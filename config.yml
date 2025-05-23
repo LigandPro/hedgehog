@@ -1,0 +1,20 @@
+descriptors: 
+  run: True
+  n_jobs: 1
+  device: cuda:4
+  batch_size: 512
+
+structure_filters: 
+  run: True
+
+retrosynthesis: 
+  run: True
+
+smina_score: 
+  run: True
+
+pains_file_path: data/wehi_pains.csv
+mcf_file_path: data/mcf.csv
+
+molecules_to_compare_with_seen: /PATH/TO/TRAIN/MOLECULES/TO/COMPARE/GENERATORS/PERFORMANCE.smi
+molecules_to_compare_with_unseen: /PATH/TO/TEST/MOLECULES/TO/COMPARE/GENERATORS/PERFORMANCE.smi
