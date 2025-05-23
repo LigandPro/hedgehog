@@ -27,7 +27,9 @@ Metrics calculation:
 2) Run:
    ```bash
    python main.py \
-   --generated_mols_path path/to/.csv/.txt/.smi/files/with/molecules
+   --generated_mols_path path/to/.csv/.txt/.smi/files/with/molecules \
+   --path_to_save path/to/save/data \
+   --config config.yml
    ```
 ---
 ## AIZythFinder retrosynthesis
