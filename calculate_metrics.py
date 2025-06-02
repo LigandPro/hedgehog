@@ -1,12 +1,12 @@
 import logging
 
-from metrics_utils import *
+from descriptors.utils import *
 from logger_config import logger
 
-from descriptors_main import main as descriptors_main
-from structural_filters_main import main as structural_filters_main
-from retrosynthesis_main import main as retrosynthesis_main
-from smina_score_main import main as smina_score_main
+from descriptors.main import main as descriptors_main
+from structFilters.main import main as structural_filters_main
+from retroSynth.main import main as retrosynthesis_main
+from sminaScore.main import main as smina_score_main
 
 
 def run_descriptors(generated_mols_path, path_to_save):

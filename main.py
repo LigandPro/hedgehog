@@ -8,16 +8,16 @@ import seaborn as sns
 
 from calculate_metrics import calculate_metrics
 from logger_config import logger
-from other_staff.MolGenBenchmark.config_utils import load_config
+from config_utils import load_config
 
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--generated_mols_path', type=str, required=True)
-    parser.add_argument('--path_to_save',        type=str, required=True)
-    parser.add_argument('--config',              type=str, required=True, default='config.yml')
+    parser.add_argument('--config',              type=str,                 default='config.yml')
 
+    parser.add_argument('--path_to_save',        type=str, required=False, default='./descriptors/results/')
     parser.add_argument('--smiles_col_name',     type=str, required=False, default='smiles')
     return parser.parse_args()
 

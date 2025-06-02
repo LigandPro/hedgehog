@@ -21,9 +21,9 @@ sys.path.append(os.path.join(RDConfig.RDContribDir, 'SA_Score'))
 import sascorer
 
 from syba import syba
-from mce18 import MCE18
+from modules.mce18 import MCE18
 
-from MolScore.moleval.metrics.metrics import GetMetrics
+from modules.MolScore.moleval.metrics.metrics import GetMetrics
 
 from medchem.rules._utils import n_fused_aromatic_rings
 
@@ -82,7 +82,7 @@ def load_inhibitors(path_to_save):
     df_inhibitors_clean_seen, df_inhibitors_clean_unseen = inhibitors_data
 
     df_inhibitors_total = pd.concat([df_inhibitors_clean_seen, df_inhibitors_clean_unseen])
-    df_inhibitors_total.to_csv(f'{path_to_save}_inhibs_total.smi', index=False)
+    df_inhibitors_total.to_csv(f'{path_to_save}inhibs_total.smi', index=False)
 
     logger.info(f"Number of unique inhibitors seen: {len(df_inhibitors_clean_seen)}")
     logger.info(f"Number of unique inhibitors unseen: {len(df_inhibitors_clean_unseen)}")
@@ -188,7 +188,7 @@ def tanimoto_similarity_claculation(dict_generated, df_inhibitors_total, path_to
     plt.xlabel("Tanimoto")
     plt.ylabel("Frequency")
     plt.legend()
-    plt.savefig(f"{path_to_save}_tanimotoSim.png")
+    plt.savefig(f"{path_to_save}tanimotoSim.png")
 
     return
 
@@ -246,7 +246,12 @@ def compute_syba_score(dict_generated, syba_model):
                         else None
                         for m in mols]
 
-        syba_scores = dm.parallelized(_compute_syba, smiles_list, syba_model, n_jobs=n_jobs, progress=True)
+        syba_scores = dm.parallelized(_compute_syba, 
+                                      [(smiles, syba_model) for smiles in smiles_list],
+                                      arg_type="args",
+                                      n_jobs=n_jobs, 
+                                      progress=True,
+                                      )
         syba_scores = [v if not np.isnan(v) 
                        else 0
                        for v in syba_scores 
@@ -278,13 +283,17 @@ def computing_target_descriptors(dataset_to_compare_with, syba_model):
     ).dropna()
 
     target_mols = [dm.to_mol(smi) for smi in dataset_to_compare_with["standard_smiles"]]
-    target_mce_values = dm.parallelized(_compute_mce18, target_mols, n_jobs=None, progress=True)
+    target_mce_values = dm.parallelized(_compute_mce18, target_mols, n_jobs=n_jobs, progress=True)
     target_mce_scores = [s for s in target_mce_values if s is not None]
     mean_target_mce = np.mean(target_mce_scores) if target_mce_scores else 0
 
     if syba_model is not None:
         target_smiles = [Chem.MolToSmiles(m) for m in target_mols if m is not None]
-        target_syba_values = dm.parallelized(_compute_syba, target_smiles, syba_model, n_jobs=None, progress=True)
+        target_syba_values = dm.parallelized(_compute_syba, 
+                                             [(smiles, syba_model) for smiles in target_smiles],
+                                             arg_type="args",
+                                             n_jobs=n_jobs, 
+                                             progress=True)
         target_syba_scores = [v for v in target_syba_values if not np.isnan(v)]
         mean_target_syba = np.mean(target_syba_scores) if target_syba_scores else 0
         logger.info(f"Target dataset: Mean SYBA: {mean_target_syba:.2f}")
@@ -356,7 +365,7 @@ def collect_metrics_dict(dict_generated, desc_dict, target_desc):
 
 
 def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
-    fig_name = f'{path_to_save}_molevalDescriptors.png'
+    fig_name = f'{path_to_save}molevalDescriptors.png'
 
     all_metrics = set()
     for name_metrics in metrics_dict.values():
@@ -403,7 +412,7 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
         all_data.append(row)
 
     df_means = pd.DataFrame(all_data)
-    df_means.to_csv(f"{path_to_save}_allChptsDescriptors.csv", index=False)
+    df_means.to_csv(f"{path_to_save}allChptsDescriptors.csv", index=False)
 
     TARGET_SMILES = df_to_compare_with["standard_smiles"].tolist()
     MetricEngine = GetMetrics(
@@ -437,8 +446,8 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
         
 
     df_metrics = pd.DataFrame(rows).set_index('Dataset')
-    df_metrics.to_csv(f"{path_to_save}_molevalMetrics.csv", index=False)
-    df_means = pd.read_csv(f"{path_to_save}_allChptsDescriptors.csv")
+    df_metrics.to_csv(f"{path_to_save}molevalMetrics.csv", index=False)
+    df_means = pd.read_csv(f"{path_to_save}allChptsDescriptors.csv")
 
     df_metrics_reset = df_metrics.reset_index().rename(columns={'Dataset': 'dataset'})
     df_merged = pd.merge(df_means, df_metrics_reset, on='dataset', how='outer')
@@ -446,10 +455,10 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
     target_row = df_merged[df_merged['dataset'] == 'Target']
     other_rows = df_merged[df_merged['dataset'] != 'Target']
     df_merged = pd.concat([target_row, other_rows]).reset_index(drop=True)
-    df_merged.to_csv(f"{path_to_save}_allMetrics.csv", index=False)
+    df_merged.to_csv(f"{path_to_save}allMetrics.csv", index=False)
 
-
-    colors = ['#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#FF99CC']
+    n_datasets = len(df_merged['dataset'].unique())
+    colors = ['#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#FF99CC'][:n_datasets]
     numeric_cols = df_merged.select_dtypes(include=[np.number]).columns
     ncols = 6
     nrows = math.ceil(len(numeric_cols) / ncols)
@@ -467,12 +476,12 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
         fig.delaxes(axs[j])
         
     plt.tight_layout(rect=[0, 0.05, 1, 1])
-    plt.savefig(f"{path_to_save}_molevalMetrics.png", bbox_inches='tight')
+    plt.savefig(f"{path_to_save}molevalMetrics.png", bbox_inches='tight')
 
     import json
-    with open(f"{path_to_save}_metricsDict.json", "w") as f:
+    with open(f"{path_to_save}metricsDict.json", "w") as f:
         json.dump(metrics_dict, f)
-    with open(f"{path_to_save}_molevalMetrics.json", "w") as f:
+    with open(f"{path_to_save}molevalMetrics.json", "w") as f:
         json.dump(moleval_metrics, f)
 
 
@@ -651,9 +660,9 @@ def calculate_metrics(df, syba_model, save_path=None):
         
     if save_path:
         if save_path.endswith('/'):
-            path_to_save = save_path + f'{df_name}_additionalMetrics.csv'
+            path_to_save = save_path + f'{df_name}additionalMetrics.csv'
         else:
-            path_to_save = save_path + f'/{df_name}_additionalMetrics.csv'
+            path_to_save = save_path + f'/{df_name}additionalMetrics.csv'
         metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
         metrics_df.to_csv(path_to_save, index_label=df_name)
 
@@ -687,9 +696,9 @@ def calculate_cycle_metrics(df, save_path=None):
             skipped_molecules.append(smiles)
     if save_path:
         if save_path.endswith('/'):
-            path_to_save = save_path + f'{df_name}_cycleMetrics.csv'
+            path_to_save = save_path + f'{df_name}cycleMetrics.csv'
         else:
-            path_to_save = save_path + f'/{df_name}_cycleMetrics.csv'
+            path_to_save = save_path + f'/{df_name}cycleMetrics.csv'
         metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
         metrics_df.to_csv(path_to_save, index_label=df_name)
 

@@ -14,7 +14,7 @@ def main(generated_mols_path, path_to_save):
         logger.error(f"Failed to load SYBA model: {str(e)}")
         syba_model = None
 
-    path_to_save = path_to_save + '/descriptors/'
+    
     if not os.path.exists(path_to_save):
         os.makedirs(path_to_save)
     generated_mols_df = pd.read_csv(generated_mols_path, names=['smiles'])
@@ -29,11 +29,8 @@ def main(generated_mols_path, path_to_save):
     tanimoto_similarity_claculation(dict_generated, df_to_compare_with, path_to_save)
     descriptors_dict = compute_descriptors(dict_generated)
     dict_generated = compute_mce18_score(dict_generated)
-    if syba_model is not None:
-        dict_generated = compute_syba_score(dict_generated, syba_model)
-        target_descriptors_df = computing_target_descriptors(df_to_compare_with, syba_model)
-    else:
-        target_descriptors_df = computing_target_descriptors(df_to_compare_with, None)
+    dict_generated = compute_syba_score(dict_generated, syba_model)
+    target_descriptors_df = computing_target_descriptors(df_to_compare_with, syba_model)
     dict_generated["Target"] = target_descriptors_df
 
     metrics_dict = collect_metrics_dict(dict_generated, descriptors_dict, target_descriptors_df)
