@@ -1,32 +1,36 @@
 import logging
-import yaml
+import os
+from datetime import datetime
 
-def setup_logger(config_path='config.yml'):
-    try:
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-            log_config = config.get('logging', {})
-    except:
-        log_config = {'level': 'INFO', 'file_output': False}
+def setup_logger(name='metrics_comparison'):
+    logs_dir = 'logs'
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
 
-    logger = logging.getLogger('metrics_comparison')
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    logger.handlers = []
+
+    console_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S' 
+    )
     
-    level = getattr(logging, log_config.get('level', 'INFO'))
-    logger.setLevel(level)
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(level)
-
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-
-    if log_config.get('file_output', False):
-        file_handler = logging.FileHandler('metrics_comparison.log')
-        file_handler.setLevel(level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
+
+    current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = os.path.join(logs_dir, f'{name}_{current_time}.log')
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
 
     return logger
 
