@@ -24,7 +24,7 @@ Environment preparation
       2.3 Download MCE-18 implementation file from source: ```https://github.com/Tong-Du/MCE-18.git``` \
       2.4 Export path to MolGenBenchmark project:
    ```bash
-   export PYTHONPATH=$PYTHONPATH:/path/to/modules/MolScore
+   export PYTHONPATH=$PYTHONPATH:/path/to/modules/MolGenBenchmark
    ```  
 Metrics calculation:
 1) Clone REPO repo for source:
