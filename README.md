@@ -2,22 +2,27 @@
 Benchmarking Generative Models for Molecular Design
 
 ## Metrics Calculation
-Environment preparation:
-1) Using mamba / conda (preferred)
-```bash
-mamba install lich::syba
-```
-
-or clone SYBA repo from source 
+Environment preparation
+1. Go to `modules` folder and clone the following packages as external modules:
   ```bash
-   git clone https://github.com/lich-uct/syba.git && cd syba && conda activate YOUR_ENV && pip install .
-   ```
-2) Clone MolSCore repo from source
-  ```bash
-  git clone https://github.com/MorganCThomas/MolScore.git
+  cd modules
   ```
-3) Download MCE-18 implementation file from source: ```https://github.com/Tong-Du/MCE-18.git```
-   
+
+2. Install dependencies: \
+   2.1 Install SYBA using mamba / conda (preferred):
+      ```bash
+      mamba install lich::syba
+      ```
+      or clone SYBA from source:
+      ```bash
+      git clone https://github.com/lich-uct/syba.git && cd syba && conda activate YOUR_ENV && pip install .
+      ```
+    2.2 Clone MolSCore repo from source:
+      ```bash
+      git clone https://github.com/MorganCThomas/MolScore.git
+      ```
+    2.3 Download MCE-18 implementation file from source: ```https://github.com/Tong-Du/MCE-18.git```
+     
 Metrics calculation:
 1) Clone REPO repo for source:
    ```bash
