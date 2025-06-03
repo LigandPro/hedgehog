@@ -22,9 +22,9 @@ Environment preparation
       git clone https://github.com/MorganCThomas/MolScore.git
       ```
       2.3 Download MCE-18 implementation file from source: ```https://github.com/Tong-Du/MCE-18.git``` \
-      2.4 Export path to MolGenBenchmark project:
+      2.4 Export path to MolScore module:
    ```bash
-   export PYTHONPATH=$PYTHONPATH:/path/to/modules/MolGenBenchmark
+   export PYTHONPATH=$PYTHONPATH:/path/to/modules/MolGenBenchmark/modules/MolScore
    ```  
 Metrics calculation:
 1) Clone REPO repo for source:
