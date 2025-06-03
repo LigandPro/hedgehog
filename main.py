@@ -14,7 +14,7 @@ from config_utils import load_config
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--generated_mols_path', type=str, required=True)
+    parser.add_argument('--mols_path', type=str, required=True)
     parser.add_argument('--config',              type=str,                 default='config.yml')
 
     parser.add_argument('--path_to_save',        type=str, required=False, default='./descriptors/results/')

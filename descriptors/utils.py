@@ -45,8 +45,8 @@ batch_size = config['descriptors']['batch_size']
 
 def load_inhibitors(path_to_save):
     logger.info("Loading data...")
-    df_inhibitors_seen = pd.read_csv(config['molecules_to_compare_with_seen'], sep="\t", names=["smiles"], header=None)
-    df_inhibitors_unseen = pd.read_csv(config['molecules_to_compare_with_unseen'], sep="\t", names=["smiles"], header=None)
+    df_inhibitors_seen = pd.read_csv(config['data']['molecules_to_compare_with_seen'], sep="\t", names=["smiles"], header=None)
+    df_inhibitors_unseen = pd.read_csv(config['data']['molecules_to_compare_with_unseen'], sep="\t", names=["smiles"], header=None)
 
     def _preprocess_inhibitors(i, row):
         mol = dm.to_mol(row["smiles"], ordered=True)
@@ -523,13 +523,13 @@ def get_smarts_to_regid_mapping(pains_file_path):
 
 def get_structure_filters_data(is_pains):
     if is_pains:
-        pains_file_path = config['pains_file_path']
+        pains_file_path = config['data']['pains_file_path']
         pains_list, smarts_to_regid = get_smarts_to_regid_mapping(pains_file_path)
         mcf_list = None 
     else:
         smarts_to_regid = {}
         pains_list = None
-        mcf_file_path = config['mcf_file_path']
+        mcf_file_path = config['data']['mcf_file_path']
         mcf_list_not_canonized_smarts = pd.read_csv(mcf_file_path, names=['names', 'smarts'])['smarts'][1:].tolist()
         mcf_list = list(canonicalize_smarts(row.strip()) for row in mcf_list_not_canonized_smarts)
     return smarts_to_regid, pains_list, mcf_list

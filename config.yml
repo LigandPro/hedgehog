@@ -6,15 +6,22 @@ descriptors:
 
 structure_filters: 
   run: True
+  sample_size: 10000
+  save_dir: /mnt/ligandpro/data/gurevich/medchem_filters
+  filename: common_filter
+  mode: 'scratch' # options 'scratch' or 'continue'
 
 retrosynthesis: 
-  run: True
+  run: False
 
 smina_score: 
-  run: True
+  run: False
 
-pains_file_path: data/wehi_pains.csv
-mcf_file_path: data/mcf.csv
 
-molecules_to_compare_with_seen: /PATH/TO/TRAIN/MOLECULES/TO/COMPARE/GENERATORS/PERFORMANCE.smi
-molecules_to_compare_with_unseen: /PATH/TO/TEST/MOLECULES/TO/COMPARE/GENERATORS/PERFORMANCE.smi
+
+data:
+  pains_file_path: data/wehi_pains.csv
+  mcf_file_path: data/mcf.csv
+
+  molecules_to_compare_with_seen: /home/dorochka/projects/testing_benchmark/KRAS_inhibs_seen_1.smi
+  molecules_to_compare_with_unseen: /home/dorochka/projects/testing_benchmark/KRAS_inhibs_unseen_1.smi
