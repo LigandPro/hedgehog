@@ -1,3 +1,10 @@
+main: 
+  generated_mols_path: /home/dorochka/other_staff/metrics_sergei/models_evaluation_results/_data/sampled_smiles/7ew9/pocket2mol_7ew9.txt
+  folder_to_save: ./results/pocket2mol_7ew9/
+  smiles_col_name: smiles
+  save_mols_list: True
+  number_of_mols_to_save: 10000
+
 descriptors: 
   run: True
   n_jobs: 1
@@ -5,7 +12,7 @@ descriptors:
   batch_size: 512
 
 structure_filters: 
-  run: True
+  run: False
   sample_size: 10000
   save_dir: /mnt/ligandpro/data/gurevich/medchem_filters
   filename: common_filter

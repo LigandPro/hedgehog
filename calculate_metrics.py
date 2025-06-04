@@ -4,9 +4,9 @@ from descriptors.utils import *
 from logger_config import logger
 
 from descriptors.main import main as descriptors_main
-from structFilters.main import main as structural_filters_main
-from retroSynth.main import main as retrosynthesis_main
-from sminaScore.main import main as smina_score_main
+# from structFilters.main import main as structural_filters_main
+# from retroSynth.main import main as retrosynthesis_main
+# from sminaScore.main import main as smina_score_main
 
 
 def run_descriptors(generated_mols_path, path_to_save):
@@ -14,20 +14,24 @@ def run_descriptors(generated_mols_path, path_to_save):
     descriptors_main(generated_mols_path, path_to_save)
 
 
-def run_structural_filters():
-    logger.info(f'Running Structural Filters...')
-    structural_filters_main()
+# def run_structural_filters():
+#     logger.info(f'Running Structural Filters...')
+#     structural_filters_main()
 
-def run_rethrosynth():
-    logger.info(f'Running Retrosynthesis...')
-    retrosynthesis_main()
+# def run_rethrosynth():
+#     logger.info(f'Running Retrosynthesis...')
+#     retrosynthesis_main()
 
-def run_smina_score():
-    logger.info(f'Running SMINA Score...')
-    smina_score_main()
+# def run_smina_score():
+#     logger.info(f'Running SMINA Score...')
+#     smina_score_main()
 
 
-def calculate_metrics(generated_mols_path, path_to_save, config):
+def calculate_metrics(config):
+    generated_mols_path = config['main']['generated_mols_path']
+    path_to_save = config['main']['folder_to_save']
+
+
     run_descriptors_flag = config['descriptors']['run']
     run_structural_filters_flag = config['structure_filters']['run']
     run_rethrosynth_flag = config['retrosynthesis']['run']
@@ -36,13 +40,13 @@ def calculate_metrics(generated_mols_path, path_to_save, config):
     if run_descriptors_flag:
         run_descriptors(generated_mols_path, path_to_save)
 
-    if run_structural_filters_flag:
-        run_structural_filters()
+    # if run_structural_filters_flag:
+    #     run_structural_filters()
 
-    if run_rethrosynth_flag:
-        run_rethrosynth()
+    # if run_rethrosynth_flag:
+    #     run_rethrosynth()
         
-    if run_smina_score_flag:
-        run_smina_score()
+    # if run_smina_score_flag:
+    #     run_smina_score()
     
     

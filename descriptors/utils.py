@@ -92,7 +92,7 @@ def load_inhibitors(path_to_save):
 
 
 def loading_generated_mols(generated_mols_path):
-    logger.info("Loading generated SDF files...")
+    logger.info("Loading generated molecules...")
 
     def load_and_clean_sdf(sdf_file):
         import logging

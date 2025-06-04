@@ -1,3 +1,4 @@
+import os
 import argparse
 import glob 
 import yaml
@@ -14,36 +15,43 @@ from config_utils import load_config
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mols_path', type=str, required=True)
     parser.add_argument('--config',              type=str,                 default='config.yml')
-
-    parser.add_argument('--path_to_save',        type=str, required=False, default='./descriptors/results/')
-    parser.add_argument('--smiles_col_name',     type=str, required=False, default='smiles')
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     config = load_config(args.config)
-    
-    logger.info(f'Loading generated mols from {args.generated_mols_path}...')
+    generated_mols_path = config['main']['generated_mols_path']
+    folder_to_save = config['main']['folder_to_save']
+    smiles_col_name = config['main']['smiles_col_name']
+    save_mols_list = config['main']['save_mols_list']
+    number_of_mols_to_save = config['main']['number_of_mols_to_save'] if save_mols_list else None
+
+    logger.info(f'Loading generated mols from {generated_mols_path}...')
     try:
-        data = pd.read_csv(args.generated_mols_path)
+        data = pd.read_csv(generated_mols_path, names=[smiles_col_name])
         one_df = True
-        logger.info(f'Loaded {len(data)} generated mols.')
-        
+
     except Exception as e:
-        paths = glob.glob(args.generated_mols_path)
+        paths = glob.glob(generated_mols_path)
         data = [pd.read_csv(path) for path in paths]
         one_df = False
+
+    if save_mols_list and one_df:
+        data = data.sample(number_of_mols_to_save)
+        os.makedirs(folder_to_save, exist_ok=True)
+        data.to_csv(folder_to_save + f'{number_of_mols_to_save}mols.csv', index=False)
+        logger.info(f'Sampled {len(data)} generated mols.')
+    if not one_df:
         logger.info(f'Loaded {len(data)} dataframes.')
 
     logger.info(f'Start calculating metrics...\n')
         
-    if one_df: data = calculate_metrics(args.generated_mols_path, args.path_to_save, config)
-    else:
-        for df in data:
-            calculate_metrics(df, args.path_to_save, config)
+    if one_df: data = calculate_metrics(config)
+    # else:
+    #     for df in data:
+    #         calculate_metrics(df, config)
 
 
 
