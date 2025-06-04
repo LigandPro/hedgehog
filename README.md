@@ -9,7 +9,7 @@ Environment preparation
   ```
 
 2. Install dependencies: \
-   2.1 Install SYBA using mamba / conda (preferred):
+   2.1 Install SYBA using conda or mamba (preferred):
       ```bash
       mamba install lich::syba
       ```
@@ -21,11 +21,16 @@ Environment preparation
       ```bash
       git clone https://github.com/MorganCThomas/MolScore.git
       ```
-      2.3 Download MCE-18 implementation file from source: ```https://github.com/Tong-Du/MCE-18.git``` \
-      2.4 Export path to MolGenBenchmark project:
+    and export path to MolScore module:
    ```bash
-   export PYTHONPATH=$PYTHONPATH:/path/to/modules/MolGenBenchmark
-   ```  
+   export PYTHONPATH=$PYTHONPATH:/path/to/modules/MolGenBenchmark/modules/MolScore
+   ```
+      2.3 Download MCE-18 implementation file from source: ```https://github.com/Tong-Du/MCE-18.git``` \
+      2.4 Download Eli Lilly Medchem Rules via conda or mamba (preferred):
+   ```bash
+   mamba install lilly-medchem-rules
+   ```
+   
 Metrics calculation:
 1) Clone REPO repo for source:
    ```bash
