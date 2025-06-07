@@ -9,24 +9,25 @@ import seaborn as sns
 
 from calculate_metrics import calculate_metrics
 from logger_config import logger
-from config_utils import load_config
+from configs.config_utils import load_config
 
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config',              type=str,                 default='config.yml')
+    parser.add_argument('--config',              type=str,                 default='./configs/config.yml')
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     config = load_config(args.config)
-    generated_mols_path = config['main']['generated_mols_path']
-    folder_to_save = config['main']['folder_to_save']
-    smiles_col_name = config['main']['smiles_col_name']
-    save_mols_list = config['main']['save_mols_list']
-    number_of_mols_to_save = config['main']['number_of_mols_to_save'] if save_mols_list else None
+
+    generated_mols_path = config['generated_mols_path']
+    folder_to_save = config['folder_to_save']
+    smiles_col_name = config['smiles_col_name']
+    save_mols_list = config['save_mols_list']
+    number_of_mols_to_save = config['number_of_mols_to_save'] if save_mols_list else None
 
     logger.info(f'Loading generated mols from {generated_mols_path}...')
     try:
@@ -48,7 +49,8 @@ def main():
 
     logger.info(f'Start calculating metrics...\n')
         
-    if one_df: data = calculate_metrics(config)
+    if one_df: 
+        calculate_metrics(data, config)
     # else:
     #     for df in data:
     #         calculate_metrics(df, config)

@@ -1,5 +1,7 @@
 import ast
 import json
+import glob
+
 import math 
 import random
 
@@ -12,7 +14,7 @@ import matplotlib.pyplot as plt
 
 from rdkit import Chem, RDLogger, rdBase
 
-from rdkit.Chem import DataStructs, Lipinski, rdMolDescriptors, QED, RDConfig, Draw
+from rdkit.Chem import DataStructs, Lipinski, rdMolDescriptors, QED, RDConfig, Draw, Descriptors
 from rdkit.Chem import AllChem as Chem
 
 import os 
@@ -28,25 +30,28 @@ from modules.MolScore.moleval.metrics.metrics import GetMetrics
 from medchem.rules._utils import n_fused_aromatic_rings
 
 from logger_config import logger
-from config_utils import load_config
+from configs.config_utils import load_config
 
 RDLogger.DisableLog('rdApp.*')
 rdBase.DisableLog('rdApp.*')
 dm.disable_rdkit_log() 
 
 
+def read_syba():
+    syba_model = syba.SybaClassifier()
+    try:
+        syba_model.fitDefaultScore()
+    except Exception as e:
+        logger.error(f"Failed to load SYBA model: {str(e)}")
+        syba_model = None
+    return syba_model
 
-config = load_config()
-n_jobs = config['descriptors']['n_jobs']
-device = config['descriptors']['device']
-batch_size = config['descriptors']['batch_size']
 
+def load_inhibitors(target_molecules_path):
+    logger.info("Loading target molecules data...")
 
+    df_target_mols = pd.read_csv(target_molecules_path, sep="\t", names=["smiles"], header=None)
 
-def load_inhibitors(path_to_save):
-    logger.info("Loading data...")
-    df_inhibitors_seen = pd.read_csv(config['data']['molecules_to_compare_with_seen'], sep="\t", names=["smiles"], header=None)
-    df_inhibitors_unseen = pd.read_csv(config['data']['molecules_to_compare_with_unseen'], sep="\t", names=["smiles"], header=None)
 
     def _preprocess_inhibitors(i, row):
         mol = dm.to_mol(row["smiles"], ordered=True)
@@ -66,40 +71,29 @@ def load_inhibitors(path_to_save):
         row["standard_smiles"] = dm.standardize_smiles(dm.to_smiles(mol))
         return row
     
-    inhibitors_data = []
-    for df in [df_inhibitors_seen, df_inhibitors_unseen]:
-        inhib_data = dm.parallelized(_preprocess_inhibitors,
-                                     df.iterrows(),
-                                     arg_type="args",
-                                     progress=True,
-                                     total=len(df)
-                                    )
-        inhib_data = pd.DataFrame(inhib_data)
-        inhib_data.dropna(subset=["standard_smiles"], inplace=True)
-        inhib_data.drop_duplicates(subset=["standard_smiles"], inplace=True)
-        inhibitors_data.append(inhib_data)
+    target_data = dm.parallelized(_preprocess_inhibitors,
+                                  df_target_mols.iterrows(),
+                                  arg_type="args",
+                                  progress=True,
+                                  total=len(df_target_mols)
+                                 )
+    
+    target_data = pd.DataFrame(target_data)
+    target_data.dropna(subset=["standard_smiles"], inplace=True)
+    target_data.drop_duplicates(subset=["standard_smiles"], inplace=True)
 
-    df_inhibitors_clean_seen, df_inhibitors_clean_unseen = inhibitors_data
-
-    df_inhibitors_total = pd.concat([df_inhibitors_clean_seen, df_inhibitors_clean_unseen])
-    df_inhibitors_total.to_csv(f'{path_to_save}inhibs_total.smi', index=False)
-
-    logger.info(f"Number of unique inhibitors seen: {len(df_inhibitors_clean_seen)}")
-    logger.info(f"Number of unique inhibitors unseen: {len(df_inhibitors_clean_unseen)}")
-    logger.info(f"Number of total inhibitors (seen + unseen): {len(df_inhibitors_total)}")
-
-    return df_inhibitors_clean_seen, df_inhibitors_clean_unseen, df_inhibitors_total
+    logger.info(f"Number of unique target molecules: {len(target_data)}")
+    return target_data
 
 
-def loading_generated_mols(generated_mols_path):
+def loading_generated_mols(data, model_name):
     logger.info("Loading generated molecules...")
 
-    def load_and_clean_sdf(sdf_file):
+    def load_and_clean(data):
         import logging
         logging.getLogger("rdkit").setLevel(logging.ERROR)
        
-        smiles = pd.read_csv(sdf_file, names=["smiles"])['smiles'].tolist()
-        smiles = random.sample(smiles, 10000) if len(smiles) > 10000 else smiles
+        smiles = data["smiles"].tolist()
         df_tmp = pd.DataFrame({"smiles": smiles})
         df_tmp.dropna(subset=["smiles"], inplace=True)
 
@@ -122,35 +116,30 @@ def loading_generated_mols(generated_mols_path):
         return df_proc
 
     dict_generated = {}
-    base = Path(generated_mols_path).name
-    df_gen = load_and_clean_sdf(generated_mols_path)
-    dict_generated[base] = df_gen
-    logger.info(f"{base} unique molecules: {len(df_gen)}")
+    df_gen = load_and_clean(data)
+    dict_generated[model_name] = df_gen
+    logger.info(f"{model_name} unique molecules: {len(df_gen)}")
 
     return dict_generated
 
 
-def check_intersection(dict_generated, df_inhibitors_clean_seen, df_inhibitors_clean_unseen, df_inhibitors_total):
+def check_intersection(dict_generated, target_data):
     for name, df_gen in dict_generated.items():
-        for i, df_inhibitors_clean in enumerate([df_inhibitors_clean_seen, df_inhibitors_clean_unseen, df_inhibitors_total]):
-            merged = pd.merge(df_inhibitors_clean[["standard_smiles"]],
-                              df_gen[["standard_smiles"]],
-                              on="standard_smiles",
-                              how="inner"
-                             )
-            if i == 0:
-                logger.info(f"Intersection with known SEEN inhibitors. {name} intersection count: {len(merged)}")
-            elif i == 1:
-                logger.info(f"Intersection with known UNSEEN inhibitors. {name} intersection count: {len(merged)}")
-            else:
-                logger.info(f"Intersection with all inhibitors. {name} intersection count: {len(merged)}")
+        
+        merged = pd.merge(target_data[["standard_smiles"]],
+                            df_gen[["standard_smiles"]],
+                            on="standard_smiles",
+                            how="inner"
+                            )
+        
+        logger.info(f"Intersection with target molecules: {len(merged)}")
 
 
-def tanimoto_similarity_claculation(dict_generated, df_inhibitors_total, path_to_save):
+def tanimoto_similarity_claculation(dict_generated, target_data, folder_to_save):
     logger.info("Computing fingerprints for inhibitors...")
     fps_inhibitors = []
     
-    for smi in df_inhibitors_total["standard_smiles"]:
+    for smi in target_data["standard_smiles"]:
         m = dm.to_mol(smi)
         if m:
             fp = dm.to_fp(m, fp_type="ecfp", as_array=False)
@@ -188,7 +177,7 @@ def tanimoto_similarity_claculation(dict_generated, df_inhibitors_total, path_to
     plt.xlabel("Tanimoto")
     plt.ylabel("Frequency")
     plt.legend()
-    plt.savefig(f"{path_to_save}tanimotoSim.png")
+    plt.savefig(f"{folder_to_save}tanimotoSim.png")
 
     return
 
@@ -207,7 +196,7 @@ def compute_descriptors(dict_generated):
     return desc_dict
 
 
-def compute_mce18_score(dict_generated):
+def compute_mce18_score(dict_generated, n_jobs):
     if dict_generated:
         max_name_len = max(len(name)  for name in dict_generated.keys())
         results = []
@@ -233,7 +222,7 @@ def _compute_mce18(mol):
         return 0
         
 
-def compute_syba_score(dict_generated, syba_model):
+def compute_syba_score(dict_generated, syba_model, n_jobs):
     if syba_model is None:
         for name, df_gen in dict_generated.items():
             dict_generated[name]["syba_scores"] = [0] * len(df_gen)
@@ -276,7 +265,8 @@ def _compute_syba(smiles, syba_model):
     return np.nan
     
 
-def computing_target_descriptors(dataset_to_compare_with, syba_model):
+def computing_target_descriptors(dataset_to_compare_with, syba_model, n_jobs):
+
     logger.info("Computing descriptors for target dataset...")
     target_desc = dm.descriptors.batch_compute_many_descriptors(
         [dm.to_mol(smi) for smi in dataset_to_compare_with["standard_smiles"]]
@@ -364,8 +354,8 @@ def collect_metrics_dict(dict_generated, desc_dict, target_desc):
     return metrics_dict
 
 
-def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
-    fig_name = f'{path_to_save}molevalDescriptors.png'
+def save_plots(metrics_dict, dict_generated, folder_to_save, target_data, n_jobs, batch_size):
+    fig_name = f'{folder_to_save}meanDescriptors.png'
 
     all_metrics = set()
     for name_metrics in metrics_dict.values():
@@ -412,12 +402,11 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
         all_data.append(row)
 
     df_means = pd.DataFrame(all_data)
-    df_means.to_csv(f"{path_to_save}allChptsDescriptors.csv", index=False)
+    df_means.to_csv(f"{folder_to_save}meanMetrics.csv", index=False)
 
-    TARGET_SMILES = df_to_compare_with["standard_smiles"].tolist()
+    TARGET_SMILES = target_data["standard_smiles"].tolist()
     MetricEngine = GetMetrics(
         n_jobs=n_jobs,
-        device=device,
         batch_size=batch_size,
         target=TARGET_SMILES
     )
@@ -446,8 +435,8 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
         
 
     df_metrics = pd.DataFrame(rows).set_index('Dataset')
-    df_metrics.to_csv(f"{path_to_save}molevalMetrics.csv", index=False)
-    df_means = pd.read_csv(f"{path_to_save}allChptsDescriptors.csv")
+    df_metrics.to_csv(f"{folder_to_save}relativeToTargetMetrics.csv", index=False)
+    df_means = pd.read_csv(f"{folder_to_save}meanMetrics.csv")
 
     df_metrics_reset = df_metrics.reset_index().rename(columns={'Dataset': 'dataset'})
     df_merged = pd.merge(df_means, df_metrics_reset, on='dataset', how='outer')
@@ -455,7 +444,7 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
     target_row = df_merged[df_merged['dataset'] == 'Target']
     other_rows = df_merged[df_merged['dataset'] != 'Target']
     df_merged = pd.concat([target_row, other_rows]).reset_index(drop=True)
-    df_merged.to_csv(f"{path_to_save}allMetrics.csv", index=False)
+    df_merged.to_csv(f"{folder_to_save}allMetrics.csv", index=False)
 
     n_datasets = len(df_merged['dataset'].unique())
     colors = ['#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#FF99CC'][:n_datasets]
@@ -476,12 +465,11 @@ def save_plots(metrics_dict, dict_generated, path_to_save, df_to_compare_with):
         fig.delaxes(axs[j])
         
     plt.tight_layout(rect=[0, 0.05, 1, 1])
-    plt.savefig(f"{path_to_save}molevalMetrics.png", bbox_inches='tight')
+    plt.savefig(f"{folder_to_save}relativeToTargetMetrics.png", bbox_inches='tight')
 
-    import json
-    with open(f"{path_to_save}metricsDict.json", "w") as f:
+    with open(f"{folder_to_save}metricsDict.json", "w") as f:
         json.dump(metrics_dict, f)
-    with open(f"{path_to_save}molevalMetrics.json", "w") as f:
+    with open(f"{folder_to_save}relativeToTargetMetrics.json", "w") as f:
         json.dump(moleval_metrics, f)
 
 
@@ -490,23 +478,6 @@ def canonicalize_smarts(smarts):
     mol = Chem.MolFromSmarts(smarts)
     if mol: return Chem.MolToSmarts(mol)
     else: raise ValueError(f"Invalid SMARTS: {smarts}")
-   
-
-def clean_path_name(path_name, patterns_to_remove=None):
-    if patterns_to_remove is None:
-        patterns_to_remove = ['.csv', '.sdf', '.txt', 
-                              '_smiles_metrics.csv', '_smiles_metrics_seen.csv', '_smiles_metrics_filtered.csv',
-                              '_10000_mols', '_10000', '_sampling_seen', 'sampling_10000_', 
-                              'chkpt', '_sampling', '_smiles_additional_metrics.csv', '_smiles', '_merged', 
-                              ]
-    
-    name = os.path.basename(path_name)
-    for pattern in patterns_to_remove:
-        if pattern == 'chkpt': name = name.replace(pattern, 'ckpt')
-        elif pattern == 'reinvent4_epochs': name = name.replace(pattern, 'epochs')
-        else: name = name.replace(pattern, '')
-
-    return name
 
 
 def get_model_colors(model_names, cmap=None):
@@ -519,20 +490,6 @@ def get_smarts_to_regid_mapping(pains_file_path):
     regid_col = list(row.strip('"<>') for row in pains_df['regID'])
     smarts_to_regid = dict(zip(pains_col, regid_col))
     return pains_col, smarts_to_regid
-
-
-def get_structure_filters_data(is_pains):
-    if is_pains:
-        pains_file_path = config['data']['pains_file_path']
-        pains_list, smarts_to_regid = get_smarts_to_regid_mapping(pains_file_path)
-        mcf_list = None 
-    else:
-        smarts_to_regid = {}
-        pains_list = None
-        mcf_file_path = config['data']['mcf_file_path']
-        mcf_list_not_canonized_smarts = pd.read_csv(mcf_file_path, names=['names', 'smarts'])['smarts'][1:].tolist()
-        mcf_list = list(canonicalize_smarts(row.strip()) for row in mcf_list_not_canonized_smarts)
-    return smarts_to_regid, pains_list, mcf_list
 
 
 def get_counts_from_csv(df, target_column, passed_column_name, value_column_name, plot_true_vals):
@@ -569,51 +526,6 @@ def sort_data(data_dict, reverse=True):
     return model_names, counts
 
 
-def refilter_data(paths, borders=None, save=True, path_to_save=None):
-    if borders is None:
-        borders = {'molWt_max': 1000, 
-           'logP_min': -2, 
-           'logP_max': 10, 
-           'hbd': 6, 
-           'hba': 15, 
-           'tpsa': 250, 
-           'num_rot_bonds_max': 20}
-    logger.info(f'Borders: {borders}')
-    datas = []
-    for path in paths: 
-        if path_to_save is None: 
-            out_path = path.replace('.csv', '_filtered.csv')
-        else: 
-            name = path.split('/')[-1].split('.csv')[0]
-            out_path = path_to_save + name + '_filtered.csv'
-    
-        data = pd.read_csv(path, index_col=0)
-        
-        if 'filters_logP_value' in data.columns:
-            data['filters_logP_passed'] = ((data['filters_logP_value'] >= borders['logP_min']) & (data['filters_logP_value'] <= borders['logP_max']))
-        if 'filters_molWt_value' in data.columns:
-            data['filters_molWt_passed'] = data['filters_molWt_value'] <= borders['molWt_max']
-        if 'filters_hbd_value' in data.columns: 
-            data['filters_hbd_passed'] = data['filters_hbd_value'] <= borders['hbd']
-        if 'filters_hba_value' in data.columns:
-            data['filters_hba_passed'] = data['filters_hba_value'] <= borders['hba']
-        if 'filters_tpsa_value' in data.columns:
-            data['filters_tpsa_passed'] = data['filters_tpsa_value'] <= borders['tpsa']
-        if 'filters_num_rot_bonds_value' in data.columns:
-            data['filters_num_rot_bonds_passed'] = data['filters_num_rot_bonds_value'] <= borders['num_rot_bonds_max']
-        
-        if save: 
-            data.to_csv(out_path)
-            print(f'{path} saved')
-        
-        datas.append(data)
-    
-    assert len(datas) == len(paths), 'Number of filtered data is not equal to number of paths.'
-
-    if save: return
-    else: return datas
-
-
 def draw_smarts(smarts):
     mol = Chem.MolFromSmarts(smarts)
 
@@ -635,77 +547,6 @@ def sdf_to_txt(sdf_file_path, txt_file_path):
     logger.info(f'{txt_file_path} saved')
     return
 
-
-def calculate_metrics(df, syba_model, save_path=None):
-    if type(df) == dict:
-        df = pd.DataFrame(df)
-    df_name = df.columns[0]
-    metrics = {}
-    skipped_molecules = []
-    for smiles in df[df.columns[0]]:
-        mol = Chem.MolFromSmiles(smiles)
-        mol_metrics = {}
-        if mol:
-            mol_metrics['hbd'] = Lipinski.NumHDonors(mol)
-            mol_metrics['hba'] = Lipinski.NumHAcceptors(mol)
-            mol_metrics['tpsa'] = rdMolDescriptors.CalcTPSA(mol)
-            mol_metrics['qed'] = QED.qed(mol)
-            mol_metrics['sp3'] = rdMolDescriptors.CalcFractionCSP3(mol)
-            mol_metrics['num_heavy_atoms'] = rdMolDescriptors.CalcNumHeavyAtoms(mol)
-            mol_metrics['sas_score'] = _calculate_sas(smiles)
-            mol_metrics['syba_score'] = _calculate_syba(smiles, syba_model)
-            metrics[smiles] = mol_metrics
-        else:
-            skipped_molecules.append(smiles)
-        
-    if save_path:
-        if save_path.endswith('/'):
-            path_to_save = save_path + f'{df_name}additionalMetrics.csv'
-        else:
-            path_to_save = save_path + f'/{df_name}additionalMetrics.csv'
-        metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
-        metrics_df.to_csv(path_to_save, index_label=df_name)
-
-    if skipped_molecules:
-        logger.warning(f'Skipped {len(skipped_molecules)} molecules: {skipped_molecules}')
-
-    return metrics
-
-
-def calculate_cycle_metrics(df, save_path=None):
-    assert type(df) == pd.DataFrame or type(df) == pd.Series, 'df must be a pandas DataFrame or Series'
-
-    df_name = df.columns[0]
-    metrics = {}
-    skipped_molecules = []
-    for smiles in df[df.columns[0]]:
-        mol = Chem.MolFromSmiles(smiles)
-        mol_metrics = {}
-        if mol:
-            mol_metrics['#rings'] = mol.GetRingInfo().NumRings()
-            mol_metrics['#aromatic_rings'] = rdMolDescriptors.CalcNumAromaticRings(mol)
-            mol_metrics['#heteroatoms'] = sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() not in (1, 6))
-            mol_metrics['#cycles_together'] = n_fused_aromatic_rings(mol)
-
-            total_bonds = mol.GetNumBonds()
-            rotatable_bonds = Lipinski.NumRotatableBonds(mol)
-            rigid_bonds = total_bonds - rotatable_bonds
-            mol_metrics['#rigid_bonds'] = rigid_bonds
-            metrics[smiles] = mol_metrics
-        else:
-            skipped_molecules.append(smiles)
-    if save_path:
-        if save_path.endswith('/'):
-            path_to_save = save_path + f'{df_name}cycleMetrics.csv'
-        else:
-            path_to_save = save_path + f'/{df_name}cycleMetrics.csv'
-        metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
-        metrics_df.to_csv(path_to_save, index_label=df_name)
-
-    if skipped_molecules:
-        logger.warning(f'Skipped {len(skipped_molecules)} molecules: {skipped_molecules}')
-    return     
-
           
 def _calculate_sas(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -721,3 +562,326 @@ def _calculate_syba(smiles, syba_model):
             return syba_model.predict(mol=mol)
     return np.nan
 
+
+def compute_metrics(df, syba_model, model_name, save_path=None):
+    if type(df) == dict:
+        df = pd.DataFrame(df)
+    metrics = {}
+    skipped_molecules = []
+    for smiles in df[df.columns[0]]:
+        mol = Chem.MolFromSmiles(smiles)
+        mol_metrics = {}
+        if mol:
+            symbols = list(set(atom.GetSymbol() 
+                         for atom in mol.GetAtoms() 
+                         if atom.GetSymbol()))
+            
+            
+            charged_mol = False if any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms()) else True
+
+            ring_info = mol.GetRingInfo()
+            rings = [len(x) for x in ring_info.AtomRings()]
+
+            total_bonds = mol.GetNumBonds()
+            rotatable_bonds = Lipinski.NumRotatableBonds(mol)
+            rigid_bonds = total_bonds - rotatable_bonds
+
+            mol_metrics['chars'] = symbols
+            mol_metrics['n_atoms'] = Chem.AddHs(mol).GetNumAtoms()
+            mol_metrics['n_heavy_atoms'] = rdMolDescriptors.CalcNumHeavyAtoms(mol)
+            mol_metrics['charged_mol'] = charged_mol
+            mol_metrics['molWt'] = Descriptors.ExactMolWt(mol)
+            mol_metrics['logP'] = Descriptors.MolLogP(mol)
+            mol_metrics['ring_size'] = rings
+            mol_metrics['n_rings'] = mol.GetRingInfo().NumRings()
+            mol_metrics['n_aroma_rings'] = rdMolDescriptors.CalcNumAromaticRings(mol)
+            mol_metrics['n_rings_together'] = n_fused_aromatic_rings(mol)
+            mol_metrics['n_het_atoms'] = sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() not in (1, 6))
+            mol_metrics['n_rigid_bonds'] = rigid_bonds
+            mol_metrics['n_rot_bonds'] = rdMolDescriptors.CalcNumRotatableBonds(mol)
+            mol_metrics['hbd'] = Lipinski.NumHDonors(mol)
+            mol_metrics['hba'] = Lipinski.NumHAcceptors(mol)
+            mol_metrics['fsp3'] = rdMolDescriptors.CalcFractionCSP3(mol)
+            mol_metrics['tpsa'] = rdMolDescriptors.CalcTPSA(mol)
+            mol_metrics['qed'] = QED.qed(mol)
+            mol_metrics['sa_score'] = _calculate_sas(smiles)
+            mol_metrics['syba_score'] = _calculate_syba(smiles, syba_model)
+            metrics[smiles] = mol_metrics
+        else:
+            skipped_molecules.append(smiles)
+        
+    if save_path:
+        if save_path.endswith('/'):
+            folder_to_save = save_path + f'perMolMetrics.csv'
+        else:
+            folder_to_save = save_path + f'/perMolMetrics.csv'
+        metrics_df = pd.DataFrame.from_dict(metrics, orient='index').reset_index().rename(columns={'index': 'smiles'})
+        metrics_df.to_csv(folder_to_save, index_label=model_name)
+
+    if skipped_molecules:
+        logger.warning(f'Skipped {len(skipped_molecules)} molecules: {skipped_molecules}')
+
+    return metrics_df  
+
+
+def filter_molecules(df, borders, folder_to_save):
+    logger.info(f'Borders: {borders}')
+
+    allowed_chars = borders['allowed_chars']
+    n_atoms_min = borders['n_atoms_min']
+    n_atoms_max = borders['n_atoms_max']
+    n_heavy_atoms_min = borders['n_heavy_atoms_min']
+    n_heavy_atoms_max = borders['n_heavy_atoms_max']
+    charged_mol_allowed = borders['charged_mol_allowed']
+    molWt_min = borders['molWt_min']
+    molWt_max = borders['molWt_max']
+    logP_min = borders['logP_min']
+    logP_max = borders['logP_max']
+    ring_size_min = borders['ring_size_min']
+    ring_size_max = borders['ring_size_max']
+    n_rings_min = borders['n_rings_min']
+    n_rings_max = borders['n_rings_max']
+    n_aroma_rings_min = borders['n_aroma_rings_min']
+    n_aroma_rings_max = borders['n_aroma_rings_max']
+    n_rings_together_min = borders['n_rings_together_min']
+    n_rings_together_max = borders['n_rings_together_max']  
+    n_het_atoms_min = borders['n_het_atoms_min']
+    n_het_atoms_max = borders['n_het_atoms_max']  
+    n_rigid_bonds_min = borders['n_rigid_bonds_min']
+    n_rigid_bonds_max = borders['n_rigid_bonds_max']
+    n_rot_bonds_min = borders['n_rot_bonds_min']
+    n_rot_bonds_max = borders['n_rot_bonds_max']
+    hbd_min = borders['hbd_min']
+    hbd_max = borders['hbd_max']
+    hba_min = borders['hba_min']
+    hba_max = borders['hba_max']
+    fsp3_min = borders['fsp3_min']
+    fsp3_max = borders['fsp3_max']
+    tpsa_min = borders['tpsa_min']
+    tpsa_max = borders['tpsa_max']
+    qed_min = borders['qed_min']
+    qed_max = borders['qed_max']
+    sa_score_min = borders['sa_score_min']
+    sa_score_max = borders['sa_score_max']
+    syba_score_min = borders['syba_score_min']
+    syba_score_max = borders['syba_score_max']
+
+
+    filtered_data = {}
+    filtered_data['smiles'] = df['smiles']
+    
+    filtered_data['chars'] = df['chars']
+    filtered_data['chars_passed'] = df['chars'].apply(lambda x: 
+                                                             all(str(char).strip() in allowed_chars 
+                                                                 for char in (x if isinstance(x, list) else eval(x))))
+
+    filtered_data['n_atoms'] = df['n_atoms']
+    filtered_data['n_atoms_passed'] = (df['n_atoms'] >= n_atoms_min) & (df['n_atoms'] <= n_atoms_max)
+    
+    filtered_data['n_heavy_atoms'] = df['n_heavy_atoms']
+    filtered_data['n_heavy_atoms_passed'] = (df['n_heavy_atoms'] >= n_heavy_atoms_min) & (df['n_heavy_atoms'] <= n_heavy_atoms_max)
+    
+    filtered_data['charged_mol'] = df['charged_mol']
+    filtered_data['charged_mol_passed'] = df['charged_mol'] == charged_mol_allowed
+    
+    filtered_data['molWt'] = df['molWt']
+    filtered_data['molWt_passed'] = (df['molWt'] >= molWt_min) & (df['molWt'] <= molWt_max)
+    
+    filtered_data['logP'] = df['logP']
+    filtered_data['logP_passed'] = (df['logP'] >= logP_min) & (df['logP'] <= logP_max)
+    
+    filtered_data['ring_size'] = df['ring_size']
+    filtered_data['ring_size_passed'] = df['ring_size'].apply(lambda x: 
+                                                                all(float(ring_size) >= ring_size_min and float(ring_size) <= ring_size_max 
+                                                                   for ring_size in (x if isinstance(x, list) else eval(x))))
+    
+    filtered_data['n_rings'] = df['n_rings']
+    filtered_data['n_rings_passed'] = (df['n_rings'] >= n_rings_min) & (df['n_rings'] <= n_rings_max)
+
+    filtered_data['n_aroma_rings'] = df['n_aroma_rings']
+    filtered_data['n_aroma_rings_passed'] = (df['n_aroma_rings'] >= n_aroma_rings_min) & (df['n_aroma_rings'] <= n_aroma_rings_max)
+
+    filtered_data['n_rings_together'] = df['n_rings_together']
+    filtered_data['n_rings_together_passed'] = (df['n_rings_together'] >= n_rings_together_min) & (df['n_rings_together'] <= n_rings_together_max)
+
+    filtered_data['n_het_atoms'] = df['n_het_atoms']
+    filtered_data['n_het_atoms_passed'] = (df['n_het_atoms'] >= n_het_atoms_min) & (df['n_het_atoms'] <= n_het_atoms_max)
+
+    filtered_data['n_rigid_bonds'] = df['n_rigid_bonds']
+    filtered_data['n_rigid_bonds_passed'] = (df['n_rigid_bonds'] >= n_rigid_bonds_min) & (df['n_rigid_bonds'] <= n_rigid_bonds_max)
+    
+    filtered_data['n_rot_bonds'] = df['n_rot_bonds']
+    filtered_data['n_rot_bonds_passed'] = (df['n_rot_bonds'] >= n_rot_bonds_min) & (df['n_rot_bonds'] <= n_rot_bonds_max)
+
+    filtered_data['hbd'] = df['hbd']
+    filtered_data['hbd_passed'] = (df['hbd'] <= hbd_max) & (df['hbd'] >= hbd_min)
+
+    filtered_data['hba'] = df['hba']
+    filtered_data['hba_passed'] = (df['hba'] <= hba_max) & (df['hba'] >= hba_min)
+
+    filtered_data['fsp3'] = df['fsp3']
+    filtered_data['fsp3_passed'] = (df['fsp3'] <= fsp3_max) & (df['fsp3'] >= fsp3_min)
+
+    
+    filtered_data['tpsa'] = df['tpsa']
+    filtered_data['tpsa_passed'] = (df['tpsa'] <= tpsa_max) & (df['tpsa'] >= tpsa_min)
+
+    filtered_data['qed'] = df['qed']
+    filtered_data['qed_passed'] = (df['qed'] <= qed_max) & (df['qed'] >= qed_min)
+
+    filtered_data['sa_score'] = df['sa_score']
+    filtered_data['sa_score_passed'] = (df['sa_score'] <= sa_score_max) & (df['sa_score'] >= sa_score_min)
+
+    filtered_data['syba_score'] = df['syba_score']
+    if syba_score_max == 'inf':
+        filtered_data['syba_score_passed'] = (df['syba_score'] >= syba_score_min)
+    else:
+        filtered_data['syba_score_passed'] = (df['syba_score'] <= syba_score_max) & (df['syba_score'] >= syba_score_min)
+    
+    filtered_data = pd.DataFrame(filtered_data)
+    filtered_data.to_csv(folder_to_save + 'filtered_mols.csv', index_label='SMILES')
+    return filtered_data
+
+
+def _parse_chars_in_mol_column(series):
+    parsed = []
+    for val in series.dropna():
+        try:
+            if isinstance(val, list):
+                chars = val
+            else:
+                chars = eval(val)
+            parsed.extend(chars)
+        except Exception as e:
+            print(f"Error processing value: {val}, error: {e}")
+    return parsed
+
+def _parse_ring_size_column(series):
+    parsed = []
+    for val in series.dropna():
+        try:
+            if isinstance(val, list):
+                sizes = val
+            else:
+                sizes = eval(val)
+            parsed.extend([float(size) for size in sizes])
+        except Exception as e:
+            print(f"Error processing value: {val}, error: {e}")
+    return parsed
+
+
+def draw_filtered_mols(df, folder_to_save, config): 
+    model_name = config['model_name']
+    
+    descriptors_config = load_config(config['config_descriptors'])
+    borders = descriptors_config['borders']
+    borders['charged_mol_allowed'] = int(borders['charged_mol_allowed'])
+    cols_to_plot = descriptors_config['filtered_cols_to_plot']
+    discrete_feats = descriptors_config['discrete_features_to_plot']
+    not_to_smooth_by_sides_cols = descriptors_config['not_to_smooth_plot_by_sides']
+    renamer = descriptors_config['renamer']
+
+    colors = get_model_colors([model_name])
+
+    nrows = len(cols_to_plot) // 5  + len(cols_to_plot) % 5 if len(cols_to_plot) > 5 else 1
+    ncols = 5 if len(cols_to_plot) > 5 else len(cols_to_plot)
+    fig, axes = plt.subplots(nrows=nrows, ncols=5, figsize=(nrows * ncols, nrows * ncols))
+    axes = axes.flatten()
+
+    for i, col in enumerate(cols_to_plot):
+        relevant_keys = [k for k in borders.keys() if col.lower() in k.lower()]
+        if not relevant_keys:
+            continue
+        
+        min_val = next((borders[k] for k in relevant_keys if 'min' in k), None)
+        max_val = next((borders[k] for k in relevant_keys if 'max' in k), None)
+        minmax_str = f"min: {min_val}, max: {max_val}"
+
+        data_to_plot_after = {}
+        counts_after, total_mols = {}, {}
+
+        if col == 'chars':
+            values_raw = df[col].dropna()
+            values_before = _parse_chars_in_mol_column(values_raw)
+        elif col == 'ring_size':
+            values_raw = df[col].dropna()
+            values_before = _parse_ring_size_column(values_raw)
+        else:
+            values_before = df[col].dropna().tolist()
+
+        if col == 'syba_score' and max_val == 'inf':
+            values_after = [v for v in values_before if 
+                            (min_val is None or v >= min_val)]
+        else:
+            values_after = [v for v in values_before if 
+                            (min_val is None or v >= min_val) and 
+                            (max_val is None or v <= max_val)]
+
+        data_to_plot_after[model_name] = values_before
+        counts_after[model_name] = len(values_after)
+        total_mols[model_name] = len(values_before)
+
+        ax = axes[i]
+        for model_name, values in data_to_plot_after.items():
+            total = total_mols.get(model_name, 0)
+            count = counts_after.get(model_name, 0)
+            mols_passed = count / total * 100 if total > 0 else 0
+
+            label = f'{model_name}, passed: {mols_passed:.1f}%'
+            color = colors[model_name]
+
+            if len(values) > 1:
+                if col in discrete_feats:
+                    if col == 'charged_mol':
+                        value_counts = pd.Series(values).value_counts().sort_index()
+                        complete_counts = pd.Series([0, 0], index=[False, True])
+                        complete_counts.update(value_counts)
+                        value_counts = complete_counts.sort_index()
+
+                        ax.bar(x=['Not charged', 'Charged'], height=value_counts.values, 
+                            alpha=0.5, color=color, edgecolor='black', linewidth=0.3, 
+                            label=label)
+                        total = len(values)
+                        passed = sum(v == borders['charged_mol_allowed'] for v in values)
+                        mols_passed = (passed / total * 100) if total > 0 else 0
+                        ax.legend([label], loc='upper right', fontsize=8)
+                    else:
+                        value_counts = pd.Series(values).value_counts().sort_index()
+                        ax.bar(value_counts.index, value_counts.values, alpha=0.5, color=color, edgecolor='black', linewidth=0.3, align='edge', width=0.8, label=label)
+                elif col in not_to_smooth_by_sides_cols:
+                    sns.kdeplot(values, label=label, fill=True, alpha=0.3, ax=ax, color=color, clip=(0, None))
+                else:
+                    sns.kdeplot(values, label=label, fill=True, alpha=0.3, ax=ax, color=color)
+            else:
+                ax.scatter(values, [0.01]*len(values), label=label, alpha=0.7, color=color)
+
+        title = f"{renamer[col] if col in renamer else col} ({minmax_str})"
+        ax.set_title(title, fontsize=12)
+        ax.set_xlabel(renamer[col], fontsize=10)
+        
+        if col in discrete_feats:
+            ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+
+
+        if min_val is not None:
+            ax.axvline(min_val, color='red', linestyle='--', linewidth=1.5, label=f'min: {min_val}')
+        if max_val is not None and max_val != 'inf':
+            ax.axvline(max_val, color='blue', linestyle='--', linewidth=1.5, label=f'max: {max_val}')
+        
+        x_min, x_max = ax.get_xlim()
+        if min_val is not None:
+            ax.axvspan(x_min, min_val, color='grey', alpha=0.2, zorder=0)
+        if max_val is not None and max_val != 'inf':
+            ax.axvspan(max_val, x_max, color='grey', alpha=0.2, zorder=0)
+
+        ax.tick_params(axis='both', labelsize=10)  
+        ax.legend(fontsize=8, loc='upper right')
+
+    for j in range(len(cols_to_plot), len(axes)):
+        fig.delaxes(axes[j])
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.93, bottom=0.05, left=0.05, right=0.98)
+
+    plt.savefig(f"{folder_to_save}filteredMetricsDistribution.png", dpi=300, bbox_inches='tight', format='png')

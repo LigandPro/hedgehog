@@ -1,6 +1,4 @@
-import logging
-
-from descriptors.utils import *
+from configs.config_utils import load_config
 from logger_config import logger
 
 from descriptors.main import main as descriptors_main
@@ -9,44 +7,33 @@ from descriptors.main import main as descriptors_main
 # from sminaScore.main import main as smina_score_main
 
 
-def run_descriptors(generated_mols_path, path_to_save):
-    logger.info(f'Calculating Descriptors...')
-    descriptors_main(generated_mols_path, path_to_save)
+def run_descriptors(data, config):
+    config_descriptors = load_config(config['config_descriptors'])
+    if config_descriptors['run']:
+        logger.info(f'Calculating Descriptors...')
+        descriptors_main(data, config)
 
 
 # def run_structural_filters():
-#     logger.info(f'Running Structural Filters...')
-#     structural_filters_main()
+#     if config_structFilters['run']:
+    #     logger.info(f'Running Structural Filters...')
+    #     structural_filters_main()
 
 # def run_rethrosynth():
-#     logger.info(f'Running Retrosynthesis...')
-#     retrosynthesis_main()
+#     if config_retroSynth['run']:
+    #     logger.info(f'Running Retrosynthesis...')
+    #     retrosynthesis_main()
 
 # def run_smina_score():
-#     logger.info(f'Running SMINA Score...')
-#     smina_score_main()
+#     if config_dockingScore['run']:
+    #     logger.info(f'Running SMINA Score...')
+    #     smina_score_main()
 
 
-def calculate_metrics(config):
-    generated_mols_path = config['main']['generated_mols_path']
-    path_to_save = config['main']['folder_to_save']
-
-
-    run_descriptors_flag = config['descriptors']['run']
-    run_structural_filters_flag = config['structure_filters']['run']
-    run_rethrosynth_flag = config['retrosynthesis']['run']
-    run_smina_score_flag = config['smina_score']['run']
-    
-    if run_descriptors_flag:
-        run_descriptors(generated_mols_path, path_to_save)
-
-    # if run_structural_filters_flag:
-    #     run_structural_filters()
-
-    # if run_rethrosynth_flag:
-    #     run_rethrosynth()
-        
-    # if run_smina_score_flag:
-    #     run_smina_score()
+def calculate_metrics(data, config):
+    run_descriptors(data, config)
+    # run_structural_filters(config)
+    # run_rethrosynth(config)  
+    # run_smina_score(config)
     
     
