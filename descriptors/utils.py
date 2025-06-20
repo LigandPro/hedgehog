@@ -342,8 +342,18 @@ def draw_filtered_mols(df, folder_to_save, config):
         if max_val is not None and max_val != 'inf':
             ax.axvspan(max_val, x_max, color='grey', alpha=0.2, zorder=0)
 
-        ax.tick_params(axis='both', labelsize=10)  
         ax.legend(fontsize=8, loc='upper right')
+        
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_linewidth(0.5)
+        ax.spines['left'].set_linewidth(0.5)
+
+        ax.tick_params(axis='both', which='both', 
+                      bottom=True, top=False, left=True, right=False,
+                      labelbottom=True, labeltop=False, 
+                      labelleft=True, labelright=False,
+                      length=4, width=0.5, colors='black', labelsize=10)
 
     for j in range(len(cols_to_plot), len(axes)):
         fig.delaxes(axes[j])
