@@ -31,29 +31,34 @@ dm.disable_rdkit_log()
 
 def get_model_name(path=None, config=None, df=None, mode='single_comparison'):
     assert mode in ['single_comparison', 'multi_comparison'], "Mode must be either 'single_comparison' or 'multi_comparison'"
-    assert config or path or df, "Config OR path OR df must be provided. Choose one of them."
-    assert (config and not path and not df) or (not config and path and not df) or (not config and not path and df), "Config OR path OR df must be provided. Provide only one."
+    assert config or path or (df is not None), "Config OR path OR df must be provided. Choose one of them."
+    assert (config and not path and not (df is not None)) or (not config and path and not (df is not None)) or (not config and not path and (df is not None)), "Config OR path OR df must be provided. Provide only one."
 
     if config:  
         if mode == 'single_comparison':
             return config['generated_mols_path'].split('/')[-1].split('.')[0]
+        
         else:
             paths = glob.glob(config['generated_mols_path'])
             model_names = [path.split('/')[-1].split('.')[0] for path in paths]
             return model_names
+        
+
     if path:
         model_name = path.split('/')[-1].split('.')[0]
         return model_name
-    if df:
+    
+
+    if df is not None:
         if mode == 'single_comparison':
-            model_name = df.columns[0]
+            model_name = config['generated_mols_path'].split('/')[-1].split('.')[0]
             return model_name
-        else:
-            model_names = []
-            for data in df:
-                cols = data.columns['smiles']
-                model_names.append(cols[0])
+        
+        elif mode == 'multi_comparison':
+            model_names = df['model_name'].unique().tolist()
             return model_names
+        else:
+            raise ValueError(f"Invalid mode: {mode}")
 
 
 def load_syba():
@@ -117,7 +122,7 @@ def _parse_chars_in_mol_column(series):
                 chars = eval(val)
             parsed.extend(chars)
         except Exception as e:
-            print(f"Error processing value: {val}, error: {e}")
+            logger.error(f"Error processing value: {val}, error: {e}")
     return parsed
 
 
@@ -131,16 +136,19 @@ def _parse_ring_size_column(series):
                 sizes = eval(val)
             parsed.extend([float(size) for size in sizes])
         except Exception as e:
-            print(f"Error processing value: {val}, error: {e}")
+            logger.error(f"Error processing value: {val}, error: {e}")
     return parsed
 
 
-def compute_metrics(df, syba_model, save_path=None):
+def compute_metrics(df, syba_model, save_path, mode, config):
+    if mode == 'single_comparison':
+        model_name = get_model_name(config=config, mode=mode)
+    else:
+        model_name = get_model_name(df=df, mode=mode)
     metrics = {}
-    model_name = 'any'
-    # for df in [dfs]:
+    
     skipped_molecules = []
-    # model_name = get_model_name(df=df, mode='single_comparison')
+
     for smiles in df[df.columns[0]]:
         mol = Chem.MolFromSmiles(smiles)
         if mol:
@@ -158,6 +166,10 @@ def compute_metrics(df, syba_model, save_path=None):
             total_bonds = mol.GetNumBonds()
             rotatable_bonds = Lipinski.NumRotatableBonds(mol)
             rigid_bonds = total_bonds - rotatable_bonds
+
+            if mode == 'multi_comparison': 
+                model_name = df.loc[df['smiles'] == smiles, 'model_name'].iloc[0]
+                mol_metrics['model_name'] = model_name
 
             mol_metrics['chars'] = symbols
             mol_metrics['n_atoms'] = Chem.AddHs(mol).GetNumAtoms()
@@ -184,32 +196,40 @@ def compute_metrics(df, syba_model, save_path=None):
             metrics[smiles] = mol_metrics
             
         else:
-            skipped_molecules.append(smiles)
-        
-        # metrics[model_name] = metrics
+            if mode == 'single_comparison':
+                skipped_molecules.append(smiles)
+            else:
+                skipped_molecules.append((smiles, model_name))
+
+    if not save_path.endswith('/'):
+        save_path = save_path + f'/'
+
+    save_path = save_path + f'Descriptors/'
 
     if skipped_molecules:
         logger.warning(f'Skipped {len(skipped_molecules)} molecules: {skipped_molecules}')
-        skipped_df = pd.DataFrame({'smiles': skipped_molecules})
-        skipped_df.to_csv(save_path + f'/skippedMolsDescriptors.csv', index=False)
-        
-    if save_path:
-        if save_path.endswith('/'):
-            folder_to_save = save_path + f'perMolMetrics.csv'
+        if mode == 'single_comparison':
+            skipped_df = pd.DataFrame({'smiles': skipped_molecules})
+            skipped_df.to_csv(save_path + f'skippedMolsDescriptors.csv', index=False)
         else:
-            folder_to_save = save_path + f'/perMolMetrics.csv'
-        metrics_df = pd.DataFrame.from_dict(metrics, orient='index').reset_index().rename(columns={'index': 'smiles'})
-        metrics_df.to_csv(folder_to_save, index_label=model_name, index=False)
+            skipped_df = pd.DataFrame({'smiles': [smiles for smiles, _ in skipped_molecules], 
+                                       'model_name': [model_name for _, model_name in skipped_molecules]})
+            skipped_df.to_csv(save_path + f'skippedMolsDescriptors.csv', index=False)
+        
+    folder_to_save = save_path + f'perMolMetrics.csv'
+    metrics_df = pd.DataFrame.from_dict(metrics, orient='index').reset_index().rename(columns={'index': 'smiles'})
+    metrics_df.to_csv(folder_to_save, index_label=model_name, index=False)
     return metrics_df  
 
 
-def filter_molecules(df, borders, folder_to_save):
+def filter_molecules(df, borders, folder_to_save, mode):
+    folder_to_save = folder_to_save + f'Descriptors/'
     logger.info(f'Borders: {borders}')
     filtered_data = {}
     for col in df.columns.tolist():
         col_in_borders = any(col.lower() in k.lower() for k in borders.keys())
 
-        if col == 'smiles':
+        if col == 'smiles' or col == 'model_name':
             filtered_data[col] = df[col]
 
         elif col_in_borders:
@@ -241,7 +261,11 @@ def filter_molecules(df, borders, folder_to_save):
     left_mol_after_filters = drop_false_rows(filtered_data_withFalse, borders)
 
     if len(left_mol_after_filters) > 0:
-        left_mol_after_filters.to_csv(folder_to_save + 'leftMolsAfterDescriptors.csv', index_label='SMILES', index=False)
+        left_mol_after_filters.to_csv(folder_to_save + 'leftMolsAfterDescriptorsMetircs.csv', index_label='SMILES', index=False)
+        if mode == 'single_comparison':
+            left_mol_after_filters['smiles'].to_csv(folder_to_save + 'leftMolsAfterDescriptorsSMILES.csv', index_label='SMILES', index=False)
+        else:
+            left_mol_after_filters[['smiles', 'model_name']].to_csv(folder_to_save + 'leftMolsAfterDescriptorsSMILES.csv', index_label='SMILES', index=False)
     else:
         logger.warning(f'No molecules passed Descriptors Filters')
     return
@@ -249,8 +273,13 @@ def filter_molecules(df, borders, folder_to_save):
 
 
 def draw_filtered_mols(df, folder_to_save, config): 
-    # model_name = config['model_name']
-    model_name = 'any'
+    mode = config['mode']
+    if mode == 'single_comparison':
+        model_name = get_model_name(config=config, mode=mode)
+    else:   
+        model_name = get_model_name(df=df, mode=mode)
+    folder_to_save = folder_to_save + '/Descriptors/'
+    
     descriptors_config = load_config(config['config_descriptors'])
     borders = descriptors_config['borders']
     borders['charged_mol_allowed'] = int(borders['charged_mol_allowed'])
@@ -259,7 +288,12 @@ def draw_filtered_mols(df, folder_to_save, config):
     not_to_smooth_by_sides_cols = descriptors_config['not_to_smooth_plot_by_sides']
     renamer = descriptors_config['renamer']
 
-    colors = get_model_colors([model_name])
+    if mode == 'multi_comparison':
+        model_names = df['model_name'].unique().tolist()
+        colors = get_model_colors(model_names)
+    else:
+        model_names = [model_name]
+        colors = get_model_colors(model_names)
 
     nrows = len(cols_to_plot) // 5  + len(cols_to_plot) % 5 if len(cols_to_plot) > 5 else 1
     ncols = 5 if len(cols_to_plot) > 5 else len(cols_to_plot)
@@ -275,63 +309,52 @@ def draw_filtered_mols(df, folder_to_save, config):
         max_val = next((borders[k] for k in relevant_keys if 'max' in k), None)
         minmax_str = f"min: {min_val}, max: {max_val}"
 
-        data_to_plot_after = {}
-        counts_after, total_mols = {}, {}
-
-        if col == 'chars':
-            values_raw = df[col].dropna()
-            values_before = _parse_chars_in_mol_column(values_raw)
-        elif col == 'ring_size':
-            values_raw = df[col].dropna()
-            values_before = _parse_ring_size_column(values_raw)
-        else:
-            values_before = df[col].dropna().tolist()
-
-        if col == 'syba_score' and max_val == 'inf':
-            values_after = [v for v in values_before if 
-                            (min_val is None or v >= min_val)]
-        else:
-            values_after = [v for v in values_before if 
-                            (min_val is None or v >= min_val) and 
-                            (max_val is None or v <= max_val)]
-
-        data_to_plot_after[model_name] = values_before
-        counts_after[model_name] = len(values_after)
-        total_mols[model_name] = len(values_before)
-
         ax = axes[i]
-        for model_name, values in data_to_plot_after.items():
-            total = total_mols.get(model_name, 0)
-            count = counts_after.get(model_name, 0)
+        for model in model_names:
+            if mode == 'multi_comparison':
+                model_df = df[df['model_name'] == model]
+            else:
+                model_df = df
+            if col == 'chars':
+                values_raw = model_df[col].dropna()
+                values_before = _parse_chars_in_mol_column(values_raw)
+            elif col == 'ring_size':
+                values_raw = model_df[col].dropna()
+                values_before = _parse_ring_size_column(values_raw)
+            else:
+                values_before = model_df[col].dropna().tolist()
+
+            if col == 'syba_score' and max_val == 'inf':
+                values_after = [v for v in values_before if (min_val is None or v >= min_val)]
+            else:
+                values_after = [v for v in values_before if (min_val is None or v >= min_val) and (max_val is None or v <= max_val)]
+
+            total = len(values_before)
+            count = len(values_after)
             mols_passed = count / total * 100 if total > 0 else 0
 
-            label = f'{model_name}, passed: {mols_passed:.1f}%'
-            color = colors[model_name]
+            label = f'{model}, passed: {mols_passed:.1f}%' 
+            color = colors[model]
 
-            if len(values) > 1:
+            if len(values_before) > 1:
                 if col in discrete_feats:
                     if col == 'charged_mol':
-                        value_counts = pd.Series(values).value_counts().sort_index()
+                        value_counts = pd.Series(values_before).value_counts().sort_index()
                         complete_counts = pd.Series([0, 0], index=[False, True])
                         complete_counts.update(value_counts)
                         value_counts = complete_counts.sort_index()
-
                         ax.bar(x=['Not charged', 'Charged'], height=value_counts.values, 
                             alpha=0.5, color=color, edgecolor='black', linewidth=0.3, 
                             label=label)
-                        total = len(values)
-                        passed = sum(v == borders['charged_mol_allowed'] for v in values)
-                        mols_passed = (passed / total * 100) if total > 0 else 0
-                        ax.legend([label], loc='upper right', fontsize=8)
                     else:
-                        value_counts = pd.Series(values).value_counts().sort_index()
+                        value_counts = pd.Series(values_before).value_counts().sort_index()
                         ax.bar(value_counts.index, value_counts.values, alpha=0.5, color=color, edgecolor='black', linewidth=0.3, align='edge', width=0.8, label=label)
                 elif col in not_to_smooth_by_sides_cols:
-                    sns.kdeplot(values, label=label, fill=True, alpha=0.3, ax=ax, color=color, clip=(0, None))
+                    sns.kdeplot(values_before, label=label, fill=True, alpha=0.3, ax=ax, color=color, clip=(0, None))
                 else:
-                    sns.kdeplot(values, label=label, fill=True, alpha=0.3, ax=ax, color=color)
+                    sns.kdeplot(values_before, label=label, fill=True, alpha=0.3, ax=ax, color=color)
             else:
-                ax.scatter(values, [0.01]*len(values), label=label, alpha=0.7, color=color)
+                ax.scatter(values_before, [0.01]*len(values_before), label=label, alpha=0.7, color=color)
 
         title = f"{renamer[col] if col in renamer else col} ({minmax_str})"
         ax.set_title(title, fontsize=12)
@@ -340,7 +363,6 @@ def draw_filtered_mols(df, folder_to_save, config):
         if col in discrete_feats:
             ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
         ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-
 
         if min_val is not None:
             ax.axvline(min_val, color='red', linestyle='--', linewidth=1.5, label=f'min: {min_val}')
