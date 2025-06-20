@@ -1,0 +1,41 @@
+run: True
+
+filename: common_filter
+filter_data: True
+
+calculate_common_alerts: True
+common_alerts_names: {'Glaxo' : True, 
+                      'Dundee' : True,
+                      'BMS' : True,
+                      'PAINS' : True,
+                      'SureChEMBL' : True,
+                      'MLSMR' : True,
+                      'Inpharmatica' : True,
+                      'LINT' : True,
+                      'AlphaScreen-Hitters' : True,
+                      'Chelator' : True,
+                      'Frequent-Hitter' : True,
+                      'LD50-Oral' : True, 
+                    }
+
+calculate_NIBR: True
+nibr_scheduler: threads
+
+calculate_bredt: True
+calculate_molgraph_stats: True
+calculate_molcomplexity: True
+
+
+
+# zegreb в дискрипоры 
+# доавить в модель с бенчамарками 
+
+
+#  TO DO 
+#  - nibr (+)
+#  - lilly 
+#  - extra module for custom filter 
+#  - - graph (+)
+#  - - complexity (+) 
+#  - - bredt (+)
+#  - - M1, M2, ??????????

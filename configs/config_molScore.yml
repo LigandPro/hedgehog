@@ -1,0 +1,6 @@
+run: True
+
+
+
+#  how to do better:
+# if i do not have  mols to process for filters save an empy df or not to save? 
