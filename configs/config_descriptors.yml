@@ -62,17 +62,11 @@ borders:
   qed_min: 0.3
   qed_max: 1
 
-  sa_score_min: 0
-  sa_score_max: 4.5
-
-  syba_score_min: 0
-  syba_score_max: 'inf'
-
 filtered_cols_to_plot: ['chars', 'n_atoms', 'n_heavy_atoms', 'n_N_atoms', 'fN_atoms',
                         'charged_mol', 'molWt', 'logP', 
                         'ring_size', 'n_rings', 'n_aroma_rings', 'n_fused_aromatic_rings', 
                         'n_het_atoms', 'n_rigid_bonds', 'n_rot_bonds', 'hbd', 'hba', 
-                        'fsp3', 'tpsa', 'qed', 'sa_score', 'syba_score']
+                        'fsp3', 'tpsa', 'qed']
 
 discrete_features_to_plot: ['chars','charged_mol', 'n_N_atoms',
                             'ring_size', 'n_rings', 'n_aroma_rings', 'n_fused_aromatic_rings', 
@@ -80,7 +74,7 @@ discrete_features_to_plot: ['chars','charged_mol', 'n_N_atoms',
 
 not_to_smooth_plot_by_sides: ['n_atoms', 'n_heavy_atoms', 'fN_atoms',
                               'molWt', 
-                              'fsp3', 'tpsa', 'qed', 'sa_score']
+                              'fsp3', 'tpsa', 'qed',]
 
                                 
 renamer: 
@@ -104,5 +98,3 @@ renamer:
   fsp3: 'Fraction of SP3'
   tpsa: 'TPSA' 
   qed: 'QED'
-  sa_score: 'SA score'
-  syba_score: 'SYBA score' 

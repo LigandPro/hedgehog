@@ -8,15 +8,8 @@ import matplotlib.pyplot as plt
 
 from rdkit import Chem, RDLogger, rdBase
 
-from rdkit.Chem import Lipinski, rdMolDescriptors, QED, RDConfig, Descriptors
+from rdkit.Chem import Lipinski, rdMolDescriptors, QED, Descriptors
 from rdkit.Chem import AllChem as Chem
-
-import os 
-import sys
-sys.path.append(os.path.join(RDConfig.RDContribDir, 'SA_Score'))
-import sascorer
-
-from syba import syba
 
 from medchem.rules._utils import n_fused_aromatic_rings
 
@@ -59,35 +52,11 @@ def get_model_name(path=None, config=None, df=None, mode='single_comparison'):
             return model_names
         else:
             raise ValueError(f"Invalid mode: {mode}")
-
-
-def load_syba():
-    syba_model = syba.SybaClassifier()
-    try:
-        syba_model.fitDefaultScore()
-    except Exception as e:
-        logger.error(f"Failed to load SYBA model: {str(e)}")
-        syba_model = None
-    return syba_model
-
+        
+    
 
 def get_model_colors(model_names, cmap=None):
     return dict(zip(model_names, plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1)) if cmap is None else plt.cm.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))))
-
-          
-def _calculate_sas(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-    return sascorer.calculateScore(mol)
-
-
-def _calculate_syba(smiles, syba_model):
-    if smiles:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol:
-            return syba_model.predict(mol=mol)
-    return np.nan
 
 
 def drop_false_rows(df, borders):
@@ -140,7 +109,7 @@ def _parse_ring_size_column(series):
     return parsed
 
 
-def compute_metrics(df, syba_model, save_path, mode, config):
+def compute_metrics(df, save_path, mode, config):
     if mode == 'single_comparison':
         model_name = get_model_name(config=config, mode=mode)
     else:
@@ -191,8 +160,6 @@ def compute_metrics(df, syba_model, save_path, mode, config):
             mol_metrics['fsp3'] = rdMolDescriptors.CalcFractionCSP3(mol)
             mol_metrics['tpsa'] = rdMolDescriptors.CalcTPSA(mol)
             mol_metrics['qed'] = QED.qed(mol)
-            mol_metrics['sa_score'] = _calculate_sas(smiles)
-            mol_metrics['syba_score'] = _calculate_syba(smiles, syba_model)
             metrics[smiles] = mol_metrics
             
         else:
