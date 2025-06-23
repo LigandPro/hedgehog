@@ -26,6 +26,12 @@ borders:
   logP_min: -2
   logP_max: 10
 
+  clogP_min: -100
+  clogP_max: 100
+
+  sw_min: -100
+  sw_max: 100
+
   ring_size_min: 3
   ring_size_max: 12
 
@@ -63,7 +69,7 @@ borders:
   qed_max: 1
 
 filtered_cols_to_plot: ['chars', 'n_atoms', 'n_heavy_atoms', 'n_N_atoms', 'fN_atoms',
-                        'charged_mol', 'molWt', 'logP', 
+                        'charged_mol', 'molWt', 'logP', 'clogP', 'sw',
                         'ring_size', 'n_rings', 'n_aroma_rings', 'n_fused_aromatic_rings', 
                         'n_het_atoms', 'n_rigid_bonds', 'n_rot_bonds', 'hbd', 'hba', 
                         'fsp3', 'tpsa', 'qed']
@@ -86,6 +92,8 @@ renamer:
   charged_mol: 'Charged Molecule'
   molWt: 'Molecular Weight' 
   logP: 'logP' 
+  clogP: 'clogP' # расчетный logP
+  sw: 'logS' # это логарифм_10 молярной растворимости вещества в воде при 25°C
   ring_size: 'Size of rings' 
   n_rings: 'Number of rings' 
   n_aroma_rings: 'Number of aromatic rings' 

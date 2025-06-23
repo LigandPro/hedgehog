@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 from rdkit import Chem, RDLogger, rdBase
 
-from rdkit.Chem import Lipinski, rdMolDescriptors, QED, Descriptors
+from rdkit.Chem import Lipinski, rdMolDescriptors, QED, Descriptors, Crippen
 from rdkit.Chem import AllChem as Chem
 
 from medchem.rules._utils import n_fused_aromatic_rings
@@ -133,8 +133,14 @@ def compute_metrics(df, save_path, mode, config):
             rings = [len(x) for x in ring_info.AtomRings()]
 
             total_bonds = mol.GetNumBonds()
-            rotatable_bonds = Lipinski.NumRotatableBonds(mol)
-            rigid_bonds = total_bonds - rotatable_bonds
+            n_rot_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol)
+            n_rigid_bonds = total_bonds - n_rot_bonds
+
+            n_heavy_atoms = rdMolDescriptors.CalcNumHeavyAtoms(mol)
+            n_aromatic_atoms = sum(1 for a in mol.GetAtoms() if a.GetIsAromatic() and a.GetAtomicNum()>1)
+            molWt = Descriptors.ExactMolWt(mol)
+            clogp = Crippen.MolLogP(mol)
+
 
             if mode == 'multi_comparison': 
                 model_name = df.loc[df['smiles'] == smiles, 'model_name'].iloc[0]
@@ -142,19 +148,22 @@ def compute_metrics(df, save_path, mode, config):
 
             mol_metrics['chars'] = symbols
             mol_metrics['n_atoms'] = Chem.AddHs(mol).GetNumAtoms()
-            mol_metrics['n_heavy_atoms'] = rdMolDescriptors.CalcNumHeavyAtoms(mol)
+            mol_metrics['n_heavy_atoms'] = n_heavy_atoms
             mol_metrics['n_N_atoms'] = sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() == 7)
             mol_metrics['fN_atoms'] = mol_metrics['n_N_atoms'] / mol_metrics['n_heavy_atoms']
             mol_metrics['charged_mol'] = charged_mol
-            mol_metrics['molWt'] = Descriptors.ExactMolWt(mol)
+            mol_metrics['molWt'] = molWt
             mol_metrics['logP'] = Descriptors.MolLogP(mol)
+            mol_metrics['clogP'] = clogp
+            mol_metrics['sw'] = 0.16 - 0.63*clogp - 0.0062*molWt + 0.066*n_rot_bonds - 0.74*n_aromatic_atoms
             mol_metrics['ring_size'] = rings
             mol_metrics['n_rings'] = mol.GetRingInfo().NumRings()
             mol_metrics['n_aroma_rings'] = rdMolDescriptors.CalcNumAromaticRings(mol)
             mol_metrics['n_fused_aromatic_rings'] = n_fused_aromatic_rings(mol)
+            mol_metrics['n_aromatic_atoms'] = n_aromatic_atoms
             mol_metrics['n_het_atoms'] = sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() not in (1, 6))
-            mol_metrics['n_rigid_bonds'] = rigid_bonds
-            mol_metrics['n_rot_bonds'] = rdMolDescriptors.CalcNumRotatableBonds(mol)
+            mol_metrics['n_rigid_bonds'] = n_rigid_bonds
+            mol_metrics['n_rot_bonds'] = n_rot_bonds
             mol_metrics['hbd'] = Lipinski.NumHDonors(mol)
             mol_metrics['hba'] = Lipinski.NumHAcceptors(mol)
             mol_metrics['fsp3'] = rdMolDescriptors.CalcFractionCSP3(mol)
@@ -257,10 +266,10 @@ def draw_filtered_mols(df, folder_to_save, config):
 
     if mode == 'multi_comparison':
         model_names = df['model_name'].unique().tolist()
-        colors = get_model_colors(model_names)
+        colors = get_model_colors(model_names, cmap='tab20')
     else:
         model_names = [model_name]
-        colors = get_model_colors(model_names)
+        colors = get_model_colors(model_names, cmap='tab20')
 
     nrows = len(cols_to_plot) // 5  + len(cols_to_plot) % 5 if len(cols_to_plot) > 5 else 1
     ncols = 5 if len(cols_to_plot) > 5 else len(cols_to_plot)
@@ -291,8 +300,13 @@ def draw_filtered_mols(df, folder_to_save, config):
             else:
                 values_before = model_df[col].dropna().tolist()
 
-            if col == 'syba_score' and max_val == 'inf':
+            if max_val == 'inf':
                 values_after = [v for v in values_before if (min_val is None or v >= min_val)]
+            else:
+                values_after = [v for v in values_before if (min_val is None or v >= min_val) and (max_val is None or v <= max_val)]
+
+            if min_val is None:
+                values_after = [v for v in values_before if (max_val is None or v <= max_val)]
             else:
                 values_after = [v for v in values_before if (min_val is None or v >= min_val) and (max_val is None or v <= max_val)]
 
