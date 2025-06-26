@@ -64,6 +64,8 @@ results/
 *.sdf
 *.smi
 *.csv
+MolGenBenchmark/modules/MolScore/
+MolGenBenchmark/modules/PickyBinder/
 
 # Large model files
 *.pkl
