@@ -2,8 +2,14 @@ import logging
 import os
 from datetime import datetime
 
+from configs import config
+from configs.config_utils import load_config
+
+
 def setup_logger(name='metrics_comparison'):
-    logs_dir = 'logs'
+    config = load_config(config)
+    folder_to_save = config['folder_to_save']
+    logs_dir = f'{folder_to_save}/'
     if not os.path.exists(logs_dir):
         os.makedirs(logs_dir)
 
