@@ -1,13 +1,11 @@
 import logging
 import os
+import yaml
 from datetime import datetime
-
-from configs import config
-from configs.config_utils import load_config
 
 
 def setup_logger(name='metrics_comparison'):
-    config = load_config(config)
+    config = yaml.safe_load(open('./configs/config.yml'))
     folder_to_save = config['folder_to_save']
     logs_dir = f'{folder_to_save}/'
     if not os.path.exists(logs_dir):
