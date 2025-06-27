@@ -4,7 +4,8 @@ from configs.config_utils import load_config
 from descriptors.utils import *
 
 
-def main(data, config, mode):
+def main(data, config):
+    mode = config['mode']
     folder_to_save = config['folder_to_save']
 
     config_descriptors = load_config(config['config_descriptors'])
@@ -15,7 +16,7 @@ def main(data, config, mode):
         os.makedirs(folder_to_save)
 
 
-    metrics_df = compute_metrics(data, folder_to_save, mode, config)  
+    metrics_df = compute_metrics(data, folder_to_save, config)  
 
     if config_descriptors['filter_data']:
         filter_molecules(metrics_df, borders, folder_to_save, mode)

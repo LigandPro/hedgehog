@@ -56,7 +56,7 @@ def get_model_name(path=None, config=None, df=None, mode='single_comparison'):
     
 
 def get_model_colors(model_names, cmap=None):
-    return dict(zip(model_names, plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1)) if cmap is None else plt.cm.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))))
+    return dict(zip(model_names, plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1)) if cmap is None else plt.colormaps.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))))
 
 
 def drop_false_rows(df, borders):
@@ -109,7 +109,8 @@ def _parse_ring_size_column(series):
     return parsed
 
 
-def compute_metrics(df, save_path, mode, config):
+def compute_metrics(df, save_path, config):
+    mode = config['mode']
     if mode == 'single_comparison':
         model_name = get_model_name(config=config, mode=mode)
     else:
