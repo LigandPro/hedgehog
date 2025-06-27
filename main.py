@@ -93,7 +93,7 @@ def main():
     
 
     logger.info(f'Start calculating metrics...')
-    calculate_metrics(data, config, mode)
+    calculate_metrics(data, config)
 
 
 if __name__ == '__main__':
