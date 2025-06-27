@@ -1,3 +1,5 @@
+
+import os 
 import glob 
 import numpy as np
 import pandas as pd
@@ -75,10 +77,9 @@ def format_number(x, p=None):
 
 
 def get_model_colors(model_names, cmap=None):
-    base_colors = dict(zip(model_names, plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1)) 
-                           if cmap is None 
-                           else plt.cm.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))))
-    return base_colors
+   return dict(zip(model_names, plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1)) 
+                   if cmap is None 
+                   else plt.colormaps.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))))
 
 
 def clean_name(name):
@@ -87,6 +88,12 @@ def clean_name(name):
         name = name.replace(ban, '')
     return name.strip()
     
+
+def standardize_folder_to_save(folder_to_save):
+    if not folder_to_save.endswith('/'):
+        folder_to_save += '/'
+    return folder_to_save
+
 
 def common_postprocessing_statistics(filter_results, res_df, stat, extend):          
     if stat is not None:
@@ -104,19 +111,18 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
     return res_df,filter_extended
 
 
-def process_one_file(config, input_path, apply_filter, subsample, mode):
+def process_one_file(config, input_path, apply_filter, subsample):
+    mode = config['mode']
+    
     input_type = input_path[input_path.rfind(".")+1:]
     assert input_type in {"csv", "smi", 'sdf', 'txt'}
 
     if input_type == 'csv':
         data = pd.read_csv(input_path)
-        if subsample <= len(data):
-            data = data.sample(n=subsample, random_state=42)
         smiles_col = None
-        if 'smiles' in data.columns:
-            smiles_col = 'smiles'
-        elif 'SMILES' in data.columns:
-            smiles_col = 'SMILES'
+        if 'smiles' in data.columns: smiles_col = 'smiles'
+        elif 'SMILES' in data.columns: smiles_col = 'SMILES'
+
         if ('SMILES' not in data.columns) and ('smiles' not in data.columns):
             for col in data.columns:
                 if "smiles" in col.lower():
@@ -130,12 +136,11 @@ def process_one_file(config, input_path, apply_filter, subsample, mode):
             mols = [dm.to_mol(x) for x in smiles]
         else:
             assert 'model_name' in data.columns, "CSV must contain 'model_name' column in multi_comparison mode"
-            smiles = data[smiles_col].tolist()
+            smiles_str = data[smiles_col].tolist()
             model_names = data['model_name'].tolist()
-            mols = [dm.to_mol(x) for x in smiles]
-            smiles = list(zip(smiles, model_names, mols))
+            mols = [dm.to_mol(x) for x in smiles_str]
+            smiles = list(zip(smiles_str, model_names, mols))
 
-    
     elif input_type == "smi" or input_type == 'txt':
         with open(input_path, 'r') as file:
             lines = [line.rstrip('\n') for line in file]
@@ -153,7 +158,7 @@ def process_one_file(config, input_path, apply_filter, subsample, mode):
                 if len(parts) == 2:
                     smi, model = parts
                 else:
-                    smi, model = parts[0], "unknown"
+                    smi, model = parts[:1], "unknown"
                 smiles.append(smi)
                 model_names.append(model)
             mols = [dm.to_mol(x) for x in smiles]
@@ -167,9 +172,12 @@ def process_one_file(config, input_path, apply_filter, subsample, mode):
         mols, smiles = dropna(mols, smiles)
     else:
         smiles = [(smi, model, mol) for (smi, model, mol) in smiles if mol is not None]
+        mols = [mol for (_, _, mol) in smiles]
 
     assert len(mols) == len(smiles), f"{len(mols)}, {len(smiles)}"
-    assert len(mols) <= subsample
+    if mode == 'single_comparison':
+        assert len(mols) <= subsample
+    
     for mol, smi in zip(mols, smiles):
         if mode == 'multi_comparison':
             smi_val = smi[0]
@@ -283,7 +291,7 @@ def apply_bredt_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None)
                             'full_pass' : out 
                             })    
     if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols) 
+        results = add_model_name_col(results, smiles_modelName_mols, mode) 
     return results
 
 
@@ -458,12 +466,15 @@ def check_paths(paths):
 
 def plot_calculated_stats(config, prefix):
     mode = config['mode']
-    folder_to_save = config['folder_to_save']
+    folder_to_save = standardize_folder_to_save(config['folder_to_save'])
 
-    paths = glob.glob(folder_to_save + f'/{prefix}StructFilters/' + '*metrics.csv')
+    if prefix == 'beforeDescriptors':
+        paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
+    else:
+        paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
     check_paths(paths)
 
-    model_name = get_model_name(config, mode)
+    model_name_set = get_model_name(config, mode)
     datas=[]
     filter_names = []
 
@@ -476,76 +487,83 @@ def plot_calculated_stats(config, prefix):
         for banned_col in banned_cols:
             data_filtered.loc[:, f'num_banned_{banned_col}'] = data_filtered[banned_col] * data_filtered['num_mol']
         datas.append(data_filtered)
-        if mode == 'single_comparison':
-            filter_name = path.split(f'{model_name}/')[-1].split('_metrics.csv')[0]
-            filter_names.append(filter_name)
-        else:
-            for n in model_name:
-                filter_name = path.split(f'{n}/')[-1].split('_metrics.csv')[0]
-                filter_names.append(filter_name)
-
-    plt.style.use('default')
-    sns.set_context("talk")
+        filter_name = path.split(f'{model_name_set}/')[-1].split('_metrics.csv')[0]
+        filter_names.append(filter_name)
     
     filter_results = {}
-    filters_to_find = glob.glob(folder_to_save + f'/{prefix}StructFilters/*filteredMols.csv')
-
+    filters_to_find = glob.glob(folder_to_save + f'{prefix}_StructFilters/*filteredMols.csv')
+    
     for path in filters_to_find:
         try:
             filter_data = pd.read_csv(path)
+            model_name = filter_data['model_name']
             filter_name = path.split('/')[-1].split('filteredMols.csv')[0].strip('_')
-            # Count molecules that passed the filter (where full_pass is True)
             if 'full_pass' in filter_data.columns:
-                passed = filter_data[filter_data['full_pass'] == True].shape[0]
-            else:
-                # If no full_pass column, count all molecules as they passed
-                passed = len(filter_data)
-            filter_results[filter_name] = passed
+                passed = filter_data[filter_data['full_pass'] == True]
+                num_passed_by_model = passed.groupby('model_name').size().to_dict()
+
+            if num_passed_by_model is not None:
+                filter_results[filter_name] = num_passed_by_model
+            elif num_passed_by_model is None:
+                filter_results[filter_name] = {model_name: 0}
+
         except (IndexError, FileNotFoundError):
-            filter_results[filter_name] = 0
+            filter_results[filter_name] = {model_name: 0}
+    for filter, values in filter_results.items():
+        if len(values) != len(model_name):
+            for model in model_name:
+                if model not in values.keys():
+                    filter_results[filter][model] = 0        
+    for filter_name, models in filter_results.items():
+        filter_results[filter_name] = dict(sorted(models.items()))
 
     n_plots = len(datas)
     n_cols = 2
     n_rows = (n_plots + n_cols - 1) // n_cols  
-    fig = plt.figure(figsize=(32, 5*n_rows)) 
-
+    
+    fig = plt.figure(figsize=(40, 5*n_rows)) 
     for idx, (data, filter_name) in enumerate(zip(datas, filter_names)):
         ax = plt.subplot(n_rows, n_cols, idx + 1)
-        models = data.sort_values('num_mol', ascending=True).index
+        models = data.index
         x = np.arange(len(models))
         width = 0.8 
-        
         total_mols = data['num_mol'].sum()
-        total = ax.barh(x, data.loc[models, 'num_mol'], width, 
-                       label=f'Total Molecules ({format_number(total_mols)})', 
-                       color='#E5E5E5', alpha=0.5)
+        total = ax.barh(x, data.loc[models, 'num_mol'], width, label=f'Total Molecules ({format_number(total_mols)})', color='#E5E5E5', alpha=0.5)
 
-        # Add text for this specific filter's pass rate
         clean_filter_name = filter_name.split('/')[-1].lower()
         for known_filter in filter_results.keys():
             if known_filter.lower() in clean_filter_name:
-                passed = filter_results[known_filter]
-                bar_center_x = data.loc[models, 'num_mol'].values[0] / 2
-                bar_center_y = x[0]
-                
-                # Changed to single line with comma separator
-                text = f'Passed {known_filter}: {passed} ({(passed/total_mols*100):.1f}%)'
-                
-                text_box = ax.text(bar_center_x, bar_center_y, text,
-                                 ha='center', va='center',
-                                 fontsize=12, color='black', fontweight='bold',
-                                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
+                if mode == 'single_comparison':
+                    passed = list(filter_results[known_filter].values())[0]
+                    bar_center_x = data.loc[models, 'num_mol'].values[0] / 2
+                    bar_center_y = x[0]
+                    model_total = data.loc[model, 'num_mol']
+                    text = f'Passed molecules: {passed} ({(passed/model_total*100):.1f}%)'
+                    ax.annotate(text, (bar_center_x, bar_center_y), ha='center', va='center', fontsize=12, color='black', fontweight='bold',
+                                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3), zorder=1000)
+                else:
+                    for i, (model, passed) in enumerate(filter_results[known_filter].items()):
+                        bar_center_x = data.loc[models, 'num_mol'].values[0] / 2
+                        bar_center_y = x[i]
+                        model_total = data.loc[model, 'num_mol']
+                        if model_total != 0:
+                            text = f'Passed molecules: {passed} ({(passed/model_total*100):.1f}%)'
+                        else:
+                            text = f'Passed molecules: {passed} (0%)'
+                        ax.annotate(text, (bar_center_x, bar_center_y), ha='center', va='center', fontsize=12, color='black', fontweight='bold',
+                                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3), zorder=1000)
 
 
         for i, model in enumerate(models):
             count = data.loc[model, 'num_mol']
-            ax.text(count, i, f'{int(count)}', va='center', ha='left', fontsize=12, color='black', fontweight='bold')
-                
+            max_bar_width = data['num_mol'].max()
+            text_x_position = max_bar_width 
+            ax.text(text_x_position, i, int(count),  va='center', ha='left', fontsize=12, color='black', fontweight='bold')     
+        
         banned_bars = []
         banned_percentages = [] 
         ratio_cols = [col for col in data.columns if 'banned_ratio' in col and 'num_banned' not in col]
-        colors = get_model_colors(model_names=ratio_cols, cmap='tab20')
-
+        colors = get_model_colors(model_names=ratio_cols, cmap='Paired')
         for col, color in zip(ratio_cols, colors.values()):
             num_banned_col = f'num_banned_{col}'
             ratio_name = col.replace('banned_ratio', '').strip('_')
@@ -571,8 +589,13 @@ def plot_calculated_stats(config, prefix):
         ax.set_yticklabels(models, fontsize=12)
         
         ax.xaxis.set_major_formatter(plt.FuncFormatter(format_number))
-        plt.setp(ax.get_xticklabels(), fontsize=12)
-        
+
+        max_mols = int(data['num_mol'].max())
+        step = max(1, max_mols // 5) 
+        ticks = list(range(0, max_mols + 1, step))
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(ticks)
+
         ax.set_xlabel(f'Number of Molecules (Total: {format_number(total_mols)})', fontsize=12, labelpad=10)
         ax.set_ylabel('Models', fontsize=12, labelpad=10)
         
@@ -589,7 +612,10 @@ def plot_calculated_stats(config, prefix):
 
     plt.subplots_adjust(right=0.85, hspace=0.6, wspace=0.5) 
     
-    plt.savefig(folder_to_save + f'/{prefix}StructFilters/' + f'MoleculeCountsComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    if prefix == 'beforeDescriptors':
+        plt.savefig(folder_to_save + f'{prefix}_StructFilters/' + f'MoleculeCountsComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    else:
+        plt.savefig(folder_to_save + f'StructFilters/' + f'MoleculeCountsComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close()
 
     return
@@ -597,11 +623,13 @@ def plot_calculated_stats(config, prefix):
 
 def plot_restriction_ratios(config, prefix):
     mode = config['mode']
-    folder_to_save = config['folder_to_save']
+    folder_to_save = standardize_folder_to_save(config['folder_to_save'])
     folder_name = config['folder_to_save'].split('/')[-1]
-    model_name = get_model_name(config, mode)
 
-    paths = glob.glob(folder_to_save + f'/{prefix}StructFilters/' + '*metrics.csv')
+    if prefix == 'beforeDescriptors':
+        paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
+    else:
+        paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
     check_paths(paths)
     
     filter_data = {}
@@ -620,29 +648,31 @@ def plot_restriction_ratios(config, prefix):
             
         clean_cols = {col: col.replace('_banned_ratio', '').replace('banned_ratio', '').replace('_s', 's') for col in ratio_cols}
         ratios = data[ratio_cols].rename(columns=clean_cols)
+
+        actual_model_names = data['model_name'].tolist()
+        ratios.index = actual_model_names
         
-        if len(ratios) > 0 and not ratios.empty:
-            row = ratios.iloc[0]
-            if row.isna().all() or (row == 0).all():
-                continue
-                
-            all_value = None
-            if 'all' in row.index:
-                all_value = row['all']
-                row = row.drop('all')
+        row = ratios.iloc[0]
+        if row.isna().all():
+            continue
             
-            sorted_values = row.sort_values(ascending=False)
-            
-            if all_value is not None:
-                if all_value >= sorted_values.iloc[0]:
-                    sorted_index = pd.Index(['all']).append(sorted_values.index)
-                else:
-                    sorted_index = sorted_values.index.append(pd.Index(['all']))
-                ratios = ratios[sorted_index]
+        all_value = None
+        if 'all' in row.index:
+            all_value = row['all']
+            row = row.drop('all')
+        
+        sorted_values = row.sort_values(ascending=False)
+        
+        if all_value is not None:
+            if all_value >= sorted_values.iloc[0]:
+                sorted_index = pd.Index(['all']).append(sorted_values.index)
             else:
-                ratios = ratios[sorted_values.index]
-            
-            filter_data[filter_name] = ratios
+                sorted_index = sorted_values.index.append(pd.Index(['all']))
+            ratios = ratios[sorted_index]
+        else:
+            ratios = ratios[sorted_values.index]
+        
+        filter_data[filter_name] = ratios
 
     if not filter_data:
         logger.error("No valid data to plot")
@@ -659,12 +689,13 @@ def plot_restriction_ratios(config, prefix):
     fig = plt.figure(figsize=(16, 7*n_rows))
     fig.suptitle('Comparison of Restriction Ratios Across Different Filters', fontsize=16, y=0.98, fontweight='bold')
 
+
     for idx, (filter_name, data) in enumerate(filter_data.items()):
         ax = plt.subplot(n_rows, n_cols, idx + 1)
         
         if not data.empty and data.notna().any().any():
             sns.heatmap(data.T, cmap='Blues', 
-                       cbar_kws={'label': 'Restriction Ratio'}, ax=ax, vmin=0, 
+                       cbar_kws={'label': 'Restriction Ratio'}, ax=ax, vmin=0, vmax=1,
                        fmt='.3f', annot=True, annot_kws={'size': 10, 'rotation': 0}, cbar=True)
             
             ax.set_title(f'{clean_name(filter_name)} Filter', pad=10, fontsize=11, fontweight='bold')
@@ -672,16 +703,20 @@ def plot_restriction_ratios(config, prefix):
             plt.setp(ax.get_xticklabels(), ha='center')
             ax.set_xlabel('Model')
             ax.set_ylabel('Filter Type')
-            
-            if len(data.index) > 0:
-                ax.set_xticklabels([model_name])
+
+            actual_model_names = data.index.tolist()
+            if len(actual_model_names) == len(ax.get_xticklabels()):
+                ax.set_xticklabels(actual_model_names)
             
         else:
             ax.text(0.5, 0.5, 'No data available', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
             ax.set_title(f'{clean_name(filter_name)} Filter', pad=10, fontsize=11, fontweight='bold')
 
     plt.tight_layout()
-    plt.savefig(folder_to_save + f'/{prefix}StructFilters/' + 'RestrictionRatiosComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    if prefix == 'beforeDescriptors':
+        plt.savefig(folder_to_save + f'{prefix}_StructFilters/' + 'RestrictionRatiosComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    else:
+        plt.savefig(folder_to_save + f'StructFilters/' + 'RestrictionRatiosComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close()
     return
 
@@ -689,8 +724,13 @@ def plot_restriction_ratios(config, prefix):
 
 def filter_data(config, prefix):
     mode = config['mode']
-    folder_to_save = config['folder_to_save'] + f'/{prefix}StructFilters/'
-    model_name = get_model_name(config, mode)
+    folder_to_save = standardize_folder_to_save(config['folder_to_save'])
+
+    if prefix == 'beforeDescriptors':
+        folder_to_save = folder_to_save + f'{prefix}_StructFilters/'
+    else:
+        folder_to_save = folder_to_save + f'StructFilters/'
+
     paths = glob.glob(folder_to_save + '*filteredMols.csv')
     check_paths(paths)
 
@@ -698,7 +738,12 @@ def filter_data(config, prefix):
     datas = []
     for path in paths:
         data = pd.read_csv(path)
-        filter_name = path.split(f'{model_name}/')[-1].split('FilteredMols.csv')[0].strip('_')
+        if mode == 'single_comparison':
+            model_name = get_model_name(config, mode)
+            filter_name = path.split(f'{model_name}/')[-1].split('_filteredMols.csv')[0].strip('_')
+        else:
+            filter_name = path.split(f'{folder_to_save}')[-1].split('_filteredMols.csv')[0].strip('_')
+
         for col in columns_to_drop:
             if col in data.columns:
                 data.drop(columns=[col], inplace=True)
@@ -707,7 +752,12 @@ def filter_data(config, prefix):
         datas.append(data)
 
     filtered_data = reduce(lambda x, y: pd.merge(x, y, on='SMILES', how='inner'), datas)
+    filtered_data['model_name'] = filtered_data['Nibr_model_name']
 
-    filtered_data.to_csv(folder_to_save + f'leftMolsAfterStructFiltersMetrics.csv', index=False)
-    filtered_data['SMILES'].to_csv(folder_to_save + f'leftMolsAfterStructFiltersSMILES.csv', index=False)
+    filtered_data.to_csv(folder_to_save + 'leftMolsAfterStructFiltersMetrics.csv', index=False)
+    if mode == 'single_comparison':
+        filtered_data['SMILES'].to_csv(folder_to_save + 'leftMolsAfterStructFiltersSMILES.csv', index=False)
+    else:
+        filtered_data[['SMILES', 'model_name']].to_csv(folder_to_save + 'leftMolsAfterStructFiltersSMILES.csv', index_label='SMILES', index=False)
+
     return filtered_data
