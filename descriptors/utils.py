@@ -59,6 +59,16 @@ def get_model_colors(model_names, cmap=None):
     return dict(zip(model_names, plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1)) if cmap is None else plt.colormaps.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))))
 
 
+def process_path(folder_to_save, key_word=None):
+    if not folder_to_save.endswith('/'):
+        folder_to_save = folder_to_save + '/'
+
+    if key_word:
+        folder_to_save = folder_to_save + f'{key_word}/'
+
+    return folder_to_save
+
+
 def drop_false_rows(df, borders):
     passed_cols = []
     filter_charged_mol = borders['filter_charged_mol']
@@ -178,10 +188,7 @@ def compute_metrics(df, save_path, config):
             else:
                 skipped_molecules.append((smiles, model_name))
 
-    if not save_path.endswith('/'):
-        save_path = save_path + f'/'
-
-    save_path = save_path + f'Descriptors/'
+    save_path = process_path(save_path, key_word='Descriptors')
 
     if skipped_molecules:
         logger.warning(f'Skipped {len(skipped_molecules)} molecules: {skipped_molecules}')
@@ -200,7 +207,7 @@ def compute_metrics(df, save_path, config):
 
 
 def filter_molecules(df, borders, folder_to_save, mode):
-    folder_to_save = folder_to_save + f'Descriptors/'
+    folder_to_save = process_path(folder_to_save, key_word='Descriptors')
     logger.info(f'Borders: {borders}')
     filtered_data = {}
     for col in df.columns.tolist():
@@ -255,7 +262,7 @@ def draw_filtered_mols(df, folder_to_save, config):
         model_name = get_model_name(config=config, mode=mode)
     else:   
         model_name = get_model_name(df=df, mode=mode)
-    folder_to_save = folder_to_save + '/Descriptors/'
+    folder_to_save = process_path(folder_to_save, key_word='Descriptors')
     
     descriptors_config = load_config(config['config_descriptors'])
     borders = descriptors_config['borders']

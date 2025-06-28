@@ -89,9 +89,14 @@ def clean_name(name):
     return name.strip()
     
 
-def standardize_folder_to_save(folder_to_save):
+
+def process_path(folder_to_save, key_word=None):
     if not folder_to_save.endswith('/'):
-        folder_to_save += '/'
+        folder_to_save = folder_to_save + '/'
+
+    if key_word:
+        folder_to_save = folder_to_save + f'{key_word}/'
+
     return folder_to_save
 
 
@@ -466,7 +471,7 @@ def check_paths(paths):
 
 def plot_calculated_stats(config, prefix):
     mode = config['mode']
-    folder_to_save = standardize_folder_to_save(config['folder_to_save'])
+    folder_to_save = process_path(config['folder_to_save'])
 
     if prefix == 'beforeDescriptors':
         paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
@@ -491,7 +496,10 @@ def plot_calculated_stats(config, prefix):
         filter_names.append(filter_name)
     
     filter_results = {}
-    filters_to_find = glob.glob(folder_to_save + f'{prefix}_StructFilters/*filteredMols.csv')
+    if prefix == 'beforeDescriptors':
+        filters_to_find = glob.glob(folder_to_save + f'{prefix}_StructFilters/*filteredMols.csv')
+    else:
+        filters_to_find = glob.glob(folder_to_save + f'StructFilters/*filteredMols.csv')
     
     for path in filters_to_find:
         try:
@@ -540,7 +548,7 @@ def plot_calculated_stats(config, prefix):
                     model_total = data.loc[model, 'num_mol']
                     text = f'Passed molecules: {passed} ({(passed/model_total*100):.1f}%)'
                     ax.annotate(text, (bar_center_x, bar_center_y), ha='center', va='center', fontsize=12, color='black', fontweight='bold',
-                                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3), zorder=1000)
+                                bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3), zorder=1000)
                 else:
                     for i, (model, passed) in enumerate(filter_results[known_filter].items()):
                         bar_center_x = data.loc[models, 'num_mol'].values[0] / 2
@@ -590,13 +598,15 @@ def plot_calculated_stats(config, prefix):
         
         ax.xaxis.set_major_formatter(plt.FuncFormatter(format_number))
 
-        max_mols = int(data['num_mol'].max())
-        step = max(1, max_mols // 5) 
-        ticks = list(range(0, max_mols + 1, step))
-        ax.set_xticks(ticks)
-        ax.set_xticklabels(ticks)
+        # max_mols = int(data['num_mol'].max())
+        # step = max(1, max_mols // 5) 
+        # ticks = list(range(0, max_mols + 1, step))
+        # ax.set_xticks(ticks)
+        # ax.set_xticklabels(ticks)
+        ax.set_xlim(left=0)
 
-        ax.set_xlabel(f'Number of Molecules (Total: {format_number(total_mols)})', fontsize=12, labelpad=10)
+        if mode == 'single_comparison':
+            ax.set_xlabel(f'Number of Molecules (Total: {format_number(total_mols)})', fontsize=12, labelpad=10)
         ax.set_ylabel('Models', fontsize=12, labelpad=10)
         
         ax.grid(True, axis='x', alpha=0.2, linestyle='--')
@@ -623,7 +633,7 @@ def plot_calculated_stats(config, prefix):
 
 def plot_restriction_ratios(config, prefix):
     mode = config['mode']
-    folder_to_save = standardize_folder_to_save(config['folder_to_save'])
+    folder_to_save = process_path(config['folder_to_save'])
     folder_name = config['folder_to_save'].split('/')[-1]
 
     if prefix == 'beforeDescriptors':
@@ -724,13 +734,10 @@ def plot_restriction_ratios(config, prefix):
 
 def filter_data(config, prefix):
     mode = config['mode']
-    folder_to_save = standardize_folder_to_save(config['folder_to_save'])
-
     if prefix == 'beforeDescriptors':
-        folder_to_save = folder_to_save + f'{prefix}_StructFilters/'
+        folder_to_save = process_path(config['folder_to_save'], key_word=f'{prefix}_StructFilters/')
     else:
-        folder_to_save = folder_to_save + f'StructFilters/'
-
+        folder_to_save = process_path(config['folder_to_save'], key_word='StructFilters')
     paths = glob.glob(folder_to_save + '*filteredMols.csv')
     check_paths(paths)
 
