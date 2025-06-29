@@ -1,3 +1,4 @@
+import os 
 import glob
 
 import numpy as np
@@ -65,7 +66,7 @@ def process_path(folder_to_save, key_word=None):
 
     if key_word:
         folder_to_save = folder_to_save + f'{key_word}/'
-
+    os.makedirs(folder_to_save, exist_ok=True)
     return folder_to_save
 
 
