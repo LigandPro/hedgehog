@@ -1,6 +1,14 @@
 run: True
+MetricsEngine_n_jobs: 2 # better max of 2 else 1
+MetricsEngine_batch_size: 512
 
 
+borders: 
+  ra_score_min: 0
+  ra_score_max: 'inf'
 
-#  how to do better:
-# if i do not have  mols to process for filters save an empy df or not to save? 
+  sa_score_min: 0
+  sa_score_max: 4.5
+
+  syba_score_min: 0
+  syba_score_max: 'inf'

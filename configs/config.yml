@@ -1,15 +1,11 @@
-# generated_mols_path: /home/dorochka/other_staff/_data/sampled_smiles/7ew9/*
-# target_mols_path: data/KRAS_target_mols.csv
-# folder_to_save: results/7ew9/multi_comparison1/
-# mode: multi_comparison # single_comparison, multi_comparison
+generated_mols_path: /home/dorochka/other_staff/_data/sampled_smiles/7ew9/*
+target_mols_path: data/KRAS_target_mols.csv
+folder_to_save: results/7ew9/AllModels/
+mode: multi_comparison # single_comparison, multi_comparison
 
-generated_mols_path: /home/dorochka/projects/testing_benchmark/test_10mols_2.smi
-target_mols_path: /home/dorochka/projects/testing_benchmark/KRAS_inhibs_seen_1.smi
-folder_to_save: results/7ew9/test/
-mode: single_comparison # single_comparison, multi_comparison
 
 n_jobs: 22
-sample_size: 10
+sample_size: 10000
 batch_size: 512 
 save_sampled_mols: True
 
@@ -18,16 +14,10 @@ mcf_file_path: data/mcf.csv
 
 config_descriptors: configs/config_descriptors.yml
 config_structFilters: configs/config_structFilters.yml
-config_molscore: configs/config_molScore.yml
+config_molScore: configs/config_molScore.yml
 config_retroSynth: configs/config_retroSynth.yml
-config_dockingScore: configs/config_dockingScore.yml
+config_docking: configs/config_docking.yml
 
 
-
-# DONE add explicitly number of left mols 
-# DONE add struct filters before descriptors  + plots 
-# anootation add to plots + smarts visualization (annotation + readson )
-# add RAscore 
-# add RAScore after StructFilters 
 
 
