@@ -36,7 +36,7 @@ def load_multi_comparison_data(paths, sample_size):
             
         model_name = get_model_name(path=path)
         if len(df) < sample_size:
-            logger.warning(f'Sample size is not equal to {sample_size}. Chosen {len(df)} for {model_name} mols.')
+            logger.warning(f'Sample size is not equal to {sample_size}. Chosen {len(df)} mols for {model_name} model.')
         else:
             df = df.sample(sample_size)
 

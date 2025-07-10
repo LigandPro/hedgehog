@@ -68,6 +68,9 @@ modules/MolScore/
 modules/PickyBinder/
 modules/dockingTools/p2rank/
 
+# Docking directory (exclude from tracking)
+docking/
+
 # Large model files
 *.pkl
 *.pickle
