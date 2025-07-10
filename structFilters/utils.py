@@ -34,6 +34,17 @@ def get_model_name(config, mode):
         return model_names
 
 
+def process_path(folder_to_save, key_word=None):
+    if not folder_to_save.endswith('/'):
+        folder_to_save = folder_to_save + '/'
+
+    if key_word:
+        folder_to_save = folder_to_save + f'{key_word}/'
+
+    os.makedirs(folder_to_save, exist_ok=True)
+    return folder_to_save
+
+
 def dropFalse(df):
     df = df[df['full_pass'] == True]
     return df
@@ -735,7 +746,7 @@ def plot_restriction_ratios(config, prefix):
 def filter_data(config, prefix):
     mode = config['mode']
     if prefix == 'beforeDescriptors':
-        folder_to_save = process_path(config['folder_to_save'], key_word=f'{prefix}_StructFilters/')
+        folder_to_save = process_path(config['folder_to_save'], key_word=f'{prefix}_StructFilters')
     else:
         folder_to_save = process_path(config['folder_to_save'], key_word='StructFilters')
     paths = glob.glob(folder_to_save + '*filteredMols.csv')
@@ -754,7 +765,7 @@ def filter_data(config, prefix):
         for col in columns_to_drop:
             if col in data.columns:
                 data.drop(columns=[col], inplace=True)
-        
+
         data = data.rename(columns={col: f"{filter_name}_{col}" for col in data.columns if col != 'SMILES'})
         datas.append(data)
 

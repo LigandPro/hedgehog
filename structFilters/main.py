@@ -11,7 +11,7 @@ def main(config, prefix):
     model_name = get_model_name(config, mode=mode)
 
     sample_size = config['sample_size']
-    folder_to_save = standardize_folder_to_save(config['folder_to_save'])
+    folder_to_save = process_path(config['folder_to_save'])
 
     if prefix == 'beforeDescriptors':
         os.makedirs(folder_to_save + f'{prefix}_StructFilters/', exist_ok=True)
