@@ -68,8 +68,8 @@ modules/MolScore/
 modules/PickyBinder/
 modules/dockingTools/p2rank/
 
-# Docking directory (exclude from tracking)
 docking/
+retroSynth/
 
 # Large model files
 *.pkl
