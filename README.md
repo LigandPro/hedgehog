@@ -23,7 +23,7 @@ Clone `MolGenBenchmark` repository repo for source:
    ```
       
 ### Adding external modules
-To run this benchmark propertly you need to install some extra packages. Go to [modules folder](projects/MolGenBenchmark/modules/README.md) and follow `README.md` inside.
+To run this benchmark propertly you need to install some extra packages. Go to [modules folder](modules/) and follow `README.md` inside.
 
 
 When the evironment setup adjust `./configs` folder and specify configs based on metrics you want to calculate. And then run code:
