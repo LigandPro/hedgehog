@@ -1,4 +1,3 @@
-
 import os 
 import glob 
 import numpy as np
@@ -13,6 +12,8 @@ from functools import reduce
 
 import datamol as dm
 import medchem as mc
+from medchem.structural.lilly_demerits import LillyDemeritsFilters
+
 
 from logger_config import logger
 from configs.config_utils import load_config
@@ -100,6 +101,16 @@ def clean_name(name):
     return name.strip()
     
 
+def filter_alerts(config):
+    df = pd.read_csv(config["alerts_data_path"])
+    mask = df.rule_set_name.isin(config["include_rulesets"])
+    for ruleset in config["exclude_descriptions"].keys():
+        local_mask_1 = ~(df.rule_set_name == ruleset)
+        local_mask_2 = ~df.description.isin(config["exclude_descriptions"][ruleset])
+        local_mask = local_mask_1 | local_mask_2
+        mask &= local_mask
+    return df[mask]
+    
 
 def process_path(folder_to_save, key_word=None):
     if not folder_to_save.endswith('/'):
@@ -244,14 +255,16 @@ def add_model_name_col(final_result, smiles_with_model, mode):
 def filter_function_applier(filter_name):
     if filter_name == 'common_alerts':
         return apply_structural_alerts
-    elif filter_name == 'NIBR':
-        return apply_nibr_filter
-    elif filter_name == 'bredt':
-        return apply_bredt_filter
     elif filter_name == 'molgraph_stats':
         return apply_molgraph_stats
     elif filter_name == 'molcomplexity':
         return apply_molcomplexity_filters
+    elif filter_name == 'NIBR':
+        return apply_nibr_filter
+    elif filter_name == 'bredt':
+        return apply_bredt_filter
+    elif filter_name == 'lilly':
+        return apply_lilly_filter
     else:
         raise ValueError(f"Filter {filter_name} not found")
 
@@ -295,42 +308,6 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     return final_result
 
 
-def apply_bredt_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
-    logger.info(f"Processing {len(mols)} molecules to calculate Bredt filter")
-    mode = config['mode']
-    out = mc.functional.bredt_filter(mols=mols,
-                                     n_jobs=-1,
-                                     progress=False,
-                                     return_idx=False,
-                                    )
-    results = pd.DataFrame({'mol' : mols,
-                            'full_pass' : out 
-                            })    
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols, mode) 
-    return results
-
-
-def apply_nibr_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
-    logger.info(f"Processing {len(mols)} molecules to calculate NIBR filter")
-    mode = config['mode']
-    n_jobs = config['n_jobs']
-
-    config_structFilters = load_config(config['config_structFilters'])
-    scheduler = config_structFilters['nibr_scheduler']
-
-    nibr_filters = mc.structural.NIBRFilters()
-    results = nibr_filters(mols=mols,
-                           n_jobs=n_jobs,
-                           scheduler=scheduler,
-                           keep_details=True,
-                        ) 
-
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols, mode)      
-    return results
-
-
 def apply_molgraph_stats(config, mols: list[Chem.rdchem.Mol], smiles_modelName_mols=None):
     logger.info(f"Processing {len(mols)} molecules to calculate Molecular Graph statistics")
     mode = config['mode']
@@ -371,6 +348,61 @@ def apply_molcomplexity_filters(config, mols: list[Chem.Mol], smiles_modelName_m
     return final_result
 
 
+def apply_bredt_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
+    logger.info(f"Processing {len(mols)} molecules to calculate Bredt filter")
+    mode = config['mode']
+    out = mc.functional.bredt_filter(mols=mols,
+                                     n_jobs=-1,
+                                     progress=False,
+                                     return_idx=False,
+                                    )
+    results = pd.DataFrame({'mol' : mols,
+                            'full_pass' : out 
+                            })    
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols, mode) 
+    return results
+
+
+def apply_nibr_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
+    logger.info(f"Processing {len(mols)} molecules to calculate NIBR filter")
+    mode = config['mode']
+    n_jobs = config['n_jobs']
+
+    config_structFilters = load_config(config['config_structFilters'])
+    scheduler = config_structFilters['nibr_scheduler']
+
+    nibr_filters = mc.structural.NIBRFilters()
+    results = nibr_filters(mols=mols,
+                           n_jobs=n_jobs,
+                           scheduler=scheduler,
+                           keep_details=True,
+                        ) 
+
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols, mode)      
+    return results
+
+
+def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
+    logger.info(f"Processing {len(mols)} molecules")
+    mode = config['mode']
+    n_jobs = config['n_jobs']
+
+    config_strcuFilters = load_config(config['config_structFilters'])
+    scheduler = config_strcuFilters['lilly_scheduler']
+
+    dfilter = LillyDemeritsFilters()
+    results = dfilter(mols=mols,
+                      n_jobs=n_jobs,
+                      scheduler=scheduler,
+        )
+        
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols, mode)
+    return results 
+
+
 def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter_name:str, mode, stat=None, extend=None):
     if mode == 'multi_comparison':
         all_res = []
@@ -407,7 +439,36 @@ def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         return res_df, filter_extended
 
+    elif filter_name == 'molgraph_stats':
+        res_df = pd.DataFrame({"model_name" : [model_name],
+                               "num_mol" : [num_mol],
+                              })
+        for i in range(1, 12):
+            res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_filter_{i}"].mean()
 
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
+        pass_filter_cols = [col for col in filter_extended.columns if 'pass_filter' in col]
+        filter_extended['full_pass'] = filter_extended[pass_filter_cols].all(axis=1)
+        return res_df, filter_extended
+
+
+    elif filter_name == 'molcomplexity':
+        any_banned_percent = 1 - filter_results.full_pass.mean()
+        all_banned_percent = 1 - filter_results.pass_any.mean()
+
+        res_df = pd.DataFrame({"model_name" : [model_name],
+                                "num_mol" : [num_mol],
+                                "all_banned_ratio" : [all_banned_percent],
+                                "any_banned_ratio" : [any_banned_percent]
+                             })
+        alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
+        for name in alert_names:
+            res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
+        
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
+        return res_df, filter_extended
+
+    
     elif filter_name == 'bredt':
         res_df = pd.DataFrame({"model_name" : [model_name],
                                "num_mol" : [num_mol],
@@ -439,42 +500,34 @@ def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter
         return res_df, filter_extended
 
 
-    elif filter_name == 'molgraph_stats':
-        res_df = pd.DataFrame({"model_name" : [model_name],
-                               "num_mol" : [num_mol],
-                              })
-        for i in range(1, 12):
-            res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_filter_{i}"].mean()
-
-        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
-        pass_filter_cols = [col for col in filter_extended.columns if 'pass_filter' in col]
-        filter_extended['full_pass'] = filter_extended[pass_filter_cols].all(axis=1)
-        return res_df, filter_extended
-
-
-    elif filter_name == 'molcomplexity':
-        any_banned_percent = 1 - filter_results.full_pass.mean()
-        all_banned_percent = 1 - filter_results.pass_any.mean()
-
-        res_df = pd.DataFrame({"model_name" : [model_name],
-                                "num_mol" : [num_mol],
-                                "all_banned_ratio" : [all_banned_percent],
-                                "any_banned_ratio" : [any_banned_percent]
+    elif filter_name == 'lilly':
+        mean_noNA_demerit_score = filter_results.demerit_score.dropna().mean()
+        
+        res_df = pd.DataFrame({'model_name': [model_name], 
+                               'num_mol': [num_mol],
+                               'mean_noNA_demerit_score': mean_noNA_demerit_score
                              })
-        alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
-        for name in alert_names:
-            res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
+        res_df[f"banned_ratio"] = 1 - filter_results[f"pass_filter"].mean()
         
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
+        filter_extended.rename(columns={'pass_filter' : 'full_pass'}, inplace=True)
         return res_df, filter_extended
+    
         
     else:
         raise ValueError(f"Filter {filter_name} not found")
     
 
-def check_paths(paths):
-    required_patterns = ['nibr', 'bredt', 'molgraphstats', 'molcomplexity', 'commonalerts']
+def check_paths(config, paths):
+    all_filters = {}
+    for k, v in config.items():
+        if 'calculate_' in k:
+            k = k.replace('calculate_', '')
+            all_filters[k] = v
+
+    required_patterns = [k for k, v in all_filters.items() if v]
     missing_patterns = [pattern for pattern in required_patterns if not any(pattern in path.lower() for path in paths)]
+
     if len(missing_patterns) > 0:
         raise AssertionError(f"Invalid filter name(s) missing: {', '.join(missing_patterns)}")
     return True
@@ -484,11 +537,13 @@ def plot_calculated_stats(config, prefix):
     mode = config['mode']
     folder_to_save = process_path(config['folder_to_save'])
 
+    config_structFilters = load_config(config['config_structFilters'])
+
     if prefix == 'beforeDescriptors':
         paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
     else:
         paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
-    check_paths(paths)
+    check_paths(config_structFilters, paths)
 
     model_name_set = get_model_name(config, mode)
     datas=[]
@@ -647,11 +702,14 @@ def plot_restriction_ratios(config, prefix):
     folder_to_save = process_path(config['folder_to_save'])
     folder_name = config['folder_to_save'].split('/')[-1]
 
+    config_structFilters = load_config(config['config_structFilters'])
+
+
     if prefix == 'beforeDescriptors':
         paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
     else:
         paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
-    check_paths(paths)
+    check_paths(config_structFilters, paths)
     
     filter_data = {}
     
@@ -745,12 +803,14 @@ def plot_restriction_ratios(config, prefix):
 
 def filter_data(config, prefix):
     mode = config['mode']
+    config_structFilters = load_config(config['config_structFilters'])
+
     if prefix == 'beforeDescriptors':
         folder_to_save = process_path(config['folder_to_save'], key_word=f'{prefix}_StructFilters')
     else:
         folder_to_save = process_path(config['folder_to_save'], key_word='StructFilters')
     paths = glob.glob(folder_to_save + '*filteredMols.csv')
-    check_paths(paths)
+    check_paths(config_structFilters, paths)
 
     columns_to_drop = ['full_pass', 'any_pass', 'name', 'pass_any']
     datas = []
@@ -770,7 +830,8 @@ def filter_data(config, prefix):
         datas.append(data)
 
     filtered_data = reduce(lambda x, y: pd.merge(x, y, on='SMILES', how='inner'), datas)
-    filtered_data['model_name'] = filtered_data['Nibr_model_name']
+    model_name_cols = [col for col in filtered_data.columns if 'model_name' in col.lower()]
+    filtered_data['model_name'] = filtered_data[model_name_cols[0]]
 
     filtered_data.to_csv(folder_to_save + 'leftMolsAfterStructFiltersMetrics.csv', index=False)
     if mode == 'single_comparison':
