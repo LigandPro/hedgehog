@@ -62,8 +62,6 @@ venv.bak/
 logs/
 results/
 *.sdf
-*.smi
-*.csv
 modules/MolScore/
 modules/PickyBinder/
 modules/dockingTools/p2rank/
