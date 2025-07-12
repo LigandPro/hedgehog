@@ -5,15 +5,14 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-
 from rdkit import Chem
 from tqdm.auto import tqdm
 from functools import reduce
+from pandarallel import pandarallel
 
 import datamol as dm
 import medchem as mc
 from medchem.structural.lilly_demerits import LillyDemeritsFilters
-
 
 from logger_config import logger
 from configs.config_utils import load_config
@@ -270,41 +269,55 @@ def filter_function_applier(filter_name):
 
 
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
-    mode = config['mode']
-    n_jobs = config['n_jobs']
+    def _apply_alerts(row):
+        mol = row["mol"]
+        row["SMILES"] = Chem.MolToSmiles(mol, canonical=True)
 
-    config_structFilters = load_config(config['config_structFilters'])
-    alert_names = config_structFilters['common_alerts_names']
-    itoalertname = {i: n for i, n in enumerate(alert_names.keys())}
+        config_structFilters = load_config(config['config_structFilters'])
+        alert_data = pd.read_csv(config_structFilters['alerts_data_path'])
+        df = alert_data.copy()
+        df["matches"] = df.smarts.apply(lambda x, y: y.GetSubstructMatches(Chem.MolFromSmarts(x)), args=(mol,)) 
+        grouped = df.groupby("rule_set_name").apply(
+            lambda group: pd.Series({"matches": [match for matches in group["matches"] 
+                                                       for match in matches] 
+                                                       if any(matches 
+                                                              for matches in group["matches"]) 
+                                                       else (),
+                                     "reasons": ";".join(group[group["matches"].apply(lambda x: len(x) > 0)]["description"].fillna('').tolist()) 
+                                                                if any(matches 
+                                                                       for matches in group["matches"]) 
+                                                                else "",
+                                    }),
+            include_groups=False
+        ).reset_index()
+        grouped["pass_filter"] = grouped["matches"].apply(lambda x: True if not x else False)
+        for _, g_row in grouped.iterrows():
+            name = g_row["rule_set_name"]
+            row[f"pass_filter_{name}"] = g_row["pass_filter"]
+            row[f"reasons_{name}"] = g_row["reasons"]
+        return row
+
+
+    def _get_full_any_pass(row):
+        full_pass = True
+        any_pass  = False
+        for col in row.index:
+            if "pass_filter" in col:
+                full_pass &= row[col]
+                any_pass |= row[col]
+        row["full_pass"] = full_pass
+        row["any_pass"] = any_pass
+        return row
     
+
     logger.info(f"Processing {len(mols)} filtered molecules")
-    result_frames = []
 
-    for name in tqdm(alert_names):
-        alert = mc.structural.CommonAlertsFilters(alerts_set=[name])
-        results = alert(mols=mols,
-                        n_jobs=n_jobs,
-                        )
-        result_frames.append(results)
+    n_jobs = config['n_jobs']
+    pandarallel.initialize(progress_bar=True, nb_workers=n_jobs)
 
-    final_result = result_frames[0]
-    final_result['full_pass'] = final_result["pass_filter"].copy()
-    final_result['any_pass'] = final_result["pass_filter"].copy()
-    final_result[f'pass_filter_{itoalertname[0]}'] = final_result["pass_filter"].copy()
-    final_result[f'reasons_{itoalertname[0]}'] = final_result["reasons"].copy()
-    
-    for i in tqdm(range(1, len(result_frames))):  
-        res = result_frames[i]
-        name = itoalertname[i]
-
-        final_result[f"pass_filter_{name}"] = res['pass_filter'].copy()
-        final_result[f"reasons_{name}"] = res['reasons'].copy()
-        
-        final_result['full_pass'] = final_result['full_pass'] * final_result[f"pass_filter_{name}"]
-        final_result['any_pass'] = final_result['any_pass'] + final_result[f"pass_filter_{name}"]
-
-    if smiles_modelName_mols is not None:
-        final_result = add_model_name_col(final_result, smiles_modelName_mols, mode)
+    mols_df = pd.DataFrame({"mol" : mols})
+    final_result = mols_df.parallel_apply(_apply_alerts, axis=1)
+    final_result = final_result.parallel_apply(_get_full_any_pass, axis=1)
     return final_result
 
 
@@ -396,7 +409,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     results = dfilter(mols=mols,
                       n_jobs=n_jobs,
                       scheduler=scheduler,
-        )
+                      )
         
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols, mode)
@@ -423,19 +436,18 @@ def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter
     filter_results['model_name'] = model_name 
 
     if filter_name == 'common_alerts':
-        alert_names = config['common_alerts_names']
-        
         any_banned_percent = (filter_results.full_pass == False).mean()
         all_banned_percent = (filter_results.any_pass  == False).mean()
-        
+
         res_df = pd.DataFrame({"model_name" : [model_name],
                                "num_mol" : [num_mol],
                                "all_banned_ratio" : [all_banned_percent],
                                "any_banned_ratio" : [any_banned_percent]
                              })
-        for name in alert_names:
+
+        for name in config["include_rulesets"]:
             res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_filter_{name}"].mean()
-        
+
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         return res_df, filter_extended
 
@@ -525,9 +537,8 @@ def check_paths(config, paths):
             k = k.replace('calculate_', '')
             all_filters[k] = v
 
-    required_patterns = [k for k, v in all_filters.items() if v]
+    required_patterns = [''.join(k.split('_')) for k, v in all_filters.items() if v]
     missing_patterns = [pattern for pattern in required_patterns if not any(pattern in path.lower() for path in paths)]
-
     if len(missing_patterns) > 0:
         raise AssertionError(f"Invalid filter name(s) missing: {', '.join(missing_patterns)}")
     return True
