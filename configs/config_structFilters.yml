@@ -1,7 +1,7 @@
 run: True
 filter_data: True 
 
-alerts_data_path: "/home/dorochka/projects/MolGenBenchmark/data/common_alerts_collection.csv"
+alerts_data_path: "data/common_alerts_collection.csv"
 
 calculate_common_alerts: True
 include_rulesets:
