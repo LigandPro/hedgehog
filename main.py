@@ -4,6 +4,10 @@ import glob
 import yaml
 import pandas as pd 
 import numpy as np 
+
+# Fix PIL/Pillow import error by setting matplotlib backend
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend that doesn't need PIL
 import matplotlib.pyplot as plt 
 import seaborn as sns 
 

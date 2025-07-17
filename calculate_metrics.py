@@ -7,7 +7,7 @@ from descriptors.main import main as descriptors_main
 from structFilters.main import main as structural_filters_main
 from molScore.main import main as molscore_main
 # from retroSynth.main import main as retrosynthesis_main
-from docking.main import main as docking_main
+# from docking.main import main as docking_main
 
 
 def check_left_any_data(config, key_word):
@@ -77,7 +77,7 @@ def calculate_metrics(data, config):
     run_descriptors(data, config)
     run_structural_filters(config, prefix='Descriptors')
     run_molscore_evaluation(config)
-    # run_rethrosynth(config)  
+    # run_rethrosynth(config)
     # run_docking(config)
     
     
