@@ -274,7 +274,7 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
         row["SMILES"] = Chem.MolToSmiles(mol, canonical=True)
 
         config_structFilters = load_config(config['config_structFilters'])
-        alert_data = pd.read_csv(config_structFilters['alerts_data_path'])
+        alert_data = filter_alerts(config_structFilters)
         df = alert_data.copy()
         df["matches"] = df.smarts.apply(lambda x, y: y.GetSubstructMatches(Chem.MolFromSmarts(x)), args=(mol,)) 
         grouped = df.groupby("rule_set_name").apply(
@@ -312,13 +312,18 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
 
     logger.info(f"Processing {len(mols)} filtered molecules")
 
+    mode = config['mode']
     n_jobs = config['n_jobs']
+
     pandarallel.initialize(progress_bar=True, nb_workers=n_jobs)
 
     mols_df = pd.DataFrame({"mol" : mols})
-    final_result = mols_df.parallel_apply(_apply_alerts, axis=1)
-    final_result = final_result.parallel_apply(_get_full_any_pass, axis=1)
-    return final_result
+    results = mols_df.parallel_apply(_apply_alerts, axis=1)
+    results = results.parallel_apply(_get_full_any_pass, axis=1)
+
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols, mode)
+    return results
 
 
 def apply_molgraph_stats(config, mols: list[Chem.rdchem.Mol], smiles_modelName_mols=None):
@@ -398,7 +403,7 @@ def apply_nibr_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
 
 
 def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
-    logger.info(f"Processing {len(mols)} molecules")
+    logger.info(f"Processing {len(mols)} molecules to calculate Lilly filter")
     mode = config['mode']
     n_jobs = config['n_jobs']
 
@@ -538,7 +543,10 @@ def check_paths(config, paths):
             all_filters[k] = v
 
     required_patterns = [''.join(k.split('_')) for k, v in all_filters.items() if v]
-    missing_patterns = [pattern for pattern in required_patterns if not any(pattern in path.lower() for path in paths)]
+    missing_patterns = [pattern 
+                        for pattern in required_patterns 
+                        if not any(pattern.lower() in path.lower() 
+                            for path in paths)]
     if len(missing_patterns) > 0:
         raise AssertionError(f"Invalid filter name(s) missing: {', '.join(missing_patterns)}")
     return True
@@ -675,11 +683,6 @@ def plot_calculated_stats(config, prefix):
         
         ax.xaxis.set_major_formatter(plt.FuncFormatter(format_number))
 
-        # max_mols = int(data['num_mol'].max())
-        # step = max(1, max_mols // 5) 
-        # ticks = list(range(0, max_mols + 1, step))
-        # ax.set_xticks(ticks)
-        # ax.set_xticklabels(ticks)
         ax.set_xlim(left=0)
 
         if mode == 'single_comparison':
@@ -821,7 +824,7 @@ def filter_data(config, prefix):
     else:
         folder_to_save = process_path(config['folder_to_save'], key_word='StructFilters')
     paths = glob.glob(folder_to_save + '*filteredMols.csv')
-    check_paths(config_structFilters, paths)
+    # check_paths(config_structFilters, paths)
 
     columns_to_drop = ['full_pass', 'any_pass', 'name', 'pass_any']
     datas = []
