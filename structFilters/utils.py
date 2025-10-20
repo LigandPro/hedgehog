@@ -23,15 +23,44 @@ def camelcase(any_str):
     return camel_str
 
 
-def get_model_name(config, mode):
-    assert mode in ['single_comparison', 'multi_comparison'], "Mode must be either 'single_comparison' or 'multi_comparison'"
-    
-    if mode == 'single_comparison':
-        return config['generated_mols_path'].split('/')[-1].split('.')[0]
-    else:
-        paths = glob.glob(config['generated_mols_path'])
-        model_names = [path.split('/')[-1].split('.')[0] for path in paths]
-        return model_names
+def build_identity_map_from_descriptors(config):
+    base_folder = process_path(config['folder_to_save'])
+    id_path = base_folder + 'Descriptors/passDescriptorsSMILES.csv'
+    identity_map = {}
+    id_df = None
+    try:
+        if os.path.exists(id_path):
+            id_df = pd.read_csv(id_path)
+            if 'smiles' not in id_df.columns:
+                smiles_col = next((c for c in id_df.columns if c.lower() == 'smiles'), None)
+                if smiles_col:
+                    id_df = id_df.rename(columns={smiles_col: 'smiles'})
+            if 'model_name' not in id_df.columns:
+                id_df['model_name'] = 'single'
+            if 'mol_idx' in id_df.columns:
+                for _, row in id_df.iterrows():
+                    key_raw = (row['smiles'], row['model_name'])
+                    identity_map[key_raw] = row['mol_idx']
+    except Exception:
+        pass
+    return identity_map, id_df
+
+
+
+def get_model_name(config):
+    paths = glob.glob(config['generated_mols_path'])
+    if len(paths) > 1:
+        return [path.split('/')[-1].split('.')[0] for path in paths]
+    single = paths[0]
+    try:
+        tmp = pd.read_csv(single)
+        lower_cols = {c.lower(): c for c in tmp.columns}
+        candidate = lower_cols.get('model_name') or lower_cols.get('name')
+        if candidate is not None and tmp[candidate].nunique(dropna=True) > 1:
+            return sorted(tmp[candidate].dropna().unique().tolist())
+    except Exception:
+        pass
+    return single.split('/')[-1].split('.')[0]
 
 
 def process_path(folder_to_save, key_word=None):
@@ -43,11 +72,6 @@ def process_path(folder_to_save, key_word=None):
 
     os.makedirs(folder_to_save, exist_ok=True)
     return folder_to_save
-
-
-def dropFalse(df):
-    df = df[df['full_pass'] == True]
-    return df
 
 
 def sdf_to_mols(sdf_file, SUBSAMPLE):
@@ -125,8 +149,9 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
     if stat is not None:
         res_df = pd.concat([stat, res_df])
 
-    to_smi = lambda mol: Chem.MolToSmiles(mol, canonical=True)
-    filter_results["SMILES"] = filter_results.mol.apply(to_smi)
+    # Preserve existing SMILES if present; only derive from mol when missing
+    if 'smiles' not in filter_results.columns:
+        filter_results["smiles"] = filter_results.mol.apply(lambda m: dm.to_smiles(m) if m is not None else None)
     filter_results = filter_results.drop(columns='mol')
 
     if extend is not None:
@@ -138,8 +163,6 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
 
 
 def process_one_file(config, input_path, apply_filter, subsample):
-    mode = config['mode']
-    
     input_type = input_path[input_path.rfind(".")+1:]
     assert input_type in {"csv", "smi", 'sdf', 'txt'}
 
@@ -147,9 +170,9 @@ def process_one_file(config, input_path, apply_filter, subsample):
         data = pd.read_csv(input_path)
         smiles_col = None
         if 'smiles' in data.columns: smiles_col = 'smiles'
-        elif 'SMILES' in data.columns: smiles_col = 'SMILES'
+        elif 'smiles' in data.columns: smiles_col = 'smiles'
 
-        if ('SMILES' not in data.columns) and ('smiles' not in data.columns):
+        if 'smiles' not in data.columns:
             for col in data.columns:
                 if "smiles" in col.lower():
                     smiles_col = col
@@ -157,63 +180,76 @@ def process_one_file(config, input_path, apply_filter, subsample):
 
         assert smiles_col is not None
 
-        if mode == 'single_comparison':
-            smiles = data[smiles_col].tolist()
-            mols = [dm.to_mol(x) for x in smiles]
-        else:
-            assert 'model_name' in data.columns, "CSV must contain 'model_name' column in multi_comparison mode"
+        has_mol_idx = 'mol_idx' in data.columns
+        is_multi = ('model_name' in data.columns and data['model_name'].nunique(dropna=True) > 1)
+        if is_multi:
             smiles_str = data[smiles_col].tolist()
             model_names = data['model_name'].tolist()
             mols = [dm.to_mol(x) for x in smiles_str]
-            smiles = list(zip(smiles_str, model_names, mols))
+            if has_mol_idx:
+                mol_indices = data['mol_idx'].tolist()
+                smiles = list(zip(smiles_str, model_names, mols, mol_indices))
+            else:
+                smiles = list(zip(smiles_str, model_names, mols))
+        else:
+            smiles = data[smiles_col].tolist()
+            mols = [dm.to_mol(x) for x in smiles]
+            if has_mol_idx:
+                mol_indices = data['mol_idx'].tolist()
+                smiles = list(zip(smiles, [None]*len(smiles), mols, mol_indices))
 
     elif input_type == "smi" or input_type == 'txt':
         with open(input_path, 'r') as file:
             lines = [line.rstrip('\n') for line in file]
+
         if subsample <= len(lines):
             lines = np.random.permutation(lines)[:subsample].tolist()
 
-        if mode == 'single_comparison':
-            smiles = lines
-            mols = [dm.to_mol(x) for x in smiles]
-        else:
-            smiles = []
-            model_names = []
-            for line in lines:
-                parts = line.split()
-                if len(parts) == 2:
-                    smi, model = parts
-                else:
-                    smi, model = parts[:1], "unknown"
+        smiles = []
+        model_names = []
+        for line in lines:
+            parts = line.split(',')
+            if len(parts) == 2:
+                smi, model = parts
                 smiles.append(smi)
                 model_names.append(model)
-            mols = [dm.to_mol(x) for x in smiles]
+            else:
+                smiles.append(parts[0])
+        mols = [dm.to_mol(x) for x in smiles]
+        if len(model_names) == len(smiles):
             smiles = list(zip(smiles, model_names, mols))
 
     elif input_type == 'sdf':
-        assert mode == 'single_comparison', "SDF must be in single_comparison mode"
         mols, smiles = sdf_to_mols(input_path, subsample)
 
-    if mode == 'single_comparison':
-        mols, smiles = dropna(mols, smiles)
+    if isinstance(smiles[0], tuple):
+        cleaned = []
+        for item in smiles:
+            if len(item) >= 3:
+                smi, model, mol = item[0], item[1], item[2]
+                if mol is not None:
+                    if len(item) >= 4:
+                        mol_idx = item[3]
+                        cleaned.append((smi, model, mol, mol_idx))
+                    else:
+                        cleaned.append((smi, model, mol))
+        smiles = cleaned
+        mols = [it[2] for it in smiles]
     else:
-        smiles = [(smi, model, mol) for (smi, model, mol) in smiles if mol is not None]
-        mols = [mol for (_, _, mol) in smiles]
+        mols, smiles = dropna(mols, smiles)
 
     assert len(mols) == len(smiles), f"{len(mols)}, {len(smiles)}"
-    if mode == 'single_comparison':
+    if not isinstance(smiles[0], tuple):
         assert len(mols) <= subsample
-    
+
     for mol, smi in zip(mols, smiles):
-        if mode == 'multi_comparison':
-            smi_val = smi[0]
-        else:
-            smi_val = smi
+        smi_val = smi[0] if isinstance(smi, tuple) else smi
         assert mol is not None, f"{smi_val}"
 
     final_result = None
+
     if len(mols) > 0:
-        if mode == 'multi_comparison':
+        if isinstance(smiles[0], tuple):
             final_result = apply_filter(config, mols, smiles)
         else:
             final_result = apply_filter(config, mols)
@@ -221,36 +257,58 @@ def process_one_file(config, input_path, apply_filter, subsample):
     return final_result
 
 
-def add_model_name_col(final_result, smiles_with_model, mode):
+def add_model_name_col(final_result, smiles_with_model):
     if len(final_result) == len(smiles_with_model):
-        if mode == 'single_comparison':
-            smiles = smiles_with_model
-            final_result['smiles'] = smiles
-            final_result['model_name'] = model_names 
+        if isinstance(smiles_with_model[0], tuple) and len(smiles_with_model[0]) >= 3:
+            smiles_vals = []
+            model_vals = []
+            mol_idx_vals = []
+            any_mol_idx = False
+            for item in smiles_with_model:
+                smi = item[0]
+                model = item[1]
+                smiles_vals.append(smi)
+                model_vals.append(model if model is not None else 'single')
+                if len(item) >= 4:
+                    mol_idx_vals.append(item[3])
+                    any_mol_idx = True
+                else:
+                    mol_idx_vals.append(None)
+            final_result['smiles'] = smiles_vals
+            final_result['model_name'] = model_vals
+            if any_mol_idx:
+                final_result['mol_idx'] = mol_idx_vals
         else:
-            smiles, model_names, mols = zip(*smiles_with_model)
-            final_result['smiles'] = smiles
-            final_result['model_name'] = model_names
+            final_result['smiles'] = smiles_with_model
     else:
         logger.warning("Length mismatch between results and smiles_with_model! Attempting to align valid mols.")
-        valid_pairs = []
+        valid_records = []
         mols_in_result = list(final_result['mol'])
         for mol in mols_in_result:
-            for smi, model, orig_mol in smiles_with_model:
-                if mol == orig_mol:
-                    valid_pairs.append((smi, model))
+            matched = None
+            for item in smiles_with_model:
+                if isinstance(item, tuple) and len(item) >= 3:
+                    smi, model, orig_mol = item[0], (item[1] if item[1] is not None else 'single'), item[2]
+                    mol_idx = item[3] if len(item) >= 4 else None
+                else:
+                    smi, model, orig_mol, mol_idx = item, 'single', None, None
+                if orig_mol is not None and mol == orig_mol:
+                    matched = (smi, model, mol_idx)
                     break
-        if len(valid_pairs) == len(final_result):
-            smiles, model_names = zip(*valid_pairs)
-            final_result['smiles'] = smiles
-            final_result['model_name'] = model_names
+            if matched is not None:
+                valid_records.append(matched)
+        if len(valid_records) == len(final_result) and len(valid_records) > 0:
+            s_list, m_list, idx_list = zip(*valid_records)
+            final_result['smiles'] = s_list
+            final_result['model_name'] = m_list
+            if any(x is not None for x in idx_list):
+                final_result['mol_idx'] = idx_list
         else:
             logger.error("Could not align all mols with smiles/model_name. Check your data integrity.")
 
     return final_result
 
 
-# list of functions to apply filters
 def filter_function_applier(filter_name):
     if filter_name == 'common_alerts':
         return apply_structural_alerts
@@ -271,7 +329,7 @@ def filter_function_applier(filter_name):
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     def _apply_alerts(row):
         mol = row["mol"]
-        row["SMILES"] = Chem.MolToSmiles(mol, canonical=True)
+        row["smiles"] = dm.to_smiles(mol) if mol is not None else None
 
         config_structFilters = load_config(config['config_structFilters'])
         alert_data = filter_alerts(config_structFilters)
@@ -312,7 +370,6 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
 
     logger.info(f"Processing {len(mols)} filtered molecules")
 
-    mode = config['mode']
     n_jobs = config['n_jobs']
 
     pandarallel.initialize(progress_bar=True, nb_workers=n_jobs)
@@ -322,13 +379,12 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     results = results.parallel_apply(_get_full_any_pass, axis=1)
 
     if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols, mode)
+        results = add_model_name_col(results, smiles_modelName_mols)
     return results
 
 
 def apply_molgraph_stats(config, mols: list[Chem.rdchem.Mol], smiles_modelName_mols=None):
     logger.info(f"Processing {len(mols)} molecules to calculate Molecular Graph statistics")
-    mode = config['mode']
     severities = list(range(1, 12))
 
     results = {'mol' : mols}
@@ -343,13 +399,12 @@ def apply_molgraph_stats(config, mols: list[Chem.rdchem.Mol], smiles_modelName_m
     results = pd.DataFrame(results)
 
     if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols, mode)
+        results = add_model_name_col(results, smiles_modelName_mols)
     return results
 
 
 def apply_molcomplexity_filters(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
     logger.info(f"Processing {len(mols)} molecules to calculate Complexity filters")
-    mode = config['mode']
     final_result = pd.DataFrame({'mol' : mols,
                                  'full_pass' : True,
                                  'pass_any' : False
@@ -362,13 +417,12 @@ def apply_molcomplexity_filters(config, mols: list[Chem.Mol], smiles_modelName_m
         final_result['pass_any'] = final_result['pass_any'] + final_result[f"pass_{name}"]
     
     if smiles_modelName_mols is not None:
-        final_result = add_model_name_col(final_result, smiles_modelName_mols, mode)
+        final_result = add_model_name_col(final_result, smiles_modelName_mols)
     return final_result
 
 
 def apply_bredt_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
     logger.info(f"Processing {len(mols)} molecules to calculate Bredt filter")
-    mode = config['mode']
     out = mc.functional.bredt_filter(mols=mols,
                                      n_jobs=-1,
                                      progress=False,
@@ -378,13 +432,12 @@ def apply_bredt_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None)
                             'full_pass' : out 
                             })    
     if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols, mode) 
+        results = add_model_name_col(results, smiles_modelName_mols) 
     return results
 
 
 def apply_nibr_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
     logger.info(f"Processing {len(mols)} molecules to calculate NIBR filter")
-    mode = config['mode']
     n_jobs = config['n_jobs']
 
     config_structFilters = load_config(config['config_structFilters'])
@@ -398,13 +451,12 @@ def apply_nibr_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
                         ) 
 
     if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols, mode)      
+        results = add_model_name_col(results, smiles_modelName_mols)      
     return results
 
 
 def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     logger.info(f"Processing {len(mols)} molecules to calculate Lilly filter")
-    mode = config['mode']
     n_jobs = config['n_jobs']
 
     config_strcuFilters = load_config(config['config_structFilters'])
@@ -417,16 +469,17 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                       )
         
     if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols, mode)
+        results = add_model_name_col(results, smiles_modelName_mols)
     return results 
 
 
-def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter_name:str, mode, stat=None, extend=None):
-    if mode == 'multi_comparison':
+def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter_name:str, stat=None, extend=None):
+    is_multi = 'model_name' in filter_results.columns and filter_results['model_name'].nunique(dropna=True) > 1
+    if is_multi:
         all_res = []
         all_extended = []
         for model, group in filter_results.groupby('model_name'):
-            res_df, filter_extended = get_basic_stats(config, group.copy(), model, filter_name, 'single_comparison', stat, extend,)
+            res_df, filter_extended = get_basic_stats(config, group.copy(), model, filter_name, stat, extend)
             all_res.append(res_df)
             all_extended.append(filter_extended)
 
@@ -434,7 +487,6 @@ def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter
         filter_extended = pd.concat(all_extended, ignore_index=True)
         return res_df, filter_extended
 
-    
     num_mol = len(filter_results)
 
     filter_results.dropna(subset='mol', inplace=True)
@@ -529,7 +581,6 @@ def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         filter_extended.rename(columns={'pass_filter' : 'full_pass'}, inplace=True)
         return res_df, filter_extended
-    
         
     else:
         raise ValueError(f"Filter {filter_name} not found")
@@ -553,7 +604,6 @@ def check_paths(config, paths):
 
 
 def plot_calculated_stats(config, prefix):
-    mode = config['mode']
     folder_to_save = process_path(config['folder_to_save'])
 
     config_structFilters = load_config(config['config_structFilters'])
@@ -564,9 +614,11 @@ def plot_calculated_stats(config, prefix):
         paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
     check_paths(config_structFilters, paths)
 
-    model_name_set = get_model_name(config, mode)
+    model_name_set = get_model_name(config)
     datas=[]
     filter_names = []
+
+    identity_map, src = build_identity_map_from_descriptors(config)
 
     for path in paths:
         data = pd.read_csv(path)
@@ -626,25 +678,16 @@ def plot_calculated_stats(config, prefix):
         clean_filter_name = filter_name.split('/')[-1].lower()
         for known_filter in filter_results.keys():
             if known_filter.lower() in clean_filter_name:
-                if mode == 'single_comparison':
-                    passed = list(filter_results[known_filter].values())[0]
+                for i, (model, passed) in enumerate(filter_results[known_filter].items()):
                     bar_center_x = data.loc[models, 'num_mol'].values[0] / 2
-                    bar_center_y = x[0]
-                    model_total = data.loc[model, 'num_mol']
-                    text = f'Passed molecules: {passed} ({(passed/model_total*100):.1f}%)'
+                    bar_center_y = x[i]
+                    model_total = data.loc[model, 'num_mol'] if model in data.index else data['num_mol'].iloc[0]
+                    if model_total != 0:
+                        text = f'Passed molecules: {passed} ({(passed/model_total*100):.1f}%)'
+                    else:
+                        text = f'Passed molecules: {passed} (0%)'
                     ax.annotate(text, (bar_center_x, bar_center_y), ha='center', va='center', fontsize=12, color='black', fontweight='bold',
                                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3), zorder=1000)
-                else:
-                    for i, (model, passed) in enumerate(filter_results[known_filter].items()):
-                        bar_center_x = data.loc[models, 'num_mol'].values[0] / 2
-                        bar_center_y = x[i]
-                        model_total = data.loc[model, 'num_mol']
-                        if model_total != 0:
-                            text = f'Passed molecules: {passed} ({(passed/model_total*100):.1f}%)'
-                        else:
-                            text = f'Passed molecules: {passed} (0%)'
-                        ax.annotate(text, (bar_center_x, bar_center_y), ha='center', va='center', fontsize=12, color='black', fontweight='bold',
-                                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3), zorder=1000)
 
 
         for i, model in enumerate(models):
@@ -677,16 +720,13 @@ def plot_calculated_stats(config, prefix):
         
         clean_filter_name = filter_name.split('/')[-1] 
         ax.set_title(clean_name(clean_filter_name), fontsize=14, pad=20, fontweight='bold')
-        
         ax.set_yticks(x)
         ax.set_yticklabels(models, fontsize=12)
-        
         ax.xaxis.set_major_formatter(plt.FuncFormatter(format_number))
-
         ax.set_xlim(left=0)
 
-        if mode == 'single_comparison':
-            ax.set_xlabel(f'Number of Molecules (Total: {format_number(total_mols)})', fontsize=12, labelpad=10)
+    if isinstance(model_name, str):
+        ax.set_xlabel(f'Number of Molecules (Total: {format_number(total_mols)})', fontsize=12, labelpad=10)
         ax.set_ylabel('Models', fontsize=12, labelpad=10)
         
         ax.grid(True, axis='x', alpha=0.2, linestyle='--')
@@ -712,12 +752,10 @@ def plot_calculated_stats(config, prefix):
 
 
 def plot_restriction_ratios(config, prefix):
-    mode = config['mode']
     folder_to_save = process_path(config['folder_to_save'])
     folder_name = config['folder_to_save'].split('/')[-1]
 
     config_structFilters = load_config(config['config_structFilters'])
-
 
     if prefix == 'beforeDescriptors':
         paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
@@ -725,23 +763,25 @@ def plot_restriction_ratios(config, prefix):
         paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
     check_paths(config_structFilters, paths)
     
-    filter_data = {}
-    
     if not paths:
         logger.error(f"No data files found in {folder_to_save}")
         return
     
+    filter_data = {}
+    model_names_filters = {}
     for path in paths:
         filter_name = path.split(f'{folder_name}/')[-1].split('_metrics.csv')[0]
         data = pd.read_csv(path)
+
         ratio_cols = [col for col in data.columns if 'banned_ratio' in col]
-        
+        model_names_filters[filter_name] = {}
+        model_names_filters[filter_name] = dict(zip(data['model_name'].tolist(), data['num_mol'].tolist()))
+
         if not ratio_cols:
             continue
             
         clean_cols = {col: col.replace('_banned_ratio', '').replace('banned_ratio', '').replace('_s', 's') for col in ratio_cols}
         ratios = data[ratio_cols].rename(columns=clean_cols)
-
         actual_model_names = data['model_name'].tolist()
         ratios.index = actual_model_names
         
@@ -766,10 +806,12 @@ def plot_restriction_ratios(config, prefix):
             ratios = ratios[sorted_values.index]
         
         filter_data[filter_name] = ratios
-
     if not filter_data:
         logger.error("No valid data to plot")
         return
+
+    model_names_filters = pd.DataFrame(model_names_filters).reset_index()
+    model_names_filters = model_names_filters.rename(columns={'index': 'model_name'})
 
     plt.style.use('default')
     sns.set_style("white")
@@ -782,20 +824,36 @@ def plot_restriction_ratios(config, prefix):
     fig = plt.figure(figsize=(16, 7*n_rows))
     fig.suptitle('Comparison of Restriction Ratios Across Different Filters', fontsize=16, y=0.98, fontweight='bold')
 
-
     for idx, (filter_name, data) in enumerate(filter_data.items()):
+        number_of_mols = np.array(model_names_filters[filter_name].tolist())
         ax = plt.subplot(n_rows, n_cols, idx + 1)
-        
+        for col in data.columns:
+            if col not in ['any', 'all', 'model_name', 'num_mol']:
+                data[col] = number_of_mols * (1 - np.array(data[col].tolist()))
         if not data.empty and data.notna().any().any():
-            sns.heatmap(data.T, cmap='Blues', 
-                       cbar_kws={'label': 'Restriction Ratio'}, ax=ax, vmin=0, vmax=1,
-                       fmt='.3f', annot=True, annot_kws={'size': 10, 'rotation': 0}, cbar=True)
+            if 'all' in data.columns:
+                data.drop(columns=['all'], inplace=True) 
+            if 'any' in data.columns:
+                data.drop(columns=['any'], inplace=True)
+
+            from matplotlib.colors import LinearSegmentedColormap
+            custom_cmap = LinearSegmentedColormap.from_list('custom', ['white', '#b29eee'])
+            if idx == 1:
+
+                sns.heatmap(data.T, cmap=custom_cmap, 
+                        cbar_kws={'label': 'Passed Molecules', 'format': '%d', }, ax=ax, vmin=0, vmax=max(data.max()),
+                        fmt='.0f', 
+                        annot=True, annot_kws={'size': 12, 'rotation': 0, 'color': 'black'}, cbar=True)
+            else:
+                sns.heatmap(data.T, cmap=custom_cmap, 
+                        cbar_kws={'label': 'Passed Molecules', 'format': '%d', }, ax=ax, vmin=0, vmax=max(data.max()),
+                        fmt='.0f', 
+                        annot=True, annot_kws={'size': 12, 'rotation': 0, 'color': 'black'}, cbar=False)
             
-            ax.set_title(f'{clean_name(filter_name)} Filter', pad=10, fontsize=11, fontweight='bold')
-            plt.setp(ax.get_yticklabels(), rotation=0, ha='right')
-            plt.setp(ax.get_xticklabels(), ha='center')
+            ax.set_title(f'{clean_name(filter_name)} Filter', fontsize=12, fontweight='bold')
+            plt.setp(ax.get_yticklabels(), rotation=0, ha='right', fontsize=12)
+            plt.setp(ax.get_xticklabels(), rotation=0, ha='right', fontsize=12)
             ax.set_xlabel('Model')
-            ax.set_ylabel('Filter Type')
 
             actual_model_names = data.index.tolist()
             if len(actual_model_names) == len(ax.get_xticklabels()):
@@ -816,7 +874,6 @@ def plot_restriction_ratios(config, prefix):
 
 
 def filter_data(config, prefix):
-    mode = config['mode']
     config_structFilters = load_config(config['config_structFilters'])
 
     if prefix == 'beforeDescriptors':
@@ -824,33 +881,162 @@ def filter_data(config, prefix):
     else:
         folder_to_save = process_path(config['folder_to_save'], key_word='StructFilters')
     paths = glob.glob(folder_to_save + '*filteredMols.csv')
-    # check_paths(config_structFilters, paths)
 
     columns_to_drop = ['full_pass', 'any_pass', 'name', 'pass_any']
     datas = []
     for path in paths:
         data = pd.read_csv(path)
-        if mode == 'single_comparison':
-            model_name = get_model_name(config, mode)
-            filter_name = path.split(f'{model_name}/')[-1].split('_filteredMols.csv')[0].strip('_')
-        else:
-            filter_name = path.split(f'{folder_to_save}')[-1].split('_filteredMols.csv')[0].strip('_')
+        filter_name = path.split(f'{folder_to_save}')[-1].split('_filteredMols.csv')[0].strip('_')
 
         for col in columns_to_drop:
             if col in data.columns:
                 data.drop(columns=[col], inplace=True)
 
-        data = data.rename(columns={col: f"{filter_name}_{col}" for col in data.columns if col != 'SMILES'})
+        data = data.rename(columns={col: f"{filter_name}_{col}" for col in data.columns if col not in ['smiles', 'model_name']})
+
+        if 'model_name' not in data.columns:
+            data['model_name'] = 'single'
         datas.append(data)
 
-    filtered_data = reduce(lambda x, y: pd.merge(x, y, on='SMILES', how='inner'), datas)
-    model_name_cols = [col for col in filtered_data.columns if 'model_name' in col.lower()]
-    filtered_data['model_name'] = filtered_data[model_name_cols[0]]
+    identity_map, _ = build_identity_map_from_descriptors(config)
 
-    filtered_data.to_csv(folder_to_save + 'leftMolsAfterStructFiltersMetrics.csv', index=False)
-    if mode == 'single_comparison':
-        filtered_data['SMILES'].to_csv(folder_to_save + 'leftMolsAfterStructFiltersSMILES.csv', index=False)
+    if len(datas) > 0:
+        filtered_data = reduce(lambda x, y: pd.merge(x, y,
+                                                    on=['smiles', 'model_name'],
+                                                    how='inner'), datas)
     else:
-        filtered_data[['SMILES', 'model_name']].to_csv(folder_to_save + 'leftMolsAfterStructFiltersSMILES.csv', index_label='SMILES', index=False)
+        filtered_data = pd.DataFrame(columns=['smiles', 'model_name'])
+    model_name_cols = [col for col in filtered_data.columns if 'model_name' in col.lower()]
+    if model_name_cols:
+        filtered_data['model_name'] = filtered_data[model_name_cols[0]]
+
+    if identity_map and len(filtered_data) > 0:
+        def _canon(s):
+            return str(s)
+        raw_vals = [identity_map.get((s, m)) for s, m in zip(filtered_data['smiles'], filtered_data['model_name'])]
+        canon_vals = [identity_map.get((_canon(s), m)) for s, m in zip(filtered_data['smiles'], filtered_data['model_name'])]
+        filled = []
+        for r, c in zip(raw_vals, canon_vals):
+            filled.append(r if pd.notna(r) and r != '' else c)
+        filtered_data['mol_idx'] = filled
+    elif identity_map and len(filtered_data) == 0:
+        id_df = pd.DataFrame(list(identity_map.items()), columns=['key', 'mol_idx'])
+        id_df[['smiles', 'model_name']] = pd.DataFrame(id_df['key'].tolist(), index=id_df.index)
+        filtered_data = id_df[['smiles', 'model_name', 'mol_idx']]
+
+    if 'model_name' not in filtered_data.columns:
+        filtered_data['model_name'] = 'single'
+    cols = ['smiles', 'model_name'] + (['mol_idx'] if 'mol_idx' in filtered_data.columns else [])
+    out_df = filtered_data[cols].copy()
+    out_df = out_df[['smiles', 'model_name'] + ([ 'mol_idx'] if 'mol_idx' in out_df.columns else [])]
+    out_df.to_csv(folder_to_save + 'passStructFiltersSMILES.csv', index_label='smiles', index=False)
+
+    extended_paths = glob.glob(folder_to_save + '*extended.csv')
+    if extended_paths:
+        failures_map = {}
+        has_model_name = False
+        for path in extended_paths:
+            try:
+                df_ext = pd.read_csv(path)
+                filter_name = path.split('/')[-1].split('_extended.csv')[0].strip('_')
+                if 'model_name' in df_ext.columns:
+                    has_model_name = True
+                if 'full_pass' in df_ext.columns:
+                    failed_df = df_ext[df_ext['full_pass'] == False]
+                    for _, row in failed_df.iterrows():
+                        key = (row['smiles'], row['model_name']) if 'model_name' in failed_df.columns else (row['smiles'], None)
+                        if key not in failures_map:
+                            failures_map[key] = set()
+                        failures_map[key].add(filter_name)
+            except Exception:
+                continue
+
+        if failures_map:
+            def _canon(s):
+                return str(s)
+            fail_rows = []
+            for k in failures_map.keys():
+                smi = k[0]
+                model = (k[1] if has_model_name else 'single')
+                entry = {'smiles': smi, 'model_name': model}
+                mol_idx_val = None
+                if identity_map:
+                    mol_idx_val = identity_map.get((smi, model))
+                    if mol_idx_val is None:
+                        mol_idx_val = identity_map.get((_canon(smi), model))
+                if mol_idx_val is not None:
+                    entry['mol_idx'] = mol_idx_val
+                fail_rows.append(entry)
+            fail_df = pd.DataFrame(fail_rows)
+            id_cols = ['smiles', 'model_name', 'mol_idx']
+            ordered = [c for c in id_cols if c in fail_df.columns] + [c for c in fail_df.columns if c not in id_cols]
+            fail_df = fail_df[ordered]
+            fail_df.to_csv(folder_to_save + 'failStructFiltersSMILES.csv', index=False)
+
+            records = []
+            for (smi, model), filters in failures_map.items():
+                rec = {'smiles': smi,
+                       'model_name': (model if has_model_name else 'single'),
+                       'failed_filters': ';'.join(sorted(filters))}
+                if identity_map:
+                    mol_idx_val = identity_map.get((smi, rec['model_name']))
+                    if mol_idx_val is None:
+                        mol_idx_val = identity_map.get((_canon(smi), rec['model_name']))
+                    if mol_idx_val is not None:
+                        rec['mol_idx'] = mol_idx_val
+                records.append(rec)
+            df_fail_summary = pd.DataFrame(records)
+            cols = ['smiles', 'model_name'] + (['mol_idx'] if 'mol_idx' in df_fail_summary.columns else []) + ['failed_filters']
+            df_fail_summary = df_fail_summary[cols]
+            df_fail_summary.to_csv(folder_to_save + 'failStructFiltersMetrics.csv', index=False)
 
     return filtered_data
+
+
+def inject_identity_columns_to_all_csvs(config, prefix):
+    base_folder = process_path(config['folder_to_save'])
+    id_path = base_folder + 'Descriptors/passDescriptorsSMILES.csv'
+    if not os.path.exists(id_path):
+        return
+
+    try:
+        id_df = pd.read_csv(id_path)
+        if 'model_name' not in id_df.columns:
+            id_df['model_name'] = 'single'
+        keep_cols = ['smiles', 'model_name'] + (['mol_idx'] if 'mol_idx' in id_df.columns else [])
+        id_df = id_df[keep_cols].copy()
+    except Exception:
+        return
+
+    if prefix == 'beforeDescriptors':
+        target_folder = process_path(config['folder_to_save'], key_word=f'{prefix}_StructFilters')
+    else:
+        target_folder = process_path(config['folder_to_save'], key_word='StructFilters')
+
+    csv_paths = glob.glob(target_folder + '*.csv')
+    for path in csv_paths:
+        try:
+            df = pd.read_csv(path)
+            if 'smiles' not in df.columns:
+                continue
+            right = id_df.rename(columns={'mol_idx': 'mol_idx_id'}) if 'mol_idx' in id_df.columns else id_df.copy()
+            if 'model_name' in df.columns:
+                merged = df.merge(right, on=['smiles', 'model_name'], how='left')
+            else:
+                right_dedup = right.drop_duplicates('smiles')
+                merged = df.merge(right_dedup, on='smiles', how='left')
+
+            if 'mol_idx_id' in merged.columns:
+                if 'mol_idx' in merged.columns:
+                    merged['mol_idx'] = merged['mol_idx'].fillna(merged['mol_idx_id'])
+                else:
+                    merged['mol_idx'] = merged['mol_idx_id']
+                merged.drop(columns=['mol_idx_id'], inplace=True)
+
+            identity_order = ['smiles', 'model_name', 'mol_idx']
+            ordered = [c for c in identity_order if c in merged.columns] + [c for c in merged.columns if c not in identity_order]
+            merged = merged[ordered]
+
+            merged.to_csv(path, index=False)
+        except Exception:
+            continue
