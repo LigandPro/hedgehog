@@ -5,27 +5,27 @@ alerts_data_path: "data/common_alerts_collection.csv"
 
 calculate_common_alerts: True
 include_rulesets:
-  - "Dundee"
-  - "BMS"
-  - "Inpharmatica"
-  - "LD50-Oral"
-  - "Glaxo"
-  - "PAINS"
-  - "AlphaScreen-Hitters"
-  - "Frequent-Hitter"
-  - "Chelator"
-  - "Toxicophore"
-  - "Skin"
-  - "Reactive-Unstable-Toxic"
+  - "Dundee" 
+  - "BMS" 
+  - "Inpharmatica" 
+  - "LD50-Oral"  
+  - "Glaxo" 
+  - "PAINS" 
+  - "AlphaScreen-Hitters"  
+  - "Frequent-Hitter" 
+  - "Chelator" 
+  - "Toxicophore"  
+  - "Skin" 
+  - "Reactive-Unstable-Toxic" 
   - "SureChEMBL"
-  - "Electrophilic"
-  - "Genotoxic-Carcinogenicity"
+  - "Electrophilic" 
+  - "Genotoxic-Carcinogenicity" 
   - "MLSMR"
-  - "LINT"
-  - "GST-Hitters"
-  - "Non-Genotoxic-Carcinogenicity"
-  - "HIS-Hitters"
-  - "LuciferaseInhibitor"
+  - "LINT" 
+  - "GST-Hitters" 
+  - "Non-Genotoxic-Carcinogenicity" 
+  - "HIS-Hitters" 
+  - "LuciferaseInhibitor" 
 
 exclude_descriptions:
   "Dundee":
@@ -98,15 +98,14 @@ exclude_descriptions:
   "HIS-Hitters":
     - "Picolylamines_A"
 
+calculate_molgraph_stats: True
 
-calculate_molgraph_stats: False
+calculate_molcomplexity: True
 
-calculate_molcomplexity: False
-
-calculate_NIBR: False
+calculate_NIBR: True
 nibr_scheduler: threads
 
-calculate_bredt: False
+calculate_bredt: True
 
 calculate_lilly: False 
 lilly_scheduler: threads
