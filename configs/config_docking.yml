@@ -1,0 +1,47 @@
+run: True
+tools: both # Tools to prepare: 'both' (default), 'smina', 'gnina', or a comma list
+
+receptor_pdb: path/to/receptor.pdb
+
+## smina via pyscreener
+pyscreener_activate: source ~/miniconda3/etc/profile.d/conda.sh && conda activate pyscreener
+# Option 1: provide a path to an INI
+smina_ini: path/to/smina_config.ini
+## Option 2: inline full smina INI content (overrides smina_ini if set)
+# smina_ini_content: |
+#   output-dir = smina_results
+#   screen-type = smina
+#   metadata-template = {"software": "smina"}
+#   receptors = [/abs/path/to/prepared_receptor.pdb]
+#   input-files = [/abs/path/to/ligands.smi]
+#   center = [0.0, 0.0, 0.0]
+#   size = [10.0, 10.0, 10.0]
+#   ncpu = 32
+#   collect-all = true
+
+## GNINA direct settings
+gnina_bin: /path/to/gnina
+gnina_env_path: /path/to/gnina_env 
+gnina_autobox_ligand: /path/to/reference_ligand.sdf
+gnina_autobox_add: 4
+gnina_cpu: 16
+gnina_seed: 42
+gnina_extra_args: --log score.log
+gnina_output_dir: Docking/gnina_results 
+## If no reference ligand provided, you can set the center and size of the box manually with
+# center: [-1.258, -12.520, 11.390]
+# size: [10.0, 10.0, 10.0]
+# exhaustiveness: 8
+# num_modes: 9
+
+## If provided, use raw gnina path + args with token substitution
+# {receptor} {ligands} {out}
+gnina_path: ""
+gnina_args: ""
+
+## Auto-run behaviour during pipeline
+auto_run: True
+run_in_background: False
+
+
+
