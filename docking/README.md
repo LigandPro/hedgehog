@@ -30,6 +30,8 @@ Notes:
 - Scripts are executed with working directory set to `Docking`
 - For Gnina, the output path is absolute by default to avoid nested path duplication.
 - You can set `tools: gnina` or `tools: smina` to limit execution.
+- Please take a look at `smina_example.ini` config to utilizr for `smina` docking. 
+- 
 - Set `auto_run: False` in the docking config to generate scripts without executing them.
 - Use `gnina_extra_args` to pass flags like `--log score.log` or scoring options.
 
