@@ -1,38 +1,51 @@
-# MolGenBenchmark
-Benchmarking Generative Models for Molecular Design
+# 🦔 HEDGE
+**Hierarchical Evaluation of Drug GEnerators**
 
-## Metrics Calculation
-Clone `MolGenBenchmark` repository repo for source:
-   ```bash
-   git clone https://github.com/LigandPro/MolGenBenchmark.git
-   ```
-
-### Environment preparation
-1. Create environment with `environment.yml` file
-2. Install SYBA using conda or mamba (preferred):
-      ```bash
-      mamba install lich::syba
-      ```
-      or clone SYBA from source:
-      ```bash
-      git clone https://github.com/lich-uct/syba.git && cd syba && conda activate YOUR_ENV && pip install .
-      ```
-3. Download Eli Lilly Medchem Rules via conda or mamba (preferred):
-   ```bash
-   mamba install lilly-medchem-rules
-   ```
-      
-### Adding external modules
-To run this benchmark propertly you need to install some extra packages. Go to [modules folder](modules/) and follow `README.md` inside.
+![HEDGE Pipeline](data/imgs/pipeline_structure.png)
 
 
-When the evironment setup adjust `./configs` folder and specify configs based on metrics you want to calculate. And then run code:
+Comprehensive benchmark pipeline for evaluating generative models in molecular design.
+
+### 5-Stage Filtering Pipeline:
+1) Physicochemical Descriptors: 22 descriptors ([descriptors folder](src/hedge/stages/descriptors/))
+2) Structural Filters: 6 structural criteria with ~2500 SMARTS patterns ([structural filters folder](structFilters/))
+3) Synthesis evaluation ([synthesis folder](synthesis/))
+4) Docking: able to calculate docking score with smina and/or GNINA docking tools ([docking folder](docking/))
+5) Medicinal Chemists evaluation: calculate 4 medichinal chemists evaluation criteria ([medChem folder](medChem/))
+
+## Setup & Run
+**Hybrid approach:** Conda + UV
+
 ```bash
-python main.py
+# Clone repository
+git clone https://github.com/LigandPro/hedge.git
+cd hedge
+
+# Create conda environment for Lilly binaries (one-time setup)
+conda env create -f environment.yml
+
+# Every time you work
+conda activate hedge_env
+
+# Run full pipeline
+uv run python main.py run
+
+# Run specific stage
+uv run python main.py run --stage descriptors
+
+# Get help
+uv run python main.py --help
 ```
+ 
+### Adding external modules
+To run this benchmark properly you need to install some extra packages. Go to [modules folder](modules/) and follow `README.md` inside.
 
 
-## AIZythFinder retrosynthesis
+
+### Configure your run
+Edit config for each stage in [configs folder](configs/) based on metrics you want to calculate.
+
+<!-- ## AIZythFinder retrosynthesis
 To run AIZythFinder retrosynthesis clone code from source:
 ```bash
 git clone https://github.com/MolecularAI/aizynthfinder.git
@@ -40,8 +53,8 @@ git clone https://github.com/MolecularAI/aizynthfinder.git
 
 
 ## docking score
----
-## REINVENT4 fine-tune
+--- -->
+<!-- ## REINVENT4 fine-tune
 To fine-tune REINVENT4 follow these steps:
 1. Clone REINVENT4 repository and setup environment:
     ```bash 
@@ -60,4 +73,4 @@ To fine-tune REINVENT4 follow these steps:
      Run the training using the modified configuration file. It takes approximetely 72 hours to train a model on ~750 samples with that setup. 
      
      Once trained, fine-tuned model can be used for downstream evaluation and benchmarking tasks.
----
+--- -->

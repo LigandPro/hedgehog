@@ -12,7 +12,7 @@
     ```
 3. Export path to `MolScore` module:
     ```bash
-    export PYTHONPATH=$PYTHONPATH:/path/to/modules/MolGenBenchmark/modules/MolScore
+    export PYTHONPATH=$PYTHONPATH:/path/to/modules/hedge/modules/MolScore
     ```
 
 ### Add pyscreener module:
@@ -40,10 +40,5 @@
 
     Download script and put it into `modules` folder.
 
-
-When the evironment setup adjust `./configs` folder and specify configs based on metrics you want to calculate. And then run code:
-```bash
-python main.py
-```
 
 

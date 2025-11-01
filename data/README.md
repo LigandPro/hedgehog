@@ -1,6 +1,6 @@
 # Data Directory Documentation
 
-This directory contains reference datasets and filter definitions used by the MolGenBenchmark framework for molecular generation evaluation and structural filtering.
+This directory contains reference datasets and filter definitions used by the HEDGE framework for molecular generation evaluation and structural filtering.
 
 ## Files Overview
 
