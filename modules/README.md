@@ -6,6 +6,11 @@
     cd modules
     git clone https://github.com/MorganCThomas/MolScore.git
     ```
+2. Create Retrosynthetic Accessibility (RA) score conda environment (RA score requires Python 3.7 and conflicts with other environments):
+   ```bash
+   conda env create -f MolScore/molscore/data/models/RAScore/environment.yml
+   ```
+   If you skip this, MolScore will create it automatically when needed (may take a few minutes).
 
 ## Add pyscreener module:
 1. Clone `pyscreener` repo from source:
@@ -14,10 +19,10 @@
     ```
 
 ## Add MCE-18 module:
-1. `MCE-18` implementation file was loaded from source: 
+1.  `MCE-18` implementation file was loaded from source: 
     [https://github.com/Tong-Du/MCE-18.git](https://github.com/Tong-Du/MCE-18.git)
 
-    Download script and put it into `modules` folder.
+    We thank authors for this brilliant open-source implementation of MCE-18 metric from https://pubs.acs.org/doi/10.1021/acs.jmedchem.9b00004 paper. 
 <!-- 
 ## Install SYBA (required for synthesis stage)
 SYBA is automatically installed when you create the conda environment from `environment.yml` (which includes the `lich` channel).
@@ -56,21 +61,21 @@ conda install -c conda-forge lilly-medchem-rules
 ## Add AiZynthFinder retrosynthesis module 
 1. **Clone the retrosynthesis repository**:
     ```bash
-    cd modules
     git clone git@github.com:LigandPro/retrosynthesis.git
     ```
 
 2. **Download public data** (model files):
     ```bash
-    cd modules/retrosynthesis/aizynthfinder
+    cd retrosynthesis/aizynthfinder
     mkdir -p public data
     # Using uv run
     uv run python -m aizynthfinder.tools.download_public_data ./public
     mv ../../../src/hedge/stages/synthesis/logging.yml data/
     ```
+3. **Continue environment setup** following main [README.md](/README.md)
 
-3. **Configure** in `configs/config_synthesis.yml`:
+**Configure** in `configs/config_synthesis.yml`:
     - Set `run: True` to enable the stage
     - Adjust `nproc` for parallel processing if needed
 
-4. The synthesis stage will run automatically after structural filters and before docking in the pipeline.
+The synthesis stage will run automatically after structural filters and before docking in the pipeline.

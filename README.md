@@ -25,9 +25,9 @@ cd hedge
 conda env create -f environment.yml
 ```
 
-Before running the pipeline you should download external modules: go to [modules folder](modules/) and follow `README.md` inside.
+Before running the pipeline you should download external modules: go to [modules folder](modules/) and follow [README.md](modules/README.md) inside.
 
-After modules installation continue environment setting:
+After modules installation continue environment setting from ```hedge/``` folder:
 ```bash
 # Activate conda environment
 conda activate hedge_env
