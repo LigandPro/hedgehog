@@ -51,32 +51,37 @@ coverage.xml
 
 # Environments
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+*.conda
+
+# UV package manager
+.uv/
 
 # Project-specific data and results
-logs/
 results/
-*.sdf
+
+# External modules (git submodules or cloned repositories)
+modules/mce18.py
+modules/dockingTools/
 modules/MolScore/
-modules/PickyBinder/
-modules/dockingTools/p2rank/
+modules/pyscreener/
+modules/retrosynthesis/
 
-docking/
-retroSynth/
+# Build artifacts in external modules
+modules/*/build/
+modules/*/dist/
+modules/*/*.egg-info/
+modules/*/.eggs/
+modules/*/__pycache__/
 
-# Large model files
-*.pkl
-*.pickle
-*.h5
-*.hdf5
-*.pt
-*.pth
-*.ckpt
+# Log files
+*.log
+*.log.*
 
 # VS Code
 .vscode/
@@ -85,6 +90,9 @@ retroSynth/
 !.vscode/launch.json
 !.vscode/extensions.json
 .history/
+
+# PyCharm
+.idea/
 
 # macOS
 .DS_Store
@@ -103,7 +111,3 @@ retroSynth/
 *.temp
 *.swp
 *.swo
-*~
-
-# Conda environments
-*.conda
