@@ -1060,7 +1060,7 @@ def _create_main_filter_plot(filter_failures, file_path):
 
 def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
     """Create individual plots for each filter showing failure reasons."""
-    пше ыеф
+    
     for filter_name, stats in filter_failures.items():
         if stats['failures'] > 0:
             reasons_data = filter_reasons.get(filter_name, [])
