@@ -201,21 +201,18 @@ def _load_syba_model():
 
 
 def _load_rascore():
-    """Load RAscore calculator - uses MolScore implementation."""
+    """Check if RAScore model and rascore-env are available."""
     global _rascore_available
     if _rascore_available is None:
-        rascore_config = Path(__file__).parent / "RAScore.json"
         molscore_path = Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
+        model_path = molscore_path / "molscore" / "data" / "models" / "RAScore" / "XGB_chembl_ecfp_counts" / "model.pkl"
         
-        if (molscore_path / "molscore").exists() and rascore_config.exists():
+        if model_path.exists():
             _rascore_available = True
-            logger.debug("MolScore implementation available for RA score calculation")
+            logger.debug("RAScore model available for calculation")
         else:
             _rascore_available = False
-            if not rascore_config.exists():
-                logger.warning(f"RAScore config not found at {rascore_config}. RA scores will be set to np.nan")
-            if not (molscore_path / "molscore").exists():
-                logger.warning(f"MolScore module not found at {molscore_path}. RA scores will be set to np.nan")
+            logger.warning(f"RAScore model not found at {model_path}. RA scores will be set to np.nan")
     return _rascore_available
 
 
@@ -271,131 +268,130 @@ def _calculate_syba_score(smiles):
         return np.nan
 
 
-def _calculate_ra_score(smiles, output_dir=None, config=None):
-    """Calculate Retrosynthetic Accessibility score.
-    
-    Uses MolScore implementation.
-    Returns probability (0-1) that molecule is synthesizable.
-    Returns np.nan if calculation fails or module not available.
-    
+def _calculate_ra_scores_batch(smiles_list, config=None):
+    """Calculate RA scores for multiple molecules in a single batch.
     Args:
-        smiles: SMILES string
+        smiles_list: List of SMILES strings
+        config: Configuration dict (can contain 'rascore_conda_prefix' for manual override)
         
     Returns:
-        RA score (0-1, higher is better) or np.nan
+        List of RA scores (0-1, higher is better), with np.nan for failed calculations
     """
     if not _load_rascore():
-        return np.nan
+        return [np.nan] * len(smiles_list)
     
     try:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return np.nan
-    
+        conda_prefix = None
+        if config and isinstance(config, dict):
+            conda_prefix = config.get('rascore_conda_prefix')
+        
+        if not conda_prefix:
+            common_locations = [
+                Path.home() / 'miniconda3' / 'envs' / 'rascore-env',
+                Path.home() / 'anaconda3' / 'envs' / 'rascore-env',
+                Path.home() / 'conda' / 'envs' / 'rascore-env',
+                Path('/opt/conda/envs/rascore-env'),
+            ]
+            for location in common_locations:
+                if location.exists():
+                    conda_prefix = str(location)
+                    break
+        
+        if not conda_prefix or not Path(conda_prefix).exists():
+            logger.warning('Could not find rascore-env. RA scores will be set to np.nan')
+            return [np.nan] * len(smiles_list)
+        
         molscore_path = Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
-        if str(molscore_path) not in sys.path:
-            sys.path.insert(0, str(molscore_path))
+        model_path = molscore_path / "molscore" / "data" / "models" / "RAScore" / "XGB_chembl_ecfp_counts" / "model.pkl"
         
-        rascore_config_template = Path(__file__).parent / "RAScore.json"
+        if not model_path.exists():
+            logger.warning(f"RAScore model not found at {model_path}")
+            return [np.nan] * len(smiles_list)
         
-        if not rascore_config_template.exists():
-            logger.warning(f"RAScore config not found at {rascore_config_template}")
-            return np.nan
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.smi', delete=False) as f:
+            smiles_file = f.name
+            for smi in smiles_list:
+                f.write(f"{smi}\n")
+        
+        script_content = f"""
+import sys
+import pickle as pkl
+import numpy as np
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+def get_ecfp6_counts(smiles, nBits=2048):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    fp = AllChem.GetMorganFingerprint(mol, 3, useFeatures=False, useCounts=True)
+    arr = np.zeros((nBits,), dtype=np.int32)
+    for idx, v in fp.GetNonzeroElements().items():
+        arr[idx % nBits] += v
+    return arr
+
+with open('{model_path}', 'rb') as f:
+    clf = pkl.load(f)
+
+with open('{smiles_file}', 'r') as f:
+    smiles_list = [line.strip() for line in f]
+
+for smiles in smiles_list:
+    fp = get_ecfp6_counts(smiles)
+    if fp is None:
+        print('nan')
+    else:
+        try:
+            prob = clf.predict_proba(np.array([fp]))[0, 1]
+            print(prob)
+        except Exception:
+            print('nan')
+"""
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            temp_script = f.name
+            f.write(script_content)
         
         try:
-            import contextlib
-            with open(rascore_config_template, 'r') as f:
-                rascore_config_data = json.load(f)
+            python_exec = Path(conda_prefix) / 'bin' / 'python'
+            if not python_exec.exists():
+                logger.warning(f"Python not found in rascore-env: {python_exec}")
+                return [np.nan] * len(smiles_list)
             
-            if not output_dir:
-                logger.warning('No output_dir provided for RA score, using default location')
-                default_output = Path(__file__).parent.parent.parent.parent.parent / 'results' / 'MolScore'
-                output_dir = str(default_output)
+            result = subprocess.run(
+                [str(python_exec), temp_script],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
             
-            rascore_config_data['output_dir'] = str(output_dir)
-            
-            conda_prefix = None
-            if config and isinstance(config, dict):
-                conda_prefix = config.get('rascore_conda_prefix')
-            
-            if not conda_prefix and 'CONDA_PREFIX' in os.environ:
-                conda_prefix = os.environ['CONDA_PREFIX']
-            
-            if not conda_prefix and hasattr(sys, 'executable') and sys.executable:
-                python_path = Path(sys.executable)
-                if 'envs' in str(python_path):
-                    parts = python_path.parts
-                    envs_idx = None
-                    for i, part in enumerate(parts):
-                        if part == 'envs':
-                            envs_idx = i
-                            break
-                    if envs_idx is not None:
-                        conda_prefix = str(Path(*parts[:envs_idx+2]))
-            
-            if conda_prefix:
-                env_name = Path(conda_prefix).name if Path(conda_prefix).exists() else None
-                if env_name == 'rascore-env':
-                    scoring_funcs = rascore_config_data.get('scoring_functions', [])
-                    for func in scoring_funcs:
-                        if func.get('name') == 'RAScore_XGB':
-                            params = func.get('parameters', {})
-                            params['conda_prefix'] = conda_prefix
-                            logger.debug(f'Using existing rascore-env: {conda_prefix}')
-                            break
-                else:
-                    logger.debug('MolScore will create rascore-env automatically (requires Python 3.7)')
-            else:
-                logger.debug('MolScore will create rascore-env automatically from environment.yml')
-            
-            output_dir_path = Path(output_dir)
-            output_dir_path.mkdir(parents=True, exist_ok=True)
-            rascore_config = output_dir_path / 'RAScore.json'
-            with open(rascore_config, 'w') as f:
-                json.dump(rascore_config_data, f, indent=2)
-            
-            molscore_logger = logging.getLogger("molscore")
-            old_level = molscore_logger.level
-            molscore_logger.setLevel(logging.ERROR)
-            
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                from molscore.manager import MolScore
-                smiles_list = [smiles]
-                ms = MolScore(model_name="hedge",
-                              task_config=str(rascore_config),
-                              budget=len(smiles_list)
-                              )
-            molscore_logger.setLevel(old_level)
-            scores = None
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                while not ms.finished:
-                    scores = ms.score(smiles_list)
-            if scores is not None:
-                if hasattr(scores, '__len__') and len(scores) > 0:
-                    score_value = scores[0]
-                    if isinstance(score_value, dict):
-                        score_value = score_value.get('RAScore_pred_proba') or score_value.get('score') or score_value.get('total_score')
+            if result.returncode == 0:
+                scores = []
+                for line in result.stdout.strip().split('\n'):
                     try:
-                        return float(score_value)
-                    except (ValueError, TypeError):
-                        logger.warning(f"MolScore returned non-numeric score for {smiles}: {score_value}")
-                        return np.nan
-                else:
-                    logger.warning(f"MolScore returned empty scores for {smiles}")
-                    return np.nan
+                        score = float(line.strip())
+                        scores.append(score if not np.isnan(score) else np.nan)
+                    except ValueError:
+                        scores.append(np.nan)
+                
+                if len(scores) != len(smiles_list):
+                    logger.warning(f"Expected {len(smiles_list)} scores but got {len(scores)}")
+                    return [np.nan] * len(smiles_list)
+                return scores
             else:
-                logger.warning(f"MolScore returned None for {smiles}")
-                return np.nan
-        except Exception as molscore_error:
-            logger.warning(f"Failed to calculate RA score with MolScore for {smiles}: {molscore_error}")
-            import traceback
-            logger.debug(traceback.format_exc())
-            return np.nan
+                logger.debug(f"RA score batch calculation failed: {result.stderr}")
+                return [np.nan] * len(smiles_list)
+        finally:
+            try:
+                os.unlink(temp_script)
+                os.unlink(smiles_file)
+            except:
+                pass
+                
     except Exception as e:
-        logger.warning(f"Failed to calculate RA score for {smiles}: {e}")
-        import traceback
-        logger.warning(traceback.format_exc())
-        return np.nan
+        logger.debug(f"Failed to calculate RA scores in batch: {e}")
+        return [np.nan] * len(smiles_list)
 
 
 def calculate_synthesis_scores(df, folder_to_save=None, config=None):
@@ -415,15 +411,12 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
     _load_rascore()
     
     result_df = df.copy()
-    ra_output_dir = None
-    if folder_to_save:
-        from pathlib import Path
-        ra_output_dir = Path(folder_to_save) / 'Synthesis' / 'MolScore'
-        ra_output_dir.mkdir(parents=True, exist_ok=True)
-    
     result_df['sa_score'] = result_df['smiles'].apply(_calculate_sa_score)
     result_df['syba_score'] = result_df['smiles'].apply(_calculate_syba_score)
-    result_df['ra_score'] = result_df['smiles'].apply(lambda smi: _calculate_ra_score(smi, ra_output_dir, config))
+    
+    smiles_list = result_df['smiles'].tolist()
+    ra_scores = _calculate_ra_scores_batch(smiles_list, config)
+    result_df['ra_score'] = ra_scores
     
     for score_name in ['sa_score', 'syba_score', 'ra_score']:
         valid_scores = result_df[score_name].dropna()
