@@ -16,6 +16,8 @@ Comprehensive benchmark pipeline for evaluating generative models in molecular d
 ## Setup & Run
 **Hybrid approach:** Conda + UV
 
+Requires ~15 mins to set up the environemnt.
+
 ```bash
 # Clone repository
 git clone https://github.com/LigandPro/hedge.git
