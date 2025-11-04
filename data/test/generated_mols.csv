@@ -1,0 +1,11 @@
+SMILES,model_name
+c1cc2c(nc1N1CCN(C[C@@H]3CCCO3)CC1)OCO2,test_model_a
+COc1cccc(-c2nccnc2C2CN(C(=O)c3cc4ccccc4[nH]3)C2)c1,test_model_a
+CC(C)N1CCC(NC(=O)c2cc3ccccc3c(-c3ccncc3)n2)CC1,test_model_a
+O=C(NCCN1CCOCC1)c1ccc(-c2cnc3ccc(O)cc3c2)cc1,test_model_b
+CN1CCC(c2nc3c(C(N)=O)cccc3[nH]2)CC1,test_model_b
+CSc1nc(-c2ccc(F)cc2)c(-c2ccnc(NCC3CCNCC3)c2)[nH]1,test_model_c
+Cc1ccc(Cl)c(-c2cc(CCCN)nc(CN)c2C)c1,test_model_c
+COc1ccc2nccc(C(=O)N3CCCc4nn(CCOc5ccccn5)cc43)c2c1,test_model_c
+c1cnc(Nc2cccc([C@@H]3CCN(c4ccccc4-n4cccn4)C3)c2)nc1,test_model_c
+CCc1nc(C(N)=O)ccc1NCCc1ccccc1-c1ccco1,test_model_c
