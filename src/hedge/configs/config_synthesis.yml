@@ -1,4 +1,4 @@
-run: False
+run: True
 
 # Filter molecules: if True, only keep molecules that were solved (retrosynthesis path found)
 # If False, keep all molecules regardless of retrosynthesis result
