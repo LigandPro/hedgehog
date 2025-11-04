@@ -2,14 +2,14 @@ import os
 import glob
 import pandas as pd
 
-from logger_config import logger 
-from configs.config_utils import load_config
-from src.hedge.stages.structFilters.utils import *
+from hedge.configs.logger import logger, load_config
+from hedge.stages.structFilters.utils import *
 
-def _order_identity_columns(df, config=None):
+def _order_identity_columns(df):
     """Order dataframe columns with identity columns first."""
     id_cols = ['smiles', 'model_name', 'mol_idx']
-    ordered_cols = [c for c in id_cols if c in df.columns] + [c for c in df.columns if c not in id_cols]
+    existing_id_cols = [c for c in id_cols if c in df.columns]
+    ordered_cols = existing_id_cols + [c for c in df.columns if c not in id_cols]
     return df[ordered_cols]
 
 
@@ -47,46 +47,6 @@ def _get_input_path(config, prefix, folder_to_save):
     return config['generated_mols_path']
 
 
-def _assign_mol_idx_from_source(df, config, folder_to_save):
-    """Assign mol_idx from source files if not already present."""
-    if 'mol_idx' in df.columns and not df['mol_idx'].isna().all():
-        return df
-    
-    try:
-        id_path = folder_to_save + 'Descriptors/passDescriptorsSMILES.csv'
-        src_df = None
-        
-        if os.path.exists(id_path):
-            src_df = pd.read_csv(id_path)
-        else:
-            sample_path = folder_to_save + 'sampledMols.csv'
-            if os.path.exists(sample_path):
-                src_df = pd.read_csv(sample_path)
-        
-        if src_df is None:
-            return df
-        
-        exact_lookup = {(row['smiles'], row['model_name']): row['mol_idx'] for _, row in src_df.iterrows()}
-        
-        for col in ['mol_idx_x', 'mol_idx_y']:
-            if col in df.columns:
-                df = df.drop(columns=[col])
-        
-        if 'mol_idx' not in df.columns:
-            df['mol_idx'] = None
-        
-        for idx, row in df.iterrows():
-            if pd.isna(df.loc[idx, 'mol_idx']):
-                mol_idx_val = exact_lookup.get((row['smiles'], row['model_name']))
-                if mol_idx_val is not None:
-                    df.loc[idx, 'mol_idx'] = mol_idx_val
-    
-    except Exception:
-        pass
-    
-    return df
-
-
 def main(config, prefix):
     """Main entry point for structural filters stage."""
     sample_size = config['sample_size']
@@ -121,12 +81,10 @@ def main(config, prefix):
         final_res, final_extended = get_basic_stats(config_structFilters, filter_results, model_name, filter_name=filter_name)
         path_to_save = folder_to_save + f'{subfolder}/{camelcase(filter_name)}'
         
-        final_res = _order_identity_columns(final_res, config=config)
+        final_res = _order_identity_columns(final_res)
         final_res.to_csv(f'{path_to_save}_metrics.csv', index=False)
         
-        if 'mol_idx' not in final_extended.columns or final_extended['mol_idx'].isna().all():
-            final_extended = _assign_mol_idx_from_source(final_extended, config, folder_to_save)
-        final_extended = _order_identity_columns(final_extended, config=config)
+        final_extended = _order_identity_columns(final_extended)
         final_extended.to_csv(f"{path_to_save}_extended.csv", index=False)
         
         if 'pass' not in final_extended.columns:
@@ -137,11 +95,7 @@ def main(config, prefix):
                 final_extended['pass'] = True
         filtered_mols = final_extended[final_extended['pass'] == True].copy()
         
-        if 'mol_idx_x' in filtered_mols.columns or 'mol_idx_y' in filtered_mols.columns:
-            filtered_mols['mol_idx'] = filtered_mols.get('mol_idx', filtered_mols.get('mol_idx_x'))
-            filtered_mols = filtered_mols.drop(columns=[c for c in ['mol_idx_x', 'mol_idx_y'] if c in filtered_mols.columns])
-        
-        filtered_mols = _order_identity_columns(filtered_mols, config=config)
+        filtered_mols = _order_identity_columns(filtered_mols)
         filtered_mols.to_csv(f'{path_to_save}_filteredMols.csv', index=False)
     
     plot_calculated_stats(config, prefix)

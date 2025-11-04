@@ -22,8 +22,7 @@ except ImportError:
     LILLY_AVAILABLE = False
     LillyDemeritsFilters = None
 
-from logger_config import logger
-from configs.config_utils import load_config
+from hedge.configs.logger import logger, load_config
 
 def camelcase(any_str):
     return ''.join(word.capitalize() for word in any_str.split('_'))
@@ -33,26 +32,21 @@ def build_identity_map_from_descriptors(config):
     """Build a map of (smiles, model_name) -> mol_idx from descriptors output."""
     base_folder = process_path(config['folder_to_save'])
     id_path = base_folder + 'Descriptors/passDescriptorsSMILES.csv'
-    identity_map = {}
-    id_df = None
     
     try:
-        if not os.path.exists(id_path):
+        if os.path.exists(id_path):
+            id_df = pd.read_csv(id_path)
+            identity_map = {(row['smiles'], row['model_name']): row['mol_idx'] 
+                           for _, row in id_df.iterrows()}
             return identity_map, id_df
-            
-        id_df = pd.read_csv(id_path)
-        identity_map = {
-            (row['smiles'], row['model_name']): row['mol_idx']
-            for _, row in id_df.iterrows()
-        }
     except Exception:
         pass
     
-    return identity_map, id_df
+    return {}, None
 
 
 def process_path(folder_to_save, key_word=None):
-    """Ensure path ends with / and create directory if needed."""
+    """Ensure path ends with '/' and create directory if needed."""
     if not folder_to_save.endswith('/'):
         folder_to_save += '/'
 
@@ -129,17 +123,11 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
     if stat is not None:
         res_df = pd.concat([stat, res_df])
 
-    mol_idx_to_preserve = filter_results['mol_idx'].copy()
     filter_results = filter_results.drop(columns='mol')
-    
     if extend is not None:
-        filter_extended = pd.concat([extend, filter_results], ignore_index=True).copy()
-        start_idx = len(extend)
-        end_idx = start_idx + len(filter_results)
-        filter_extended.loc[start_idx:end_idx-1, 'mol_idx'] = mol_idx_to_preserve.values
+        filter_extended = pd.concat([extend, filter_results], ignore_index=True)
     else:
         filter_extended = filter_results.copy()
-        filter_extended['mol_idx'] = mol_idx_to_preserve.values
     
     return res_df, filter_extended
 
@@ -225,72 +213,33 @@ def process_one_file(config, input_path, apply_filter, subsample):
 
 
 def add_model_name_col(final_result, smiles_with_model):
-    if len(final_result) == len(smiles_with_model):
-        if isinstance(smiles_with_model[0], tuple) and len(smiles_with_model[0]) >= 3:
-            smiles_vals = []
-            model_vals = []
-            mol_idx_vals = []
-            any_mol_idx = False
-            for item in smiles_with_model:
-                smi = item[0]
-                model = item[1]
-                smiles_vals.append(smi)
-                model_vals.append(model if model is not None else 'single')
-                if len(item) >= 4:
-                    mol_idx_vals.append(item[3])
-                    any_mol_idx = True
-                else:
-                    mol_idx_vals.append(None)
-            final_result['smiles'] = smiles_vals
-            final_result['model_name'] = model_vals
-            if any_mol_idx:
-                final_result['mol_idx'] = mol_idx_vals
-        else:
-            final_result['smiles'] = smiles_with_model
-    else:
-        logger.warning("Length mismatch between results and smiles_with_model! Attempting to align valid mols.")
-        valid_records = []
-        mols_in_result = list(final_result['mol'])
-        for mol in mols_in_result:
-            matched = None
-            for item in smiles_with_model:
-                if isinstance(item, tuple) and len(item) >= 3:
-                    smi, model, orig_mol = item[0], (item[1] if item[1] is not None else 'single'), item[2]
-                    mol_idx = item[3] if len(item) >= 4 else None
-                else:
-                    smi, model, orig_mol, mol_idx = item, 'single', None, None
-                if orig_mol is not None and mol == orig_mol:
-                    matched = (smi, model, mol_idx)
-                    break
-            if matched is not None:
-                valid_records.append(matched)
-        if len(valid_records) == len(final_result) and len(valid_records) > 0:
-            s_list, m_list, idx_list = zip(*valid_records)
-            final_result['smiles'] = s_list
-            final_result['model_name'] = m_list
-            if any(x is not None for x in idx_list):
-                final_result['mol_idx'] = idx_list
-        else:
-            logger.error("Could not align all mols with smiles/model_name. Check your data integrity.")
-
+    """Add smiles, model_name, and mol_idx columns from input data."""
+    smiles_vals = [item[0] for item in smiles_with_model]
+    model_vals = [item[1] if item[1] is not None else 'single' for item in smiles_with_model]
+    mol_idx_vals = [item[3] if len(item) >= 4 else None for item in smiles_with_model]
+    
+    final_result['smiles'] = smiles_vals
+    final_result['model_name'] = model_vals
+    final_result['mol_idx'] = mol_idx_vals
+    
     return final_result
 
 
 def filter_function_applier(filter_name):
-    filters = {
-        'common_alerts': apply_structural_alerts,
-        'molgraph_stats': apply_molgraph_stats,
-        'molcomplexity': apply_molcomplexity_filters,
-        'NIBR': apply_nibr_filter,
-        'bredt': apply_bredt_filter,
-        'lilly': apply_lilly_filter
-    }
+    filters = {'common_alerts': apply_structural_alerts,
+               'molgraph_stats': apply_molgraph_stats,
+               'molcomplexity': apply_molcomplexity_filters,
+               'NIBR': apply_nibr_filter,
+               'bredt': apply_bredt_filter,
+               'lilly': apply_lilly_filter
+              }
     if filter_name not in filters:
         raise ValueError(f"Filter {filter_name} not found")
     return filters[filter_name]
 
 
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
+    logger.info(f"Calculating Common Alerts...")
     def _apply_alerts(row):
         mol = row["mol"]
         row["smiles"] = dm.to_smiles(mol) if mol is not None else None
@@ -347,8 +296,8 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     return results
 
 
-def apply_molgraph_stats(config, mols: list[Chem.rdchem.Mol], smiles_modelName_mols=None):
-    logger.info(f"Processing {len(mols)} molecules to calculate Molecular Graph statistics")
+def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
+    logger.info(f"Calculating Molecular Graph statistics...")
     severities = list(range(1, 12))
 
     results = {'mol' : mols}
@@ -367,8 +316,8 @@ def apply_molgraph_stats(config, mols: list[Chem.rdchem.Mol], smiles_modelName_m
     return results
 
 
-def apply_molcomplexity_filters(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
-    logger.info(f"Processing {len(mols)} molecules to calculate Complexity filters")
+def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
+    logger.info(f"Calculating Complexity filters...")
     final_result = pd.DataFrame({'mol' : mols,
                                  'pass' : True,
                                  'pass_any' : False
@@ -385,8 +334,8 @@ def apply_molcomplexity_filters(config, mols: list[Chem.Mol], smiles_modelName_m
     return final_result
 
 
-def apply_bredt_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
-    logger.info(f"Processing {len(mols)} molecules to calculate Bredt filter")
+def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
+    logger.info(f"Calculating Bredt filter...")
     out = mc.functional.bredt_filter(mols=mols,
                                      n_jobs=-1,
                                      progress=False,
@@ -400,8 +349,8 @@ def apply_bredt_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None)
     return results
 
 
-def apply_nibr_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
-    logger.info(f"Processing {len(mols)} molecules to calculate NIBR filter")
+def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
+    logger.info(f"Calculating NIBR filter...")
     n_jobs = config['n_jobs']
 
     config_structFilters = load_config(config['config_structFilters'])
@@ -413,7 +362,6 @@ def apply_nibr_filter(config, mols: list[Chem.Mol], smiles_modelName_mols=None):
                            scheduler=scheduler,
                            keep_details=True,
                         ) 
-
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)      
     return results
@@ -428,7 +376,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             "Or disable this filter by setting 'calculate_lilly: False' in config_structFilters.yml"
         )
     
-    logger.info(f"Processing {len(mols)} molecules to calculate Lilly filter")
+    logger.info(f"Calculating Lilly filter...")
     n_jobs = config['n_jobs']
 
     config_strcuFilters = load_config(config['config_structFilters'])
@@ -445,7 +393,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     return results 
 
 
-def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter_name:str, stat=None, extend=None):
+def get_basic_stats(config, filter_results, model_name, filter_name, stat=None, extend=None):
     is_multi = filter_results['model_name'].nunique(dropna=True) > 1
     if is_multi:
         all_res = []
@@ -460,11 +408,7 @@ def get_basic_stats(config, filter_results: pd.DataFrame, model_name:str, filter
         return res_df, filter_extended
 
     num_mol = len(filter_results)
-
-    mol_idx_before = filter_results['mol_idx'].copy()
-    
     filter_results.dropna(subset='mol', inplace=True)
-    filter_results['mol_idx'] = mol_idx_before.reindex(filter_results.index)
     filter_results['model_name'] = model_name 
 
     if filter_name == 'common_alerts':
@@ -894,43 +838,24 @@ def filter_data(config, prefix):
                 data.drop(columns=[col], inplace=True)
         datas.append(data)
 
-    identity_map, _ = build_identity_map_from_descriptors(config)
-
     if len(datas) > 0:
-        mol_idx_first = datas[0][['smiles', 'model_name', 'mol_idx']].copy() if len(datas[0]) > 0 else None
-        filtered_data = datas[0].drop(columns=['mol_idx'], errors='ignore').copy()
+        filtered_data = datas[0].copy()
         
         for df in datas[1:]:
-            df_clean = df.drop(columns=['mol_idx'], errors='ignore').copy()
             merge_cols = ['smiles', 'model_name']
             existing_cols = set(filtered_data.columns) - set(merge_cols)
-            new_cols = [col for col in df_clean.columns if col not in existing_cols and col not in merge_cols]
+            new_cols = [col for col in df.columns if col not in existing_cols and col not in merge_cols]
             
             if new_cols:
                 cols_to_merge = merge_cols + new_cols
-                filtered_data = filtered_data.merge(df_clean[cols_to_merge], on=merge_cols, how='inner')
+                filtered_data = filtered_data.merge(df[cols_to_merge], on=merge_cols, how='inner')
             else:
-                filtered_data = filtered_data.merge(df_clean[merge_cols], on=merge_cols, how='inner')
-        
-        if mol_idx_first is not None:
-            filtered_data = filtered_data.merge(mol_idx_first[['smiles', 'model_name', 'mol_idx']], on=['smiles', 'model_name'], how='left')
-            mol_idx_cols = [c for c in filtered_data.columns if c.startswith('mol_idx')]
-            if len(mol_idx_cols) > 1:
-                for col in mol_idx_cols[1:]:
-                    filtered_data = filtered_data.drop(columns=[col])
-            if 'mol_idx' not in filtered_data.columns and mol_idx_cols:
-                filtered_data = filtered_data.rename(columns={mol_idx_cols[0]: 'mol_idx'})
+                filtered_data = filtered_data.merge(df[merge_cols], on=merge_cols, how='inner')
     else:
-        filtered_data = pd.DataFrame(columns=['smiles', 'model_name'])
+        filtered_data = pd.DataFrame(columns=['smiles', 'model_name', 'mol_idx'])
 
-
-    if identity_map and len(filtered_data) > 0:
-        _canon = str
-        filled = [r if pd.notna(r) and r != '' else c
-                  for r, c in zip([identity_map.get((s, m)) for s, m in zip(filtered_data['smiles'], filtered_data['model_name'])],
-                                  [identity_map.get((_canon(s), m)) for s, m in zip(filtered_data['smiles'], filtered_data['model_name'])]
-                                )]
-        filtered_data['mol_idx'] = filled
+    if 'mol_idx' not in filtered_data.columns:
+        filtered_data['mol_idx'] = None
 
     cols = ['smiles', 'model_name', 'mol_idx']
     out_df = filtered_data[cols].copy()
@@ -946,7 +871,7 @@ def filter_data(config, prefix):
                 input_path = sampled_path
             else:
                 try:
-                    from src.hedge.stages.structFilters.main import _get_input_path
+                    from hedge.stages.structFilters.main import _get_input_path
                     input_path = _get_input_path(config, prefix, base_folder)
                 except Exception:
                     input_path = None
@@ -966,14 +891,8 @@ def filter_data(config, prefix):
             all_input = pd.read_csv(input_path)
             if len(out_df) > 0:
                 merge_cols = ['smiles', 'model_name']
-                out_df_merge = out_df[merge_cols].copy()
-                all_input_merge = all_input[merge_cols + ['mol_idx']].copy()
-                
-                merged = all_input_merge.merge(out_df_merge, on=merge_cols, how='left', indicator=True)
-                fail_molecules = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge']).copy()
-                
-                if 'mol_idx' not in fail_molecules.columns:
-                    fail_molecules = fail_molecules.merge(all_input[merge_cols + ['mol_idx']], on=merge_cols, how='left')
+                merged = all_input.merge(out_df[merge_cols], on=merge_cols, how='left', indicator=True)
+                fail_molecules = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge'])
             else:
                 fail_molecules = all_input.copy()
             
@@ -1003,18 +922,14 @@ def filter_data(config, prefix):
                     pass_cols = [col for col in all_extended.columns if col.startswith('pass_') or col == 'pass']
                     if pass_cols:
                         cols_to_merge = merge_cols + pass_cols
-                        fail_molecules = fail_molecules.merge(all_extended[cols_to_merge], on=merge_cols, how='left', suffixes=('', '_ext'))
-                        for col in pass_cols:
-                            if f'{col}_ext' in fail_molecules.columns:
-                                fail_molecules[col] = fail_molecules[col].fillna(fail_molecules[f'{col}_ext'])
-                                fail_molecules = fail_molecules.drop(columns=[f'{col}_ext'])
+                        fail_molecules = fail_molecules.merge(all_extended[cols_to_merge], on=merge_cols, how='left')
                         for col in pass_cols:
                             if col in fail_molecules.columns:
                                 fail_molecules[col] = fail_molecules[col].fillna(False)
                 
                 id_cols = ['smiles', 'model_name', 'mol_idx']
                 pass_cols_final = [col for col in fail_molecules.columns if col.startswith('pass_') or col == 'pass']
-                fail_cols = id_cols + pass_cols_final
+                fail_cols = [c for c in id_cols if c in fail_molecules.columns] + pass_cols_final
                 fail_molecules[fail_cols].to_csv(folder_to_save + 'failStructFiltersSMILES.csv', index=False)
         except Exception as e:
             logger.warning(f"Could not create failStructFiltersSMILES.csv: {e}")
@@ -1023,18 +938,7 @@ def filter_data(config, prefix):
 
 
 def inject_identity_columns_to_all_csvs(config, prefix):
-    base_folder = process_path(config['folder_to_save'])
-    id_path = base_folder + 'Descriptors/passDescriptorsSMILES.csv'
-    if not os.path.exists(id_path):
-        return
-
-    try:
-        id_df = pd.read_csv(id_path)
-        keep_cols = ['smiles', 'model_name', 'mol_idx']
-        id_df = id_df[keep_cols].copy()
-    except Exception:
-        return
-
+    """Ensure identity columns are ordered consistently in all CSVs."""
     subdir = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
     target_folder = process_path(config['folder_to_save'], key_word=subdir)
 
@@ -1042,21 +946,13 @@ def inject_identity_columns_to_all_csvs(config, prefix):
     for path in csv_paths:
         try:
             df = pd.read_csv(path)
-            if 'smiles' not in df.columns or 'model_name' not in df.columns:
+            if 'smiles' not in df.columns:
                 continue
-            right = id_df.rename(columns={'mol_idx': 'mol_idx_id'})
-            merged = df.merge(right, on=['smiles', 'model_name'], how='left')
-
-            if 'mol_idx_id' in merged.columns:
-                mask = merged['mol_idx'].isna()
-                merged.loc[mask, 'mol_idx'] = merged.loc[mask, 'mol_idx_id']
-                merged = merged.drop(columns=['mol_idx_id'])
 
             identity_order = ['smiles', 'model_name', 'mol_idx']
-            ordered = [c for c in identity_order if c in merged.columns] + [c for c in merged.columns if c not in identity_order]
-            merged = merged[ordered]
-
-            merged.to_csv(path, index=False)
+            ordered = [c for c in identity_order if c in df.columns] + [c for c in df.columns if c not in identity_order]
+            df = df[ordered]
+            df.to_csv(path, index=False)
         except Exception:
             continue
 
@@ -1164,7 +1060,7 @@ def _create_main_filter_plot(filter_failures, file_path):
 
 def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
     """Create individual plots for each filter showing failure reasons."""
-    
+    пше ыеф
     for filter_name, stats in filter_failures.items():
         if stats['failures'] > 0:
             reasons_data = filter_reasons.get(filter_name, [])
