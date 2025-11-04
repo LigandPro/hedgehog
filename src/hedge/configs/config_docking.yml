@@ -21,13 +21,14 @@ smina_ini: src/hedge/stages/docking/smina_example.ini
 #   verbose = true
 
 ## GNINA direct settings
+
 gnina_bin: /mnt/ligandpro/soft/docking/gnina/gnina
 gnina_env_path: /mnt/ligandpro/soft/docking/gnina/env
 gnina_autobox_ligand: data/test/05C_from_7EW9.sdf
 gnina_autobox_add: 4
 gnina_cpu: 32
 gnina_seed: 42
-gnina_extra_args: --log score.log
+gnina_extra_args: --log score.log #TODO: добавить возможность настройки --cnn_scoring refinement
 gnina_output_dir: Docking/gnina_results
 ## If no reference ligand provided, you can set the center and size of the box manually with
 # center: [-1.258, -12.520, 11.390]
