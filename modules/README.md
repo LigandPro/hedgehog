@@ -67,10 +67,10 @@ conda install -c conda-forge lilly-medchem-rules
 2. **Download public data** (model files):
     ```bash
     cd retrosynthesis/aizynthfinder
-    mkdir -p public data
+    mkdir -p public aizynthfinder/data
     # Using uv run
     uv run python -m aizynthfinder.tools.download_public_data ./public
-    mv ../../../src/hedge/stages/synthesis/logging.yml data/
+    mv ../../../src/hedge/stages/synthesis/logging.yml aizynthfinder/data/
     ```
 3. **Continue environment setup** following main [README.md](/README.md)
 
