@@ -48,7 +48,7 @@ You are ready to use **🦔 HEDGE** for your purpose!
 # Every time you work activate conda environment for not-in-PyPI packages
 conda activate hedge_env
 
-# Run full pipeline
+# Run full pipeline on a proposed small test data from `data/test/`
 uv run hedge run
 
 # Run specific stage
