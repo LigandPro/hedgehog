@@ -40,7 +40,7 @@ def main(config):
         logger.warning("No molecules to process for synthesis analysis")
         return
     
-    scored_df = calculate_synthesis_scores(input_df, folder_to_save)
+    scored_df = calculate_synthesis_scores(input_df, folder_to_save, config_synthesis)
     scores_output = output_folder / 'synthesis_scores.csv'
     scored_df_ordered = _order_identity_columns(scored_df)
     scored_df_ordered.to_csv(scores_output, index=False)

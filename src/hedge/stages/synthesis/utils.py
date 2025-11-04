@@ -271,7 +271,7 @@ def _calculate_syba_score(smiles):
         return np.nan
 
 
-def _calculate_ra_score(smiles, output_dir=None):
+def _calculate_ra_score(smiles, output_dir=None, config=None):
     """Calculate Retrosynthetic Accessibility score.
     
     Uses MolScore implementation.
@@ -313,6 +313,40 @@ def _calculate_ra_score(smiles, output_dir=None):
                 output_dir = str(default_output)
             
             rascore_config_data['output_dir'] = str(output_dir)
+            
+            conda_prefix = None
+            if config and isinstance(config, dict):
+                conda_prefix = config.get('rascore_conda_prefix')
+            
+            if not conda_prefix and 'CONDA_PREFIX' in os.environ:
+                conda_prefix = os.environ['CONDA_PREFIX']
+            
+            if not conda_prefix and hasattr(sys, 'executable') and sys.executable:
+                python_path = Path(sys.executable)
+                if 'envs' in str(python_path):
+                    parts = python_path.parts
+                    envs_idx = None
+                    for i, part in enumerate(parts):
+                        if part == 'envs':
+                            envs_idx = i
+                            break
+                    if envs_idx is not None:
+                        conda_prefix = str(Path(*parts[:envs_idx+2]))
+            
+            if conda_prefix:
+                env_name = Path(conda_prefix).name if Path(conda_prefix).exists() else None
+                if env_name == 'rascore-env':
+                    scoring_funcs = rascore_config_data.get('scoring_functions', [])
+                    for func in scoring_funcs:
+                        if func.get('name') == 'RAScore_XGB':
+                            params = func.get('parameters', {})
+                            params['conda_prefix'] = conda_prefix
+                            logger.debug(f'Using existing rascore-env: {conda_prefix}')
+                            break
+                else:
+                    logger.debug('MolScore will create rascore-env automatically (requires Python 3.7)')
+            else:
+                logger.debug('MolScore will create rascore-env automatically from environment.yml')
             
             output_dir_path = Path(output_dir)
             output_dir_path.mkdir(parents=True, exist_ok=True)
@@ -364,11 +398,13 @@ def _calculate_ra_score(smiles, output_dir=None):
         return np.nan
 
 
-def calculate_synthesis_scores(df, folder_to_save=None):
+def calculate_synthesis_scores(df, folder_to_save=None, config=None):
     """Calculate SA, SYBA, and RA scores for all molecules in DataFrame.
     
     Args:
         df: DataFrame with 'smiles' column
+        folder_to_save: Optional folder to save RA score outputs
+        config: Optional config dict (can contain 'rascore_conda_prefix' for manual override)
         
     Returns:
         DataFrame with added columns: sa_score, syba_score, ra_score
@@ -387,7 +423,7 @@ def calculate_synthesis_scores(df, folder_to_save=None):
     
     result_df['sa_score'] = result_df['smiles'].apply(_calculate_sa_score)
     result_df['syba_score'] = result_df['smiles'].apply(_calculate_syba_score)
-    result_df['ra_score'] = result_df['smiles'].apply(lambda smi: _calculate_ra_score(smi, ra_output_dir))
+    result_df['ra_score'] = result_df['smiles'].apply(lambda smi: _calculate_ra_score(smi, ra_output_dir, config))
     
     for score_name in ['sa_score', 'syba_score', 'ra_score']:
         valid_scores = result_df[score_name].dropna()
