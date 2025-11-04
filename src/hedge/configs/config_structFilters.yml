@@ -1,0 +1,112 @@
+run: True
+run_before_descriptors: True 
+filter_data: True 
+
+alerts_data_path: "data/common_alerts_collection.csv"
+
+calculate_common_alerts: True
+include_rulesets:
+  - "Dundee" 
+  - "BMS" 
+  - "Inpharmatica" 
+  - "LD50-Oral"  
+  - "Glaxo" 
+  - "PAINS" 
+  - "AlphaScreen-Hitters"  
+  - "Frequent-Hitter" 
+  - "Chelator" 
+  - "Toxicophore"  
+  - "Skin" 
+  - "Reactive-Unstable-Toxic" 
+  - "SureChEMBL"
+  - "Electrophilic" 
+  - "Genotoxic-Carcinogenicity" 
+  - "MLSMR"
+  - "LINT" 
+  - "GST-Hitters" 
+  - "Non-Genotoxic-Carcinogenicity" 
+  - "HIS-Hitters" 
+  - "LuciferaseInhibitor" 
+
+exclude_descriptions:
+  "Dundee":
+    - "Aliphatic long chain"
+    - "isolated alkene"
+    - "triple bond"
+  "Toxicophore":
+    - "acetylene_alkyne"
+    - "acyclic_alkyne"
+    - "alkynes"
+    - "masked_aniline"
+    - "adamantane"
+    - "imidazole"
+    - "michael_acceptors_double"
+    - "michael_acceptors_triple"
+    - "n_acylated_azoles"
+    - "pyrrole"
+  "Skin":
+    - "Activated alkine"
+    - "Tertiary alkyl"
+    - "Aromatic primary and secondary amines"
+    - "Aromatic amines"
+    - "Esters of aromatic alcohols and their thio and aza analogues"
+    - "Haloethyl-substituted aromatic compounds"
+    - "Ortho-disubstituted benzenes"
+  "Reactive-Unstable-Toxic":
+    - "Aldimines and ketimines"
+    - "Alkyl Halides"
+    - "Glutarimides"
+    - "Activated Halides"
+    - "Activated halides (o-nitro substituted haloaromatics)"
+    - "Activated halides (p-nitro substituted haloaromatics)"
+    - "Activated halides (α-halogen substituted N-heterocycles)"
+    - "Activated halides (γ-halogen substituted N-heterocycles)"
+    - "Activated haloaromatics"
+    - "Aminals"
+    - "Enamines"
+    - "Halomethyl amines"
+    - "Halomethyl ethers"
+    - "Other undesirable policyclic (adamantane derivatives)"
+    - "Oxetanes"
+    - "Oxetanes, thietanes"
+    - "Polycyclic 4 fused rings and more"
+    - "Simple anilines and phenols"
+  "SureChEMBL":
+    - "aminothiazole"
+  "Electrophilic":
+    - "Acetates"
+    - "Alkyl halides"
+    - "Ethanolamines"
+    - "Morpholines"
+    - "Poly aromatic hydrocarbons"
+  "Genotoxic-Carcinogenicity":
+    - "Aromatic N-acyl amine"
+    - "Aromatic amines"
+    - "Derivatives of urethane (carbamates)"
+    - "Halogenated methanes"
+    - "Polycyclic aromatic hydrocarbons"
+    - "Polycyclic aromatic system (general)"
+    - "Polycyclic aromatic system (specific)"
+    - "Secondary aromatic acetamides and formamides"
+    - "Tertiary aromatic amines"
+    - "Aromatic amines"
+  "LINT":
+    - "high halogen content (>3)"
+  "Non-Genotoxic-Carcinogenicity":
+    - "Halogenated benzene"
+    - "Heterocyclic Polycyclic Aromatic Hydrocarbons"
+    - "Polycyclic Aromatic Hydrocarbons"
+  "HIS-Hitters":
+    - "Picolylamines_A"
+
+calculate_molgraph_stats: True
+
+calculate_molcomplexity: True
+
+calculate_NIBR: True
+nibr_scheduler: threads
+
+calculate_bredt: True
+
+calculate_lilly: True 
+lilly_scheduler: threads
