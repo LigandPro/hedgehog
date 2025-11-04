@@ -45,7 +45,7 @@ You are ready to use **🦔 HEDGE** for your purpose!
 **Usage**
 
 ```bash
-# Every time you work activate conda environment for non PyPI packages
+# Every time you work activate conda environment for not-in-PyPI packages
 conda activate hedge_env
 
 # Run full pipeline
