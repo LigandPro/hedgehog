@@ -12,8 +12,7 @@ from rdkit.Chem import AllChem as Chem
 
 from medchem.rules._utils import n_fused_aromatic_rings
 
-from logger_config import logger
-from configs.config_utils import load_config
+from hedge.configs.logger import logger, load_config
 
 # Disable RDKit warnings
 RDLogger.DisableLog('rdApp.*')
@@ -22,8 +21,6 @@ rdBase.DisableLog('rdApp.*')
 
 def process_path(folder_to_save, key_word=None):
     """
-    Process and create folder path with optional subfolder.
-    
     Args:
         folder_to_save: Base folder path
         key_word: Optional subfolder name
@@ -110,7 +107,7 @@ def compute_metrics(df, save_path, config=None):
     model_name and mol_idx are already in df from sampledMols.csv.
     
     Args:
-        df: DataFrame with molecules (must have 'smiles', 'model_name', optionally 'mol_idx')
+        df: DataFrame with molecules (must have 'smiles', 'model_name', 'mol_idx')
         save_path: Output folder path
         config: Configuration dictionary
         
@@ -176,8 +173,7 @@ def compute_metrics(df, save_path, config=None):
         else:
             skipped_molecules.append((smiles, model_name, mol_idx))
 
-    save_path = process_path(save_path, key_word='Descriptors')
-
+    save_path = process_path(save_path)
     if skipped_molecules:
         logger.warning(f'Skipped {len(skipped_molecules)} molecules that failed to parse')
         skipped_df = pd.DataFrame({'smiles': [s for s, _, _ in skipped_molecules], 
@@ -200,9 +196,9 @@ def filter_molecules(df, borders, folder_to_save):
     Args:
         df: DataFrame with computed descriptors
         borders: Dictionary with min/max thresholds for each descriptor
-        folder_to_save: Output folder path
+        folder_to_save: Output folder path (should already include 'Descriptors' subfolder)
     """
-    folder_to_save = process_path(folder_to_save, key_word='Descriptors')
+    folder_to_save = process_path(folder_to_save)
     logger.info(f'Borders: {borders}')
     filtered_data = {}
     for col in df.columns.tolist():
@@ -363,11 +359,11 @@ def draw_filtered_mols(df, folder_to_save, config):
     
     Args:
         df: DataFrame with computed descriptors
-        folder_to_save: Output folder path
+        folder_to_save: Output folder path (should already include 'Descriptors' subfolder)
         config: Configuration dictionary
     """
     is_multi = df['model_name'].nunique(dropna=True) > 1
-    folder_to_save = process_path(folder_to_save, key_word='Descriptors')
+    folder_to_save = process_path(folder_to_save)
     
     descriptors_config = load_config(config['config_descriptors'])
     borders = descriptors_config['borders']

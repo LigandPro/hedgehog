@@ -1,8 +1,7 @@
 import os 
 
-from configs.config_utils import load_config
-from logger_config import logger
-from src.hedge.stages.descriptors.utils import compute_metrics, filter_molecules, draw_filtered_mols, process_path
+from hedge.configs.logger import logger, load_config
+from hedge.stages.descriptors.utils import compute_metrics, filter_molecules, draw_filtered_mols, process_path
 
 
 def main(data, config, subfolder):
@@ -19,24 +18,26 @@ def main(data, config, subfolder):
     folder_to_save = process_path(config['folder_to_save'])
     
     if subfolder is not None:
-        folder_to_save = folder_to_save + process_path(subfolder)
-        folder_to_save = process_path(folder_to_save)
+        if not subfolder.endswith('/'):
+            subfolder = subfolder + '/'
+        folder_to_save = folder_to_save + subfolder
+        os.makedirs(folder_to_save, exist_ok=True)
 
     config_descriptors = load_config(config['config_descriptors'])
     borders = config_descriptors['borders']
     
-    os.makedirs(folder_to_save + 'Descriptors', exist_ok=True)
-    if not os.path.exists(folder_to_save):
-        os.makedirs(folder_to_save)
+    descriptors_folder = folder_to_save + 'Descriptors/'
+    os.makedirs(descriptors_folder, exist_ok=True)
 
     if data is None or len(data) == 0:
         logger.warning('No molecules provided for descriptor calculation. Skipping.')
         return None
 
-    metrics_df = compute_metrics(data, folder_to_save, config=config)  
+    metrics_df = compute_metrics(data, descriptors_folder, config=config)  
 
     if config_descriptors['filter_data']:
-        filter_molecules(metrics_df, borders, folder_to_save)
-        draw_filtered_mols(metrics_df, folder_to_save, config)
+        filter_molecules(metrics_df, borders, descriptors_folder)
+        draw_filtered_mols(metrics_df, descriptors_folder, config)
     
     return metrics_df
+    
