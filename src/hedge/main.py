@@ -203,23 +203,39 @@ def run(
                                           help="Run only a specific pipeline stage. Please provide also --mols argument to specify the molecules path. If no --mols provided, the pipeline will use the molecules from the config file.",
                                           case_sensitive=False
                                          ),
+    reuse_folder: bool = typer.Option(False,
+                                      "--reuse",
+                                      help="Force reuse of existing results folder (useful for reruns)"
+                                     ),
+    force_new_folder: bool = typer.Option(False,
+                                          "--force-new",
+                                          help="Force creation of a new results folder even when rerunning stages"
+                                         ),
 ):
     """
     Run the molecular analysis pipeline.
-    
+
     Examples:
-    
+
     \b
-    # Run full pipeline
-    uv run python main.py run
-    
+    # Run full pipeline (auto-creates new folder if results exist)
+    uv run hedge run
+
     \b
-    # Run only descriptors stage
-    uv run python main.py run --stage descriptors
-    
+    # Rerun specific stage (auto-reuses existing folder)
+    uv run hedge run --stage docking
+
     \b
-    # Override molecules path
-    uv run python main.py run --mols data/*.csv
+    # Run stage with new molecules (auto-creates new folder)
+    uv run hedge run --stage descriptors --mols data/*.csv
+
+    \b
+    # Force reuse existing folder
+    uv run hedge run --reuse
+
+    \b
+    # Force create new folder even for stage rerun
+    uv run hedge run --stage docking --force-new
     """
 
     # Display banner
@@ -241,15 +257,36 @@ def run(
         config_dict[STAGE_OVERRIDE_KEY] = stage.value
         logger.info(f"[#B29EEE]Override:[/#B29EEE] Running only stage: [bold]{stage.value}[/bold]")
 
-    # Get unique folder name to avoid overwriting existing results
-    folder_to_save = _get_unique_results_folder(Path(config_dict['folder_to_save']))
+    # Validate conflicting flags
+    if reuse_folder and force_new_folder:
+        logger.error("[red]Error:[/red] Cannot use --reuse and --force-new together. Please choose one.")
+        raise typer.Exit(code=1)
 
-    # Log if we're using a different folder
+    # Determine folder strategy based on flags and context
     original_folder = Path(config_dict['folder_to_save'])
-    if folder_to_save != original_folder:
-        logger.info(f"[#B29EEE]Note:[/#B29EEE] Folder '{original_folder}' already contains results. Using '{folder_to_save}' instead.")
 
-    # Update config with the unique folder path
+    if reuse_folder:
+        # Explicit reuse: always use configured folder
+        folder_to_save = original_folder
+        logger.info(f"[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '{folder_to_save}' (--reuse flag)")
+    elif force_new_folder:
+        # Explicit new: always create incremented folder
+        folder_to_save = _get_unique_results_folder(original_folder)
+        if folder_to_save != original_folder:
+            logger.info(f"[#B29EEE]Folder mode:[/#B29EEE] Creating new folder '{folder_to_save}' (--force-new flag)")
+    else:
+        # Automatic logic (Hybrid Variant 4)
+        if stage and not generated_mols_path:
+            # Stage rerun on existing data → reuse folder
+            folder_to_save = original_folder
+            logger.info(f"[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '{folder_to_save}' for stage execution")
+        else:
+            # Full run OR stage with new molecules → create new folder
+            folder_to_save = _get_unique_results_folder(original_folder)
+            if folder_to_save != original_folder:
+                logger.info(f"[#B29EEE]Folder mode:[/#B29EEE] Folder '{original_folder}' contains results. Using '{folder_to_save}' instead.")
+
+    # Update config with the chosen folder path
     config_dict['folder_to_save'] = str(folder_to_save)
 
     ligand_preparation_tool = config_dict.get('ligand_preparation_tool')
