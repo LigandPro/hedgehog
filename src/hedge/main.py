@@ -31,6 +31,52 @@ def _validate_input_path(input_path):
     return input_path_obj if input_path_obj.exists() else None
 
 
+def _get_unique_results_folder(base_folder):
+    """
+    Generate a unique folder name by appending a number if the folder already exists.
+
+    If the base folder exists and contains any files or directories, creates a new folder
+    with an incremented suffix (e.g., results -> results1 -> results2).
+
+    Args:
+        base_folder: Path object representing the base folder
+
+    Returns:
+        Path object with a unique folder name
+    """
+    base_folder = Path(base_folder)
+
+    # If folder doesn't exist, return as is
+    if not base_folder.exists():
+        return base_folder
+
+    # Check if folder exists and is not empty
+    if base_folder.exists() and any(base_folder.iterdir()):
+        # Extract base name and try to find a counter suffix
+        base_name = base_folder.name
+        parent = base_folder.parent
+
+        # Try to extract existing counter from base name
+        import re
+        match = re.match(r'^(.+?)(\d+)$', base_name)
+        if match:
+            name_without_counter = match.group(1)
+            start_counter = int(match.group(2)) + 1
+        else:
+            name_without_counter = base_name
+            start_counter = 1
+
+        # Find the next available folder name
+        counter = start_counter
+        while True:
+            new_folder = parent / f"{name_without_counter}{counter}"
+            if not new_folder.exists() or not any(new_folder.iterdir()):
+                return new_folder
+            counter += 1
+
+    return base_folder
+
+
 def preprocess_input_with_rdkit(input_path, folder_to_save, logger):
     """
     Preprocess input CSV file using RDKit (fallback when ligand_preparation_tool is not provided).
@@ -194,8 +240,17 @@ def run(
     if stage:
         config_dict[STAGE_OVERRIDE_KEY] = stage.value
         logger.info(f"[#B29EEE]Override:[/#B29EEE] Running only stage: [bold]{stage.value}[/bold]")
-    
-    folder_to_save = Path(config_dict['folder_to_save'])
+
+    # Get unique folder name to avoid overwriting existing results
+    folder_to_save = _get_unique_results_folder(Path(config_dict['folder_to_save']))
+
+    # Log if we're using a different folder
+    original_folder = Path(config_dict['folder_to_save'])
+    if folder_to_save != original_folder:
+        logger.info(f"[#B29EEE]Note:[/#B29EEE] Folder '{original_folder}' already contains results. Using '{folder_to_save}' instead.")
+
+    # Update config with the unique folder path
+    config_dict['folder_to_save'] = str(folder_to_save)
 
     ligand_preparation_tool = config_dict.get('ligand_preparation_tool')
     original_input_path = config_dict.get('generated_mols_path') or generated_mols_path
