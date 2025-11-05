@@ -47,12 +47,19 @@ def assign_mol_idx(df: pl.DataFrame, run_base: Path, logger: Optional[object] = 
     _save_model_index_map(run_base, model_map)
 
     df = df.with_columns(
-        pl.col(MODEL_NAME_COLUMN).replace(model_map).alias(TEMP_MODEL_NUMBER),
-        (pl.int_range(pl.len()).over(MODEL_NAME_COLUMN) + 1).alias(TEMP_COUNTER)
+        pl.col(MODEL_NAME_COLUMN)
+        .replace(model_map)
+        .cast(pl.Int64)
+        .alias(TEMP_MODEL_NUMBER),
+        (pl.int_range(pl.len()).over(MODEL_NAME_COLUMN) + 1).alias(TEMP_COUNTER),
     )
 
     df = df.with_columns(
-        pl.format("LP-{:04d}-{:05d}", pl.col(TEMP_MODEL_NUMBER), pl.col(TEMP_COUNTER)).alias(MOL_IDX_COLUMN)
+        pl.format(
+            "LP-{}-{}",
+            pl.col(TEMP_MODEL_NUMBER).cast(pl.Utf8).str.zfill(MODEL_NUMBER_WIDTH),
+            pl.col(TEMP_COUNTER).cast(pl.Utf8).str.zfill(COUNTER_WIDTH),
+        ).alias(MOL_IDX_COLUMN)
     )
     df = df.drop([TEMP_MODEL_NUMBER, TEMP_COUNTER])
 
@@ -70,5 +77,4 @@ def _save_model_index_map(run_base: Path, model_map: dict) -> None:
             json.dump(model_map, f, indent=2, sort_keys=True)
     except Exception:
         pass
-
 

@@ -1,4 +1,6 @@
 import os
+import json
+import ast
 
 import numpy as np
 import polars as pl
@@ -18,6 +20,81 @@ from hedge.configs.logger import logger, load_config
 # Disable RDKit warnings
 RDLogger.DisableLog('rdApp.*')
 rdBase.DisableLog('rdApp.*')
+
+
+def _stringify_nested_value(value):
+    """Convert nested polars values (Series, list, struct) to a JSON string."""
+    if value is None:
+        return None
+    if hasattr(value, 'to_list'):
+        value = value.to_list()
+    return json.dumps(value)
+
+
+def write_csv_safe(df: pl.DataFrame, path: str) -> None:
+    """
+    Write a DataFrame to CSV, stringifying nested columns first so Polars can serialize them.
+    """
+    nested_cols = [
+        name for name, dtype in zip(df.columns, df.dtypes)
+        if isinstance(dtype, (pl.List, pl.Struct, pl.Array))
+    ]
+    if nested_cols:
+        df = df.with_columns(
+            [
+                pl.col(name).map_elements(
+                    _stringify_nested_value, return_dtype=pl.Utf8
+                ).alias(name)
+                for name in nested_cols
+            ]
+        )
+    df.write_csv(path)
+
+
+def _chars_pass(value, allowed_chars) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, list):
+        items = value
+    else:
+        try:
+            parsed = ast.literal_eval(value)
+            items = parsed if isinstance(parsed, (list, tuple, set)) else [parsed]
+        except Exception:
+            items = [value]
+    try:
+        return all(str(char).strip() in allowed_chars for char in items)
+    except Exception:
+        return False
+
+
+def _ring_size_pass(value, min_border, max_border) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, list):
+        items = value
+    else:
+        try:
+            parsed = ast.literal_eval(value)
+            items = parsed if isinstance(parsed, (list, tuple, set)) else [parsed]
+        except Exception:
+            items = [value]
+
+    def _within_bounds(size):
+        try:
+            size_val = float(size)
+        except Exception:
+            return False
+        if min_border is not None and size_val < float(min_border):
+            return False
+        if max_border is not None and max_border != 'inf' and size_val > float(max_border):
+            return False
+        return True
+
+    try:
+        return all(_within_bounds(size) for size in items)
+    except Exception:
+        return False
 
 
 def process_path(folder_to_save, key_word=None):
@@ -188,13 +265,13 @@ def compute_metrics(df, save_path, config=None):
         if any(idx is not None for _, _, idx in skipped_molecules):
             skipped_data['mol_idx'] = [idx for _, _, idx in skipped_molecules]
         skipped_df = pl.DataFrame(skipped_data)
-        skipped_df.write_csv(save_path + 'skipped_molecules.csv')
+        write_csv_safe(skipped_df, save_path + 'skipped_molecules.csv')
 
     # Convert dict to list of records
     metrics_list = [{'smiles': smiles, **metrics_dict} for smiles, metrics_dict in metrics.items()]
     metrics_df = pl.DataFrame(metrics_list)
     metrics_df = order_identity_columns(metrics_df)
-    metrics_df.write_csv(save_path + 'descriptors_all.csv')
+    write_csv_safe(metrics_df, save_path + 'descriptors_all.csv')
     return metrics_df  
 
 
@@ -209,39 +286,71 @@ def filter_molecules(df, borders, folder_to_save):
     """
     folder_to_save = process_path(folder_to_save)
     logger.info(f'Borders: {borders}')
-    filtered_data = {}
-    for col in df.columns.tolist():
-        col_in_borders = any(col.lower() in k.lower() for k in borders.keys())
+    identity_cols = ['smiles', 'model_name', 'mol_idx']
+    allowed_chars = borders.get('allowed_chars', [])
 
-        if col in ['smiles', 'model_name', 'mol_idx']:
-            filtered_data[col] = df[col]
+    select_exprs = []
+    descriptor_exprs = []
 
-        elif col_in_borders:
-            filtered_data[col] = df[col]
+    for col in df.columns:
+        col_lower = col.lower()
+        col_in_borders = any(col_lower in key.lower() for key in borders.keys())
 
-            relevant_keys = [k for k in borders.keys() if col.lower() in k.lower()]
-            min_border = next((borders[k] for k in relevant_keys if 'min' in k), None)
-            max_border = next((borders[k] for k in relevant_keys if 'max' in k), None)
+        if col in identity_cols:
+            select_exprs.append(pl.col(col))
+            continue
 
-            if col == 'chars':
-                filtered_data[f'{col}_pass'] = df[col].apply(lambda x: 
-                                                                all(str(char).strip() in borders['allowed_chars'] 
-                                                                    for char in (x if isinstance(x, list) else eval(x))))
-            elif col == 'ring_size':
-                filtered_data[f'{col}_pass'] = df[col].apply(lambda x: 
-                                                                all(float(ring_size) >= min_border and float(ring_size) <= max_border 
-                                                                    for ring_size in (x if isinstance(x, list) else eval(x))))
-            elif col == 'syba_score':
-                if max_border == 'inf':
-                    filtered_data[f'{col}_pass'] = df[col] >= min_border
-                else:
-                    filtered_data[f'{col}_pass'] = (df[col] >= min_border) & (df[col] <= max_border)
-            else:
-                filtered_data[f'{col}_pass'] = (df[col] >= min_border) & (df[col] <= max_border)
+        if not col_in_borders:
+            continue
 
-    filtered_data_withFalse = pl.DataFrame(filtered_data)
+        select_exprs.append(pl.col(col))
+        relevant_keys = [k for k in borders.keys() if col_lower in k.lower()]
+        min_border = next((borders[k] for k in relevant_keys if 'min' in k), None)
+        max_border = next((borders[k] for k in relevant_keys if 'max' in k), None)
+        pass_col = f'{col}_pass'
+
+        if col == 'chars' and allowed_chars:
+            descriptor_exprs.append(
+                pl.col(col)
+                .map_elements(lambda x, allowed=allowed_chars: _chars_pass(x, allowed), return_dtype=pl.Boolean)
+                .fill_null(False)
+                .alias(pass_col)
+            )
+        elif col == 'ring_size':
+            descriptor_exprs.append(
+                pl.col(col)
+                .map_elements(
+                    lambda x, min_b=min_border, max_b=max_border: _ring_size_pass(x, min_b, max_b),
+                    return_dtype=pl.Boolean,
+                )
+                .fill_null(False)
+                .alias(pass_col)
+            )
+        elif col == 'syba_score':
+            expr = pl.lit(True)
+            if min_border is not None:
+                expr = expr & (pl.col(col) >= min_border)
+            if max_border is not None and max_border != 'inf':
+                expr = expr & (pl.col(col) <= max_border)
+            descriptor_exprs.append(expr.cast(pl.Boolean).fill_null(False).alias(pass_col))
+        else:
+            expr = pl.lit(True)
+            if min_border is not None:
+                expr = expr & (pl.col(col) >= min_border)
+            if max_border is not None and max_border != 'inf':
+                expr = expr & (pl.col(col) <= max_border)
+            descriptor_exprs.append(expr.cast(pl.Boolean).fill_null(False).alias(pass_col))
+
+    if select_exprs:
+        filtered_data_withFalse = df.select(select_exprs)
+    else:
+        filtered_data_withFalse = df.clone()
+
+    if descriptor_exprs:
+        filtered_data_withFalse = filtered_data_withFalse.with_columns(descriptor_exprs)
+
     filtered_data_withFalse = order_identity_columns(filtered_data_withFalse)
-    filtered_data_withFalse.write_csv(folder_to_save + 'pass_flags.csv')
+    write_csv_safe(filtered_data_withFalse, folder_to_save + 'pass_flags.csv')
     pass_filters = drop_false_rows(filtered_data_withFalse, borders)
 
     if len(pass_filters) > 0:
@@ -252,10 +361,11 @@ def filter_molecules(df, borders, folder_to_save):
 
         ordered_cols = id_cols + sorted(descriptor_cols)
         ordered_cols = [col for col in ordered_cols if col in pass_filters.columns]
-        pass_filters.select(ordered_cols).write_csv(folder_to_save + 'descriptors_passed.csv')
+        write_csv_safe(pass_filters.select(ordered_cols), folder_to_save + 'descriptors_passed.csv')
 
-        cols = ['smiles', 'model_name', 'mol_idx']
-        pass_filters.select(cols).write_csv(folder_to_save + 'filtered_molecules.csv')
+        cols = [col for col in ['smiles', 'model_name', 'mol_idx'] if col in pass_filters.columns]
+        if cols:
+            write_csv_safe(pass_filters.select(cols), folder_to_save + 'filtered_molecules.csv')
     else:
         logger.warning('No molecules pass Descriptors Filters')
 
@@ -300,10 +410,10 @@ def filter_molecules(df, borders, folder_to_save):
                         ordered_cols.append(pass_col)
                 
                 ordered_cols = [col for col in ordered_cols if col in fail_filters.columns]
-                fail_filters.select(ordered_cols).write_csv(folder_to_save + 'descriptors_failed.csv')
+                write_csv_safe(fail_filters.select(ordered_cols), folder_to_save + 'descriptors_failed.csv')
 
                 id_cols_smiles = ['smiles', 'model_name', 'mol_idx']
-                fail_filters.select(id_cols_smiles).write_csv(folder_to_save + 'failed_molecules.csv')
+                write_csv_safe(fail_filters.select(id_cols_smiles), folder_to_save + 'failed_molecules.csv')
     else:
         all_computed_path = folder_to_save + 'descriptors_all.csv'
         if os.path.exists(all_computed_path):
@@ -341,10 +451,10 @@ def filter_molecules(df, borders, folder_to_save):
                     ordered_cols.append(pass_col)
             
             ordered_cols = [col for col in ordered_cols if col in fail_filters.columns]
-            fail_filters.select(ordered_cols).write_csv(folder_to_save + 'descriptors_failed.csv')
+            write_csv_safe(fail_filters.select(ordered_cols), folder_to_save + 'descriptors_failed.csv')
 
             id_cols_smiles = ['smiles', 'model_name', 'mol_idx']
-            fail_filters.select(id_cols_smiles).write_csv(folder_to_save + 'failed_molecules.csv')
+            write_csv_safe(fail_filters.select(id_cols_smiles), folder_to_save + 'failed_molecules.csv')
 
     id_path = folder_to_save + 'filtered_molecules.csv'
     if os.path.exists(id_path):
@@ -355,13 +465,13 @@ def filter_molecules(df, borders, folder_to_save):
         if os.path.exists(per_path):
             per = pl.read_csv(per_path)
             per = order_identity_columns(per)
-            per.write_csv(per_path)
+            write_csv_safe(per, per_path)
 
         flags_path = folder_to_save + 'pass_flags.csv'
         if os.path.exists(flags_path):
             flags = pl.read_csv(flags_path)
             flags = order_identity_columns(flags)
-            flags.write_csv(flags_path)
+            write_csv_safe(flags, flags_path)
 
 
 def draw_filtered_mols(df, folder_to_save, config):
@@ -375,7 +485,7 @@ def draw_filtered_mols(df, folder_to_save, config):
     """
     # Convert polars to pandas for plotting compatibility
     if isinstance(df, pl.DataFrame):
-        df = df.to_pandas()
+        df = pd.DataFrame(df.to_dict(as_series=False))
 
     is_multi = df['model_name'].nunique(dropna=True) > 1
     folder_to_save = process_path(folder_to_save)

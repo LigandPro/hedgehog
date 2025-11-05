@@ -1,6 +1,7 @@
 import os
 import glob
 import numpy as np
+import pandas as pd
 import polars as pl
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -31,6 +32,71 @@ except ImportError:
     LillyDemeritsFilters = None
 
 from hedge.configs.logger import logger, load_config
+
+_ALERT_DATA = None
+
+
+def _init_structural_alerts_worker(alert_df: pd.DataFrame) -> None:
+    """Initializer for multiprocessing workers to share alert data globally."""
+    global _ALERT_DATA
+    _ALERT_DATA = alert_df
+
+
+def _aggregate_alert_group(group: pd.DataFrame) -> pd.Series:
+    """Aggregate alert matches and reasons per rule set."""
+    matches_lists = list(group["matches"])
+    has_matches = [len(m) > 0 for m in matches_lists]
+    if any(has_matches):
+        matches = [match for matches in matches_lists for match in matches]
+        mask = pd.Series(has_matches, index=group.index)
+        reasons = ";".join(group.loc[mask, "description"].fillna('').tolist())
+    else:
+        matches = ()
+        reasons = ""
+    return pd.Series(
+        {
+            "matches": matches,
+            "reasons": reasons,
+            "pass_filter": not any(has_matches),
+        }
+    )
+
+
+def _structural_alerts_worker(mol) -> dict:
+    """Worker that computes structural alert flags for a single molecule."""
+    if _ALERT_DATA is None:
+        raise RuntimeError("Structural alerts worker not initialized with alert data.")
+
+    result = {"mol": mol, "smiles": dm.to_smiles(mol) if mol is not None else None}
+
+    if mol is None:
+        result["pass"] = False
+        result["pass_any"] = False
+        return result
+
+    df = _ALERT_DATA.copy()
+    matches = []
+    for pattern in df["mol_pattern"]:
+        if pattern is None:
+            matches.append(())
+        else:
+            matches.append(mol.GetSubstructMatches(pattern))
+    df["matches"] = matches
+
+    grouped = df.groupby("rule_set_name").apply(_aggregate_alert_group).reset_index()
+
+    pass_flags = []
+    for _, g_row in grouped.iterrows():
+        name = g_row["rule_set_name"]
+        passed = bool(g_row["pass_filter"])
+        result[f"pass_{name}"] = passed
+        result[f"reasons_{name}"] = g_row["reasons"]
+        pass_flags.append(passed)
+
+    result["pass"] = all(pass_flags) if pass_flags else True
+    result["pass_any"] = any(pass_flags) if pass_flags else False
+    return result
+
 
 def camelcase(any_str):
     return ''.join(word.capitalize() for word in any_str.split('_'))
@@ -247,71 +313,32 @@ def filter_function_applier(filter_name):
 
 
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
-    logger.info(f"Calculating Common Alerts...")
-    def _apply_alerts(row):
-        mol = row["mol"]
-        row["smiles"] = dm.to_smiles(mol) if mol is not None else None
-
-        config_structFilters = load_config(config['config_structFilters'])
-        alert_data = filter_alerts(config_structFilters)
-        df = alert_data.copy()
-        df["matches"] = df.smarts.apply(lambda x, y: y.GetSubstructMatches(Chem.MolFromSmarts(x)), args=(mol,)) 
-        grouped = df.groupby("rule_set_name").apply(
-            lambda group: pd.Series({"matches": [match for matches in group["matches"] 
-                                                       for match in matches] 
-                                                       if any(matches 
-                                                              for matches in group["matches"]) 
-                                                       else (),
-                                     "reasons": ";".join(group[group["matches"].apply(lambda x: len(x) > 0)]["description"].fillna('').tolist()) 
-                                                                if any(matches 
-                                                                       for matches in group["matches"]) 
-                                                                else "",
-                                    })
-        ).reset_index()
-        grouped["pass_filter"] = grouped["matches"].apply(lambda x: True if not x else False)
-        for _, g_row in grouped.iterrows():
-            name = g_row["rule_set_name"]
-            row[f"pass_{name}"] = g_row["pass_filter"]
-            row[f"reasons_{name}"] = g_row["reasons"]
-        return row
-
-
-    def _get_full_any_pass(row):
-        pass_val = True
-        any_pass_val  = False
-        for col in row.index:
-            if col.startswith("pass_") and col != "pass_any":
-                pass_val &= row[col]
-                any_pass_val |= row[col]
-        row["pass"] = pass_val
-        row["pass_any"] = any_pass_val
-        return row
-    
-
+    logger.info("Calculating Common Alerts...")
     logger.info(f"Processing {len(mols)} filtered molecules")
 
-    n_jobs = config['n_jobs']
+    n_jobs = max(1, config.get('n_jobs', 1))
     logger.info(f"Using {n_jobs} workers for parallel processing")
 
-    # Process molecules in parallel using multiprocessing
+    config_structFilters = load_config(config['config_structFilters'])
+    alert_data = filter_alerts(config_structFilters).copy()
+    alert_data["mol_pattern"] = alert_data["smarts"].apply(Chem.MolFromSmarts)
+
     from multiprocessing import Pool
-    import pandas as pd  # Temporary pandas import for row processing
 
-    # Create initial DataFrame
-    mols_df = pd.DataFrame({"mol": mols})
+    global _ALERT_DATA
+    _ALERT_DATA = alert_data
 
-    # Apply alerts in parallel
-    with Pool(n_jobs) as pool:
-        results_list = pool.map(_apply_alerts, [row for _, row in mols_df.iterrows()])
-    results = pd.DataFrame(results_list)
+    if n_jobs == 1:
+        results_list = [_structural_alerts_worker(mol) for mol in mols]
+    else:
+        with Pool(n_jobs, initializer=_init_structural_alerts_worker, initargs=(alert_data,)) as pool:
+            results_list = pool.map(_structural_alerts_worker, mols)
 
-    # Apply pass logic
-    with Pool(n_jobs) as pool:
-        results_list = pool.map(_get_full_any_pass, [row for _, row in results.iterrows()])
     results = pd.DataFrame(results_list)
 
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
+    _ALERT_DATA = None
     return results
 
 

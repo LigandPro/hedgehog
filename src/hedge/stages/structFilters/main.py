@@ -1,12 +1,22 @@
 import os
 import glob
 import polars as pl
+import pandas as pd
 
 from hedge.configs.logger import logger, load_config
 from hedge.stages.structFilters.utils import *
 
 def _order_identity_columns(df):
     """Order dataframe columns with identity columns first."""
+    if isinstance(df, pd.DataFrame):
+        data = {}
+        for col in df.columns:
+            series = df[col]
+            values = series.tolist()
+            data[col] = [value if pd.notna(value) else None for value in values]
+        df = pl.DataFrame(data)
+    elif not isinstance(df, pl.DataFrame):
+        df = pl.DataFrame(df)
     id_cols = ['smiles', 'model_name', 'mol_idx']
     existing_id_cols = [c for c in id_cols if c in df.columns]
     ordered_cols = existing_id_cols + [c for c in df.columns if c not in id_cols]

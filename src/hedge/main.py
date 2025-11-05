@@ -312,7 +312,7 @@ def run(
     if save_mols:
         folder_to_save.mkdir(parents=True, exist_ok=True)
         output_path = folder_to_save / SAMPLED_MOLS_FILENAME
-        data.to_csv(output_path, index=False)
+        data.write_csv(output_path)
         logger.info(f"[#B29EEE]✓[/#B29EEE] Sampled total of {len(data)} molecules saved to {output_path}")
     
     # Run metrics calculation pipeline
