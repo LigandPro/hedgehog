@@ -1,6 +1,6 @@
 import os
 import glob
-import pandas as pd
+import polars as pl
 
 from hedge.configs.logger import logger, load_config
 from hedge.stages.structFilters.utils import *
@@ -10,7 +10,7 @@ def _order_identity_columns(df):
     id_cols = ['smiles', 'model_name', 'mol_idx']
     existing_id_cols = [c for c in id_cols if c in df.columns]
     ordered_cols = existing_id_cols + [c for c in df.columns if c not in id_cols]
-    return df[ordered_cols]
+    return df.select(ordered_cols)
 
 
 def _get_input_path(config, stage_dir, folder_to_save):
@@ -58,10 +58,10 @@ def _get_input_path(config, stage_dir, folder_to_save):
 
     single_path = matched[0]
     try:
-        df_check = pd.read_csv(single_path)
+        df_check = pl.read_csv(single_path)
         lower_cols = {c.lower(): c for c in df_check.columns}
         candidate = lower_cols.get('model_name') or lower_cols.get('name')
-        if candidate and df_check[candidate].nunique(dropna=True) > 1:
+        if candidate and df_check[candidate].n_unique() > 1:
             sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
             if os.path.exists(sampled_path):
                 return sampled_path
@@ -88,8 +88,8 @@ def main(config, stage_dir):
     input_path = _get_input_path(config, stage_dir, folder_to_save)
     
     try:
-        input_df = pd.read_csv(input_path)
-        model_names = sorted(input_df['model_name'].dropna().unique().tolist())
+        input_df = pl.read_csv(input_path)
+        model_names = sorted(input_df['model_name'].drop_nulls().unique().to_list())
         model_name = model_names[0] if len(model_names) == 1 else model_names
     except Exception as e:
         logger.error(f"Could not load input data: {e}")
@@ -116,21 +116,21 @@ def main(config, stage_dir):
         os.makedirs(filter_subdir, exist_ok=True)
 
         final_res = _order_identity_columns(final_res)
-        final_res.to_csv(os.path.join(filter_subdir, 'metrics.csv'), index=False)
+        final_res.write_csv(os.path.join(filter_subdir, 'metrics.csv'))
 
         final_extended = _order_identity_columns(final_extended)
-        final_extended.to_csv(os.path.join(filter_subdir, 'extended.csv'), index=False)
+        final_extended.write_csv(os.path.join(filter_subdir, 'extended.csv'))
 
         if 'pass' not in final_extended.columns:
             if 'pass_filter' in final_extended.columns:
-                final_extended['pass'] = final_extended['pass_filter']
+                final_extended = final_extended.with_columns(pl.col('pass_filter').alias('pass'))
             else:
                 logger.warning(f"'pass' column not found in {filter_name} extended results. Assuming all molecules pass.")
-                final_extended['pass'] = True
-        filtered_mols = final_extended[final_extended['pass'] == True].copy()
+                final_extended = final_extended.with_columns(pl.lit(True).alias('pass'))
+        filtered_mols = final_extended.filter(pl.col('pass') == True)
 
         filtered_mols = _order_identity_columns(filtered_mols)
-        filtered_mols.to_csv(os.path.join(filter_subdir, 'filtered_molecules.csv'), index=False)
+        filtered_mols.write_csv(os.path.join(filter_subdir, 'filtered_molecules.csv'))
 
     plot_calculated_stats(config, stage_dir)
     plot_restriction_ratios(config, stage_dir)

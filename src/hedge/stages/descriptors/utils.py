@@ -1,7 +1,8 @@
-import os 
+import os
 
 import numpy as np
-import pandas as pd
+import polars as pl
+import pandas as pd  # Keep for plotting compatibility
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -41,19 +42,19 @@ def order_identity_columns(df):
     """Reorder dataframe columns with identity columns first."""
     id_cols = ['smiles', 'model_name', 'mol_idx']
     ordered = id_cols + [c for c in df.columns if c not in id_cols]
-    return df[ordered]
+    return df.select(ordered)
 
 
 def drop_false_rows(df, borders):
     """
     Filter rows that passed all descriptor filters.
-    
+
     Args:
         df: DataFrame with '_pass' columns
         borders: Configuration dict with filter settings
-        
+
     Returns:
-        pd.DataFrame: Filtered dataframe with only passed molecules
+        pl.DataFrame: Filtered dataframe with only passed molecules
     """
     passed_cols = []
     filter_charged_mol = borders.get('filter_charged_mol', False)
@@ -68,12 +69,18 @@ def drop_false_rows(df, borders):
                     charged_mol_col = col
             else:
                 passed_cols.append(col)
-    
-    mask = df[passed_cols].all(axis=1)
-    df_masked = df[mask].copy()
+
+    # Create mask by combining all pass columns with AND
+    if passed_cols:
+        mask = pl.lit(True)
+        for col in passed_cols:
+            mask = mask & pl.col(col)
+        df_masked = df.filter(mask)
+    else:
+        df_masked = df.clone()
 
     if not filter_charged_mol and charged_mol_col is not None and charged_mol_col not in df_masked.columns:
-        df_masked[charged_mol_col] = df.loc[mask, charged_mol_col]
+        df_masked = df_masked.with_columns(df.filter(mask).select(charged_mol_col))
     return df_masked
 
 
@@ -105,25 +112,23 @@ def compute_metrics(df, save_path, config=None):
     """
     Compute 22 physicochemical descriptors for each molecule.
     model_name and mol_idx are already in df from sampledMols.csv.
-    
+
     Args:
         df: DataFrame with molecules (must have 'smiles', 'model_name', 'mol_idx')
         save_path: Output folder path
         config: Configuration dictionary
-        
+
     Returns:
-        pd.DataFrame: Dataframe with computed descriptors per molecule
+        pl.DataFrame: Dataframe with computed descriptors per molecule
     """
     if df is None or len(df) == 0:
         logger.warning('Empty DataFrame provided to compute_metrics. Returning empty DataFrame.')
-        return pd.DataFrame()
-    
-    df = df.copy()
-    
+        return pl.DataFrame()
+
     metrics = {}
     skipped_molecules = []
-    
-    for idx, row in df.iterrows():
+
+    for row in df.iter_rows(named=True):
         smiles = row['smiles']
         model_name = row['model_name']
         mol_idx = row['mol_idx']
@@ -176,16 +181,20 @@ def compute_metrics(df, save_path, config=None):
     save_path = process_path(save_path)
     if skipped_molecules:
         logger.warning(f'Skipped {len(skipped_molecules)} molecules that failed to parse')
-        skipped_df = pd.DataFrame({'smiles': [s for s, _, _ in skipped_molecules],
-                                   'model_name': [m for _, m, _ in skipped_molecules]
-                                 })
+        skipped_data = {
+            'smiles': [s for s, _, _ in skipped_molecules],
+            'model_name': [m for _, m, _ in skipped_molecules]
+        }
         if any(idx is not None for _, _, idx in skipped_molecules):
-            skipped_df['mol_idx'] = [idx for _, _, idx in skipped_molecules]
-        skipped_df.to_csv(save_path + 'skipped_molecules.csv', index=False)
+            skipped_data['mol_idx'] = [idx for _, _, idx in skipped_molecules]
+        skipped_df = pl.DataFrame(skipped_data)
+        skipped_df.write_csv(save_path + 'skipped_molecules.csv')
 
-    metrics_df = pd.DataFrame.from_dict(metrics, orient='index').reset_index().rename(columns={'index': 'smiles'})
+    # Convert dict to list of records
+    metrics_list = [{'smiles': smiles, **metrics_dict} for smiles, metrics_dict in metrics.items()]
+    metrics_df = pl.DataFrame(metrics_list)
     metrics_df = order_identity_columns(metrics_df)
-    metrics_df.to_csv(save_path + 'descriptors_all.csv', index=False)
+    metrics_df.write_csv(save_path + 'descriptors_all.csv')
     return metrics_df  
 
 
@@ -230,9 +239,9 @@ def filter_molecules(df, borders, folder_to_save):
             else:
                 filtered_data[f'{col}_pass'] = (df[col] >= min_border) & (df[col] <= max_border)
 
-    filtered_data_withFalse = pd.DataFrame(filtered_data)
+    filtered_data_withFalse = pl.DataFrame(filtered_data)
     filtered_data_withFalse = order_identity_columns(filtered_data_withFalse)
-    filtered_data_withFalse.to_csv(folder_to_save + 'pass_flags.csv', index_label='SMILES', index=False)
+    filtered_data_withFalse.write_csv(folder_to_save + 'pass_flags.csv')
     pass_filters = drop_false_rows(filtered_data_withFalse, borders)
 
     if len(pass_filters) > 0:
@@ -243,33 +252,34 @@ def filter_molecules(df, borders, folder_to_save):
 
         ordered_cols = id_cols + sorted(descriptor_cols)
         ordered_cols = [col for col in ordered_cols if col in pass_filters.columns]
-        pass_filters[ordered_cols].to_csv(folder_to_save + 'descriptors_passed.csv', index=False)
+        pass_filters.select(ordered_cols).write_csv(folder_to_save + 'descriptors_passed.csv')
 
         cols = ['smiles', 'model_name', 'mol_idx']
-        pass_filters[cols].to_csv(folder_to_save + 'filtered_molecules.csv', index=False)
+        pass_filters.select(cols).write_csv(folder_to_save + 'filtered_molecules.csv')
     else:
         logger.warning('No molecules pass Descriptors Filters')
 
     if len(pass_filters) > 0:
         all_computed_path = folder_to_save + 'descriptors_all.csv'
         if os.path.exists(all_computed_path):
-            all_computed = pd.read_csv(all_computed_path)
+            all_computed = pl.read_csv(all_computed_path)
             merge_cols = ['smiles', 'model_name']
-            merged = all_computed.merge(pass_filters[merge_cols], on=merge_cols, how='left', indicator=True)
-            fail_filters = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge']).copy()
+            merged = all_computed.join(pass_filters.select(merge_cols), on=merge_cols, how='left', suffix='_pass')
+            fail_filters = merged.filter(pl.col('smiles_pass').is_null()).drop([c for c in merged.columns if c.endswith('_pass')])
 
             if len(fail_filters) > 0:
                 flags_path = folder_to_save + 'pass_flags.csv'
                 if os.path.exists(flags_path):
-                    flags_df = pd.read_csv(flags_path)
+                    flags_df = pl.read_csv(flags_path)
                     merge_cols = ['smiles', 'model_name']
                     pass_cols = [col for col in flags_df.columns if col.endswith('_pass') or col == 'pass']
                     if pass_cols:
-                        fail_filters = fail_filters.merge(flags_df[merge_cols + pass_cols], on=merge_cols, how='left', suffixes=('', '_flags'))
+                        fail_filters = fail_filters.join(flags_df.select(merge_cols + pass_cols), on=merge_cols, how='left', suffix='_flags')
                         for col in pass_cols:
                             if f'{col}_flags' in fail_filters.columns:
-                                fail_filters[col] = fail_filters[f'{col}_flags'].fillna(fail_filters.get(col, False))
-                                fail_filters = fail_filters.drop(columns=[f'{col}_flags'])
+                                fail_filters = fail_filters.with_columns(
+                                    pl.col(f'{col}_flags').fill_null(pl.col(col) if col in fail_filters.columns else pl.lit(False)).alias(col)
+                                ).drop(f'{col}_flags')
                 
                 fail_filters = order_identity_columns(fail_filters)
                 
@@ -290,26 +300,27 @@ def filter_molecules(df, borders, folder_to_save):
                         ordered_cols.append(pass_col)
                 
                 ordered_cols = [col for col in ordered_cols if col in fail_filters.columns]
-                fail_filters[ordered_cols].to_csv(folder_to_save + 'descriptors_failed.csv', index=False)
+                fail_filters.select(ordered_cols).write_csv(folder_to_save + 'descriptors_failed.csv')
 
                 id_cols_smiles = ['smiles', 'model_name', 'mol_idx']
-                fail_filters[id_cols_smiles].to_csv(folder_to_save + 'failed_molecules.csv', index=False)
+                fail_filters.select(id_cols_smiles).write_csv(folder_to_save + 'failed_molecules.csv')
     else:
         all_computed_path = folder_to_save + 'descriptors_all.csv'
         if os.path.exists(all_computed_path):
-            all_computed = pd.read_csv(all_computed_path)
-            fail_filters = all_computed.copy()
+            all_computed = pl.read_csv(all_computed_path)
+            fail_filters = all_computed.clone()
             flags_path = folder_to_save + 'pass_flags.csv'
             if os.path.exists(flags_path):
-                flags_df = pd.read_csv(flags_path)
+                flags_df = pl.read_csv(flags_path)
                 merge_cols = ['smiles', 'model_name']
                 pass_cols = [col for col in flags_df.columns if col.endswith('_pass') or col == 'pass']
                 if pass_cols:
-                    fail_filters = fail_filters.merge(flags_df[merge_cols + pass_cols], on=merge_cols, how='left', suffixes=('', '_flags'))
+                    fail_filters = fail_filters.join(flags_df.select(merge_cols + pass_cols), on=merge_cols, how='left', suffix='_flags')
                     for col in pass_cols:
                         if f'{col}_flags' in fail_filters.columns:
-                            fail_filters[col] = fail_filters[f'{col}_flags'].fillna(fail_filters.get(col, False))
-                            fail_filters = fail_filters.drop(columns=[f'{col}_flags'])
+                            fail_filters = fail_filters.with_columns(
+                                pl.col(f'{col}_flags').fill_null(pl.col(col) if col in fail_filters.columns else pl.lit(False)).alias(col)
+                            ).drop(f'{col}_flags')
             
             fail_filters = order_identity_columns(fail_filters)
             
@@ -330,41 +341,45 @@ def filter_molecules(df, borders, folder_to_save):
                     ordered_cols.append(pass_col)
             
             ordered_cols = [col for col in ordered_cols if col in fail_filters.columns]
-            fail_filters[ordered_cols].to_csv(folder_to_save + 'descriptors_failed.csv', index=False)
+            fail_filters.select(ordered_cols).write_csv(folder_to_save + 'descriptors_failed.csv')
 
             id_cols_smiles = ['smiles', 'model_name', 'mol_idx']
-            fail_filters[id_cols_smiles].to_csv(folder_to_save + 'failed_molecules.csv', index=False)
+            fail_filters.select(id_cols_smiles).write_csv(folder_to_save + 'failed_molecules.csv')
 
     id_path = folder_to_save + 'filtered_molecules.csv'
     if os.path.exists(id_path):
-        id_df = pd.read_csv(id_path)
-        id_df = id_df.drop_duplicates(['smiles', 'model_name'])
+        id_df = pl.read_csv(id_path)
+        id_df = id_df.unique(subset=['smiles', 'model_name'])
 
         per_path = folder_to_save + 'descriptors_all.csv'
         if os.path.exists(per_path):
-            per = pd.read_csv(per_path)
+            per = pl.read_csv(per_path)
             per = order_identity_columns(per)
-            per.to_csv(per_path, index=False)
+            per.write_csv(per_path)
 
         flags_path = folder_to_save + 'pass_flags.csv'
         if os.path.exists(flags_path):
-            flags = pd.read_csv(flags_path)
+            flags = pl.read_csv(flags_path)
             flags = order_identity_columns(flags)
-            flags.to_csv(flags_path, index=False)
+            flags.write_csv(flags_path)
 
 
 def draw_filtered_mols(df, folder_to_save, config):
     """
     Generate distribution plots for descriptor filters.
-    
+
     Args:
         df: DataFrame with computed descriptors
         folder_to_save: Output folder path (should already include 'Descriptors' subfolder)
         config: Configuration dictionary
     """
+    # Convert polars to pandas for plotting compatibility
+    if isinstance(df, pl.DataFrame):
+        df = df.to_pandas()
+
     is_multi = df['model_name'].nunique(dropna=True) > 1
     folder_to_save = process_path(folder_to_save)
-    
+
     descriptors_config = load_config(config['config_descriptors'])
     borders = descriptors_config['borders']
     borders['charged_mol_allowed'] = int(borders['charged_mol_allowed']) if 'charged_mol_allowed' in borders else False
