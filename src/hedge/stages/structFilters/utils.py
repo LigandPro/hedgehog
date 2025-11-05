@@ -14,8 +14,6 @@ import seaborn as sns
 from pandarallel import pandarallel
 from rdkit import Chem
 
-from hedge.configs.logger import load_config, logger
-
 LILLY_BIN_DIR = (
     Path(__file__).resolve().parents[4] / "modules" / "lilly_medchem_rules" / "bin"
 )
@@ -31,8 +29,9 @@ except ImportError:
     LILLY_AVAILABLE = False
     LillyDemeritsFilters = None
 
-warnings.filterwarnings("ignore", category=FutureWarning)
+from hedge.configs.logger import load_config, logger
 
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 def camelcase(any_str: str) -> str:
     """Convert snake_case to CamelCase.
@@ -149,13 +148,15 @@ def format_number(x: float, pos: Any = None) -> str:
         Formatted number string
     """
     if x >= 1e6:
-        return f"{x / 1e6:.1f}M"
+        return f"{x/1e6:.1f}M"
     if x >= 1e3:
-        return f"{x / 1e3:.1f}K"
+        return f"{x/1e3:.1f}K"
     return f"{x:.0f}"
 
 
-def get_model_colors(model_names: list[str], cmap: str | None = None) -> dict[str, Any]:
+def get_model_colors(
+    model_names: list[str], cmap: str | None = None
+) -> dict[str, Any]:
     """Generate color map for models.
 
     Args:
@@ -169,7 +170,9 @@ def get_model_colors(model_names: list[str], cmap: str | None = None) -> dict[st
     if cmap is None:
         colors = plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1))
     else:
-        colors = plt.colormaps.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))
+        colors = plt.colormaps.get_cmap(cmap)(
+            np.linspace(1, 0, len(model_names) + 1)
+        )
 
     return dict(zip(model_names, colors, strict=False))
 
@@ -260,7 +263,7 @@ def process_one_file(
     -------
         Filter results dataframe or None if no molecules
     """
-    input_type = input_path[input_path.rfind(".") + 1 :]
+    input_type = input_path[input_path.rfind(".")+1:]
     assert input_type in {"csv", "smi", "sdf", "txt"}
 
     if input_type == "csv":
@@ -273,7 +276,9 @@ def process_one_file(
             model_names = data["model_name"].tolist()
             mols = [dm.to_mol(x) for x in smiles_str]
             mol_indices = data["mol_idx"].tolist()
-            smiles = list(zip(smiles_str, model_names, mols, mol_indices, strict=False))
+            smiles = list(
+                zip(smiles_str, model_names, mols, mol_indices, strict=False)
+            )
         else:
             smiles = data[smiles_col].tolist()
             mols = [dm.to_mol(x) for x in smiles]
@@ -357,7 +362,8 @@ def add_model_name_col(
     """
     smiles_vals = [item[0] for item in smiles_with_model]
     model_vals = [
-        item[1] if item[1] is not None else "single" for item in smiles_with_model
+        item[1] if item[1] is not None else "single"
+        for item in smiles_with_model
     ]
     mol_idx_vals = [item[3] if len(item) >= 4 else None for item in smiles_with_model]
 
@@ -411,7 +417,6 @@ def apply_structural_alerts(
         Dataframe with filter results
     """
     logger.info("Calculating Common Alerts...")
-
     def _apply_alerts(row):
         mol = row["mol"]
         row["smiles"] = dm.to_smiles(mol) if mol is not None else None
@@ -419,34 +424,30 @@ def apply_structural_alerts(
         config_structFilters = load_config(config["config_structFilters"])
         alert_data = filter_alerts(config_structFilters)
         df = alert_data.copy()
-        df["matches"] = df.smarts.apply(
-            lambda x, y: y.GetSubstructMatches(Chem.MolFromSmarts(x)), args=(mol,)
-        )
-        grouped = (
-            df.groupby("rule_set_name")
-            .apply(
-                lambda group: pd.Series(
-                    {
-                        "matches": [
-                            match for matches in group["matches"] for match in matches
+        df["matches"] = df.smarts.apply(lambda x, y: y.GetSubstructMatches(Chem.MolFromSmarts(x)), args=(mol,))
+        grouped = df.groupby("rule_set_name").apply(
+            lambda group, include_groups=False: pd.Series(
+                {
+                    "matches": [
+                        match
+                        for matches in group["matches"]
+                        for match in matches
+                    ]
+                    if any(matches for matches in group["matches"])
+                    else (),
+                    "reasons": ";".join(
+                        group[group["matches"].apply(lambda x: len(x) > 0)][
+                            "description"
                         ]
-                        if any(matches for matches in group["matches"])
-                        else (),
-                        "reasons": ";".join(
-                            group[group["matches"].apply(lambda x: len(x) > 0)][
-                                "description"
-                            ]
-                            .fillna("")
-                            .tolist()
-                        )
-                        if any(matches for matches in group["matches"])
-                        else "",
-                    }
-                ),
-                include_groups=False,
-            )
-            .reset_index()
-        )
+                        .fillna("")
+                        .tolist()
+                    )
+                    if any(matches for matches in group["matches"])
+                    else "",
+                }
+            ),
+            include_groups=False,
+        ).reset_index()
         grouped["pass_filter"] = grouped["matches"].apply(lambda x: bool(not x))
         for _, g_row in grouped.iterrows():
             name = g_row["rule_set_name"]
@@ -454,9 +455,10 @@ def apply_structural_alerts(
             row[f"reasons_{name}"] = g_row["reasons"]
         return row
 
+
     def _get_full_any_pass(row):
         pass_val = True
-        any_pass_val = False
+        any_pass_val  = False
         for col in row.index:
             if col.startswith("pass_") and col != "pass_any":
                 pass_val &= row[col]
@@ -465,13 +467,14 @@ def apply_structural_alerts(
         row["pass_any"] = any_pass_val
         return row
 
+
     logger.info("Processing %s filtered molecules", len(mols))
 
     n_jobs = config["n_jobs"]
     pandarallel.initialize(progress_bar=False, nb_workers=n_jobs, verbose=0)
     logger.info("Pandarallel initialized with %s workers", n_jobs)
 
-    mols_df = pd.DataFrame({"mol": mols})
+    mols_df = pd.DataFrame({"mol" : mols})
     results = mols_df.parallel_apply(_apply_alerts, axis=1)
     results = results.parallel_apply(_get_full_any_pass, axis=1)
 
@@ -484,15 +487,14 @@ def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Molecular Graph statistics...")
     severities = list(range(1, 12))
 
-    results = {"mol": mols}
+    results = {"mol" : mols}
     for s in severities:
-        out = mc.functional.molecular_graph_filter(
-            mols=mols,
-            max_severity=s,
-            n_jobs=-1,
-            progress=False,
-            return_idx=False,
-        )
+        out = mc.functional.molecular_graph_filter(mols=mols,
+                                                   max_severity=s,
+                                                   n_jobs=-1,
+                                                   progress=False,
+                                                   return_idx=False,
+                                                  )
         results[f"pass_{s}"] = out
     results = pd.DataFrame(results)
 
@@ -503,15 +505,16 @@ def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
 
 def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Complexity filters...")
-    final_result = pd.DataFrame({"mol": mols, "pass": True, "pass_any": False})
+    final_result = pd.DataFrame({"mol" : mols,
+                                 "pass" : True,
+                                 "pass_any" : False
+                               })
     alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
     for name in alert_names:
         cfilter = mc.complexity.ComplexityFilter(complexity_metric=name)
         final_result[f"pass_{name}"] = final_result["mol"].apply(cfilter)
         final_result["pass"] = final_result["pass"] * final_result[f"pass_{name}"]
-        final_result["pass_any"] = (
-            final_result["pass_any"] + final_result[f"pass_{name}"]
-        )
+        final_result["pass_any"] = final_result["pass_any"] + final_result[f"pass_{name}"]
 
     if smiles_modelName_mols is not None:
         final_result = add_model_name_col(final_result, smiles_modelName_mols)
@@ -520,13 +523,14 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
 
 def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Bredt filter...")
-    out = mc.functional.bredt_filter(
-        mols=mols,
-        n_jobs=-1,
-        progress=False,
-        return_idx=False,
-    )
-    results = pd.DataFrame({"mol": mols, "pass": out})
+    out = mc.functional.bredt_filter(mols=mols,
+                                     n_jobs=-1,
+                                     progress=False,
+                                     return_idx=False,
+                                    )
+    results = pd.DataFrame({"mol" : mols,
+                            "pass" : out
+                            })
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
     return results
@@ -540,12 +544,11 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
     scheduler = config_structFilters["nibr_scheduler"]
 
     nibr_filters = mc.structural.NIBRFilters()
-    results = nibr_filters(
-        mols=mols,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        keep_details=True,
-    )
+    results = nibr_filters(mols=mols,
+                           n_jobs=n_jobs,
+                           scheduler=scheduler,
+                           keep_details=True,
+                        )
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
     return results
@@ -560,7 +563,9 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             "Or disable this filter by setting 'calculate_lilly: False' "
             "in config_structFilters.yml"
         )
-        raise ImportError(msg)
+        raise ImportError(
+            msg
+        )
 
     logger.info("Calculating Lilly filter...")
     n_jobs = config["n_jobs"]
@@ -569,28 +574,23 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     scheduler = config_strcuFilters["lilly_scheduler"]
 
     dfilter = LillyDemeritsFilters()
-    results = dfilter(
-        mols=mols,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-    )
+    results = dfilter(mols=mols,
+                      n_jobs=n_jobs,
+                      scheduler=scheduler,
+                      )
 
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
     return results
 
 
-def get_basic_stats(
-    config, filter_results, model_name, filter_name, stat=None, extend=None
-):
+def get_basic_stats(config, filter_results, model_name, filter_name, stat=None, extend=None):
     is_multi = filter_results["model_name"].nunique(dropna=True) > 1
     if is_multi:
         all_res = []
         all_extended = []
         for model, group in filter_results.groupby("model_name"):
-            res_df, filter_extended = get_basic_stats(
-                config, group.copy(), model, filter_name, stat, extend
-            )
+            res_df, filter_extended = get_basic_stats(config, group.copy(), model, filter_name, stat, extend)
             all_res.append(res_df)
             all_extended.append(filter_extended)
 
@@ -606,78 +606,57 @@ def get_basic_stats(
         any_banned_percent = (~filter_results["pass"]).mean()
         all_banned_percent = (~filter_results["pass_any"]).mean()
 
-        res_df = pd.DataFrame(
-            {
-                "model_name": [model_name],
-                "num_mol": [num_mol],
-                "all_banned_ratio": [all_banned_percent],
-                "any_banned_ratio": [any_banned_percent],
-            }
-        )
+        res_df = pd.DataFrame({"model_name" : [model_name],
+                               "num_mol" : [num_mol],
+                               "all_banned_ratio" : [all_banned_percent],
+                               "any_banned_ratio" : [any_banned_percent]
+                             })
 
         for name in config["include_rulesets"]:
             res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
 
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         return res_df, filter_extended
 
     if filter_name == "molgraph_stats":
-        res_df = pd.DataFrame(
-            {
-                "model_name": [model_name],
-                "num_mol": [num_mol],
-            }
-        )
+        res_df = pd.DataFrame({"model_name" : [model_name],
+                               "num_mol" : [num_mol],
+                              })
         for i in range(1, 12):
             res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_{i}"].mean()
 
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
-        pass_cols = [
-            col
-            for col in filter_extended.columns
-            if col.startswith("pass_") and col != "pass_any"
-        ]
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
+        pass_cols = [col for col in filter_extended.columns if col.startswith("pass_") and col != "pass_any"]
         filter_extended["pass"] = filter_extended[pass_cols].all(axis=1)
         return res_df, filter_extended
+
 
     if filter_name == "molcomplexity":
         any_banned_percent = 1 - filter_results["pass"].mean()
         all_banned_percent = 1 - filter_results["pass_any"].mean()
 
-        res_df = pd.DataFrame(
-            {
-                "model_name": [model_name],
-                "num_mol": [num_mol],
-                "all_banned_ratio": [all_banned_percent],
-                "any_banned_ratio": [any_banned_percent],
-            }
-        )
+        res_df = pd.DataFrame({"model_name" : [model_name],
+                                "num_mol" : [num_mol],
+                                "all_banned_ratio" : [all_banned_percent],
+                                "any_banned_ratio" : [any_banned_percent]
+                             })
         alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
         for name in alert_names:
             res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
 
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         return res_df, filter_extended
+
 
     if filter_name == "bredt":
-        res_df = pd.DataFrame(
-            {
-                "model_name": [model_name],
-                "num_mol": [num_mol],
-            }
-        )
+        res_df = pd.DataFrame({"model_name" : [model_name],
+                               "num_mol" : [num_mol],
+                              })
         res_df["banned_ratio"] = 1 - filter_results["pass"].mean()
 
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         return res_df, filter_extended
+
 
     if filter_name == "NIBR":
         mean_severity = filter_results.severity.mean()
@@ -686,16 +665,13 @@ def get_basic_stats(
         mean_n_covalent_motif = filter_results.n_covalent_motif.mean()
         mean_nonzero_special_mol = (filter_results.special_mol > 0).mean()
 
-        res_df = pd.DataFrame(
-            {
-                "model_name": [model_name],
-                "num_mol": [num_mol],
-                "mean_severity": [mean_severity],
-                "max_severity": [max_severity],
-                "mean_n_covalent_motif": [mean_n_covalent_motif],
-                "mean_nonzero_special_mol": [mean_nonzero_special_mol],
-            }
-        )
+        res_df = pd.DataFrame({"model_name" : [model_name],
+                               "num_mol" : [num_mol],
+                               "mean_severity" : [mean_severity],
+                               "max_severity" : [max_severity],
+                               "mean_n_covalent_motif" : [mean_n_covalent_motif],
+                               "mean_nonzero_special_mol" : [mean_nonzero_special_mol]
+                             })
 
         pass_col = None
         if "pass" in filter_results.columns:
@@ -703,35 +679,29 @@ def get_basic_stats(
         elif "pass_filter" in filter_results.columns:
             pass_col = "pass_filter"
         else:
-            filter_results["pass"] = filter_results["severity"] == 0
+            filter_results["pass"] = (filter_results["severity"] == 0)
             pass_col = "pass"
 
         res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
 
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         if "pass" not in filter_extended.columns:
             if "pass_filter" in filter_extended.columns:
-                filter_extended = filter_extended.rename(
-                    columns={"pass_filter": "pass"}
-                )
+                filter_extended = filter_extended.rename(columns={"pass_filter" : "pass"})
             elif pass_col in filter_extended.columns and pass_col != "pass":
-                filter_extended = filter_extended.rename(columns={pass_col: "pass"})
+                filter_extended = filter_extended.rename(columns={pass_col : "pass"})
             elif "severity" in filter_extended.columns:
-                filter_extended["pass"] = filter_extended["severity"] == 0
+                filter_extended["pass"] = (filter_extended["severity"] == 0)
         return res_df, filter_extended
+
 
     if filter_name == "lilly":
         mean_noNA_demerit_score = filter_results.demerit_score.dropna().mean()
 
-        res_df = pd.DataFrame(
-            {
-                "model_name": [model_name],
-                "num_mol": [num_mol],
-                "mean_noNA_demerit_score": mean_noNA_demerit_score,
-            }
-        )
+        res_df = pd.DataFrame({"model_name": [model_name],
+                               "num_mol": [num_mol],
+                               "mean_noNA_demerit_score": mean_noNA_demerit_score
+                             })
 
         pass_col = None
         if "pass" in filter_results.columns:
@@ -739,27 +709,21 @@ def get_basic_stats(
         elif "pass_filter" in filter_results.columns:
             pass_col = "pass_filter"
         else:
-            filter_results["pass"] = filter_results["demerit_score"] == 0
+            filter_results["pass"] = (filter_results["demerit_score"] == 0)
             pass_col = "pass"
 
         res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
 
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
+        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         if "pass" not in filter_extended.columns:
             if pass_col in filter_extended.columns:
                 if pass_col != "pass":
-                    filter_extended = filter_extended.rename(columns={pass_col: "pass"})
+                    filter_extended = filter_extended.rename(columns={pass_col : "pass"})
             elif "pass_filter" in filter_extended.columns:
-                filter_extended = filter_extended.rename(
-                    columns={"pass_filter": "pass"}
-                )
+                filter_extended = filter_extended.rename(columns={"pass_filter" : "pass"})
             elif "demerit_score" in filter_extended.columns:
-                filter_extended["pass"] = filter_extended["demerit_score"] == 0
-            elif "pass" in filter_results.columns and len(filter_extended) == len(
-                filter_results
-            ):
+                filter_extended["pass"] = (filter_extended["demerit_score"] == 0)
+            elif "pass" in filter_results.columns and len(filter_extended) == len(filter_results):
                 filter_extended["pass"] = filter_results["pass"].values
         return res_df, filter_extended
 
@@ -775,11 +739,10 @@ def check_paths(config, paths) -> bool:
             all_filters[k] = v
 
     required_patterns = ["".join(k.split("_")) for k, v in all_filters.items() if v]
-    missing_patterns = [
-        pattern
-        for pattern in required_patterns
-        if not any(pattern.lower() in str(candidate).lower() for candidate in paths)
-    ]
+    missing_patterns = [pattern
+                        for pattern in required_patterns
+                        if not any(pattern.lower() in str(candidate).lower()
+                            for candidate in paths)]
     if len(missing_patterns) > 0:
         msg = f"Invalid filter name(s) missing: {', '.join(missing_patterns)}"
         raise AssertionError(msg)
@@ -812,9 +775,7 @@ def plot_calculated_stats(config, prefix) -> None:
         banned_cols = [col for col in data.columns if "banned_ratio" in col]
         data_filtered = data[[*banned_cols, "num_mol"]].copy()
         for banned_col in banned_cols:
-            data_filtered.loc[:, f"num_banned_{banned_col}"] = (
-                data_filtered[banned_col] * data_filtered["num_mol"]
-            )
+            data_filtered.loc[:, f"num_banned_{banned_col}"] = data_filtered[banned_col] * data_filtered["num_mol"]
         datas.append(data_filtered)
 
         filter_name = Path(path).name.replace("_metrics.csv", "")
@@ -823,9 +784,7 @@ def plot_calculated_stats(config, prefix) -> None:
     model_name_set = sorted(all_model_names)
 
     filter_results = {}
-    subdir = (
-        f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
-    )
+    subdir = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
     subdir_path = Path(folder_to_save + f"{subdir}/")
     filters_to_find = list(subdir_path.glob("*filteredMols.csv"))
 
@@ -863,79 +822,39 @@ def plot_calculated_stats(config, prefix) -> None:
     n_cols = 2
     n_rows = (n_plots + n_cols - 1) // n_cols
 
-    plt.figure(figsize=(40, 5 * n_rows))
+    plt.figure(figsize=(40, 5*n_rows))
     for idx, (data, filter_name) in enumerate(zip(datas, filter_names, strict=False)):
         ax = plt.subplot(n_rows, n_cols, idx + 1)
         models = data.index
         x = np.arange(len(models))
         width = 0.8
         total_mols = data["num_mol"].sum()
-        total = ax.barh(
-            x,
-            data.loc[models, "num_mol"],
-            width,
-            label=f"Total Molecules ({format_number(total_mols)})",
-            color="#E5E5E5",
-            alpha=0.5,
-        )
+        total = ax.barh(x, data.loc[models, "num_mol"], width, label=f"Total Molecules ({format_number(total_mols)})", color="#E5E5E5", alpha=0.5)
 
         clean_filter_name = filter_name.lower()
         for known_filter in filter_results:
             if known_filter.lower() in clean_filter_name:
-                for i, (model, passed) in enumerate(
-                    filter_results[known_filter].items()
-                ):
+                for i, (model, passed) in enumerate(filter_results[known_filter].items()):
                     bar_center_x = data.loc[models, "num_mol"].values[0] / 2
                     bar_center_y = x[i]
-                    model_total = (
-                        data.loc[model, "num_mol"]
-                        if model in data.index
-                        else data["num_mol"].iloc[0]
-                    )
+                    model_total = data.loc[model, "num_mol"] if model in data.index else data["num_mol"].iloc[0]
                     if model_total != 0:
-                        pct = passed / model_total * 100
+                        pct = (passed / model_total * 100)
                         text = f"Passed molecules: {passed} ({pct:.1f}%)"
                     else:
                         text = f"Passed molecules: {passed} (0%)"
-                    ax.annotate(
-                        text,
-                        (bar_center_x, bar_center_y),
-                        ha="center",
-                        va="center",
-                        fontsize=12,
-                        color="black",
-                        fontweight="bold",
-                        bbox={
-                            "facecolor": "white",
-                            "alpha": 0.7,
-                            "edgecolor": "none",
-                            "pad": 3,
-                        },
-                        zorder=1000,
-                    )
+                    ax.annotate(text, (bar_center_x, bar_center_y), ha="center", va="center", fontsize=12, color="black", fontweight="bold",
+                                bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none", "pad": 3}, zorder=1000)
 
         for i, model in enumerate(models):
             count = data.loc[model, "num_mol"]
             max_bar_width = data["num_mol"].max()
             text_x_position = max_bar_width
-            ax.text(
-                text_x_position,
-                i,
-                int(count),
-                va="center",
-                ha="left",
-                fontsize=12,
-                color="black",
-                fontweight="bold",
-            )
+            ax.text(text_x_position, i, int(count),  va="center", ha="left", fontsize=12, color="black", fontweight="bold")
 
         banned_bars = []
         banned_percentages = []
-        ratio_cols = [
-            col
-            for col in data.columns
-            if "banned_ratio" in col and "num_banned" not in col
-        ]
+        ratio_cols = [col for col in data.columns if "banned_ratio" in col and "num_banned" not in col]
         colors = get_model_colors(model_names=ratio_cols, cmap="Paired")
         for col, color in zip(ratio_cols, colors.values(), strict=False):
             num_banned_col = f"num_banned_{col}"
@@ -959,19 +878,13 @@ def plot_calculated_stats(config, prefix) -> None:
             banned_bars.append(bar)
 
         clean_filter_name = filter_name
-        ax.set_title(
-            clean_name(clean_filter_name), fontsize=14, pad=20, fontweight="bold"
-        )
+        ax.set_title(clean_name(clean_filter_name), fontsize=14, pad=20, fontweight="bold")
         ax.set_yticks(x)
         ax.set_yticklabels(models, fontsize=12)
         ax.xaxis.set_major_formatter(plt.FuncFormatter(format_number))
         ax.set_xlim(left=0)
 
-    ax.set_xlabel(
-        f"Number of Molecules (Total: {format_number(total_mols)})",
-        fontsize=12,
-        labelpad=10,
-    )
+    ax.set_xlabel(f"Number of Molecules (Total: {format_number(total_mols)})", fontsize=12, labelpad=10)
     ax.set_ylabel("Models", fontsize=12, labelpad=10)
 
     ax.grid(True, axis="x", alpha=0.2, linestyle="--")
@@ -981,33 +894,21 @@ def plot_calculated_stats(config, prefix) -> None:
     sorted_indices = np.argsort(banned_percentages)[::-1]
     sorted_handles = [total] + [banned_bars[i] for i in sorted_indices]
 
-    legend = ax.legend(
-        handles=sorted_handles,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        fontsize=11,
-        ncol=1,
-    )
+    legend = ax.legend(handles=sorted_handles, loc="center left",  bbox_to_anchor=(1.02, 0.5), fontsize=11, ncol=1)
     legend.get_frame().set_alpha(0.9)
     legend.get_frame().set_edgecolor("lightgray")
 
     plt.subplots_adjust(right=0.85, hspace=0.6, wspace=0.5)
 
-    subdir = (
-        f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
-    )
-    plt.savefig(
-        folder_to_save + f"{subdir}/MoleculeCountsComparison.png",
-        dpi=300,
-        bbox_inches="tight",
-        facecolor="white",
-        edgecolor="none",
-    )
+    subdir = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
+    plt.savefig(folder_to_save + f"{subdir}/MoleculeCountsComparison.png", dpi=300, bbox_inches="tight", facecolor="white", edgecolor="none")
     plt.close()
 
 
 def plot_restriction_ratios(config, prefix) -> None:
     folder_to_save = process_path(config["folder_to_save"])
+    folder_name = Path(config["folder_to_save"]).name
+
     config_structFilters = load_config(config["config_structFilters"])
 
     if prefix == "beforeDescriptors":
@@ -1029,19 +930,12 @@ def plot_restriction_ratios(config, prefix) -> None:
         data = pd.read_csv(path)
 
         ratio_cols = [col for col in data.columns if "banned_ratio" in col]
-        model_names_filters[filter_name] = dict(
-            zip(data["model_name"].tolist(), data["num_mol"].tolist(), strict=False)
-        )
+        model_names_filters[filter_name] = dict(zip(data["model_name"].tolist(), data["num_mol"].tolist(), strict=False))
 
         if not ratio_cols:
             continue
 
-        clean_cols = {
-            col: col.replace("_banned_ratio", "")
-            .replace("banned_ratio", "")
-            .replace("_s", "s")
-            for col in ratio_cols
-        }
+        clean_cols = {col: col.replace("_banned_ratio", "").replace("banned_ratio", "").replace("_s", "s") for col in ratio_cols}
         ratios = data[ratio_cols].rename(columns=clean_cols)
         actual_model_names = data["model_name"].tolist()
         ratios.index = actual_model_names
@@ -1082,13 +976,8 @@ def plot_restriction_ratios(config, prefix) -> None:
     n_cols = min(2, n_filters)
     n_rows = (n_filters + n_cols - 1) // n_cols
 
-    fig = plt.figure(figsize=(16, 7 * n_rows))
-    fig.suptitle(
-        "Comparison of Restriction Ratios Across Different Filters",
-        fontsize=16,
-        y=0.98,
-        fontweight="bold",
-    )
+    fig = plt.figure(figsize=(16, 7*n_rows))
+    fig.suptitle("Comparison of Restriction Ratios Across Different Filters", fontsize=16, y=0.98, fontweight="bold")
 
     for idx, (filter_name, data) in enumerate(filter_data.items()):
         number_of_mols = np.array(model_names_filters[filter_name].tolist())
@@ -1103,40 +992,16 @@ def plot_restriction_ratios(config, prefix) -> None:
                 data = data.drop(columns=["any"])
 
             from matplotlib.colors import LinearSegmentedColormap
-
-            custom_cmap = LinearSegmentedColormap.from_list(
-                "custom", ["white", "#B29EEE"]
-            )
+            custom_cmap = LinearSegmentedColormap.from_list("custom", ["white", "#B29EEE"])
             if idx == 1:
-                sns.heatmap(
-                    data.T,
-                    cmap=custom_cmap,
-                    cbar_kws={"label": "Passed Molecules", "format": "%d"},
-                    ax=ax,
-                    vmin=0,
-                    vmax=max(data.max()),
-                    fmt=".0f",
-                    annot=True,
-                    annot_kws={"size": 12, "rotation": 0, "color": "black"},
-                    cbar=True,
-                )
-            else:
-                sns.heatmap(
-                    data.T,
-                    cmap=custom_cmap,
-                    cbar_kws={"label": "Passed Molecules", "format": "%d"},
-                    ax=ax,
-                    vmin=0,
-                    vmax=max(data.max()),
-                    fmt=".0f",
-                    annot=True,
-                    annot_kws={"size": 12, "rotation": 0, "color": "black"},
-                    cbar=False,
-                )
 
-            ax.set_title(
-                f"{clean_name(filter_name)} Filter", fontsize=12, fontweight="bold"
-            )
+                sns.heatmap(data.T, cmap=custom_cmap, cbar_kws={"label": "Passed Molecules", "format": "%d" }, ax=ax, vmin=0, vmax=max(data.max()),
+                            fmt=".0f", annot=True, annot_kws={"size": 12, "rotation": 0, "color": "black"}, cbar=True)
+            else:
+                sns.heatmap(data.T, cmap=custom_cmap, cbar_kws={"label": "Passed Molecules", "format": "%d" }, ax=ax, vmin=0, vmax=max(data.max()),
+                            fmt=".0f", annot=True, annot_kws={"size": 12, "rotation": 0, "color": "black"}, cbar=False)
+
+            ax.set_title(f"{clean_name(filter_name)} Filter", fontsize=12, fontweight="bold")
             plt.setp(ax.get_yticklabels(), rotation=0, ha="right", fontsize=12)
             plt.setp(ax.get_xticklabels(), rotation=0, ha="right", fontsize=12)
             ax.set_xlabel("Model")
@@ -1146,36 +1011,18 @@ def plot_restriction_ratios(config, prefix) -> None:
                 ax.set_xticklabels(actual_model_names)
 
         else:
-            ax.text(
-                0.5,
-                0.5,
-                "No data available",
-                horizontalalignment="center",
-                verticalalignment="center",
-                transform=ax.transAxes,
-            )
-            ax.set_title(
-                f"{clean_name(filter_name)} Filter",
-                pad=10,
-                fontsize=11,
-                fontweight="bold",
-            )
+            ax.text(0.5, 0.5, "No data available", horizontalalignment="center", verticalalignment="center", transform=ax.transAxes)
+            ax.set_title(f"{clean_name(filter_name)} Filter", pad=10, fontsize=11, fontweight="bold")
 
     plt.tight_layout()
-    subdir = (
-        f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
-    )
-    plt.savefig(
-        folder_to_save + f"{subdir}/RestrictionRatiosComparison.png",
-        dpi=300,
-        bbox_inches="tight",
-        facecolor="white",
-        edgecolor="none",
-    )
+    subdir = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
+    plt.savefig(folder_to_save + f"{subdir}/RestrictionRatiosComparison.png", dpi=300, bbox_inches="tight", facecolor="white", edgecolor="none")
     plt.close()
 
 
-def filter_data(config: dict[str, Any], prefix: str) -> pd.DataFrame:
+def filter_data(
+    config: dict[str, Any], prefix: str
+) -> pd.DataFrame:
     """Filter and merge molecular data from different filters.
 
     Args:
@@ -1211,21 +1058,13 @@ def filter_data(config: dict[str, Any], prefix: str) -> pd.DataFrame:
         for df in datas[1:]:
             merge_cols = ["smiles", "model_name"]
             existing_cols = set(filtered_data.columns) - set(merge_cols)
-            new_cols = [
-                col
-                for col in df.columns
-                if col not in existing_cols and col not in merge_cols
-            ]
+            new_cols = [col for col in df.columns if col not in existing_cols and col not in merge_cols]
 
             if new_cols:
                 cols_to_merge = merge_cols + new_cols
-                filtered_data = filtered_data.merge(
-                    df[cols_to_merge], on=merge_cols, how="inner"
-                )
+                filtered_data = filtered_data.merge(df[cols_to_merge], on=merge_cols, how="inner")
             else:
-                filtered_data = filtered_data.merge(
-                    df[merge_cols], on=merge_cols, how="inner"
-                )
+                filtered_data = filtered_data.merge(df[merge_cols], on=merge_cols, how="inner")
     else:
         filtered_data = pd.DataFrame(columns=["smiles", "model_name", "mol_idx"])
 
@@ -1252,7 +1091,9 @@ def filter_data(config: dict[str, Any], prefix: str) -> pd.DataFrame:
 
                     input_path = _get_input_path(config, prefix, base_folder)
                 except Exception:
-                    logger.debug("Could not determine input path from main module")
+                    logger.debug(
+                        "Could not determine input path from main module"
+                    )
                     input_path = None
     else:
         sampled_path = Path(base_folder + "sampledMols.csv")
@@ -1312,14 +1153,16 @@ def filter_data(config: dict[str, Any], prefix: str) -> pd.DataFrame:
                                 )
                                 for col in pass_cols:
                                     if f"{col}_dup" in all_extended.columns:
-                                        all_extended[col] = all_extended[col].fillna(
-                                            all_extended[f"{col}_dup"]
-                                        )
+                                        all_extended[col] = all_extended[
+                                            col
+                                        ].fillna(all_extended[f"{col}_dup"])
                                         all_extended = all_extended.drop(
                                             columns=[f"{col}_dup"]
                                         )
                     except Exception:
-                        logger.debug(f"Could not process extended file: {ext_path}")
+                        logger.debug(
+                            f"Could not process extended file: {ext_path}"
+                        )
                         continue
 
                 if all_extended is not None:
@@ -1338,7 +1181,9 @@ def filter_data(config: dict[str, Any], prefix: str) -> pd.DataFrame:
                         )
                         for col in pass_cols:
                             if col in fail_molecules.columns:
-                                fail_molecules[col] = fail_molecules[col].fillna(False)
+                                fail_molecules[col] = fail_molecules[col].fillna(
+                                    False
+                                )
 
                 id_cols = ["smiles", "model_name", "mol_idx"]
                 pass_cols_final = [
@@ -1358,7 +1203,9 @@ def filter_data(config: dict[str, Any], prefix: str) -> pd.DataFrame:
     return filtered_data
 
 
-def inject_identity_columns_to_all_csvs(config: dict[str, Any], prefix: str) -> None:
+def inject_identity_columns_to_all_csvs(
+    config: dict[str, Any], prefix: str
+) -> None:
     """Ensure identity columns are ordered consistently in all CSVs.
 
     Args:
@@ -1406,11 +1253,7 @@ def analyze_filter_failures(
     logger.debug(f"Analyzing filter failures from: {file_path}")
     df = pd.read_csv(file_path, low_memory=False)
 
-    filter_columns = [
-        col
-        for col in df.columns
-        if col.startswith("pass_") and col not in {"pass", "pass_any"}
-    ]
+    filter_columns = [col for col in df.columns if col.startswith("pass_") and col not in {"pass", "pass_any"}]
 
     if not filter_columns:
         return None, None, None
@@ -1426,11 +1269,10 @@ def analyze_filter_failures(
         total = len(df)
         failure_percentage = (failures / total) * 100
 
-        filter_failures[filter_name] = {
-            "failures": failures,
-            "total": total,
-            "percentage": failure_percentage,
-        }
+        filter_failures[filter_name] = {"failures": failures,
+                                        "total": total,
+                                        "percentage": failure_percentage
+                                       }
 
         reasons_col = f"reasons_{filter_name}"
         if reasons_col in df.columns:
@@ -1440,15 +1282,11 @@ def analyze_filter_failures(
             reason_counts = {}
             for reasons_str in reasons_data:
                 if pd.notna(reasons_str) and str(reasons_str).strip():
-                    individual_reasons = [
-                        r.strip() for r in str(reasons_str).split(";") if r.strip()
-                    ]
+                    individual_reasons = [r.strip() for r in str(reasons_str).split(";") if r.strip()]
                     for reason in individual_reasons:
                         reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-            sorted_reasons = sorted(
-                reason_counts.items(), key=lambda x: x[1], reverse=True
-            )
+            sorted_reasons = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)
             filter_reasons[filter_name] = sorted_reasons
             all_detailed_reasons[filter_name] = reason_counts
 
@@ -1457,7 +1295,7 @@ def analyze_filter_failures(
     _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path)
 
     all_reasons = {}
-    for _filter_name, reasons in filter_reasons.items():
+    for filter_name, reasons in filter_reasons.items():
         for reason, count in reasons:
             if reason in all_reasons:
                 all_reasons[reason] += count
@@ -1481,7 +1319,9 @@ def analyze_filter_failures(
     return filter_failures, filter_reasons, all_detailed_reasons
 
 
-def _create_main_filter_plot(filter_failures: dict[str, Any], file_path: str) -> None:
+def _create_main_filter_plot(
+    filter_failures: dict[str, Any], file_path: str
+) -> None:
     """Create main filter failures bar chart.
 
     Args:
@@ -1557,16 +1397,10 @@ def _create_individual_filter_plots(filter_failures, filter_reasons, file_path) 
 
             plot_data = []
             for reason, count in reasons_data:
-                plot_data.append(
-                    {
-                        "Reason": reason,
-                        "Count": count,
-                        "Percentage_of_Filter_Failures": (count / stats["failures"])
-                        * 100
-                        if stats["failures"] > 0
-                        else 0,
-                    }
-                )
+                plot_data.append({"Reason": reason,
+                                  "Count": count,
+                                  "Percentage_of_Filter_Failures": (count / stats["failures"]) * 100 if stats["failures"] > 0 else 0
+                                })
 
             if not plot_data:
                 continue
@@ -1575,40 +1409,19 @@ def _create_individual_filter_plots(filter_failures, filter_reasons, file_path) 
             plot_df = plot_df.sort_values("Count", ascending=False)
 
             plt.figure(figsize=(max(16, len(plot_df) * 0.6), 20))
-            bars = plt.bar(
-                range(len(plot_df)),
-                plot_df["Count"],
-                color="steelblue",
-                alpha=0.8,
-                width=0.3,
-            )
+            bars = plt.bar(range(len(plot_df)), plot_df["Count"], color="steelblue", alpha=0.8, width=0.3)
 
             plt.xlabel("Failure Reasons", fontsize=20)
             plt.ylabel("Number of Molecules Failed", fontsize=20)
             title_text = (
-                f"{filter_name.upper()} - Failure Reasons "
-                f"({len(plot_df)} reasons, {stats['failures']} total failures)"
+                f'{filter_name.upper()} - Failure Reasons '
+                f'({len(plot_df)} reasons, {stats["failures"]} total failures)'
             )
             plt.title(title_text, fontsize=26, fontweight="bold")
-            plt.xticks(
-                range(len(plot_df)),
-                plot_df["Reason"],
-                rotation=45,
-                ha="right",
-                fontsize=max(10, min(16, 300 // len(plot_df))),
-            )
+            plt.xticks(range(len(plot_df)), plot_df["Reason"], rotation=45, ha="right", fontsize=max(10, min(16, 300 // len(plot_df))))
 
-            for i, (_bar, count) in enumerate(
-                zip(bars, plot_df["Count"], strict=False)
-            ):
-                plt.text(
-                    i,
-                    count + max(plot_df["Count"]) * 0.01,
-                    f"{count}\n({plot_df.iloc[i]['Percentage_of_Filter_Failures']:.1f}%)",
-                    ha="center",
-                    va="bottom",
-                    fontsize=12,
-                )
+            for i, (_bar, count) in enumerate(zip(bars, plot_df["Count"], strict=False)):
+                plt.text(i, count + max(plot_df["Count"]) * 0.01, f"{count}\n({plot_df.iloc[i]['Percentage_of_Filter_Failures']:.1f}%)", ha="center", va="bottom", fontsize=12)
 
             plt.grid(axis="y", alpha=0.3)
             plt.tight_layout()
@@ -1623,12 +1436,8 @@ def _create_individual_filter_plots(filter_failures, filter_reasons, file_path) 
 
 def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path) -> None:
     """Create multi-panel plot showing all filters with reasons."""
-    sorted_filters = sorted(
-        filter_failures.items(), key=lambda x: x[1]["failures"], reverse=True
-    )
-    sorted_filters = [
-        (name, stats) for name, stats in sorted_filters if stats["failures"] > 0
-    ]
+    sorted_filters = sorted(filter_failures.items(), key=lambda x: x[1]["failures"], reverse=True)
+    sorted_filters = [(name, stats) for name, stats in sorted_filters if stats["failures"] > 0]
 
     num_filters = len(sorted_filters)
     if num_filters == 0:
@@ -1666,19 +1475,11 @@ def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path) 
         else:
             title_suffix = f"({len(all_reasons_data)} reasons)"
 
-        plt.bar(
-            range(len(reason_names)),
-            reason_counts,
-            color="steelblue",
-            alpha=0.8,
-            width=0.3,
-        )
+        plt.bar(range(len(reason_names)), reason_counts, color="steelblue", alpha=0.8, width=0.3)
 
         plt.xlabel("Reasons", fontsize=14)
         plt.ylabel("Molecules Failed", fontsize=14)
-        plt.title(
-            f"{filter_name.upper()}\n{title_suffix}", fontsize=16, fontweight="bold"
-        )
+        plt.title(f"{filter_name.upper()}\n{title_suffix}", fontsize=16, fontweight="bold")
 
         truncated_names = []
         for name in reason_names:
@@ -1687,23 +1488,10 @@ def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path) 
             else:
                 truncated_names.append(name)
 
-        plt.xticks(
-            range(len(truncated_names)),
-            truncated_names,
-            rotation=45,
-            ha="right",
-            fontsize=12,
-        )
+        plt.xticks(range(len(truncated_names)), truncated_names, rotation=45, ha="right", fontsize=12)
 
         for j, count in enumerate(reason_counts):
-            plt.text(
-                j,
-                count + max(reason_counts) * 0.01 if reason_counts else 0,
-                f"{count}",
-                ha="center",
-                va="bottom",
-                fontsize=11,
-            )
+            plt.text(j, count + max(reason_counts) * 0.01 if reason_counts else 0, f"{count}", ha="center", va="bottom", fontsize=11)
 
         plt.grid(axis="y", alpha=0.3)
 
@@ -1789,9 +1577,7 @@ def _create_comprehensive_overview(filter_reasons, filter_failures, file_path) -
         reason_names.append(reason_short)
         reason_counts.append(count)
 
-    bars = plt.bar(
-        range(len(reason_names)), reason_counts, color="darkgreen", alpha=0.7, width=0.3
-    )
+    bars = plt.bar(range(len(reason_names)), reason_counts, color="darkgreen", alpha=0.7, width=0.3)
 
     plt.xlabel("Failure Reasons", fontsize=20)
     plt.ylabel("Total Number of Molecules Failed", fontsize=20)
@@ -1800,19 +1586,10 @@ def _create_comprehensive_overview(filter_reasons, filter_failures, file_path) -
         f"(Top {display_count} of {len(top_reasons)})"
     )
     plt.title(title_text, fontsize=26, fontweight="bold")
-    plt.xticks(
-        range(len(reason_names)), reason_names, rotation=45, ha="right", fontsize=16
-    )
+    plt.xticks(range(len(reason_names)), reason_names, rotation=45, ha="right", fontsize=16)
 
     for i, (_bar, count) in enumerate(zip(bars, reason_counts, strict=False)):
-        plt.text(
-            i,
-            count + max(reason_counts) * 0.01,
-            f"{count}",
-            ha="center",
-            va="bottom",
-            fontsize=14,
-        )
+        plt.text(i, count + max(reason_counts) * 0.01, f"{count}", ha="center", va="bottom", fontsize=14)
 
     plt.grid(axis="y", alpha=0.3)
     plt.tight_layout()
@@ -1851,13 +1628,12 @@ def _create_summary_table(
     summary_data = []
 
     for filter_name, stats in filter_failures.items():
-        row = {
-            "Ruleset": filter_name,
-            "Total_Failures": stats["failures"],
-            "Failure_Percentage": stats["percentage"],
-            "Total_Molecules": stats["total"],
-            "Unique_Reasons_Count": len(filter_reasons.get(filter_name, [])),
-        }
+        row = {"Ruleset": filter_name,
+               "Total_Failures": stats["failures"],
+               "Failure_Percentage": stats["percentage"],
+               "Total_Molecules": stats["total"],
+               "Unique_Reasons_Count": len(filter_reasons.get(filter_name, []))
+              }
 
         if filter_reasons.get(filter_name):
             for i, (reason, count) in enumerate(filter_reasons[filter_name][:5], 1):
@@ -1885,7 +1661,9 @@ def _create_summary_table(
     return summary_df
 
 
-def plot_filter_failures_analysis(config: dict[str, Any], prefix: str) -> None:
+def plot_filter_failures_analysis(
+    config: dict[str, Any], prefix: str
+) -> None:
     """Analyze and plot filter failures for extended CSV files.
 
     Args:

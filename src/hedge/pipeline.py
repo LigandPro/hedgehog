@@ -55,7 +55,7 @@ DOCKING_TOOL_GNINA = "gnina"
 DOCKING_TOOL_BOTH = "both"
 DOCKING_RESULTS_DIR_TEMPLATE = {
     DOCKING_TOOL_SMINA: DIR_DOCKING + "/smina_results",
-    DOCKING_TOOL_GNINA: DIR_DOCKING + "/gnina_results",
+    DOCKING_TOOL_GNINA: DIR_DOCKING + "/gnina_results"
 }
 
 
@@ -178,7 +178,9 @@ class PipelineStageRunner:
         logger.debug("No processed data found from any stage")
         return None
 
-    def run_descriptors(self, data: pd.DataFrame, subfolder: str | None = None) -> bool:
+    def run_descriptors(
+        self, data: pd.DataFrame, subfolder: str | None = None
+    ) -> bool:
         """Run molecular descriptors calculation.
 
         Args:
@@ -234,6 +236,7 @@ class PipelineStageRunner:
         except Exception as e:
             logger.error(f"Error running structural filters: {e}")
             return False
+
 
     def run_synthesis(self) -> bool:
         """Run synthesis analysis.
@@ -337,7 +340,9 @@ class PipelineStageRunner:
 
         return any(present_map.get(tool, False) for tool in tools_list)
 
-    def _get_gnina_output_dir(self, cfg: dict[str, Any], base_folder: Path) -> Path:
+    def _get_gnina_output_dir(
+        self, cfg: dict[str, Any], base_folder: Path
+    ) -> Path:
         """Get the GNINA output directory from config.
 
         Args:
@@ -402,9 +407,7 @@ class PipelineStageRunner:
                 return False
 
             if not self.docking_results_present():
-                logger.error(
-                    "Docking finished but no results detected in output directories"
-                )
+                logger.error("Docking finished but no results detected in output directories")
                 return False
             return True
         except Exception as e:
@@ -476,7 +479,9 @@ class MolecularAnalysisPipeline:
                 logger.warning(f"Could not load config for {stage.name}: {e}")
                 stage.enabled = False
 
-    def get_latest_data(self, skip_descriptors: bool = False) -> pd.DataFrame | None:
+    def get_latest_data(
+        self, skip_descriptors: bool = False
+    ) -> pd.DataFrame | None:
         """Load the most recent stage output data.
 
         Args:
@@ -517,7 +522,9 @@ class MolecularAnalysisPipeline:
                             filename = FILE_PASS_SMILES_TEMPLATE.format(
                                 stage=next_source
                             )
-                            path = self.data_checker.base_path / next_source / filename
+                            path = (
+                                self.data_checker.base_path / next_source / filename
+                            )
                             data = pd.read_csv(path)
                             if len(data) > 0:
                                 logger.info(
@@ -586,17 +593,11 @@ class MolecularAnalysisPipeline:
                 logger.info(f"Molecules before filtration: {initial_count}")
                 logger.info(f"Molecules remaining after all stages: {final_count}")
                 if initial_count > 0:
-                    logger.info(
-                        f"  Retention rate: {100 * final_count / initial_count:.2f}%"
-                    )
+                    logger.info(f"  Retention rate: {100*final_count/initial_count:.2f}%")
                 if final_data is not None and len(final_data) > 0:
-                    final_output_path = (
-                        self.data_checker.base_path / "finalMolecules.csv"
-                    )
+                    final_output_path = self.data_checker.base_path / "finalMolecules.csv"
                     final_data.to_csv(final_output_path, index=False)
-                    logger.info(
-                        f"Saved {final_count} final molecules to {final_output_path}"
-                    )
+                    logger.info(f"Saved {final_count} final molecules to {final_output_path}")
                 return success_count == total_enabled_stages
 
         # Stage 3: Synthesis
@@ -606,11 +607,7 @@ class MolecularAnalysisPipeline:
                 self.stages[3].completed = True
                 success_count += 1
             else:
-                output_path = (
-                    self.data_checker.base_path
-                    / DIR_SYNTHESIS
-                    / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_SYNTHESIS)
-                )
+                output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_SYNTHESIS)
                 if output_path.exists():
                     try:
                         df_check = pd.read_csv(output_path)
@@ -622,21 +619,15 @@ class MolecularAnalysisPipeline:
                             self._log_pipeline_summary()
                             initial_count = len(data)
                             final_data = self.get_latest_data(skip_descriptors=True)
-                            final_count = (
-                                len(final_data) if final_data is not None else 0
-                            )
+                            final_count = len(final_data) if final_data is not None else 0
                             logger.info("---------> Molecule Count Summary")
                             logger.info(f"Molecules before filtration: {initial_count}")
-                            logger.info(
-                                f"Molecules remaining after all stages: {final_count}"
-                            )
+                            logger.info(f"Molecules remaining after all stages: {final_count}")
                             if initial_count > 0:
                                 retention_rate = 100 * final_count / initial_count
                                 logger.info(f"Retention rate: {retention_rate:.2f}%")
                             if final_data is not None and len(final_data) > 0:
-                                final_output_path = (
-                                    self.data_checker.base_path / "finalMolecules.csv"
-                                )
+                                final_output_path = self.data_checker.base_path / "finalMolecules.csv"
                                 final_data.to_csv(final_output_path, index=False)
                                 logger.info(
                                     f"Saved {final_count} final molecules "
@@ -648,9 +639,7 @@ class MolecularAnalysisPipeline:
                             "Continuing with available molecules."
                         )
                     except Exception:
-                        logger.warning(
-                            "Synthesis stage failed. Check logs for details."
-                        )
+                        logger.warning("Synthesis stage failed. Check logs for details.")
                 else:
                     logger.error(
                         "Synthesis stage failed (no output file created). "
@@ -667,14 +656,10 @@ class MolecularAnalysisPipeline:
 
         # Stage 5': Final descriptors calculation
         if self.stages[5].enabled:
-            logger.info(
-                "---------> [#B29EEE]Stage 5': Final Descriptors Calculation[/#B29EEE]"
-            )
+            logger.info("---------> [#B29EEE]Stage 5': Final Descriptors Calculation[/#B29EEE]")
             final_data = self.get_latest_data(skip_descriptors=True)
             if final_data is not None and len(final_data) > 0:
-                if self.stage_runner.run_descriptors(
-                    final_data, subfolder=DIR_FINAL_DESCRIPTORS
-                ):
+                if self.stage_runner.run_descriptors(final_data, subfolder=DIR_FINAL_DESCRIPTORS):
                     self.stages[5].completed = True
                     success_count += 1
             else:
@@ -701,7 +686,7 @@ class MolecularAnalysisPipeline:
         logger.info(f"Molecules before filtration: {initial_count}")
         logger.info(f"Molecules remaining after all stages: {final_count}")
         if initial_count > 0:
-            logger.info(f"Retention rate: {100 * final_count / initial_count:.2f}%")
+            logger.info(f"Retention rate: {100*final_count/initial_count:.2f}%")
 
         if final_data is not None and len(final_data) > 0:
             final_output_path = self.data_checker.base_path / "finalMolecules.csv"
