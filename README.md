@@ -23,7 +23,10 @@ git clone https://github.com/LigandPro/hedge.git
 cd hedge
 
 # Install package with uv
-uv pip install -e .
+uv sync
+
+# Install syba via conda/mamba (required dependency)
+mamba install -c rdkit -c lich syba
 ```
 
 Before running the pipeline you should download external modules: go to [modules folder](modules/) and follow [README.md](modules/README.md) inside.
