@@ -150,20 +150,28 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
 
 def get_input_path(config: Dict[str, Any], folder_to_save: str) -> str:
     """Determine input path for synthesis stage.
-    
+
     Checks for StructFilters output first, then falls back to other sources.
+    Supports both new hierarchical structure and legacy flat structure.
     """
     base_folder = process_path(folder_to_save)
-    
-    candidates = [base_folder + 'StructFilters/passStructFiltersSMILES.csv',
-                  base_folder + 'Descriptors/passDescriptorsSMILES.csv',
-                  base_folder + 'sampledMols.csv',
-                 ]
-            
+
+    # New structure paths
+    candidates = [
+        os.path.join(base_folder, 'stages', '03_structural_filters_post', 'filtered_molecules.csv'),
+        os.path.join(base_folder, 'stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv'),
+        os.path.join(base_folder, 'input', 'sampled_molecules.csv'),
+        # Legacy structure paths
+        base_folder + 'StructFilters/passStructFiltersSMILES.csv',
+        base_folder + 'Descriptors/passDescriptorsSMILES.csv',
+        base_folder + 'sampledMols.csv',
+    ]
+
     for candidate in candidates:
         if os.path.exists(candidate):
+            logger.debug(f"Using input file: {candidate}")
             return candidate
-    
+
     logger.warning("No processed data found, using molecules from config")
     return config.get('generated_mols_path', '')
 

@@ -558,15 +558,16 @@ def check_paths(config, paths):
     return True
 
 
-def plot_calculated_stats(config, prefix):
+def plot_calculated_stats(config, stage_dir):
+    """Plot calculated statistics for structural filters."""
     folder_to_save = process_path(config['folder_to_save'])
-
     config_structFilters = load_config(config['config_structFilters'])
 
-    if prefix == 'beforeDescriptors':
-        paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
-    else:
-        paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
+    # Find metrics files (new structure with subdirectories or legacy flat structure)
+    struct_folder = os.path.join(folder_to_save, stage_dir) + '/'
+    paths = glob.glob(struct_folder + '*/metrics.csv')
+    if not paths:  # Fallback to legacy naming
+        paths = glob.glob(struct_folder + '*metrics.csv')
     check_paths(config_structFilters, paths)
 
     datas = []
@@ -589,10 +590,12 @@ def plot_calculated_stats(config, prefix):
         filter_names.append(filter_name)
     
     model_name_set = sorted(list(all_model_names))
-    
+
     filter_results = {}
-    subdir = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
-    filters_to_find = glob.glob(folder_to_save + f'{subdir}/*filteredMols.csv')
+    # Find filtered molecule files (new structure with subdirectories or legacy flat structure)
+    filters_to_find = glob.glob(struct_folder + '*/filtered_molecules.csv')
+    if not filters_to_find:  # Fallback to legacy naming
+        filters_to_find = glob.glob(struct_folder + '*filteredMols.csv')
     
     for path in filters_to_find:
         try:
@@ -701,22 +704,22 @@ def plot_calculated_stats(config, prefix):
     legend.get_frame().set_edgecolor('lightgray')
 
     plt.subplots_adjust(right=0.85, hspace=0.6, wspace=0.5)
-    
-    subdir = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
-    plt.savefig(folder_to_save + f'{subdir}/MoleculeCountsComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+
+    plt.savefig(struct_folder + 'molecule_counts_comparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close()
 
 
-def plot_restriction_ratios(config, prefix):
+def plot_restriction_ratios(config, stage_dir):
+    """Plot restriction ratios for structural filters."""
     folder_to_save = process_path(config['folder_to_save'])
     folder_name = config['folder_to_save'].split('/')[-1]
 
     config_structFilters = load_config(config['config_structFilters'])
 
-    if prefix == 'beforeDescriptors':
-        paths = glob.glob(folder_to_save + f'{prefix}_StructFilters/' + '*metrics.csv')
-    else:
-        paths = glob.glob(folder_to_save + f'StructFilters/' + '*metrics.csv')
+    struct_folder = os.path.join(folder_to_save, stage_dir) + '/'
+    paths = glob.glob(struct_folder + '*/metrics.csv')
+    if not paths:  # Fallback to legacy naming
+        paths = glob.glob(struct_folder + '*metrics.csv')
     check_paths(config_structFilters, paths)
     
     if not paths:
@@ -815,19 +818,26 @@ def plot_restriction_ratios(config, prefix):
             ax.set_title(f'{clean_name(filter_name)} Filter', pad=10, fontsize=11, fontweight='bold')
 
     plt.tight_layout()
-    subdir = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
-    plt.savefig(folder_to_save + f'{subdir}/RestrictionRatiosComparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    plt.savefig(struct_folder + 'restriction_ratios_comparison.png', dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close()
 
 
-def filter_data(config, prefix):
+def filter_data(config, stage_dir):
+    """Filter and combine data from all structural filters.
+
+    Args:
+        config: Configuration dictionary
+        stage_dir: Stage directory path
+    """
     config_structFilters = load_config(config['config_structFilters'])
 
-    subdir = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
     base_folder = process_path(config['folder_to_save'])
-    folder_to_save = process_path(config['folder_to_save'], key_word=subdir)
-    
-    paths = glob.glob(folder_to_save + '*filteredMols.csv')
+    folder_to_save = os.path.join(base_folder, stage_dir) + '/'
+
+    # Find all filter result files (both new and legacy naming)
+    paths = glob.glob(folder_to_save + '*/filtered_molecules.csv')
+    if not paths:  # Fallback to legacy naming
+        paths = glob.glob(folder_to_save + '*filteredMols.csv')
 
     columns_to_drop = ['pass', 'any_pass', 'name', 'pass_any']
     datas = []
@@ -859,9 +869,11 @@ def filter_data(config, prefix):
 
     cols = ['smiles', 'model_name', 'mol_idx']
     out_df = filtered_data[cols].copy()
-    out_df.to_csv(folder_to_save + 'passStructFiltersSMILES.csv', index=False)
-    
-    if prefix != 'beforeDescriptors':
+    out_df.to_csv(folder_to_save + 'filtered_molecules.csv', index=False)
+
+    # Determine if this is post-descriptors filters
+    is_post_descriptors = '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters'
+    if is_post_descriptors:
         descriptors_path = base_folder + 'Descriptors/passDescriptorsSMILES.csv'
         if os.path.exists(descriptors_path):
             input_path = descriptors_path
@@ -872,7 +884,7 @@ def filter_data(config, prefix):
             else:
                 try:
                     from hedge.stages.structFilters.main import _get_input_path
-                    input_path = _get_input_path(config, prefix, base_folder)
+                    input_path = _get_input_path(config, stage_dir, base_folder)
                 except Exception:
                     input_path = None
     else:
@@ -881,8 +893,8 @@ def filter_data(config, prefix):
             input_path = sampled_path
         else:
             try:
-                from src.hedge.stages.structFilters.main import _get_input_path
-                input_path = _get_input_path(config, prefix, base_folder)
+                from hedge.stages.structFilters.main import _get_input_path
+                input_path = _get_input_path(config, stage_dir, base_folder)
             except Exception:
                 input_path = None
     
@@ -930,17 +942,17 @@ def filter_data(config, prefix):
                 id_cols = ['smiles', 'model_name', 'mol_idx']
                 pass_cols_final = [col for col in fail_molecules.columns if col.startswith('pass_') or col == 'pass']
                 fail_cols = [c for c in id_cols if c in fail_molecules.columns] + pass_cols_final
-                fail_molecules[fail_cols].to_csv(folder_to_save + 'failStructFiltersSMILES.csv', index=False)
+                fail_molecules[fail_cols].to_csv(folder_to_save + 'failed_molecules.csv', index=False)
         except Exception as e:
             logger.warning(f"Could not create failStructFiltersSMILES.csv: {e}")
 
     return filtered_data
 
 
-def inject_identity_columns_to_all_csvs(config, prefix):
+def inject_identity_columns_to_all_csvs(config, stage_dir):
     """Ensure identity columns are ordered consistently in all CSVs."""
-    subdir = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
-    target_folder = process_path(config['folder_to_save'], key_word=subdir)
+    base_folder = process_path(config['folder_to_save'])
+    target_folder = os.path.join(base_folder, stage_dir) + '/'
 
     csv_paths = glob.glob(target_folder + '*.csv')
     for path in csv_paths:
@@ -1287,11 +1299,10 @@ def _create_summary_table(filter_failures, filter_reasons, file_path):
     return summary_df
 
 
-def plot_filter_failures_analysis(config, prefix):
+def plot_filter_failures_analysis(config, stage_dir):
     """Analyze and plot filter failures for extended CSV files."""
     folder_to_save = process_path(config['folder_to_save'])
-    subfolder = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
-    struct_folder = folder_to_save + f'{subfolder}/'
+    struct_folder = os.path.join(folder_to_save, stage_dir) + '/'
     
     if not os.path.exists(struct_folder):
         return

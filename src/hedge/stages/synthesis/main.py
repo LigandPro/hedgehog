@@ -15,13 +15,14 @@ def _order_identity_columns(df):
 
 def main(config):
     """Main entry point for synthesis stage (retrosynthesis analysis).
-    
+
     Args:
         config: Configuration dictionary containing pipeline settings
     """
     folder_to_save = process_path(config['folder_to_save'])
-    output_folder_str = process_path(folder_to_save, 'Synthesis')
+    output_folder_str = os.path.join(folder_to_save, 'stages', '04_synthesis')
     output_folder = Path(output_folder_str)
+    output_folder.mkdir(parents=True, exist_ok=True)
     config_synthesis = load_config(config['config_synthesis'])
     input_path = get_input_path(config, folder_to_save)
     
@@ -48,7 +49,7 @@ def main(config):
     
     if len(score_filtered_df) == 0:
         logger.warning("No molecules passed synthesis score filters")
-        output_file = output_folder / 'passSynthesisSMILES.csv'
+        output_file = output_folder / 'filtered_molecules.csv'
         output_file.parent.mkdir(parents=True, exist_ok=True)
         score_filtered_df.to_csv(output_file, index=False)
         logger.info(f"Saved 0 molecules to {output_file}")
@@ -65,7 +66,7 @@ def main(config):
         logger.error(f"  mkdir -p public")
         logger.error(f"  uv run python -m aizynthfinder.tools.download_public_data ./public")
         logger.error(f"Synthesis stage will be skipped - continuing pipeline without retrosynthesis")
-        output_file = output_folder / 'passSynthesisSMILES.csv'
+        output_file = output_folder / 'filtered_molecules.csv'
         score_filtered_df_copy = _order_identity_columns(score_filtered_df)
         output_file.parent.mkdir(parents=True, exist_ok=True)
         score_filtered_df_copy.to_csv(output_file, index=False)
@@ -99,7 +100,7 @@ def main(config):
         filtered_df = merged_df.copy()
         logger.info("Keeping all molecules (filter_solved_only=False)")
     
-    output_file = output_folder / 'passSynthesisSMILES.csv'
+    output_file = output_folder / 'filtered_molecules.csv'
     filtered_df = _order_identity_columns(filtered_df)
     filtered_df.to_csv(output_file, index=False)
     

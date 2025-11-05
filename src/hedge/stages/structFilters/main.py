@@ -72,14 +72,20 @@ def _get_input_path(config, stage_dir, folder_to_save):
     return config['generated_mols_path']
 
 
-def main(config, prefix):
-    """Main entry point for structural filters stage."""
+def main(config, stage_dir):
+    """Main entry point for structural filters stage.
+
+    Args:
+        config: Configuration dictionary
+        stage_dir: Stage directory path (e.g., 'stages/02_structural_filters_pre' or 'stages/03_structural_filters_post')
+    """
     sample_size = config['sample_size']
     folder_to_save = process_path(config['folder_to_save'])
-    
-    subfolder = f'{prefix}_StructFilters' if prefix == 'beforeDescriptors' else 'StructFilters'
-    os.makedirs(folder_to_save + f'{subfolder}/', exist_ok=True)
-    input_path = _get_input_path(config, prefix, folder_to_save)
+
+    # Determine output directory
+    output_dir = os.path.join(folder_to_save, stage_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    input_path = _get_input_path(config, stage_dir, folder_to_save)
     
     try:
         input_df = pd.read_csv(input_path)
@@ -104,14 +110,17 @@ def main(config, prefix):
             continue
         
         final_res, final_extended = get_basic_stats(config_structFilters, filter_results, model_name, filter_name=filter_name)
-        path_to_save = folder_to_save + f'{subfolder}/{camelcase(filter_name)}'
-        
+
+        # Create filter-specific subdirectory
+        filter_subdir = os.path.join(output_dir, filter_name)
+        os.makedirs(filter_subdir, exist_ok=True)
+
         final_res = _order_identity_columns(final_res)
-        final_res.to_csv(f'{path_to_save}_metrics.csv', index=False)
-        
+        final_res.to_csv(os.path.join(filter_subdir, 'metrics.csv'), index=False)
+
         final_extended = _order_identity_columns(final_extended)
-        final_extended.to_csv(f"{path_to_save}_extended.csv", index=False)
-        
+        final_extended.to_csv(os.path.join(filter_subdir, 'extended.csv'), index=False)
+
         if 'pass' not in final_extended.columns:
             if 'pass_filter' in final_extended.columns:
                 final_extended['pass'] = final_extended['pass_filter']
@@ -119,18 +128,20 @@ def main(config, prefix):
                 logger.warning(f"'pass' column not found in {filter_name} extended results. Assuming all molecules pass.")
                 final_extended['pass'] = True
         filtered_mols = final_extended[final_extended['pass'] == True].copy()
-        
-        filtered_mols = _order_identity_columns(filtered_mols)
-        filtered_mols.to_csv(f'{path_to_save}_filteredMols.csv', index=False)
-    
-    plot_calculated_stats(config, prefix)
-    plot_restriction_ratios(config, prefix)
 
-    if prefix != 'beforeDescriptors':
-        plot_filter_failures_analysis(config, prefix)
+        filtered_mols = _order_identity_columns(filtered_mols)
+        filtered_mols.to_csv(os.path.join(filter_subdir, 'filtered_molecules.csv'), index=False)
+
+    plot_calculated_stats(config, stage_dir)
+    plot_restriction_ratios(config, stage_dir)
+
+    # Only run failure analysis for post-descriptors filters
+    is_post_descriptors = '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters'
+    if is_post_descriptors:
+        plot_filter_failures_analysis(config, stage_dir)
 
     is_single_stage = config.get('_run_single_stage_override') == 'struct_filters'
     if config_structFilters.get('filter_data', False) or is_single_stage:
-        filter_data(config, prefix)
+        filter_data(config, stage_dir)
 
-    inject_identity_columns_to_all_csvs(config, prefix)
+    inject_identity_columns_to_all_csvs(config, stage_dir)
