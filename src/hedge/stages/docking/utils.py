@@ -14,14 +14,25 @@ from hedge.configs.logger import logger, load_config
 
 
 def _find_latest_input_source(base_folder):
-    """Find the most recent input source file for docking."""
-    candidates = [base_folder / 'Synthesis' / 'passSynthesisSMILES.csv',
-                  base_folder / 'StructFilters' / 'passStructFiltersSMILES.csv',
-                  base_folder / 'Descriptors' / 'passDescriptorsSMILES.csv',
-                  base_folder / 'sampledMols.csv',
-                 ]
+    """Find the most recent input source file for docking.
+
+    Supports both new hierarchical structure and legacy flat structure.
+    """
+    # New structure paths (in priority order)
+    candidates = [
+        base_folder / 'stages' / '04_synthesis' / 'filtered_molecules.csv',
+        base_folder / 'stages' / '03_structural_filters_post' / 'filtered_molecules.csv',
+        base_folder / 'stages' / '01_descriptors_initial' / 'filtered' / 'filtered_molecules.csv',
+        base_folder / 'input' / 'sampled_molecules.csv',
+        # Legacy structure paths
+        base_folder / 'Synthesis' / 'passSynthesisSMILES.csv',
+        base_folder / 'StructFilters' / 'passStructFiltersSMILES.csv',
+        base_folder / 'Descriptors' / 'passDescriptorsSMILES.csv',
+        base_folder / 'sampledMols.csv',
+    ]
     for path in candidates:
         if path.exists():
+            logger.debug(f"Using docking input: {path}")
             return path
     return None
 
@@ -800,7 +811,7 @@ def run_docking(config):
         logger.error(f'Failed to read docking input {source}: {e}')
         return False
     
-    ligands_dir = base_folder / 'Docking'
+    ligands_dir = base_folder / 'stages' / '05_docking'
     ligands_csv = ligands_dir / 'ligands.csv'
     
     try:
