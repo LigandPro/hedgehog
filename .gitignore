@@ -112,3 +112,9 @@ modules/*/__pycache__/
 *.temp
 *.swp
 *.swo
+
+# Test outputs
+tests/test_output/
+.pytest_cache/
+.coverage
+htmlcov/

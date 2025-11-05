@@ -1,0 +1,11 @@
+smiles,model_name
+CCO,test_model
+CC(C)O,test_model
+c1ccccc1,test_model
+CC(=O)O,test_model
+CCN,test_model
+c1ccc(cc1)O,test_model
+CC(C)(C)O,test_model
+CCc1ccccc1,test_model
+CC(C)N,test_model
+c1ccc(cc1)N,test_model

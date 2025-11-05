@@ -1,0 +1,10 @@
+run: False
+run_before_descriptors: False
+filter_data: False
+
+calculate_common_alerts: False
+calculate_molgraph_stats: False
+calculate_molcomplexity: False
+calculate_NIBR: False
+calculate_bredt: False
+calculate_lilly: False

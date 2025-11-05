@@ -1,0 +1,10 @@
+generated_mols_path: tests/fixtures/test_molecules.csv
+folder_to_save: tests/test_output
+n_jobs: 2
+sample_size: 10
+save_sampled_mols: True
+
+config_descriptors: tests/fixtures/test_config_descriptors.yml
+config_structFilters: tests/fixtures/test_config_structFilters.yml
+config_synthesis: tests/fixtures/test_config_synthesis.yml
+config_docking: tests/fixtures/test_config_docking.yml
