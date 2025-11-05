@@ -14,42 +14,25 @@ Comprehensive benchmark pipeline for evaluating generative models in molecular d
 5) Medicinal Chemists evaluation: calculate 4 medichinal chemists evaluation criteria (*in development*)
 
 ## Setup & Run
-**Hybrid approach:** Conda + UV
 
-Requires ~15 mins to set up the environemnt.
+Requires ~15 mins to set up the environment.
 
 ```bash
 # Clone repository
 git clone https://github.com/LigandPro/hedge.git
 cd hedge
 
-# Create conda environment from provided environment file (for Lilly and SYBA as they are not presented in PyPI) 
-conda env create -f environment.yml
+# Install package with uv
+uv pip install -e .
 ```
 
 Before running the pipeline you should download external modules: go to [modules folder](modules/) and follow [README.md](modules/README.md) inside.
 
-After modules installation continue environment setting from ```hedge/``` folder:
-```bash
-# Activate conda environment
-conda activate hedge_env
-
-# Install hedge package in conda environment
-uv pip install -e .
-
-# Create venv using conda Python with system-site-packages enabled
-# This is critical for accessing conda-installed packages
-uv venv --python $(python -c "import sys; print(sys.executable)") --system-site-packages
-```
-
-You are ready to use **🦔 HEDGE** for your purpose! 
+You are ready to use **🦔 HEDGE** for your purpose!
 
 **Usage**
 
 ```bash
-# Every time you work activate conda environment for not-in-PyPI packages
-conda activate hedge_env
-
 # Run full pipeline on a proposed small test data from `data/test/`
 uv run hedge run
 

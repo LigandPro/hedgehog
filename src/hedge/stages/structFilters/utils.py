@@ -14,6 +14,13 @@ import seaborn as sns
 from pandarallel import pandarallel
 from rdkit import Chem
 
+LILLY_BIN_DIR = (
+    Path(__file__).resolve().parents[4] / "modules" / "lilly_medchem_rules" / "bin"
+)
+if LILLY_BIN_DIR.exists():
+    existing_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{LILLY_BIN_DIR}{os.pathsep}{existing_path}"
+
 try:
     from medchem.structural.lilly_demerits import LillyDemeritsFilters
 
@@ -724,8 +731,8 @@ def check_paths(config, paths) -> bool:
     required_patterns = ["".join(k.split("_")) for k, v in all_filters.items() if v]
     missing_patterns = [pattern
                         for pattern in required_patterns
-                        if not any(pattern.lower() in path.lower()
-                            for path in paths)]
+                        if not any(pattern.lower() in str(candidate).lower()
+                            for candidate in paths)]
     if len(missing_patterns) > 0:
         msg = f"Invalid filter name(s) missing: {', '.join(missing_patterns)}"
         raise AssertionError(msg)
@@ -761,7 +768,7 @@ def plot_calculated_stats(config, prefix) -> None:
             data_filtered.loc[:, f"num_banned_{banned_col}"] = data_filtered[banned_col] * data_filtered["num_mol"]
         datas.append(data_filtered)
 
-        filter_name = path.split("/")[-1].replace("_metrics.csv", "")
+        filter_name = Path(path).name.replace("_metrics.csv", "")
         filter_names.append(filter_name)
 
     model_name_set = sorted(all_model_names)
@@ -774,7 +781,7 @@ def plot_calculated_stats(config, prefix) -> None:
     for path in filters_to_find:
         try:
             filter_data = pd.read_csv(path)
-            filter_name = path.split("/")[-1].split("filteredMols.csv")[0].strip("_")
+            filter_name = Path(path).stem.replace("filteredMols", "").strip("_")
 
             num_passed_by_model = None
             if "pass" in filter_data.columns:
@@ -814,7 +821,7 @@ def plot_calculated_stats(config, prefix) -> None:
         total_mols = data["num_mol"].sum()
         total = ax.barh(x, data.loc[models, "num_mol"], width, label=f"Total Molecules ({format_number(total_mols)})", color="#E5E5E5", alpha=0.5)
 
-        clean_filter_name = filter_name.split("/")[-1].lower()
+        clean_filter_name = filter_name.lower()
         for known_filter in filter_results:
             if known_filter.lower() in clean_filter_name:
                 for i, (model, passed) in enumerate(filter_results[known_filter].items()):
@@ -860,7 +867,7 @@ def plot_calculated_stats(config, prefix) -> None:
             bar = ax.barh(x, banned_count, width, label=label, color=color, alpha=0.8)
             banned_bars.append(bar)
 
-        clean_filter_name = filter_name.split("/")[-1]
+        clean_filter_name = filter_name
         ax.set_title(clean_name(clean_filter_name), fontsize=14, pad=20, fontweight="bold")
         ax.set_yticks(x)
         ax.set_yticklabels(models, fontsize=12)
@@ -890,7 +897,7 @@ def plot_calculated_stats(config, prefix) -> None:
 
 def plot_restriction_ratios(config, prefix) -> None:
     folder_to_save = process_path(config["folder_to_save"])
-    folder_name = config["folder_to_save"].split("/")[-1]
+    folder_name = Path(config["folder_to_save"]).name
 
     config_structFilters = load_config(config["config_structFilters"])
 
@@ -909,7 +916,7 @@ def plot_restriction_ratios(config, prefix) -> None:
     filter_data = {}
     model_names_filters = {}
     for path in paths:
-        filter_name = path.split(f"{folder_name}/")[-1].split("_metrics.csv")[0]
+        filter_name = Path(path).stem.replace("_metrics", "")
         data = pd.read_csv(path)
 
         ratio_cols = [col for col in data.columns if "banned_ratio" in col]

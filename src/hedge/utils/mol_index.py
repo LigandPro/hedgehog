@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -20,7 +21,11 @@ TEMP_MODEL_NUMBER = "_model_number"
 TEMP_COUNTER = "_per_model_counter"
 
 
-def assign_mol_idx(df: pd.DataFrame, run_base: Path) -> pd.DataFrame:
+def assign_mol_idx(
+    df: pd.DataFrame,
+    run_base: Path,
+    logger: logging.Logger | None = None,
+) -> pd.DataFrame:
     """
     Assign a stable mol_idx for each row in the dataframe.
 
@@ -36,6 +41,9 @@ def assign_mol_idx(df: pd.DataFrame, run_base: Path) -> pd.DataFrame:
         Input dataframe with molecules
     run_base : Path
         Base directory for the run (used to store model index mapping)
+    logger : logging.Logger | None
+        Optional logger used for diagnostic messages when persisting
+        the model index map fails.
 
     Returns
     -------
@@ -54,7 +62,7 @@ def assign_mol_idx(df: pd.DataFrame, run_base: Path) -> pd.DataFrame:
     model_map = {
         model: idx + 1 for idx, model in enumerate(present_models)
     }
-    _save_model_index_map(run_base, model_map)
+    _save_model_index_map(run_base, model_map, logger)
 
     df[TEMP_MODEL_NUMBER] = df[MODEL_NAME_COLUMN].map(model_map)
     df[TEMP_COUNTER] = df.groupby(MODEL_NAME_COLUMN).cumcount() + 1
@@ -68,18 +76,20 @@ def assign_mol_idx(df: pd.DataFrame, run_base: Path) -> pd.DataFrame:
     return df.drop(columns=[TEMP_MODEL_NUMBER, TEMP_COUNTER])
 
 
-def _save_model_index_map(run_base: Path, model_map: dict) -> None:
+def _save_model_index_map(
+    run_base: Path,
+    model_map: dict[str, int],
+    logger: logging.Logger | None,
+) -> None:
     """Save model index mapping to JSON file for this run."""
     try:
         dest_dir = run_base / RUN_CONFIGS_DIR
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         map_file = dest_dir / MODEL_INDEX_MAP_FILE
-        with map_file.open("w") as f:
+        with map_file.open("w", encoding="utf-8") as f:
             json.dump(model_map, f, indent=2, sort_keys=True)
-    except OSError as e:
-        # Silently fail if mapping cannot be saved
-        # This is not critical for the main workflow
-        del e  # Avoid unused variable warning
-
+    except OSError as exc:
+        if logger is not None:
+            logger.warning("Failed to persist model index map: %s", exc)
 

@@ -1,5 +1,5 @@
-import os
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -16,7 +16,7 @@ from hedge.stages.synthesis.utils import (
 )
 
 
-def _order_identity_columns(df):
+def _order_identity_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Order dataframe columns with identity columns first."""
     id_cols = ["smiles", "model_name", "mol_idx"]
     existing_id_cols = [c for c in id_cols if c in df.columns]
@@ -24,9 +24,9 @@ def _order_identity_columns(df):
     return df[ordered_cols]
 
 
-def main(config):
-    """Main entry point for synthesis stage (retrosynthesis analysis).
-    
+def main(config: dict[str, Any]) -> None:  # noqa: PLR0915
+    """Run synthesis stage (retrosynthesis analysis).
+
     Args:
         config: Configuration dictionary containing pipeline settings
     """
@@ -36,9 +36,10 @@ def main(config):
     config_synthesis = load_config(config["config_synthesis"])
     input_path = get_input_path(config, folder_to_save)
 
-    if not os.path.exists(input_path):
-        logger.error(f"Input file not found: {input_path}")
-        raise FileNotFoundError(f"Input file not found: {input_path}")
+    if not Path(input_path).exists():
+        msg = f"Input file not found: {input_path}"
+        logger.error(msg)
+        raise FileNotFoundError(msg)
 
     try:
         input_df = pd.read_csv(input_path)
@@ -66,7 +67,12 @@ def main(config):
         return
 
     input_smiles_file = output_folder / "input_smiles.smi"
-    retrosynth_module = Path(__file__).parent.parent.parent.parent.parent / "modules" / "retrosynthesis" / "aizynthfinder"
+    retrosynth_module = (
+        Path(__file__).parent.parent.parent.parent.parent
+        / "modules"
+        / "retrosynthesis"
+        / "aizynthfinder"
+    )
     aizynth_config_file = retrosynth_module / "public" / "config.yml"
 
     if not aizynth_config_file.exists():
@@ -74,8 +80,14 @@ def main(config):
         logger.error("To set up retrosynthesis, run:")
         logger.error(f"  cd {retrosynth_module}")
         logger.error("  mkdir -p public")
-        logger.error("  uv run python -m aizynthfinder.tools.download_public_data ./public")
-        logger.error("Synthesis stage will be skipped - continuing pipeline without retrosynthesis")
+        logger.error(
+            "  uv run python -m aizynthfinder.tools.download_public_data"
+            " ./public"
+        )
+        logger.error(
+            "Synthesis stage will be skipped - continuing pipeline without"
+            " retrosynthesis"
+        )
         output_file = output_folder / "passSynthesisSMILES.csv"
         score_filtered_df_copy = _order_identity_columns(score_filtered_df)
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -84,13 +96,15 @@ def main(config):
 
     prepare_input_smiles(score_filtered_df, input_smiles_file)
     output_json_file = output_folder / "retrosynthesis_results.json"
-    success = run_aizynthfinder(input_smiles_file=input_smiles_file,
-                                output_json_file=output_json_file,
-                                config_file=aizynth_config_file
-                            )
+    success = run_aizynthfinder(
+        input_smiles_file=input_smiles_file,
+        output_json_file=output_json_file,
+        config_file=aizynth_config_file,
+    )
     if not success:
-        logger.error("Retrosynthesis analysis failed")
-        raise RuntimeError("Retrosynthesis analysis failed")
+        msg = "Retrosynthesis analysis failed"
+        logger.error(msg)
+        raise RuntimeError(msg)
 
     retrosynth_df = parse_retrosynthesis_results(output_json_file)
 
@@ -114,5 +128,8 @@ def main(config):
     filtered_df = _order_identity_columns(filtered_df)
     filtered_df.to_csv(output_file, index=False)
 
-    avg_time = merged_df["search_time"].mean() if "search_time" in merged_df.columns else 0.0
+    if "search_time" in merged_df.columns:
+        avg_time = merged_df["search_time"].mean()
+    else:
+        avg_time = 0.0
     logger.info(f"Average retrosynthesis search time: {avg_time:.2f} s")

@@ -49,15 +49,12 @@ lint.select = ["ALL"]
 lint.ignore = [
     "COM812",  # conflicts with formatter
     "ISC001",  # conflicts with formatter
-    "ANN101",  # missing-type-self
-    "S101",    # allow assert
     "D100",    # module docstrings optional
     "D104",    # package docstrings optional
     "PT001",
-    "PT004",
-    "PT005",
     "PT023",
     "PLR0913", # allow >5 params
+    "E501", # allow line too long
 ]
 
 [tool.ruff.lint.per-file-ignores]
