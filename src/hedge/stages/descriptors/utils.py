@@ -28,7 +28,36 @@ def _stringify_nested_value(value):
         return None
     if hasattr(value, 'to_list'):
         value = value.to_list()
+        if len(value) == 1:
+            value = value[0]
     return json.dumps(value)
+
+
+def _coerce_sequence(value):
+    """Normalize nested list-like values coming from Polars map_elements."""
+    if value is None:
+        return []
+    if hasattr(value, 'to_list'):
+        value = value.to_list()
+        if len(value) == 1:
+            value = value[0]
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    if isinstance(value, list):
+        if len(value) == 1 and isinstance(value[0], (list, tuple, set)):
+            return list(value[0])
+        return value
+    if isinstance(value, dict):
+        return list(value.values())
+    if isinstance(value, str):
+        try:
+            parsed = ast.literal_eval(value)
+        except Exception:
+            return [value]
+        if isinstance(parsed, (list, tuple, set)):
+            return list(parsed)
+        return [parsed]
+    return [value]
 
 
 def write_csv_safe(df: pl.DataFrame, path: str) -> None:
@@ -52,16 +81,7 @@ def write_csv_safe(df: pl.DataFrame, path: str) -> None:
 
 
 def _chars_pass(value, allowed_chars) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, list):
-        items = value
-    else:
-        try:
-            parsed = ast.literal_eval(value)
-            items = parsed if isinstance(parsed, (list, tuple, set)) else [parsed]
-        except Exception:
-            items = [value]
+    items = _coerce_sequence(value)
     try:
         return all(str(char).strip() in allowed_chars for char in items)
     except Exception:
@@ -69,16 +89,7 @@ def _chars_pass(value, allowed_chars) -> bool:
 
 
 def _ring_size_pass(value, min_border, max_border) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, list):
-        items = value
-    else:
-        try:
-            parsed = ast.literal_eval(value)
-            items = parsed if isinstance(parsed, (list, tuple, set)) else [parsed]
-        except Exception:
-            items = [value]
+    items = _coerce_sequence(value)
 
     def _within_bounds(size):
         try:
@@ -136,6 +147,7 @@ def drop_false_rows(df, borders):
     passed_cols = []
     filter_charged_mol = borders.get('filter_charged_mol', False)
     charged_mol_col = None
+    mask = None
 
     for col in df.columns:
         if col.endswith('_pass') or col == 'pass':
@@ -157,7 +169,8 @@ def drop_false_rows(df, borders):
         df_masked = df.clone()
 
     if not filter_charged_mol and charged_mol_col is not None and charged_mol_col not in df_masked.columns:
-        df_masked = df_masked.with_columns(df.filter(mask).select(charged_mol_col))
+        source_df = df.filter(mask) if mask is not None else df
+        df_masked = df_masked.with_columns(source_df[charged_mol_col])
     return df_masked
 
 
