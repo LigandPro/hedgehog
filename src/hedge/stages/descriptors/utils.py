@@ -44,9 +44,7 @@ def order_identity_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[ordered]
 
 
-def drop_false_rows(
-    df: pd.DataFrame, borders: dict[str, Any]
-) -> pd.DataFrame:
+def drop_false_rows(df: pd.DataFrame, borders: dict[str, Any]) -> pd.DataFrame:
     """Filter rows that passed all descriptor filters.
 
     Args:
@@ -148,11 +146,13 @@ def compute_metrics(  # noqa: PLR0915
         if mol_n:
             mol_metrics = {}
             mol = Chem.AddHs(mol_n)  # type: ignore[no-untyped-call]
-            symbols = list({
-                atom.GetSymbol()  # type: ignore[attr-defined]
-                for atom in mol.GetAtoms()  # type: ignore[attr-defined]
-                if atom.GetSymbol()  # type: ignore[attr-defined]
-            })
+            symbols = list(
+                {
+                    atom.GetSymbol()  # type: ignore[attr-defined]
+                    for atom in mol.GetAtoms()  # type: ignore[attr-defined]
+                    if atom.GetSymbol()  # type: ignore[attr-defined]
+                }
+            )
             charged_mol = not any(
                 atom.GetFormalCharge() != 0  # type: ignore[attr-defined]
                 for atom in mol.GetAtoms()  # type: ignore[attr-defined]
@@ -175,9 +175,7 @@ def compute_metrics(  # noqa: PLR0915
             mol_metrics["model_name"] = model_name
             mol_metrics["mol_idx"] = mol_idx
             mol_metrics["chars"] = symbols
-            mol_metrics["n_atoms"] = (
-                Chem.AddHs(mol).GetNumAtoms()  # type: ignore[no-untyped-call,attr-defined]
-            )
+            mol_metrics["n_atoms"] = Chem.AddHs(mol).GetNumAtoms()  # type: ignore[no-untyped-call,attr-defined]
             mol_metrics["n_heavy_atoms"] = n_heavy_atoms
             mol_metrics["n_het_atoms"] = sum(
                 1
@@ -205,22 +203,14 @@ def compute_metrics(  # noqa: PLR0915
             )
             mol_metrics["ring_size"] = rings
             mol_metrics["n_rings"] = mol_n.GetRingInfo().NumRings()  # type: ignore[attr-defined]
-            mol_metrics["n_aroma_rings"] = (
-                rdMolDescriptors.CalcNumAromaticRings(mol_n)  # type: ignore[no-untyped-call]
-            )
-            mol_metrics["n_fused_aromatic_rings"] = (
-                n_fused_aromatic_rings(mol_n)
-            )
+            mol_metrics["n_aroma_rings"] = rdMolDescriptors.CalcNumAromaticRings(mol_n)  # type: ignore[no-untyped-call]
+            mol_metrics["n_fused_aromatic_rings"] = n_fused_aromatic_rings(mol_n)
             mol_metrics["n_rigid_bonds"] = n_rigid_bonds
             mol_metrics["n_rot_bonds"] = n_rot_bonds
             mol_metrics["hbd"] = Lipinski.NumHDonors(mol_n)  # type: ignore[no-untyped-call]
             mol_metrics["hba"] = Lipinski.NumHAcceptors(mol_n)  # type: ignore[no-untyped-call]
-            mol_metrics["fsp3"] = (
-                rdMolDescriptors.CalcFractionCSP3(mol_n)  # type: ignore[no-untyped-call]
-            )
-            mol_metrics["tpsa"] = (
-                rdMolDescriptors.CalcTPSA(mol_n)  # type: ignore[no-untyped-call]
-            )
+            mol_metrics["fsp3"] = rdMolDescriptors.CalcFractionCSP3(mol_n)  # type: ignore[no-untyped-call]
+            mol_metrics["tpsa"] = rdMolDescriptors.CalcTPSA(mol_n)  # type: ignore[no-untyped-call]
             mol_metrics["qed"] = QED.qed(mol_n)  # type: ignore[no-untyped-call]
             metrics[smiles] = mol_metrics
         else:
@@ -232,14 +222,14 @@ def compute_metrics(  # noqa: PLR0915
             "Skipped %d molecules that failed to parse",
             len(skipped_molecules),
         )
-        skipped_df = pd.DataFrame({
-            "smiles": [s for s, _, _ in skipped_molecules],
-            "model_name": [m for _, m, _ in skipped_molecules],
-        })
+        skipped_df = pd.DataFrame(
+            {
+                "smiles": [s for s, _, _ in skipped_molecules],
+                "model_name": [m for _, m, _ in skipped_molecules],
+            }
+        )
         if any(idx is not None for _, _, idx in skipped_molecules):
-            skipped_df["mol_idx"] = [
-                idx for _, _, idx in skipped_molecules
-            ]
+            skipped_df["mol_idx"] = [idx for _, _, idx in skipped_molecules]
         skipped_df.to_csv(  # type: ignore[attr-defined]
             save_path + "skippedMolsDescriptors.csv", index=False
         )
@@ -279,27 +269,20 @@ def filter_molecules(  # noqa: C901, PLR0912, PLR0915
             filtered_data[col] = df[col]
 
             relevant_keys = [k for k in borders if col.lower() in k.lower()]
-            min_border = next(
-                (borders[k] for k in relevant_keys if "min" in k), None
-            )
-            max_border = next(
-                (borders[k] for k in relevant_keys if "max" in k), None
-            )
+            min_border = next((borders[k] for k in relevant_keys if "min" in k), None)
+            max_border = next((borders[k] for k in relevant_keys if "max" in k), None)
 
             if col == "chars":
                 filtered_data[f"{col}_pass"] = df[col].apply(
                     lambda x: all(
                         str(char).strip() in borders["allowed_chars"]
-                        for char in (
-                            x if isinstance(x, list) else ast.literal_eval(x)
-                        )
+                        for char in (x if isinstance(x, list) else ast.literal_eval(x))
                     )
                 )
             elif col == "ring_size":
                 filtered_data[f"{col}_pass"] = df[col].apply(
                     lambda x, min_b=min_border, max_b=max_border: all(
-                        float(ring_size) >= min_b
-                        and float(ring_size) <= max_b
+                        float(ring_size) >= min_b and float(ring_size) <= max_b
                         for ring_size in (
                             x if isinstance(x, list) else ast.literal_eval(x)
                         )
@@ -309,18 +292,16 @@ def filter_molecules(  # noqa: C901, PLR0912, PLR0915
                 if max_border == "inf":
                     filtered_data[f"{col}_pass"] = df[col] >= min_border
                 else:
-                    filtered_data[f"{col}_pass"] = (
-                        (df[col] >= min_border) & (df[col] <= max_border)
+                    filtered_data[f"{col}_pass"] = (df[col] >= min_border) & (
+                        df[col] <= max_border
                     )
             else:
-                filtered_data[f"{col}_pass"] = (
-                    (df[col] >= min_border) & (df[col] <= max_border)
+                filtered_data[f"{col}_pass"] = (df[col] >= min_border) & (
+                    df[col] <= max_border
                 )
 
     filtered_data_with_false = pd.DataFrame(filtered_data)
-    filtered_data_with_false = order_identity_columns(
-        filtered_data_with_false
-    )
+    filtered_data_with_false = order_identity_columns(filtered_data_with_false)
     filtered_data_with_false.to_csv(  # type: ignore[attr-defined]
         folder_to_save + "descriptorsPassFlags.csv",
         index_label="SMILES",
@@ -366,9 +347,9 @@ def filter_molecules(  # noqa: C901, PLR0912, PLR0915
                 how="left",
                 indicator=True,
             )
-            fail_filters = merged[merged["_merge"] == "left_only"].drop(
-                columns=["_merge"]
-            ).copy()
+            fail_filters = (
+                merged[merged["_merge"] == "left_only"].drop(columns=["_merge"]).copy()
+            )
 
             if len(fail_filters) > 0:
                 flags_path = folder_to_save + "descriptorsPassFlags.csv"
@@ -389,9 +370,9 @@ def filter_molecules(  # noqa: C901, PLR0912, PLR0915
                         )
                         for col in pass_cols:
                             if f"{col}_flags" in fail_filters.columns:  # type: ignore[attr-defined]
-                                fail_filters[col] = fail_filters[
-                                    f"{col}_flags"
-                                ].fillna(fail_filters.get(col, False))
+                                fail_filters[col] = fail_filters[f"{col}_flags"].fillna(
+                                    fail_filters.get(col, False)
+                                )
                                 fail_filters = fail_filters.drop(
                                     columns=[f"{col}_flags"]
                                 )
@@ -459,12 +440,10 @@ def filter_molecules(  # noqa: C901, PLR0912, PLR0915
                     )
                     for col in pass_cols:
                         if f"{col}_flags" in fail_filters.columns:  # type: ignore[attr-defined]
-                            fail_filters[col] = fail_filters[
-                                f"{col}_flags"
-                            ].fillna(fail_filters.get(col, False))
-                            fail_filters = fail_filters.drop(
-                                columns=[f"{col}_flags"]
+                            fail_filters[col] = fail_filters[f"{col}_flags"].fillna(
+                                fail_filters.get(col, False)
                             )
+                            fail_filters = fail_filters.drop(columns=[f"{col}_flags"])
 
             fail_filters = order_identity_columns(fail_filters)
 
@@ -546,9 +525,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
     )
     cols_to_plot = descriptors_config["filtered_cols_to_plot"]
     discrete_feats = descriptors_config["discrete_features_to_plot"]
-    not_to_smooth_by_sides_cols = descriptors_config[
-        "not_to_smooth_plot_by_sides"
-    ]
+    not_to_smooth_by_sides_cols = descriptors_config["not_to_smooth_plot_by_sides"]
     renamer = descriptors_config["renamer"]
 
     # Plot configuration constants
@@ -602,20 +579,12 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
         if not relevant_keys:
             continue
 
-        min_val = next(
-            (borders[k] for k in relevant_keys if "min" in k), None
-        )
-        max_val = next(
-            (borders[k] for k in relevant_keys if "max" in k), None
-        )
+        min_val = next((borders[k] for k in relevant_keys if "min" in k), None)
+        max_val = next((borders[k] for k in relevant_keys if "max" in k), None)
         minmax_str = f"min: {min_val}, max: {max_val}"
         ax = axes[i]
         for model in model_names:
-            model_df = (
-                df[df["model_name"].str.lower() == model]
-                if is_multi
-                else df
-            )
+            model_df = df[df["model_name"].str.lower() == model] if is_multi else df
 
             if col == "chars":
                 values_raw = model_df[col].dropna()
@@ -641,9 +610,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                 for m in sorted(df["model_name"].dropna().unique())
             }
             name_map_lc = {str(k).lower(): v for k, v in name_map.items()}
-            label_name = name_map_lc.get(
-                str(model).lower(), str(model).upper()
-            )
+            label_name = name_map_lc.get(str(model).lower(), str(model).upper())
             label = f"{label_name}, pass: {mols_passed:.1f}%"
             color = colors[model]
 
@@ -665,23 +632,14 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                             "Br",
                             "H",
                         ]
-                        all_chars = borders.get(
-                            "allowed_chars", desired_order
-                        )
+                        all_chars = borders.get("allowed_chars", desired_order)
                         sorted_chars = [
-                            char
-                            for char in desired_order
-                            if char in all_chars
-                        ] + [
-                            char
-                            for char in all_chars
-                            if char not in desired_order
-                        ]
+                            char for char in desired_order if char in all_chars
+                        ] + [char for char in all_chars if char not in desired_order]
                         complete_counts = pd.Series(0, index=sorted_chars)
                         complete_counts.update(value_counts)
                         x_positions = [
-                            i + offset
-                            for i in range(len(complete_counts.index))
+                            i + offset for i in range(len(complete_counts.index))
                         ]
                         ax.bar(
                             x_positions,
@@ -694,9 +652,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                             label=label,
                         )
                         if model_index == 0:
-                            tick_positions = list(
-                                range(len(complete_counts.index))
-                            )
+                            tick_positions = list(range(len(complete_counts.index)))
                             ax.set_xticks(tick_positions)
                             ax._discrete_tick_values = (  # noqa: SLF001
                                 complete_counts.index
@@ -704,9 +660,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                             ax.set_xticklabels(complete_counts.index)
                     else:
                         value_counts = (
-                            pd.Series(values_before)
-                            .value_counts()
-                            .sort_index()
+                            pd.Series(values_before).value_counts().sort_index()
                         )
 
                         if max_val is not None and max_val != "inf":
@@ -720,8 +674,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                             complete_counts = value_counts
 
                         x_positions = [
-                            i + offset
-                            for i in range(len(complete_counts.index))
+                            i + offset for i in range(len(complete_counts.index))
                         ]
                         ax.bar(
                             x_positions,
@@ -736,9 +689,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                         if model_index == 0:
                             if col == "n_rigid_bonds":
                                 all_values = list(complete_counts.index)
-                                tick_values = [
-                                    x for x in all_values if x % 5 == 0
-                                ]
+                                tick_values = [x for x in all_values if x % 5 == 0]
                                 if max(all_values) not in tick_values:
                                     tick_values.append(max(all_values))
                                 tick_positions = [
@@ -747,25 +698,21 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                                     if val in all_values
                                 ]
                                 ax.set_xticks(tick_positions)
-                                ax.set_xticklabels([
-                                    str(int(val))
-                                    for val in tick_values
-                                ])
+                                ax.set_xticklabels(
+                                    [str(int(val)) for val in tick_values]
+                                )
                                 ax._discrete_tick_values = (  # noqa: SLF001
                                     complete_counts.index
                                 )
                             else:
-                                tick_positions = list(
-                                    range(len(complete_counts.index))
-                                )
+                                tick_positions = list(range(len(complete_counts.index)))
                                 ax.set_xticks(tick_positions)
                                 ax._discrete_tick_values = (  # noqa: SLF001
                                     complete_counts.index
                                 )
-                                ax.set_xticklabels([
-                                    str(int(x))
-                                    for x in complete_counts.index
-                                ])
+                                ax.set_xticklabels(
+                                    [str(int(x)) for x in complete_counts.index]
+                                )
 
                 elif col in not_to_smooth_by_sides_cols:
                     if col in ["fsp3", "qed"]:
@@ -939,9 +886,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                             zorder=0,
                         )
                     except ValueError:
-                        ax.axvspan(
-                            x_min, 0, color="grey", alpha=0.2, zorder=0
-                        )
+                        ax.axvspan(x_min, 0, color="grey", alpha=0.2, zorder=0)
                 elif col == "fsp3":
                     ax.axvspan(
                         min_val - 0.01,
@@ -967,9 +912,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
                         zorder=0,
                     )
             else:
-                ax.axvspan(
-                    x_min, min_val, color="grey", alpha=0.2, zorder=0
-                )
+                ax.axvspan(x_min, min_val, color="grey", alpha=0.2, zorder=0)
         if max_val is not None and max_val != "inf":
             if col in discrete_feats:
                 if hasattr(ax, "_discrete_tick_values"):
@@ -1024,9 +967,7 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
             *sorted(zip(labels, handles, strict=False), key=lambda t: t[0]),
             strict=False,
         )
-        ax.legend(
-            sorted_handles, sorted_labels, fontsize=8, loc="upper right"
-        )
+        ax.legend(sorted_handles, sorted_labels, fontsize=8, loc="upper right")
 
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
@@ -1061,5 +1002,3 @@ def draw_filtered_mols(  # noqa: C901, PLR0912, PLR0915
         bbox_inches="tight",
         format="png",
     )
-
-

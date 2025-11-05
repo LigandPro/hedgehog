@@ -56,12 +56,9 @@ def assign_mol_idx(
         df[MODEL_NAME_COLUMN] = DEFAULT_MODEL_NAME
 
     present_models = [
-        str(m)
-        for m in pd.unique(df[MODEL_NAME_COLUMN].dropna().astype(str))
+        str(m) for m in pd.unique(df[MODEL_NAME_COLUMN].dropna().astype(str))
     ]
-    model_map = {
-        model: idx + 1 for idx, model in enumerate(present_models)
-    }
+    model_map = {model: idx + 1 for idx, model in enumerate(present_models)}
     _save_model_index_map(run_base, model_map, logger)
 
     df[TEMP_MODEL_NUMBER] = df[MODEL_NAME_COLUMN].map(model_map)
@@ -92,4 +89,3 @@ def _save_model_index_map(
     except OSError as exc:
         if logger is not None:
             logger.warning("Failed to persist model index map: %s", exc)
-

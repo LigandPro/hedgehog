@@ -81,8 +81,7 @@ def main(config: dict[str, Any]) -> None:  # noqa: PLR0915
         logger.error(f"  cd {retrosynth_module}")
         logger.error("  mkdir -p public")
         logger.error(
-            "  uv run python -m aizynthfinder.tools.download_public_data"
-            " ./public"
+            "  uv run python -m aizynthfinder.tools.download_public_data ./public"
         )
         logger.error(
             "Synthesis stage will be skipped - continuing pipeline without"

@@ -22,9 +22,7 @@ MODEL_INDEX_MAP_FILE = "model_index_map.json"
 
 def _find_smiles_column(df: pd.DataFrame) -> str | None:
     """Find the SMILES column in a dataframe (case-insensitive)."""
-    result = next(
-        (col for col in df.columns if col.lower() == SMILES_COLUMN), None
-    )
+    result = next((col for col in df.columns if col.lower() == SMILES_COLUMN), None)
     return cast("str | None", result)
 
 
@@ -36,18 +34,14 @@ def _normalize_smiles_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _normalize_model_name_column(
-    df: pd.DataFrame, path: str
-) -> pd.DataFrame:
+def _normalize_model_name_column(df: pd.DataFrame, path: str) -> pd.DataFrame:
     """
     Normalize model_name column.
 
     Check for model_name/name, extract from path if missing.
     """
     lower_cols = {c.lower(): c for c in df.columns}
-    model_col = (
-        lower_cols.get(MODEL_NAME_COLUMN) or lower_cols.get(NAME_COLUMN)
-    )
+    model_col = lower_cols.get(MODEL_NAME_COLUMN) or lower_cols.get(NAME_COLUMN)
 
     if model_col:
         if model_col.lower() != MODEL_NAME_COLUMN:
@@ -113,9 +107,8 @@ def _detect_mode_and_paths(
             df = pd.read_csv(single_path)
             lower_cols = {c.lower(): c for c in df.columns}
 
-            candidate_col = (
-                lower_cols.get(MODEL_NAME_COLUMN)
-                or lower_cols.get(NAME_COLUMN)
+            candidate_col = lower_cols.get(MODEL_NAME_COLUMN) or lower_cols.get(
+                NAME_COLUMN
             )
 
             if candidate_col:
@@ -194,14 +187,10 @@ def _load_single_comparison_data(
             )
     else:
         initial_count = len(data)
-        data = data.drop_duplicates(subset=SMILES_COLUMN).reset_index(
-            drop=True
-        )
+        data = data.drop_duplicates(subset=SMILES_COLUMN).reset_index(drop=True)
         duplicates_removed = initial_count - len(data)
         if duplicates_removed > 0:
-            logger.info(
-                "Removed %s duplicate molecules", duplicates_removed
-            )
+            logger.info("Removed %s duplicate molecules", duplicates_removed)
 
     return _apply_sampling(data, sample_size, logger)
 
@@ -235,9 +224,9 @@ def _load_multi_file_with_model_column(
 
     df = df[cols_to_keep].dropna(subset=[SMILES_COLUMN])
     initial_count = len(df)
-    df = df.drop_duplicates(
-        subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]
-    ).reset_index(drop=True)
+    df = df.drop_duplicates(subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]).reset_index(
+        drop=True
+    )
     duplicates_removed = initial_count - len(df)
     if duplicates_removed > 0:
         logger.info(
@@ -254,44 +243,31 @@ def _load_multi_file_with_model_column(
     return df
 
 
-def _save_run_model_mapping(
-    data: pd.DataFrame, folder_to_save: Path
-) -> None:
+def _save_run_model_mapping(data: pd.DataFrame, folder_to_save: Path) -> None:
     """Save per-run model mapping for provenance."""
     try:
         run_configs_dir = folder_to_save / RUN_CONFIGS_DIR
         run_configs_dir.mkdir(parents=True, exist_ok=True)
 
-        if (
-            MOL_IDX_COLUMN in data.columns
-            and MODEL_NAME_COLUMN in data.columns
-        ):
+        if MOL_IDX_COLUMN in data.columns and MODEL_NAME_COLUMN in data.columns:
             tmp = data[[MODEL_NAME_COLUMN, MOL_IDX_COLUMN]].dropna().copy()
             tmp["model_index"] = (
-                tmp[MOL_IDX_COLUMN]
-                .astype(str)
-                .str.split("-")
-                .str[1]
-                .astype(int)
+                tmp[MOL_IDX_COLUMN].astype(str).str.split("-").str[1].astype(int)
             )
             run_map = tmp.groupby(MODEL_NAME_COLUMN, as_index=False)[
                 "model_index"
             ].first()
-            run_map = run_map[
-                ["model_index", MODEL_NAME_COLUMN]
-            ].sort_values("model_index")
-            run_map.to_csv(
-                run_configs_dir / RUN_MODELS_MAPPING_FILE, index=False
+            run_map = run_map[["model_index", MODEL_NAME_COLUMN]].sort_values(
+                "model_index"
             )
+            run_map.to_csv(run_configs_dir / RUN_MODELS_MAPPING_FILE, index=False)
     except (ValueError, KeyError, IndexError) as e:
         # Silently fail if mapping cannot be saved
         # This is not critical for the main workflow
         del e  # Avoid unused variable warning
 
 
-def prepare_input_data(
-    config: dict, logger: logging.Logger
-) -> pd.DataFrame:
+def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     """
     Prepare input molecular data from config-specified sources.
 
@@ -302,32 +278,22 @@ def prepare_input_data(
     folder_to_save = Path(config["folder_to_save"])
     save_sampled_mols = config.get("save_sampled_mols", False)
     sample_size: int | None = (
-        cast("int | None", config.get("sample_size"))
-        if save_sampled_mols
-        else None
+        cast("int | None", config.get("sample_size")) if save_sampled_mols else None
     )
 
-    detected_mode, matched_paths = _detect_mode_and_paths(
-        generated_mols_path
-    )
+    detected_mode, matched_paths = _detect_mode_and_paths(generated_mols_path)
 
-    logger.info(
-        "Loading generated molecules from %s...", generated_mols_path
-    )
+    logger.info("Loading generated molecules from %s...", generated_mols_path)
 
     if detected_mode == MODE_SINGLE:
-        data = _load_single_comparison_data(
-            matched_paths[0], sample_size, logger
-        )
+        data = _load_single_comparison_data(matched_paths[0], sample_size, logger)
     elif detected_mode == MODE_MULTI:
         if len(matched_paths) > 1:
             logger.info(
                 "Loading multi-model comparison from %s file(s)...",
                 len(matched_paths),
             )
-            data = _load_multi_comparison_data(
-                matched_paths, sample_size, logger
-            )
+            data = _load_multi_comparison_data(matched_paths, sample_size, logger)
         else:
             data = _load_multi_file_with_model_column(
                 matched_paths[0], sample_size, logger

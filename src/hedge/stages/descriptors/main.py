@@ -47,9 +47,7 @@ def main(
     Path(descriptors_folder).mkdir(parents=True, exist_ok=True)
 
     if data is None or len(data) == 0:
-        logger.warning(
-            "No molecules provided for descriptor calculation. Skipping."
-        )
+        logger.warning("No molecules provided for descriptor calculation. Skipping.")
         return None
 
     metrics_df = compute_metrics(data, descriptors_folder)

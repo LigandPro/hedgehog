@@ -17,11 +17,12 @@ from hedge.configs.logger import load_config, logger
 
 def _find_latest_input_source(base_folder: Path) -> Path | None:
     """Find the most recent input source file for docking."""
-    candidates = [base_folder / "Synthesis" / "passSynthesisSMILES.csv",
-                  base_folder / "StructFilters" / "passStructFiltersSMILES.csv",
-                  base_folder / "Descriptors" / "passDescriptorsSMILES.csv",
-                  base_folder / "sampledMols.csv",
-                 ]
+    candidates = [
+        base_folder / "Synthesis" / "passSynthesisSMILES.csv",
+        base_folder / "StructFilters" / "passStructFiltersSMILES.csv",
+        base_folder / "Descriptors" / "passDescriptorsSMILES.csv",
+        base_folder / "sampledMols.csv",
+    ]
     for path in candidates:
         if path.exists():
             return path
@@ -50,11 +51,14 @@ def _prepare_ligands_dataframe(df: pd.DataFrame, output_csv: Path) -> dict[str, 
         model_name = str(row["model_name"])
         mol_idx = str(row["mol_idx"])
 
-        rows.append({"smiles": smi,
-                     "name": str(names.iloc[idx]),
-                     "model_name": model_name,
-                     "mol_idx": mol_idx
-                    })
+        rows.append(
+            {
+                "smiles": smi,
+                "name": str(names.iloc[idx]),
+                "model_name": model_name,
+                "mol_idx": mol_idx,
+            }
+        )
 
     output_df = pd.DataFrame(rows, columns=["smiles", "name", "model_name", "mol_idx"])
     output_df.to_csv(output_csv, index=False)
@@ -64,14 +68,16 @@ def _prepare_ligands_dataframe(df: pd.DataFrame, output_csv: Path) -> dict[str, 
         with skip_path.open("w") as f:
             for smi in skipped_smiles:
                 f.write(f"{smi}\n")
-        logger.warning(f"Some SMILES could not be parsed for docking: {len(skipped_smiles)}/{len(df)}. "
-                       f"See {skip_path}"
-                       )
-    return {"csv_path": str(output_csv),
-            "total": len(df),
-            "written": len(rows),
-            "skipped": len(skipped_smiles)
-           }
+        logger.warning(
+            f"Some SMILES could not be parsed for docking: {len(skipped_smiles)}/{len(df)}. "
+            f"See {skip_path}"
+        )
+    return {
+        "csv_path": str(output_csv),
+        "total": len(df),
+        "written": len(rows),
+        "skipped": len(skipped_smiles),
+    }
 
 
 def _load_smina_ini_content(cfg: dict[str, Any]) -> list[str]:
@@ -88,10 +94,11 @@ def _load_smina_ini_content(cfg: dict[str, Any]) -> list[str]:
         except (OSError, IOError) as e:
             logger.warning("Failed to read smina_ini file %s: %s", ini_path, e)
 
-    return ["output-dir = smina_results",
-            "screen-type = smina",
-            'metadata-template = {"software": "smina"}',
-           ]
+    return [
+        "output-dir = smina_results",
+        "screen-type = smina",
+        'metadata-template = {"software": "smina"}',
+    ]
 
 
 def _update_ini_key_value(lines: list[str], key: str, value: str) -> list[str]:
@@ -109,7 +116,9 @@ def _update_ini_key_value(lines: list[str], key: str, value: str) -> list[str]:
     return updated_lines
 
 
-def _create_smina_config(cfg: dict[str, Any], ligands_csv: Path, output_ini: Path) -> None:
+def _create_smina_config(
+    cfg: dict[str, Any], ligands_csv: Path, output_ini: Path
+) -> None:
     """Create SMINA INI configuration file."""
     lines = _load_smina_ini_content(cfg)
 
@@ -162,36 +171,39 @@ def _create_smina_script(
                 f.write(f'mkdir -p "$(dirname "{protein_output_abs_path}")"\n')
                 f.write(f'touch "{protein_output_abs_path}" 2>/dev/null || true\n')
 
-            f.write('echo "Running protein preparation..."\n'
-                    f'{protein_prep_cmd} || PREP_EXIT_CODE=$?\n'
-                    'if [ ! -z "$PREP_EXIT_CODE" ]; then\n'
-                    '  echo "WARNING: Protein preparation command exited with code $PREP_EXIT_CODE"\n'
-                    'fi\n')
+            f.write(
+                'echo "Running protein preparation..."\n'
+                f"{protein_prep_cmd} || PREP_EXIT_CODE=$?\n"
+                'if [ ! -z "$PREP_EXIT_CODE" ]; then\n'
+                '  echo "WARNING: Protein preparation command exited with code $PREP_EXIT_CODE"\n'
+                "fi\n"
+            )
 
             if protein_output_abs_path:
-                f.write('# If file exists in current dir but not at absolute path, move it\n'
-                        f'if [ -f "{protein_output_file}" ] && [ ! -f "{protein_output_abs_path}" ]; then\n'
-                        f'  mv "{protein_output_file}" "{protein_output_abs_path}"\n'
-                        'fi\n'
-                        '# Check if prepared file exists and is valid (not empty)\n'
-                        f'if [ ! -f "{protein_output_abs_path}" ] && [ ! -f "{protein_output_file}" ]; then\n'
-                        f'  echo "ERROR: Protein preparation failed - output file not found at {protein_output_abs_path}"\n'
-                        '  echo "Current directory: $(pwd)"\n'
-                        '  echo "Listing files in current directory:"\n'
-                        '  ls -la\n'
-                        '  exit 1\n'
-                        f'elif [ -f "{protein_output_abs_path}" ] && [ ! -s "{protein_output_abs_path}" ]; then\n'
-                        f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_abs_path}"\n'
-                        '  exit 1\n'
-                        f'elif [ -f "{protein_output_file}" ] && [ ! -s "{protein_output_file}" ]; then\n'
-                        f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_file}"\n'
-                        '  exit 1\n'
-                        'else\n'
-                        '  echo "Protein preparation completed successfully"\n'
-                        'fi\n')
+                f.write(
+                    "# If file exists in current dir but not at absolute path, move it\n"
+                    f'if [ -f "{protein_output_file}" ] && [ ! -f "{protein_output_abs_path}" ]; then\n'
+                    f'  mv "{protein_output_file}" "{protein_output_abs_path}"\n'
+                    "fi\n"
+                    "# Check if prepared file exists and is valid (not empty)\n"
+                    f'if [ ! -f "{protein_output_abs_path}" ] && [ ! -f "{protein_output_file}" ]; then\n'
+                    f'  echo "ERROR: Protein preparation failed - output file not found at {protein_output_abs_path}"\n'
+                    '  echo "Current directory: $(pwd)"\n'
+                    '  echo "Listing files in current directory:"\n'
+                    "  ls -la\n"
+                    "  exit 1\n"
+                    f'elif [ -f "{protein_output_abs_path}" ] && [ ! -s "{protein_output_abs_path}" ]; then\n'
+                    f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_abs_path}"\n'
+                    "  exit 1\n"
+                    f'elif [ -f "{protein_output_file}" ] && [ ! -s "{protein_output_file}" ]; then\n'
+                    f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_file}"\n'
+                    "  exit 1\n"
+                    "else\n"
+                    '  echo "Protein preparation completed successfully"\n'
+                    "fi\n"
+                )
 
-        f.write(f"cd {ligands_dir}\n"
-                f"pyscreener --config {ini_file.name}\n")
+        f.write(f"cd {ligands_dir}\npyscreener --config {ini_file.name}\n")
     script_path.chmod(0o755)  # noqa: S103
     return script_path
 
@@ -202,12 +214,12 @@ def _prepare_protein_for_docking(
     protein_preparation_tool: str,
 ) -> tuple[str, str | None]:
     """Prepare protein file for docking using external tool.
-    
+
     Args:
         receptor_pdb: Path to the original receptor PDB file (must exist)
         ligands_dir: Directory where docking files are prepared
-        protein_preparation_tool: Path to protein preparation tool 
-    
+        protein_preparation_tool: Path to protein preparation tool
+
     Returns
     -------
         Tuple of (prepared_receptor_path, preparation_cmd) or (original_path, None).
@@ -219,7 +231,9 @@ def _prepare_protein_for_docking(
 
     receptor_path = Path(receptor_pdb)
     if not receptor_path.exists():
-        logger.warning(f"Original receptor file not found: {receptor_pdb} (resolved to: {receptor_path}), skipping protein preprocessing")
+        logger.warning(
+            f"Original receptor file not found: {receptor_pdb} (resolved to: {receptor_path}), skipping protein preprocessing"
+        )
         return receptor_pdb, None
 
     prepared_output_path = ligands_dir / "protein_prepared.pdb"
@@ -271,7 +285,7 @@ def _prepare_ligands_for_gnina(
 
 def _convert_with_rdkit(ligands_csv: Path, ligands_dir: Path) -> tuple[str, None]:
     """Convert SMILES to SDF using RDKit as fallback.
-    
+
     Assumes CSV contains smiles and name columns.
     """
     try:
@@ -325,7 +339,9 @@ def _build_gnina_command(  # noqa: C901
     user_path = cfg.get("gnina_path")
     user_args = cfg.get("gnina_args")
     if user_path and user_args:
-        formatted = user_args.format(receptor=receptor, ligands=ligands_path, out=str(output_sdf))
+        formatted = user_args.format(
+            receptor=receptor, ligands=ligands_path, out=str(output_sdf)
+        )
         return [str(user_path)] + shlex.split(formatted)
 
     gnina_bin = cfg.get("gnina_bin", "gnina")
@@ -333,11 +349,29 @@ def _build_gnina_command(  # noqa: C901
 
     center = cfg.get("center")
     if isinstance(center, (list, tuple)) and len(center) >= 3:  # noqa: PLR2004
-        cmd.extend(["--center_x", str(center[0]), "--center_y", str(center[1]), "--center_z", str(center[2])])
+        cmd.extend(
+            [
+                "--center_x",
+                str(center[0]),
+                "--center_y",
+                str(center[1]),
+                "--center_z",
+                str(center[2]),
+            ]
+        )
 
     size = cfg.get("size")
     if isinstance(size, (list, tuple)) and len(size) >= 3:  # noqa: PLR2004
-        cmd.extend(["--size_x", str(size[0]), "--size_y", str(size[1]), "--size_z", str(size[2])])
+        cmd.extend(
+            [
+                "--size_x",
+                str(size[0]),
+                "--size_y",
+                str(size[1]),
+                "--size_z",
+                str(size[2]),
+            ]
+        )
 
     autobox_ligand = cfg.get("gnina_autobox_ligand")
     if autobox_ligand:
@@ -355,12 +389,13 @@ def _build_gnina_command(  # noqa: C901
             )
         cmd.extend(["--autobox_ligand", str(autobox_ligand_path)])
 
-    optional_params = {"exhaustiveness": "--exhaustiveness",
-                       "num_modes": "--num_modes",
-                       "gnina_autobox_add": "--autobox_add",
-                       "gnina_cpu": "--cpu",
-                       "gnina_seed": "--seed",
-                      }
+    optional_params = {
+        "exhaustiveness": "--exhaustiveness",
+        "num_modes": "--num_modes",
+        "gnina_autobox_add": "--autobox_add",
+        "gnina_cpu": "--cpu",
+        "gnina_seed": "--seed",
+    }
 
     for cfg_key, arg_name in optional_params.items():
         value = cfg.get(cfg_key)
@@ -411,7 +446,11 @@ def _get_gnina_output_directory(
     cfg_out_dir = cfg.get("gnina_output_dir")
     if cfg_out_dir:
         out_dir_candidate = Path(cfg_out_dir)
-        return out_dir_candidate if out_dir_candidate.is_absolute() else (base_folder / out_dir_candidate)
+        return (
+            out_dir_candidate
+            if out_dir_candidate.is_absolute()
+            else (base_folder / out_dir_candidate)
+        )
     return base_folder / "Docking" / "gnina_results"
 
 
@@ -423,33 +462,33 @@ def _write_file_wait_check(
 ) -> None:
     """Write bash code to wait for file and check if it exists."""
     f.write(
-        f'# Check for {prep_type} output (prep is synchronous, should exist immediately)\n'
+        f"# Check for {prep_type} output (prep is synchronous, should exist immediately)\n"
         f'echo "Checking for {prep_type} output: {output_file}"\n'
         f'if [ -f "{output_file}" ]; then\n'
         f'  echo "{prep_type} output file found: {output_file}"\n'
-        'else\n'
+        "else\n"
         f'  echo "Waiting for {prep_type} output file (max 10 seconds)..."\n'
-        '  max_wait=10  # 10 seconds max wait (prep should be synchronous)\n'
-        '  wait_interval=1  # Check every 1 second\n'
-        '  waited=0\n'
+        "  max_wait=10  # 10 seconds max wait (prep should be synchronous)\n"
+        "  wait_interval=1  # Check every 1 second\n"
+        "  waited=0\n"
         f'  while [ ! -f "{output_file}" ] && [ $waited -lt $max_wait ]; do\n'
-        '    sleep $wait_interval\n'
-        '    waited=$((waited + wait_interval))\n'
+        "    sleep $wait_interval\n"
+        "    waited=$((waited + wait_interval))\n"
         '    echo -n "."\n'
-        '  done\n'
+        "  done\n"
         '  echo ""\n'
-        'fi\n'
+        "fi\n"
         f'if [ ! -f "{output_file}" ]; then\n'
         f'  echo "{error_msg}"\n'
         '  echo "Current directory: $(pwd)"\n'
         '  echo "Listing files in current directory:"\n'
-        '  ls -la\n'
+        "  ls -la\n"
         f'  if [ -d "$(dirname "{output_file}")" ]; then\n'
         '    echo "Listing files in output directory:"\n'
         f'    ls -la "$(dirname "{output_file}")"\n'
-        '  fi\n'
-        '  exit 1\n'
-        'fi\n'
+        "  fi\n"
+        "  exit 1\n"
+        "fi\n"
         f'echo "{prep_type} output file found: {output_file}"\n'
     )
 
@@ -467,13 +506,14 @@ def _create_gnina_script(  # noqa: C901, PLR0912
     """Create GNINA run script."""
     script_path = ligands_dir / "run_gnina.sh"
     with script_path.open("w") as f:
-        f.write("#!/usr/bin/env bash\n"
-                "set -eo pipefail\n")
+        f.write("#!/usr/bin/env bash\nset -eo pipefail\n")
 
         if activate_cmd:
             f.write(f"{activate_cmd}\n")
             if ld_library_path:
-                f.write(f'export LD_LIBRARY_PATH="{ld_library_path}:$LD_LIBRARY_PATH"\n')
+                f.write(
+                    f'export LD_LIBRARY_PATH="{ld_library_path}:$LD_LIBRARY_PATH"\n'
+                )
 
         if protein_preparation_cmd:
             parts = protein_preparation_cmd.split()
@@ -490,50 +530,61 @@ def _create_gnina_script(  # noqa: C901, PLR0912
                     break
             f.write(f"cd {ligands_dir}\n")
             if protein_output_abs_path:
-                f.write(f'mkdir -p "$(dirname "{protein_output_abs_path}")"\n'
-                        f'touch "{protein_output_abs_path}" 2>/dev/null || true\n')
-            f.write('echo "Running protein preparation for GNINA..."\n'
-                    f'{protein_preparation_cmd} || PREP_EXIT_CODE=$?\n'
-                    'if [ ! -z "$PREP_EXIT_CODE" ]; then\n'
-                    '  echo "WARNING: Protein preparation command exited with code $PREP_EXIT_CODE"\n'
-                    'fi\n')
+                f.write(
+                    f'mkdir -p "$(dirname "{protein_output_abs_path}")"\n'
+                    f'touch "{protein_output_abs_path}" 2>/dev/null || true\n'
+                )
+            f.write(
+                'echo "Running protein preparation for GNINA..."\n'
+                f"{protein_preparation_cmd} || PREP_EXIT_CODE=$?\n"
+                'if [ ! -z "$PREP_EXIT_CODE" ]; then\n'
+                '  echo "WARNING: Protein preparation command exited with code $PREP_EXIT_CODE"\n'
+                "fi\n"
+            )
             if protein_output_file:
-                f.write('# If file exists in current dir but not at absolute path, move it\n'
-                        f'if [ -f "{protein_output_file}" ] && [ ! -f "{protein_output_abs_path}" ]; then\n'
-                        f'  mv "{protein_output_file}" "{protein_output_abs_path}"\n'
-                        'fi\n'
-                        '# Verify prepared file exists and is not empty\n'
-                        f'if [ ! -f "{protein_output_abs_path}" ] && [ ! -f "{protein_output_file}" ]; then\n'
-                        f'  echo "ERROR: Protein preparation failed - output file not found at {protein_output_abs_path}"\n'
-                        '  echo "Current directory: $(pwd)"\n'
-                        '  echo "Listing files in current directory:"\n'
-                        '  ls -la\n'
-                        '  exit 1\n'
-                        f'elif [ -f "{protein_output_abs_path}" ] && [ ! -s "{protein_output_abs_path}" ]; then\n'
-                        f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_abs_path}"\n'
-                        '  exit 1\n'
-                        f'elif [ -f "{protein_output_file}" ] && [ ! -s "{protein_output_file}" ]; then\n'
-                        f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_file}"\n'
-                        '  exit 1\n'
-                        'else\n'
-                        f'  echo "Protein preparation completed successfully: {protein_output_abs_path}"\n'
-                        f'  ls -lh "{protein_output_abs_path}" 2>/dev/null || ls -lh "{protein_output_file}" 2>/dev/null || true\n'
-                        'fi\n')
+                f.write(
+                    "# If file exists in current dir but not at absolute path, move it\n"
+                    f'if [ -f "{protein_output_file}" ] && [ ! -f "{protein_output_abs_path}" ]; then\n'
+                    f'  mv "{protein_output_file}" "{protein_output_abs_path}"\n'
+                    "fi\n"
+                    "# Verify prepared file exists and is not empty\n"
+                    f'if [ ! -f "{protein_output_abs_path}" ] && [ ! -f "{protein_output_file}" ]; then\n'
+                    f'  echo "ERROR: Protein preparation failed - output file not found at {protein_output_abs_path}"\n'
+                    '  echo "Current directory: $(pwd)"\n'
+                    '  echo "Listing files in current directory:"\n'
+                    "  ls -la\n"
+                    "  exit 1\n"
+                    f'elif [ -f "{protein_output_abs_path}" ] && [ ! -s "{protein_output_abs_path}" ]; then\n'
+                    f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_abs_path}"\n'
+                    "  exit 1\n"
+                    f'elif [ -f "{protein_output_file}" ] && [ ! -s "{protein_output_file}" ]; then\n'
+                    f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_file}"\n'
+                    "  exit 1\n"
+                    "else\n"
+                    f'  echo "Protein preparation completed successfully: {protein_output_abs_path}"\n'
+                    f'  ls -lh "{protein_output_abs_path}" 2>/dev/null || ls -lh "{protein_output_file}" 2>/dev/null || true\n'
+                    "fi\n"
+                )
             else:
-                f.write('if [ $? -ne 0 ]; then\n'
-                        '  echo "ERROR: Protein preparation failed"\n'
-                        '  exit 1\n'
-                        'fi\n')
+                f.write(
+                    "if [ $? -ne 0 ]; then\n"
+                    '  echo "ERROR: Protein preparation failed"\n'
+                    "  exit 1\n"
+                    "fi\n"
+                )
 
         if preparation_cmd and prepared_output_relative:
-            f.write(f'mkdir -p "$(dirname "{prepared_output_relative}")"\n'
-                    f'{preparation_cmd}\n')
-            _write_file_wait_check(
-                f, prepared_output_relative,
-                f"ERROR: Preparation tool failed - output file {prepared_output_relative} not found after waiting",
-                "ligand preparation"
+            f.write(
+                f'mkdir -p "$(dirname "{prepared_output_relative}")"\n'
+                f"{preparation_cmd}\n"
             )
-            f.write('rm -f ligands_raw.smi || true\n')
+            _write_file_wait_check(
+                f,
+                prepared_output_relative,
+                f"ERROR: Preparation tool failed - output file {prepared_output_relative} not found after waiting",
+                "ligand preparation",
+            )
+            f.write("rm -f ligands_raw.smi || true\n")
 
         receptor_path_in_cmd = None
         for i, arg in enumerate(cmd):
@@ -542,40 +593,44 @@ def _create_gnina_script(  # noqa: C901, PLR0912
                 break
 
         if receptor_path_in_cmd:
-            f.write('echo "Checking receptor file before GNINA docking..."\n'
-                    '# Final check - wait a moment and verify file still exists and is readable\n'
-                    'sleep 1\n'
-                    f'if [ ! -f "{receptor_path_in_cmd}" ]; then\n'
-                    f'  echo "ERROR: Receptor file not found: {receptor_path_in_cmd}"\n'
-                    '  echo "Current directory: $(pwd)"\n'
-                    '  echo "Listing files in current directory:"\n'
-                    '  ls -la\n'
-                    f'  if [ -d "$(dirname "{receptor_path_in_cmd}")" ]; then\n'
-                    '    echo "Listing files in receptor directory:"\n'
-                    f'    ls -la "$(dirname "{receptor_path_in_cmd}")"\n'
-                    '  fi\n'
-                    '  exit 1\n'
-                    f'elif [ ! -s "{receptor_path_in_cmd}" ]; then\n'
-                    f'  echo "ERROR: Receptor file is empty: {receptor_path_in_cmd}"\n'
-                    '  exit 1\n'
-                    f'elif [ ! -r "{receptor_path_in_cmd}" ]; then\n'
-                    f'  echo "ERROR: Receptor file is not readable: {receptor_path_in_cmd}"\n'
-                    '  exit 1\n'
-                    'else\n'
-                    f'  echo "Receptor file verified: {receptor_path_in_cmd}"\n'
-                    f'  ls -lh "{receptor_path_in_cmd}"\n'
-                    'fi\n')
+            f.write(
+                'echo "Checking receptor file before GNINA docking..."\n'
+                "# Final check - wait a moment and verify file still exists and is readable\n"
+                "sleep 1\n"
+                f'if [ ! -f "{receptor_path_in_cmd}" ]; then\n'
+                f'  echo "ERROR: Receptor file not found: {receptor_path_in_cmd}"\n'
+                '  echo "Current directory: $(pwd)"\n'
+                '  echo "Listing files in current directory:"\n'
+                "  ls -la\n"
+                f'  if [ -d "$(dirname "{receptor_path_in_cmd}")" ]; then\n'
+                '    echo "Listing files in receptor directory:"\n'
+                f'    ls -la "$(dirname "{receptor_path_in_cmd}")"\n'
+                "  fi\n"
+                "  exit 1\n"
+                f'elif [ ! -s "{receptor_path_in_cmd}" ]; then\n'
+                f'  echo "ERROR: Receptor file is empty: {receptor_path_in_cmd}"\n'
+                "  exit 1\n"
+                f'elif [ ! -r "{receptor_path_in_cmd}" ]; then\n'
+                f'  echo "ERROR: Receptor file is not readable: {receptor_path_in_cmd}"\n'
+                "  exit 1\n"
+                "else\n"
+                f'  echo "Receptor file verified: {receptor_path_in_cmd}"\n'
+                f'  ls -lh "{receptor_path_in_cmd}"\n'
+                "fi\n"
+            )
 
-        f.write(f'mkdir -p "$(dirname "{output_sdf!s}")"\n'
-                f': > "{output_sdf!s}"\n'
-                'echo "Starting GNINA docking..."\n'
-                f'{" ".join(cmd)}\n'
-                'if [ $? -eq 0 ]; then\n'
-                '  echo "GNINA docking completed successfully"\n'
-                'else\n'
-                '  echo "GNINA docking failed with exit code $?"\n'
-                '  exit 1\n'
-                'fi\n')
+        f.write(
+            f'mkdir -p "$(dirname "{output_sdf!s}")"\n'
+            f': > "{output_sdf!s}"\n'
+            'echo "Starting GNINA docking..."\n'
+            f"{' '.join(cmd)}\n"
+            "if [ $? -eq 0 ]; then\n"
+            '  echo "GNINA docking completed successfully"\n'
+            "else\n"
+            '  echo "GNINA docking failed with exit code $?"\n'
+            "  exit 1\n"
+            "fi\n"
+        )
 
     script_path.chmod(0o755)  # noqa: S103
     return script_path
@@ -602,24 +657,25 @@ def _save_job_metadata(
 ) -> None:
     """Save job metadata to JSON file."""
     ligands_dir.mkdir(parents=True, exist_ok=True)
-    metadata = {"job_id": overall_job_id,
-                "timestamp": datetime.now().isoformat(timespec="seconds"),  # noqa: DTZ005
-                "source_file": str(source_file),
-                "num_ligands": num_ligands,
-                "receptor_pdb": receptor_pdb,
-                "tools_prepared": tools_prepared,
-                "scripts": scripts_prepared,
-                "ligands_csv": str(ligands_csv),
-                "ligands_counts": ligands_stats,
-                "jobs": {
-                    tool: {
-                        "name": tool,
-                        "job_id": job_id,
-                        "script": str(ligands_dir / f"run_{tool}.sh")
-                    }
-                    for tool, job_id in job_ids.items()
-                }
-               }
+    metadata = {
+        "job_id": overall_job_id,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),  # noqa: DTZ005
+        "source_file": str(source_file),
+        "num_ligands": num_ligands,
+        "receptor_pdb": receptor_pdb,
+        "tools_prepared": tools_prepared,
+        "scripts": scripts_prepared,
+        "ligands_csv": str(ligands_csv),
+        "ligands_counts": ligands_stats,
+        "jobs": {
+            tool: {
+                "name": tool,
+                "job_id": job_id,
+                "script": str(ligands_dir / f"run_{tool}.sh"),
+            }
+            for tool, job_id in job_ids.items()
+        },
+    }
     meta_path = ligands_dir / "job_meta.json"
     with meta_path.open("w") as f:
         json.dump(metadata, f, indent=2)
@@ -634,9 +690,11 @@ def _save_job_ids(
     ids_path = ligands_dir / "job_ids.txt"
     try:
         with ids_path.open("w") as f:
-            f.write(f"overall: {overall_job_id}\n"
-                    f"smina: {job_ids.get('smina', '')}\n"
-                    f"gnina: {job_ids.get('gnina', '')}\n")
+            f.write(
+                f"overall: {overall_job_id}\n"
+                f"smina: {job_ids.get('smina', '')}\n"
+                f"gnina: {job_ids.get('gnina', '')}\n"
+            )
     except (OSError, IOError) as e:
         logger.warning("Failed to write job_ids.txt: %s", e)
 
@@ -730,7 +788,11 @@ def _parse_tools_config(cfg: dict[str, Any]) -> list[str]:
     tools_cfg = cfg.get("tools", "both")
 
     if isinstance(tools_cfg, str):
-        tools_list = [t.strip().lower() for t in tools_cfg.split(",")] if "," in tools_cfg else [tools_cfg.strip().lower()]
+        tools_list = (
+            [t.strip().lower() for t in tools_cfg.split(",")]
+            if "," in tools_cfg
+            else [tools_cfg.strip().lower()]
+        )
     elif isinstance(tools_cfg, (list, tuple)):
         tools_list = [str(t).strip().lower() for t in tools_cfg]
     else:
@@ -761,7 +823,9 @@ def _prepare_receptor_if_needed(
             receptor_path = Path(original_receptor).resolve()
 
     if not receptor_path.exists():
-        logger.warning(f"Receptor file not found: {original_receptor} (resolved to: {receptor_path})")
+        logger.warning(
+            f"Receptor file not found: {original_receptor} (resolved to: {receptor_path})"
+        )
         return
 
     cfg["receptor_pdb"] = str(receptor_path)
@@ -800,7 +864,9 @@ def _setup_smina(
         ini_file = ligands_dir / "smina_auto.ini"
         _create_smina_config(cfg, ligands_csv, ini_file)
         activate_cmd = cfg.get("pyscreener_activate")
-        script_path = _create_smina_script(ligands_dir, ini_file, activate_cmd, protein_prep_cmd)
+        script_path = _create_smina_script(
+            ligands_dir, ini_file, activate_cmd, protein_prep_cmd
+        )
     except (OSError, ValueError, RuntimeError) as e:
         logger.exception("Failed to setup SMINA: %s", e)
         return None
@@ -825,7 +891,9 @@ def _setup_gnina(  # noqa: C901, PLR0912, PLR0915
             return None
 
         if "protein_prepared.pdb" in original_receptor:
-            logger.warning(f"GNINA: Config has prepared path: {original_receptor}, this should have been restored")
+            logger.warning(
+                f"GNINA: Config has prepared path: {original_receptor}, this should have been restored"
+            )
             project_root = Path(__file__).parent.parent.parent.parent.parent
             possible_originals = [
                 project_root / "data/test/7EW9_apo.pdb",
@@ -847,7 +915,9 @@ def _setup_gnina(  # noqa: C901, PLR0912, PLR0915
                 receptor_path = Path(original_receptor).resolve()
 
         if not receptor_path.exists():
-            logger.error(f"GNINA: receptor_pdb file not found: {original_receptor} (resolved to: {receptor_path})")
+            logger.error(
+                f"GNINA: receptor_pdb file not found: {original_receptor} (resolved to: {receptor_path})"
+            )
             return None
 
         original_receptor = str(receptor_path)
@@ -859,14 +929,18 @@ def _setup_gnina(  # noqa: C901, PLR0912, PLR0915
             else:
                 logger.info(f"GNINA: Using receptor: {receptor}")
         else:
-            receptor, protein_prep_cmd = _prepare_protein_for_docking(original_receptor, ligands_dir, protein_preparation_tool)
+            receptor, protein_prep_cmd = _prepare_protein_for_docking(
+                original_receptor, ligands_dir, protein_preparation_tool
+            )
             if receptor != original_receptor:
                 cfg["receptor_pdb"] = receptor
                 logger.info(f"GNINA: Using prepared protein: {receptor}")
             else:
                 cfg["receptor_pdb"] = original_receptor
 
-        ligands_path, prep_cmd = _prepare_ligands_for_gnina(ligands_csv, ligands_dir, ligand_preparation_tool, cfg)
+        ligands_path, prep_cmd = _prepare_ligands_for_gnina(
+            ligands_csv, ligands_dir, ligand_preparation_tool, cfg
+        )
         gnina_dir = _get_gnina_output_directory(cfg, base_folder)
         gnina_dir.mkdir(parents=True, exist_ok=True)
         output_sdf = gnina_dir / "gnina_out.sdf"
@@ -881,7 +955,16 @@ def _setup_gnina(  # noqa: C901, PLR0912, PLR0915
             if idx + 1 < len(parts):
                 prepared_output_relative = parts[idx + 1]
 
-        script_path = _create_gnina_script(ligands_dir, cmd, output_sdf, activate_cmd, ld_library_path, prep_cmd, prepared_output_relative, protein_prep_cmd)
+        script_path = _create_gnina_script(
+            ligands_dir,
+            cmd,
+            output_sdf,
+            activate_cmd,
+            ld_library_path,
+            prep_cmd,
+            prepared_output_relative,
+            protein_prep_cmd,
+        )
     except (OSError, ValueError, RuntimeError, FileNotFoundError) as e:
         logger.exception("Failed to setup GNINA: %s", e)
         return None
@@ -925,12 +1008,16 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
 
     prepared_receptor_path = None
     if protein_preparation_tool:
-        _prepare_receptor_if_needed(cfg, ligands_dir, protein_preparation_tool, base_folder)
+        _prepare_receptor_if_needed(
+            cfg, ligands_dir, protein_preparation_tool, base_folder
+        )
         original_receptor = cfg.get("receptor_pdb")
         if original_receptor:
             original_receptor_path = Path(original_receptor)
             if original_receptor_path.exists():
-                prepared_receptor_path, prep_cmd = _prepare_protein_for_docking(original_receptor, ligands_dir, protein_preparation_tool)
+                prepared_receptor_path, prep_cmd = _prepare_protein_for_docking(
+                    original_receptor, ligands_dir, protein_preparation_tool
+                )
                 if prepared_receptor_path != original_receptor and prep_cmd:
                     try:
                         import subprocess  # noqa: PLC0415
@@ -945,7 +1032,9 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
                             cwd=str(ligands_dir),
                         )
                         if result.returncode != 0:
-                            logger.error(f"Protein preparation command failed: {result.stderr}")
+                            logger.error(
+                                f"Protein preparation command failed: {result.stderr}"
+                            )
                             return False
 
                         prepared_path = Path(prepared_receptor_path)
@@ -953,25 +1042,41 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
                         wait_interval = 2
                         waited = 0
                         while waited < max_wait:
-                            if prepared_path.exists() and prepared_path.stat().st_size > 0:
-                                logger.info(f"Protein prepared successfully: {prepared_receptor_path}")
+                            if (
+                                prepared_path.exists()
+                                and prepared_path.stat().st_size > 0
+                            ):
+                                logger.info(
+                                    f"Protein prepared successfully: {prepared_receptor_path}"
+                                )
                                 break
                             time.sleep(wait_interval)
                             waited += wait_interval
                             if waited % 60 == 0:
-                                logger.info(f"Waiting for protein preparation... ({waited}s)")
+                                logger.info(
+                                    f"Waiting for protein preparation... ({waited}s)"
+                                )
 
                         if not prepared_path.exists():
-                            logger.error(f"Protein preparation failed - output file not found after {max_wait}s: {prepared_receptor_path}")
+                            logger.error(
+                                f"Protein preparation failed - output file not found after {max_wait}s: {prepared_receptor_path}"
+                            )
                             logger.error(f"Command output: {result.stdout}")
                             logger.error(f"Command error: {result.stderr}")
                             return False
                         if prepared_path.stat().st_size == 0:
-                            logger.error(f"Protein preparation failed - output file is empty: {prepared_receptor_path}")
+                            logger.error(
+                                f"Protein preparation failed - output file is empty: {prepared_receptor_path}"
+                            )
                             return False
 
                         cfg["receptor_pdb"] = prepared_receptor_path
-                    except (OSError, IOError, subprocess.CalledProcessError, RuntimeError) as e:
+                    except (
+                        OSError,
+                        IOError,
+                        subprocess.CalledProcessError,
+                        RuntimeError,
+                    ) as e:
                         logger.exception("Failed to prepare protein: %s", e)
                         return False
 
@@ -987,7 +1092,14 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
 
     if "gnina" in tools_list:
         try:
-            script = _setup_gnina(cfg, base_folder, ligands_dir, ligands_csv, ligand_preparation_tool, None)
+            script = _setup_gnina(
+                cfg,
+                base_folder,
+                ligands_dir,
+                ligands_csv,
+                ligand_preparation_tool,
+                None,
+            )
             if script:
                 scripts_prepared.append(str(script))
                 job_ids["gnina"] = _generate_job_id("gnina")
@@ -1000,8 +1112,18 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
         return False
     try:
         original_receptor = cfg.get("receptor_pdb")
-        _save_job_metadata(ligands_dir, source, len(df), original_receptor, list(job_ids.keys()),
-                          scripts_prepared, ligands_csv, ligands_stats, job_ids, overall_job_id)
+        _save_job_metadata(
+            ligands_dir,
+            source,
+            len(df),
+            original_receptor,
+            list(job_ids.keys()),
+            scripts_prepared,
+            ligands_csv,
+            ligands_stats,
+            job_ids,
+            overall_job_id,
+        )
         _save_job_ids(ligands_dir, overall_job_id, job_ids)
         logger.info(f"Docking job ID: {overall_job_id}")
     except (OSError, IOError, json.JSONEncodeError) as e:
@@ -1021,7 +1143,9 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
             try:
                 gnina_dir = _get_gnina_output_directory(cfg, base_folder)
                 output_sdf = gnina_dir / "gnina_out.sdf"
-                run_status["gnina"] = _run_gnina(ligands_dir, output_sdf, background, job_ids["gnina"])
+                run_status["gnina"] = _run_gnina(
+                    ligands_dir, output_sdf, background, job_ids["gnina"]
+                )
             except (OSError, IOError, subprocess.CalledProcessError, RuntimeError) as e:
                 logger.exception("GNINA execution failed: %s", e)
                 run_status["gnina"] = {"status": "failed", "error": str(e)}
@@ -1033,16 +1157,26 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
 
         if not background:
             selected_tools = [t for t in tools_list if t in ["smina", "gnina"]]
-            completed_tools = [t for t in selected_tools if run_status.get(t, {}).get("status") == "completed"]
-            failed_tools = [t for t in selected_tools if run_status.get(t, {}).get("status") == "failed"]
+            completed_tools = [
+                t
+                for t in selected_tools
+                if run_status.get(t, {}).get("status") == "completed"
+            ]
+            failed_tools = [
+                t
+                for t in selected_tools
+                if run_status.get(t, {}).get("status") == "failed"
+            ]
 
             if failed_tools:
-                logger.error(f'Docking tools failed: {", ".join(failed_tools)}')
+                logger.error(f"Docking tools failed: {', '.join(failed_tools)}")
 
             if len(completed_tools) == len(selected_tools):
                 return True
             if len(completed_tools) > 0:
-                logger.warning(f"Only {len(completed_tools)}/{len(selected_tools)} docking tools completed successfully")
+                logger.warning(
+                    f"Only {len(completed_tools)}/{len(selected_tools)} docking tools completed successfully"
+                )
                 return False
             logger.error("All docking tools failed")
             return False

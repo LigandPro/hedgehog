@@ -65,9 +65,7 @@ def preprocess_input_with_rdkit(
 
     try:
         folder_to_save.mkdir(parents=True, exist_ok=True)
-        prepared_output = (
-            folder_to_save / f"prepared_{input_path_obj.stem}.csv"
-        )
+        prepared_output = folder_to_save / f"prepared_{input_path_obj.stem}.csv"
 
         df = pd.read_csv(input_path_obj)
         cleaned_data = []
@@ -93,12 +91,9 @@ def preprocess_input_with_rdkit(
         output_df = pd.DataFrame(cleaned_data)
 
         initial_count = len(output_df)
-        output_df = (
-            output_df.drop_duplicates(
-                subset=["smiles", "model_name"], keep="first"
-            )
-            .reset_index(drop=True)
-        )
+        output_df = output_df.drop_duplicates(
+            subset=["smiles", "model_name"], keep="first"
+        ).reset_index(drop=True)
         duplicates_removed = initial_count - len(output_df)
         if duplicates_removed > 0:
             logger.info(
@@ -156,9 +151,7 @@ def preprocess_input_with_tool(
         return None
 
     folder_to_save.mkdir(parents=True, exist_ok=True)
-    prepared_output = (
-        folder_to_save / f"prepared_{input_path_obj.stem}.csv"
-    )
+    prepared_output = folder_to_save / f"prepared_{input_path_obj.stem}.csv"
     cmd = [
         ligand_preparation_tool,
         input_format,
@@ -174,6 +167,7 @@ def preprocess_input_with_tool(
         return str(prepared_output) if prepared_output.exists() else None
     except Exception:  # noqa: BLE001
         return None
+
 
 # Initialize Typer app and Rich console
 app = typer.Typer(
@@ -262,17 +256,14 @@ def run(
     if stage:
         config_dict[STAGE_OVERRIDE_KEY] = stage.value
         logger.info(
-            "[#B29EEE]Override:[/#B29EEE] Running only stage: "
-            "[bold]%s[/bold]",
+            "[#B29EEE]Override:[/#B29EEE] Running only stage: [bold]%s[/bold]",
             stage.value,
         )
 
     folder_to_save = Path(config_dict["folder_to_save"])
 
     ligand_preparation_tool = config_dict.get("ligand_preparation_tool")
-    original_input_path = (
-        config_dict.get("generated_mols_path") or generated_mols_path
-    )
+    original_input_path = config_dict.get("generated_mols_path") or generated_mols_path
     if original_input_path:
         if ligand_preparation_tool:
             prepared_path = preprocess_input_with_tool(
@@ -294,16 +285,12 @@ def run(
 
     if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
         try:
-            data = assign_mol_idx(
-                data, run_base=folder_to_save, logger=logger
-            )
+            data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
         except Exception as e:
             logger.error("Failed to assign mol_idx: %s", e)
             raise
 
-    save_mols = (
-        config_dict.get("save_sampled_mols", False) or stage is not None
-    )
+    save_mols = config_dict.get("save_sampled_mols", False) or stage is not None
     if save_mols:
         folder_to_save.mkdir(parents=True, exist_ok=True)
         output_path = folder_to_save / SAMPLED_MOLS_FILENAME
@@ -336,9 +323,7 @@ def info() -> None:
 
     stages_info = {
         "descriptors": "Compute 22 physicochemical descriptors per molecule",
-        "struct_filters": (
-            "Apply structural filters (Lilly, NIBR, PAINS, etc.)"
-        ),
+        "struct_filters": ("Apply structural filters (Lilly, NIBR, PAINS, etc.)"),
         "synthesis": (
             "Evaluate synthetic accessibility using retrosynthesis "
             "(AiZynthFinder) and other metrics"
@@ -350,25 +335,17 @@ def info() -> None:
         table.add_row(stage_name, description)
 
     console.print(table)
-    console.print(
-        "\n[dim]Example (1): uv run hedge run --stage descriptors[/dim]"
-    )
+    console.print("\n[dim]Example (1): uv run hedge run --stage descriptors[/dim]")
     console.print("[dim]Example (2): uv run hedge run --help [/dim]")
-
 
 
 @app.command()
 def version() -> None:
     """Display version information."""
-    console.print(
-        "[bold #B29EEE]🦔 HEDGE[/bold #B29EEE] version [bold]1.0.0[/bold]"
-    )
+    console.print("[bold #B29EEE]🦔 HEDGE[/bold #B29EEE] version [bold]1.0.0[/bold]")
     console.print("[dim]Hierarchical Evaluation of Drug GEnerators[/dim]")
-    console.print(
-        "[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]"
-    )
+    console.print("[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]")
 
 
 if __name__ == "__main__":
     app()
-
