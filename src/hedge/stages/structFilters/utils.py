@@ -325,7 +325,7 @@ def process_one_file(
     if not isinstance(smiles[0], tuple):
         assert len(mols) <= subsample
 
-    for mol, smi in zip(mols, smiles):
+    for mol, smi in zip(mols, smiles, strict=False):
         smi_val = smi[0] if isinstance(smi, tuple) else smi
         assert mol is not None, f"{smi_val}"
 
@@ -431,7 +431,7 @@ def apply_structural_alerts(
                                     }),
             include_groups=False
         ).reset_index()
-        grouped["pass_filter"] = grouped["matches"].apply(lambda x: True if not x else False)
+        grouped["pass_filter"] = grouped["matches"].apply(lambda x: bool(not x))
         for _, g_row in grouped.iterrows():
             name = g_row["rule_set_name"]
             row[f"pass_{name}"] = g_row["pass_filter"]
@@ -539,12 +539,15 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
 
 def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     if not LILLY_AVAILABLE:
-        raise ImportError(
+        msg = (
             "Lilly demerits filter is not available. "
             "This filter requires conda/mamba-installed binaries. "
             "Install with: conda install lilly-medchem-rules\n"
             "Or disable this filter by setting 'calculate_lilly: False' "
             "in config_structFilters.yml"
+        )
+        raise ImportError(
+            msg
         )
 
     logger.info("Calculating Lilly filter...")
@@ -579,7 +582,7 @@ def get_basic_stats(config, filter_results, model_name, filter_name, stat=None, 
         return res_df, filter_extended
 
     num_mol = len(filter_results)
-    filter_results.dropna(subset="mol", inplace=True)
+    filter_results = filter_results.dropna(subset="mol")
     filter_results["model_name"] = model_name
 
     if filter_name == "common_alerts":
@@ -667,9 +670,9 @@ def get_basic_stats(config, filter_results, model_name, filter_name, stat=None, 
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         if "pass" not in filter_extended.columns:
             if "pass_filter" in filter_extended.columns:
-                filter_extended.rename(columns={"pass_filter" : "pass"}, inplace=True)
+                filter_extended = filter_extended.rename(columns={"pass_filter" : "pass"})
             elif pass_col in filter_extended.columns and pass_col != "pass":
-                filter_extended.rename(columns={pass_col : "pass"}, inplace=True)
+                filter_extended = filter_extended.rename(columns={pass_col : "pass"})
             elif "severity" in filter_extended.columns:
                 filter_extended["pass"] = (filter_extended["severity"] == 0)
         return res_df, filter_extended
@@ -698,19 +701,20 @@ def get_basic_stats(config, filter_results, model_name, filter_name, stat=None, 
         if "pass" not in filter_extended.columns:
             if pass_col in filter_extended.columns:
                 if pass_col != "pass":
-                    filter_extended.rename(columns={pass_col : "pass"}, inplace=True)
+                    filter_extended = filter_extended.rename(columns={pass_col : "pass"})
             elif "pass_filter" in filter_extended.columns:
-                filter_extended.rename(columns={"pass_filter" : "pass"}, inplace=True)
+                filter_extended = filter_extended.rename(columns={"pass_filter" : "pass"})
             elif "demerit_score" in filter_extended.columns:
                 filter_extended["pass"] = (filter_extended["demerit_score"] == 0)
             elif "pass" in filter_results.columns and len(filter_extended) == len(filter_results):
                 filter_extended["pass"] = filter_results["pass"].values
         return res_df, filter_extended
 
-    raise ValueError(f"Filter {filter_name} not found")
+    msg = f"Filter {filter_name} not found"
+    raise ValueError(msg)
 
 
-def check_paths(config, paths):
+def check_paths(config, paths) -> bool:
     all_filters = {}
     for k, v in config.items():
         if "calculate_" in k:
@@ -723,11 +727,12 @@ def check_paths(config, paths):
                         if not any(pattern.lower() in path.lower()
                             for path in paths)]
     if len(missing_patterns) > 0:
-        raise AssertionError(f"Invalid filter name(s) missing: {', '.join(missing_patterns)}")
+        msg = f"Invalid filter name(s) missing: {', '.join(missing_patterns)}"
+        raise AssertionError(msg)
     return True
 
 
-def plot_calculated_stats(config, prefix):
+def plot_calculated_stats(config, prefix) -> None:
     folder_to_save = process_path(config["folder_to_save"])
 
     config_structFilters = load_config(config["config_structFilters"])
@@ -748,10 +753,10 @@ def plot_calculated_stats(config, prefix):
         data = pd.read_csv(path)
 
         all_model_names.update(data["model_name"].dropna().unique())
-        data.set_index("model_name", inplace=True)
+        data = data.set_index("model_name")
 
         banned_cols = [col for col in data.columns if "banned_ratio" in col]
-        data_filtered = data[banned_cols + ["num_mol"]].copy()
+        data_filtered = data[[*banned_cols, "num_mol"]].copy()
         for banned_col in banned_cols:
             data_filtered.loc[:, f"num_banned_{banned_col}"] = data_filtered[banned_col] * data_filtered["num_mol"]
         datas.append(data_filtered)
@@ -759,7 +764,7 @@ def plot_calculated_stats(config, prefix):
         filter_name = path.split("/")[-1].replace("_metrics.csv", "")
         filter_names.append(filter_name)
 
-    model_name_set = sorted(list(all_model_names))
+    model_name_set = sorted(all_model_names)
 
     filter_results = {}
     subdir = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
@@ -801,7 +806,7 @@ def plot_calculated_stats(config, prefix):
     n_rows = (n_plots + n_cols - 1) // n_cols
 
     plt.figure(figsize=(40, 5*n_rows))
-    for idx, (data, filter_name) in enumerate(zip(datas, filter_names)):
+    for idx, (data, filter_name) in enumerate(zip(datas, filter_names, strict=False)):
         ax = plt.subplot(n_rows, n_cols, idx + 1)
         models = data.index
         x = np.arange(len(models))
@@ -822,7 +827,7 @@ def plot_calculated_stats(config, prefix):
                     else:
                         text = f"Passed molecules: {passed} (0%)"
                     ax.annotate(text, (bar_center_x, bar_center_y), ha="center", va="center", fontsize=12, color="black", fontweight="bold",
-                                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=3), zorder=1000)
+                                bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none", "pad": 3}, zorder=1000)
 
         for i, model in enumerate(models):
             count = data.loc[model, "num_mol"]
@@ -834,7 +839,7 @@ def plot_calculated_stats(config, prefix):
         banned_percentages = []
         ratio_cols = [col for col in data.columns if "banned_ratio" in col and "num_banned" not in col]
         colors = get_model_colors(model_names=ratio_cols, cmap="Paired")
-        for col, color in zip(ratio_cols, colors.values()):
+        for col, color in zip(ratio_cols, colors.values(), strict=False):
             num_banned_col = f"num_banned_{col}"
             ratio_name = col.replace("banned_ratio", "").strip("_")
             ratio_name = clean_name(ratio_name)
@@ -883,7 +888,7 @@ def plot_calculated_stats(config, prefix):
     plt.close()
 
 
-def plot_restriction_ratios(config, prefix):
+def plot_restriction_ratios(config, prefix) -> None:
     folder_to_save = process_path(config["folder_to_save"])
     folder_name = config["folder_to_save"].split("/")[-1]
 
@@ -908,7 +913,7 @@ def plot_restriction_ratios(config, prefix):
         data = pd.read_csv(path)
 
         ratio_cols = [col for col in data.columns if "banned_ratio" in col]
-        model_names_filters[filter_name] = dict(zip(data["model_name"].tolist(), data["num_mol"].tolist()))
+        model_names_filters[filter_name] = dict(zip(data["model_name"].tolist(), data["num_mol"].tolist(), strict=False))
 
         if not ratio_cols:
             continue
@@ -965,9 +970,9 @@ def plot_restriction_ratios(config, prefix):
                 data[col] = number_of_mols * (1 - np.array(data[col].tolist()))
         if not data.empty and data.notna().any().any():
             if "all" in data.columns:
-                data.drop(columns=["all"], inplace=True)
+                data = data.drop(columns=["all"])
             if "any" in data.columns:
-                data.drop(columns=["any"], inplace=True)
+                data = data.drop(columns=["any"])
 
             from matplotlib.colors import LinearSegmentedColormap
             custom_cmap = LinearSegmentedColormap.from_list("custom", ["white", "#B29EEE"])
@@ -1231,7 +1236,7 @@ def analyze_filter_failures(
     logger.debug(f"Analyzing filter failures from: {file_path}")
     df = pd.read_csv(file_path, low_memory=False)
 
-    filter_columns = [col for col in df.columns if col.startswith("pass_") and col != "pass" and col != "pass_any"]
+    filter_columns = [col for col in df.columns if col.startswith("pass_") and col not in {"pass", "pass_any"}]
 
     if not filter_columns:
         return None, None, None
@@ -1364,7 +1369,7 @@ def _create_main_filter_plot(
     plt.close()
 
 
-def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
+def _create_individual_filter_plots(filter_failures, filter_reasons, file_path) -> None:
     """Create individual plots for each filter showing failure reasons."""
     for filter_name, stats in filter_failures.items():
         if stats["failures"] > 0:
@@ -1398,7 +1403,7 @@ def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
             plt.title(title_text, fontsize=26, fontweight="bold")
             plt.xticks(range(len(plot_df)), plot_df["Reason"], rotation=45, ha="right", fontsize=max(10, min(16, 300 // len(plot_df))))
 
-            for i, (bar, count) in enumerate(zip(bars, plot_df["Count"])):
+            for i, (_bar, count) in enumerate(zip(bars, plot_df["Count"], strict=False)):
                 plt.text(i, count + max(plot_df["Count"]) * 0.01, f"{count}\n({plot_df.iloc[i]['Percentage_of_Filter_Failures']:.1f}%)", ha="center", va="bottom", fontsize=12)
 
             plt.grid(axis="y", alpha=0.3)
@@ -1412,7 +1417,7 @@ def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
             plt.close()
 
 
-def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path):
+def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path) -> None:
     """Create multi-panel plot showing all filters with reasons."""
     sorted_filters = sorted(filter_failures.items(), key=lambda x: x[1]["failures"], reverse=True)
     sorted_filters = [(name, stats) for name, stats in sorted_filters if stats["failures"] > 0]
@@ -1439,7 +1444,7 @@ def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path):
 
     plt.figure(figsize=(cols * 6, rows * 6))
 
-    for i, (filter_name, stats) in enumerate(sorted_filters):
+    for i, (filter_name, _stats) in enumerate(sorted_filters):
         all_reasons_data = filter_reasons.get(filter_name, [])
 
         plt.subplot(rows, cols, i + 1)
@@ -1529,11 +1534,11 @@ def _create_complete_reasons_breakdown(
     return breakdown_df
 
 
-def _create_comprehensive_overview(filter_reasons, filter_failures, file_path):
+def _create_comprehensive_overview(filter_reasons, filter_failures, file_path) -> None:
     """Create comprehensive overview plot of most common failure reasons."""
     all_reasons = {}
 
-    for filter_name, reasons in filter_reasons.items():
+    for reasons in filter_reasons.values():
         for reason, count in reasons:
             if reason in all_reasons:
                 all_reasons[reason] += count
@@ -1551,10 +1556,7 @@ def _create_comprehensive_overview(filter_reasons, filter_failures, file_path):
     reason_counts = []
 
     for reason, count in top_reasons[:display_count]:
-        if len(reason) > 30:
-            reason_short = reason[:27] + "..."
-        else:
-            reason_short = reason
+        reason_short = reason[:27] + "..." if len(reason) > 30 else reason
         reason_names.append(reason_short)
         reason_counts.append(count)
 
@@ -1569,7 +1571,7 @@ def _create_comprehensive_overview(filter_reasons, filter_failures, file_path):
     plt.title(title_text, fontsize=26, fontweight="bold")
     plt.xticks(range(len(reason_names)), reason_names, rotation=45, ha="right", fontsize=16)
 
-    for i, (bar, count) in enumerate(zip(bars, reason_counts)):
+    for i, (_bar, count) in enumerate(zip(bars, reason_counts, strict=False)):
         plt.text(i, count + max(reason_counts) * 0.01, f"{count}", ha="center", va="bottom", fontsize=14)
 
     plt.grid(axis="y", alpha=0.3)
