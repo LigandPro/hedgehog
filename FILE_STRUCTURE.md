@@ -1,8 +1,8 @@
-# 🦔 HEDGE File Structure Documentation
+# HEDGE File Structure Documentation
 
 This document describes the improved file organization structure for HEDGE pipeline outputs.
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [New Structure](#new-structure)
@@ -10,7 +10,7 @@ This document describes the improved file organization structure for HEDGE pipel
 - [Detailed Breakdown](#detailed-breakdown)
 - [File Naming Conventions](#file-naming-conventions)
 
-## 🎯 Overview
+## Overview
 
 The new file structure provides:
 - **Hierarchical organization**: Clear separation of stages, outputs, configs, and inputs
@@ -19,7 +19,7 @@ The new file structure provides:
 - **Logical grouping**: Related files organized in subdirectories
 - **Backward compatibility**: Legacy structure still supported
 
-## 📁 New Structure
+## New Structure
 
 ```
 results/
@@ -32,8 +32,8 @@ results/
 │   │   │   ├── descriptors_all.csv        # All computed descriptors
 │   │   │   └── skipped_molecules.csv      # Failed to parse
 │   │   ├── filtered/
-│   │   │   ├── filtered_molecules.csv     # ✅ Molecules that passed filters
-│   │   │   ├── failed_molecules.csv       # ❌ Molecules that failed filters
+│   │   │   ├── filtered_molecules.csv     # Molecules that passed filters
+│   │   │   ├── failed_molecules.csv       # Molecules that failed filters
 │   │   │   ├── descriptors_passed.csv     # Detailed metrics for passed
 │   │   │   ├── descriptors_failed.csv     # Detailed metrics for failed
 │   │   │   └── pass_flags.csv             # Pass/fail flags per descriptor
@@ -47,8 +47,8 @@ results/
 │   │   │   └── filtered_molecules.csv
 │   │   ├── bredt/
 │   │   ├── NIBR/
-│   │   ├── filtered_molecules.csv         # ✅ Combined passed molecules
-│   │   ├── failed_molecules.csv           # ❌ Combined failed molecules
+│   │   ├── filtered_molecules.csv         # Combined passed molecules
+│   │   ├── failed_molecules.csv           # Combined failed molecules
 │   │   ├── molecule_counts_comparison.png
 │   │   └── restriction_ratios_comparison.png
 │   │
@@ -67,15 +67,15 @@ results/
 │   │   ├── lilly/
 │   │   ├── molgraph_stats/
 │   │   ├── molcomplexity/
-│   │   ├── filtered_molecules.csv         # ✅ Combined result
-│   │   ├── failed_molecules.csv           # ❌ Failed molecules
+│   │   ├── filtered_molecules.csv         # Combined result
+│   │   ├── failed_molecules.csv           # Failed molecules
 │   │   ├── molecule_counts_comparison.png
 │   │   └── restriction_ratios_comparison.png
 │   │
 │   ├── 04_synthesis/
 │   │   ├── synthesis_scores.csv           # RAScore, SAScore, etc.
 │   │   ├── synthesis_extended.csv         # With retrosynthesis results
-│   │   ├── filtered_molecules.csv         # ✅ Synthesizable molecules
+│   │   ├── filtered_molecules.csv         # Synthesizable molecules
 │   │   ├── input_smiles.smi               # Input for AiZynthFinder
 │   │   └── retrosynthesis_results.json    # AiZynthFinder output
 │   │
@@ -99,7 +99,7 @@ results/
 │           └── descriptors_distribution.png
 │
 ├── output/                                # Final pipeline results
-│   ├── final_molecules.csv                # 🎯 Final filtered molecules
+│   ├── final_molecules.csv                # Final filtered molecules
 │   └── pipeline_summary.json              # Summary statistics
 │
 ├── configs/                               # Configuration snapshot
@@ -113,30 +113,30 @@ results/
     └── pipeline_YYYYMMDD_HHMMSS.log
 ```
 
-## 🔄 Migration from Legacy Structure
+## Migration from Legacy Structure
 
 ### Legacy Structure (Old)
 
 ```
 results/test/
-├── beforeDescriptors_StructFilters/       # ❌ Confusing name
-│   ├── Pains_metrics.csv                  # ❌ CamelCase
-│   └── Pains_filteredMols.csv             # ❌ Mixed naming
-├── Descriptors/                           # ❌ CamelCase
-│   ├── perMoleculeDescriptors.csv         # ❌ camelCase
-│   ├── passDescriptorsSMILES.csv          # ❌ Unclear
+├── beforeDescriptors_StructFilters/       # Confusing name
+│   ├── Pains_metrics.csv                  # CamelCase
+│   └── Pains_filteredMols.csv             # Mixed naming
+├── Descriptors/                           # CamelCase
+│   ├── perMoleculeDescriptors.csv         # camelCase
+│   ├── passDescriptorsSMILES.csv          # Unclear
 │   └── filteredMetricsDistribution.png
 ├── StructFilters/
 │   ├── Brenk_metrics.csv
-│   └── passStructFiltersSMILES.csv        # ❌ Repetitive pattern
+│   └── passStructFiltersSMILES.csv        # Repetitive pattern
 ├── Synthesis/
 │   └── passSynthesisSMILES.csv
 ├── Docking/
-│   ├── smina_results/                     # ❌ Mixed convention
+│   ├── smina_results/                     # Mixed convention
 │   └── gnina_results/
-├── finalDescriptors/                      # ❌ camelCase (inconsistent!)
+├── finalDescriptors/                      # camelCase (inconsistent!)
 ├── run_configs/
-├── sampledMols.csv                        # ❌ camelCase
+├── sampledMols.csv                        # camelCase
 └── finalMolecules.csv
 ```
 
@@ -156,7 +156,7 @@ results/test/
 | `sampledMols.csv` | `input/sampled_molecules.csv` | Explicit input folder |
 | `run_configs/` | `configs/` | Shorter, clearer |
 
-## 📝 Detailed Breakdown
+## Detailed Breakdown
 
 ### Stage 01: Descriptors Initial
 
@@ -164,8 +164,8 @@ results/test/
 
 **Outputs**:
 - `metrics/descriptors_all.csv`: All computed descriptors for all molecules
-- `filtered/filtered_molecules.csv`: ✅ Molecules passing descriptor thresholds
-- `filtered/failed_molecules.csv`: ❌ Molecules failing descriptor thresholds
+- `filtered/filtered_molecules.csv`: Molecules passing descriptor thresholds
+- `filtered/failed_molecules.csv`: Molecules failing descriptor thresholds
 - `filtered/descriptors_passed.csv`: Full metrics for passed molecules
 - `filtered/descriptors_failed.csv`: Full metrics for failed molecules
 - `filtered/pass_flags.csv`: Boolean flags showing which descriptors passed/failed
@@ -179,8 +179,8 @@ results/test/
 - `{filter_name}/metrics.csv`: Summary statistics
 - `{filter_name}/extended.csv`: Detailed results with all columns
 - `{filter_name}/filtered_molecules.csv`: Molecules passing this specific filter
-- `filtered_molecules.csv`: ✅ Combined result from all filters
-- `failed_molecules.csv`: ❌ Molecules failing any filter
+- `filtered_molecules.csv`: Combined result from all filters
+- `failed_molecules.csv`: Molecules failing any filter
 - `molecule_counts_comparison.png`: Count comparison plot
 - `restriction_ratios_comparison.png`: Heatmap of restriction ratios
 
@@ -205,7 +205,7 @@ results/test/
 **Outputs**:
 - `synthesis_scores.csv`: RAScore, SAScore, SCScore, SYBA
 - `synthesis_extended.csv`: Includes retrosynthesis results
-- `filtered_molecules.csv`: ✅ Synthesizable molecules
+- `filtered_molecules.csv`: Synthesizable molecules
 - `input_smiles.smi`: Input for AiZynthFinder
 - `retrosynthesis_results.json`: AiZynthFinder raw output
 
@@ -226,7 +226,7 @@ results/test/
 
 **Outputs**: Same structure as Stage 01
 
-## 📐 File Naming Conventions
+## File Naming Conventions
 
 ### Principles
 
@@ -251,7 +251,7 @@ results/test/
 | Input molecules | `sampled_molecules.csv` | `sampledMols.csv` |
 | Final output | `final_molecules.csv` | `finalMolecules.csv` |
 
-## 🔧 Implementation Notes
+## Implementation Notes
 
 ### Backward Compatibility
 
@@ -288,7 +288,7 @@ FILE_FINAL_MOLECULES = 'final_molecules.csv'
 FILE_FILTERED_MOLECULES = 'filtered_molecules.csv'
 ```
 
-## 🎉 Benefits
+## Benefits
 
 1. **Clarity**: Anyone can understand the pipeline flow at a glance
 2. **Organization**: Related files grouped logically
@@ -297,7 +297,7 @@ FILE_FILTERED_MOLECULES = 'filtered_molecules.csv'
 5. **Scalability**: Easy to add new stages or outputs
 6. **Professional**: Follows industry best practices
 
-## 📚 Related Files
+## Related Files
 
 - `src/hedge/pipeline.py`: Main constants and path handling
 - `src/hedge/stages/*/main.py`: Stage entry points
@@ -307,4 +307,4 @@ FILE_FILTERED_MOLECULES = 'filtered_molecules.csv'
 
 **Version**: 1.0
 **Last Updated**: 2025-11-05
-**Status**: ✅ Implemented with backward compatibility
+**Status**: Implemented with backward compatibility
