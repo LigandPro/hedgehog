@@ -1,7 +1,7 @@
-import os 
-import glob 
+import os
+import glob
 import numpy as np
-import pandas as pd
+import polars as pl
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -10,7 +10,6 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 from rdkit import Chem
 from functools import reduce
-from pandarallel import pandarallel
 
 import datamol as dm
 import medchem as mc
@@ -292,12 +291,24 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     logger.info(f"Processing {len(mols)} filtered molecules")
 
     n_jobs = config['n_jobs']
-    pandarallel.initialize(progress_bar=False, nb_workers=n_jobs, verbose=0)
-    logger.info(f"Pandarallel initialized with {n_jobs} workers")
+    logger.info(f"Using {n_jobs} workers for parallel processing")
 
-    mols_df = pd.DataFrame({"mol" : mols})
-    results = mols_df.parallel_apply(_apply_alerts, axis=1)
-    results = results.parallel_apply(_get_full_any_pass, axis=1)
+    # Process molecules in parallel using multiprocessing
+    from multiprocessing import Pool
+    import pandas as pd  # Temporary pandas import for row processing
+
+    # Create initial DataFrame
+    mols_df = pd.DataFrame({"mol": mols})
+
+    # Apply alerts in parallel
+    with Pool(n_jobs) as pool:
+        results_list = pool.map(_apply_alerts, [row for _, row in mols_df.iterrows()])
+    results = pd.DataFrame(results_list)
+
+    # Apply pass logic
+    with Pool(n_jobs) as pool:
+        results_list = pool.map(_get_full_any_pass, [row for _, row in results.iterrows()])
+    results = pd.DataFrame(results_list)
 
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)

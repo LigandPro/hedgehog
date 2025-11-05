@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
-import pandas as pd
+import polars as pl
 import datamol as dm
 
 from hedge.configs.logger import logger, load_config
@@ -40,12 +40,11 @@ def _find_latest_input_source(base_folder):
 def _prepare_ligands_dataframe(df, output_csv):
     """Prepare ligands CSV from input DataFrame with SMILES validation."""
     output_csv.parent.mkdir(parents=True, exist_ok=True)
-    
-    names = df['mol_idx'].astype(str)
+
     rows = []
     skipped_smiles = []
-    
-    for idx, row in df.iterrows():
+
+    for row in df.iter_rows(named=True):
         smi = str(row['smiles'])
         try:
             mol = dm.to_mol(smi)
@@ -55,25 +54,25 @@ def _prepare_ligands_dataframe(df, output_csv):
         except Exception:
             skipped_smiles.append(smi)
             continue
-        
+
         model_name = str(row['model_name'])
-        mol_idx = str(row['mol_idx']) 
-        
+        mol_idx = str(row['mol_idx'])
+
         rows.append({'smiles': smi,
-                     'name': str(names.iloc[idx]),
+                     'name': mol_idx,
                      'model_name': model_name,
                      'mol_idx': mol_idx
                     })
-    
-    output_df = pd.DataFrame(rows, columns=['smiles', 'name', 'model_name', 'mol_idx'])
-    output_df.to_csv(output_csv, index=False)
-    
+
+    output_df = pl.DataFrame(rows, schema={'smiles': pl.Utf8, 'name': pl.Utf8, 'model_name': pl.Utf8, 'mol_idx': pl.Utf8})
+    output_df.write_csv(output_csv)
+
     if skipped_smiles:
         skip_path = output_csv.parent / 'skipped_smiles.txt'
         with open(skip_path, 'w') as f:
             for smi in skipped_smiles:
                 f.write(f'{smi}\n')
-        logger.warning(f'Some SMILES could not be parsed for docking: {len(skipped_smiles)}/{len(df)}. ' 
+        logger.warning(f'Some SMILES could not be parsed for docking: {len(skipped_smiles)}/{len(df)}. '
                        f'See {skip_path}'
                        )
     return {'csv_path': str(output_csv),
@@ -271,18 +270,18 @@ def _convert_with_rdkit(ligands_csv, ligands_dir) :
         from rdkit.Chem import AllChem
     except ImportError:
         raise RuntimeError('RDKit not available for ligand conversion')
-    
+
     sdf_path = ligands_dir / 'ligands_prepared.sdf'
-    df = pd.read_csv(ligands_csv)
-    smiles_series = df['smiles']
-    name_series = df['name']
-    
+    df = pl.read_csv(ligands_csv)
+    smiles_list = df['smiles'].cast(pl.Utf8).to_list()
+    name_list = df['name'].cast(pl.Utf8).to_list()
+
     writer = Chem.SDWriter(str(sdf_path))
     written_count = 0
-    
-    for smi, name in zip(smiles_series.astype(str), name_series.astype(str)):
+
+    for smi, name in zip(smiles_list, name_list):
         try:
-            mol = Chem.MolFromSmiles(smi)
+            mol = Chem.MolFromSmiles(str(smi))
             if mol is None:
                 continue
             mol = Chem.AddHs(mol)
@@ -291,17 +290,17 @@ def _convert_with_rdkit(ligands_csv, ligands_dir) :
                 AllChem.UFFOptimizeMolecule(mol)
             except Exception:
                 pass
-            mol.SetProp('_Name', name)
+            mol.SetProp('_Name', str(name))
             writer.write(mol)
             written_count += 1
         except Exception:
             continue
-    
+
     writer.close()
-    
+
     if written_count == 0:
         raise RuntimeError('RDKit conversion produced 0 molecules for GNINA SDF')
-    
+
     logger.info(f'Converted {written_count} molecules to SDF using RDKit')
     return str(sdf_path.resolve()), None
 
@@ -806,7 +805,7 @@ def run_docking(config):
         return False
     
     try:
-        df = pd.read_csv(source)
+        df = pl.read_csv(source)
     except Exception as e:
         logger.error(f'Failed to read docking input {source}: {e}')
         return False

@@ -1,13 +1,13 @@
 import io
 import os
-import sys 
+import sys
 import json
 import logging
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-import pandas as pd
+import polars as pl
 import numpy as np
 from rdkit import Chem
 
@@ -31,21 +31,21 @@ def process_path(folder_to_save, key_word=None):
 
 def prepare_input_smiles(input_df, output_file):
     """Prepare input SMILES file for aizynthfinder.
-    
+
     Args:
         input_df: DataFrame with 'smiles' column
         output_file: Path to save SMILES file
-        
+
     Returns:
         Number of molecules written
     """
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    smiles_list = input_df['smiles'].dropna().tolist()
-    
+    smiles_list = input_df['smiles'].drop_nulls().to_list()
+
     with open(output_file, 'w') as f:
         for smi in smiles_list:
             f.write(f"{smi}\n")
-    
+
     return len(smiles_list)
 
 
@@ -95,21 +95,21 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
 
 def parse_retrosynthesis_results(json_file):
     """Parse retrosynthesis JSON results into a DataFrame.
-    
+
     Args:
         json_file: Path to JSON output from aizynthfinder
-        
+
     Returns:
         DataFrame with columns: index, SMILES, solved, search_time
     """
     try:
         with open(json_file, 'r') as f:
             data = json.load(f)
-        
+
         if 'data' not in data:
             logger.warning(f"No 'data' key found in JSON file {json_file}")
-            return pd.DataFrame(columns=['index', 'SMILES', 'solved', 'search_time'])
-        
+            return pl.DataFrame(schema={'index': pl.Int64, 'SMILES': pl.Utf8, 'solved': pl.Int64, 'search_time': pl.Float64})
+
         results = []
         for item in data['data']:
             results.append({'index': item.get('index', -1),
@@ -117,11 +117,11 @@ def parse_retrosynthesis_results(json_file):
                             'solved': 1 if item.get('is_solved', False) else 0,
                             'search_time': item.get('search_time', 0.0)
                           })
-        
-        return pd.DataFrame(results)
+
+        return pl.DataFrame(results)
     except Exception as e:
         logger.error(f"Error parsing retrosynthesis results: {e}")
-        return pd.DataFrame(columns=['index', 'SMILES', 'solved', 'search_time'])
+        return pl.DataFrame(schema={'index': pl.Int64, 'SMILES': pl.Utf8, 'solved': pl.Int64, 'search_time': pl.Float64})
 
 
 def merge_retrosynthesis_results(input_df, retrosynth_df):
@@ -130,21 +130,29 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
     Args:
         input_df: Original input DataFrame with molecules (may have duplicate SMILES)
         retrosynth_df: DataFrame with retrosynthesis results indexed by position
-        
+
     Returns:
         Merged DataFrame with retrosynthesis information, preserving all input rows
     """
-    merged = input_df.reset_index(drop=True).copy()
-    retrosynth_df_copy = retrosynth_df.reset_index(drop=True)
-    
-    merged['solved'] = 0
-    merged['search_time'] = 0.0
-    
-    for idx, row in retrosynth_df_copy.iterrows():
-        if idx < len(merged):
-            merged.loc[idx, 'solved'] = row.get('solved', 0)
-            merged.loc[idx, 'search_time'] = row.get('search_time', 0.0)
-    
+    # Add row indices to both dataframes
+    input_with_idx = input_df.with_row_count(name='_row_idx')
+    retrosynth_with_idx = retrosynth_df.with_row_count(name='_row_idx')
+
+    # Select only the columns we need from retrosynth_df
+    retrosynth_subset = retrosynth_with_idx.select(['_row_idx', 'solved', 'search_time'])
+
+    # Left join to preserve all input rows
+    merged = input_with_idx.join(retrosynth_subset, on='_row_idx', how='left')
+
+    # Fill nulls with default values
+    merged = merged.with_columns([
+        pl.col('solved').fill_null(0),
+        pl.col('search_time').fill_null(0.0)
+    ])
+
+    # Drop the temporary index column
+    merged = merged.drop('_row_idx')
+
     return merged
 
 
@@ -404,12 +412,12 @@ for smiles in smiles_list:
 
 def calculate_synthesis_scores(df, folder_to_save=None, config=None):
     """Calculate SA, SYBA, and RA scores for all molecules in DataFrame.
-    
+
     Args:
         df: DataFrame with 'smiles' column
         folder_to_save: Optional folder to save RA score outputs
         config: Optional config dict (can contain 'rascore_conda_prefix' for manual override)
-        
+
     Returns:
         DataFrame with added columns: sa_score, syba_score, ra_score
     """
@@ -417,87 +425,95 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
     _load_sascorer()
     _load_syba_model()
     _load_rascore()
-    
-    result_df = df.copy()
-    result_df['sa_score'] = result_df['smiles'].apply(_calculate_sa_score)
-    result_df['syba_score'] = result_df['smiles'].apply(_calculate_syba_score)
-    
-    smiles_list = result_df['smiles'].tolist()
+
+    result_df = df.clone()
+
+    # Calculate SA and SYBA scores using map_elements
+    sa_scores = result_df['smiles'].map_elements(_calculate_sa_score, return_dtype=pl.Float64)
+    syba_scores = result_df['smiles'].map_elements(_calculate_syba_score, return_dtype=pl.Float64)
+
+    result_df = result_df.with_columns([
+        sa_scores.alias('sa_score'),
+        syba_scores.alias('syba_score')
+    ])
+
+    # Calculate RA scores in batch
+    smiles_list = result_df['smiles'].to_list()
     ra_scores = _calculate_ra_scores_batch(smiles_list, config)
-    result_df['ra_score'] = ra_scores
-    
+    result_df = result_df.with_columns(pl.Series('ra_score', ra_scores))
+
     for score_name in ['sa_score', 'syba_score', 'ra_score']:
-        valid_scores = result_df[score_name].dropna()
+        valid_scores = result_df[score_name].drop_nulls()
         if len(valid_scores) > 0:
             logger.info(f"  {score_name}: calculated for {len(valid_scores)}/{len(df)} molecules "
                        f"(mean={valid_scores.mean():.2f}, std={valid_scores.std():.2f})")
         else:
             logger.debug(f"  {score_name}: could not be calculated (module not available)")
-    
+
     return result_df
 
 
 def apply_synthesis_score_filters(df, config):
     """Apply filters based on synthesis score thresholds.
-    
+
     Each molecule is checked independently against each criterion (SA, RA, SYBA).
     A molecule must pass ALL filters for which it has valid scores.
     Molecules with NaN scores for a criterion are not filtered by that criterion.
     Only molecules that pass all applicable score filters are returned.
-    
+
     Args:
         df: DataFrame with synthesis scores
         config: Configuration with threshold settings
-        
+
     Returns:
         Filtered DataFrame with molecules that pass all applicable filters
     """
-    filtered_df = df.copy()
+    filtered_df = df.clone()
     initial_count = len(filtered_df)
-    pass_mask = pd.Series([True] * len(filtered_df), index=filtered_df.index)
-    
+    pass_mask = pl.lit(True)
+
     sa_min = config.get('sa_score_min', 0)
     sa_max = config.get('sa_score_max', 'inf')
     if 'sa_score' in filtered_df.columns:
-        valid_scores = filtered_df['sa_score'].dropna()
+        valid_scores = filtered_df['sa_score'].drop_nulls()
         if len(valid_scores) > 0:
             if sa_max != 'inf':
-                sa_mask = (filtered_df['sa_score'].isna()) | \
-                         ((filtered_df['sa_score'] >= sa_min) & (filtered_df['sa_score'] <= sa_max))
+                sa_mask = pl.col('sa_score').is_null() | \
+                         ((pl.col('sa_score') >= sa_min) & (pl.col('sa_score') <= sa_max))
             else:
-                sa_mask = (filtered_df['sa_score'].isna()) | (filtered_df['sa_score'] >= sa_min)
+                sa_mask = pl.col('sa_score').is_null() | (pl.col('sa_score') >= sa_min)
             pass_mask = pass_mask & sa_mask
         else:
             logger.info(f"SA score filter: skipped (no valid scores calculated)")
-    
+
     ra_min = config.get('ra_score_min', 0)
     ra_max = config.get('ra_score_max', 'inf')
     if 'ra_score' in filtered_df.columns:
-        valid_scores = filtered_df['ra_score'].dropna()
+        valid_scores = filtered_df['ra_score'].drop_nulls()
         if len(valid_scores) > 0:
             if ra_max != 'inf':
-                ra_mask = (filtered_df['ra_score'].isna()) | \
-                         ((filtered_df['ra_score'] >= ra_min) & (filtered_df['ra_score'] <= ra_max))
+                ra_mask = pl.col('ra_score').is_null() | \
+                         ((pl.col('ra_score') >= ra_min) & (pl.col('ra_score') <= ra_max))
             else:
-                ra_mask = (filtered_df['ra_score'].isna()) | (filtered_df['ra_score'] >= ra_min)
+                ra_mask = pl.col('ra_score').is_null() | (pl.col('ra_score') >= ra_min)
             pass_mask = pass_mask & ra_mask
         else:
             logger.info(f"RA score filter: skipped (no valid scores calculated)")
-    
+
     syba_min = config.get('syba_score_min', 0)
     syba_max = config.get('syba_score_max', 'inf')
     if 'syba_score' in filtered_df.columns:
-        valid_scores = filtered_df['syba_score'].dropna()
+        valid_scores = filtered_df['syba_score'].drop_nulls()
         if len(valid_scores) > 0:
             if syba_max != 'inf':
-                syba_mask = (filtered_df['syba_score'].isna()) | \
-                           ((filtered_df['syba_score'] >= syba_min) & (filtered_df['syba_score'] <= syba_max))
+                syba_mask = pl.col('syba_score').is_null() | \
+                           ((pl.col('syba_score') >= syba_min) & (pl.col('syba_score') <= syba_max))
             else:
-                syba_mask = (filtered_df['syba_score'].isna()) | (filtered_df['syba_score'] >= syba_min)
+                syba_mask = pl.col('syba_score').is_null() | (pl.col('syba_score') >= syba_min)
             pass_mask = pass_mask & syba_mask
         else:
             logger.info(f"SYBA score filter: skipped (no valid scores calculated)")
-    
-    filtered_df = filtered_df[pass_mask]
-    
+
+    filtered_df = filtered_df.filter(pass_mask)
+
     return filtered_df

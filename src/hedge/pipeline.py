@@ -2,7 +2,7 @@ import shutil
 import yaml
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 from hedge.configs.logger import logger, load_config
 
@@ -380,7 +380,7 @@ class MolecularAnalysisPipeline:
                     # Legacy path support
                     filename = FILE_PASS_SMILES_TEMPLATE.format(stage=latest_source) if '{stage}' in FILE_PASS_SMILES_TEMPLATE else FILE_FILTERED_MOLECULES
                     path = self.data_checker.base_path / latest_source / filename
-                data = pd.read_csv(path)
+                data = pl.read_csv(path)
                 logger.info(f'Loaded latest data from {latest_source}: {len(data)} molecules')
                 
                 if len(data) == 0:
@@ -390,7 +390,7 @@ class MolecularAnalysisPipeline:
                         if self.data_checker.check_stage_data(next_source):
                             filename = FILE_PASS_SMILES_TEMPLATE.format(stage=next_source)
                             path = self.data_checker.base_path / next_source / filename
-                            data = pd.read_csv(path)
+                            data = pl.read_csv(path)
                             if len(data) > 0:
                                 logger.info(f'Loaded data from {next_source}: {len(data)} molecules (previous step)')
                                 return data
@@ -443,7 +443,7 @@ class MolecularAnalysisPipeline:
                 if final_data is not None and len(final_data) > 0:
                     final_output_path = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
                     final_output_path.parent.mkdir(parents=True, exist_ok=True)
-                    final_data.to_csv(final_output_path, index=False)
+                    final_data.write_csv(final_output_path)
                     logger.info(f'Saved {final_count} final molecules to {final_output_path}')
                 # Generate structure documentation
                 _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
@@ -459,7 +459,7 @@ class MolecularAnalysisPipeline:
                 output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
                 if output_path.exists():
                     try:
-                        df_check = pd.read_csv(output_path)
+                        df_check = pl.read_csv(output_path)
                         if len(df_check) == 0:
                             logger.info('No molecules left after synthesis; ending pipeline early.')
                             self._log_pipeline_summary()
@@ -474,7 +474,7 @@ class MolecularAnalysisPipeline:
                             if final_data is not None and len(final_data) > 0:
                                 final_output_path = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
                                 final_output_path.parent.mkdir(parents=True, exist_ok=True)
-                                final_data.to_csv(final_output_path, index=False)
+                                final_data.write_csv(final_output_path)
                                 logger.info(f'Saved {final_count} final molecules to {final_output_path}')
                             # Generate structure documentation
                             _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
@@ -522,7 +522,7 @@ class MolecularAnalysisPipeline:
         if final_data is not None and len(final_data) > 0:
             final_output_path = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
             final_output_path.parent.mkdir(parents=True, exist_ok=True)
-            final_data.to_csv(final_output_path, index=False)
+            final_data.write_csv(final_output_path)
             logger.info(f'Saved {final_count} final molecules to {final_output_path}')
 
         # Generate structure documentation
