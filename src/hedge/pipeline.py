@@ -12,17 +12,33 @@ from hedge.stages.synthesis.main import main as synthesis_main
 from hedge.stages.docking.utils import run_docking as docking_main
 
 
-# Constants - Directory names
-DIR_DESCRIPTORS = 'Descriptors'
-DIR_STRUCT_FILTERS = 'StructFilters'
-DIR_BEFORE_DESCRIPTORS = 'beforeDescriptors'
-DIR_SYNTHESIS = 'Synthesis'
-DIR_DOCKING = 'Docking'
-DIR_FINAL_DESCRIPTORS = 'finalDescriptors'
-DIR_RUN_CONFIGS = 'run_configs'
+# Constants - Directory names (New structure)
+DIR_INPUT = 'input'
+DIR_STAGES = 'stages'
+DIR_OUTPUT = 'output'
+DIR_CONFIGS = 'configs'
+DIR_LOGS = 'logs'
+
+# Stage subdirectories
+DIR_DESCRIPTORS_INITIAL = 'stages/01_descriptors_initial'
+DIR_STRUCT_FILTERS_PRE = 'stages/02_structural_filters_pre'
+DIR_STRUCT_FILTERS_POST = 'stages/03_structural_filters_post'
+DIR_SYNTHESIS = 'stages/04_synthesis'
+DIR_DOCKING = 'stages/05_docking'
+DIR_DESCRIPTORS_FINAL = 'stages/06_descriptors_final'
+
+# Legacy names for backwards compatibility
+DIR_DESCRIPTORS = DIR_DESCRIPTORS_INITIAL
+DIR_STRUCT_FILTERS = DIR_STRUCT_FILTERS_POST
+DIR_BEFORE_DESCRIPTORS = DIR_STRUCT_FILTERS_PRE
+DIR_FINAL_DESCRIPTORS = DIR_DESCRIPTORS_FINAL
+DIR_RUN_CONFIGS = DIR_CONFIGS
 
 # Constants - File names
-FILE_PASS_SMILES_TEMPLATE = 'pass{stage}SMILES.csv'
+FILE_SAMPLED_MOLECULES = 'sampled_molecules.csv'
+FILE_FINAL_MOLECULES = 'final_molecules.csv'
+FILE_FILTERED_MOLECULES = 'filtered_molecules.csv'
+FILE_PASS_SMILES_TEMPLATE = 'filtered_molecules.csv'  # Standardized name
 FILE_MASTER_CONFIG = 'master_config_resolved.yml'
 FILE_GNINA_OUTPUT = 'gnina_out.sdf'
 
@@ -53,8 +69,8 @@ DOCKING_TOOL_SMINA = 'smina'
 DOCKING_TOOL_GNINA = 'gnina'
 DOCKING_TOOL_BOTH = 'both'
 DOCKING_RESULTS_DIR_TEMPLATE = {
-    DOCKING_TOOL_SMINA: DIR_DOCKING + '/smina_results',
-    DOCKING_TOOL_GNINA: DIR_DOCKING + '/gnina_results'
+    DOCKING_TOOL_SMINA: DIR_DOCKING + '/smina',
+    DOCKING_TOOL_GNINA: DIR_DOCKING + '/gnina'
 }
 
 
@@ -85,20 +101,34 @@ class DataChecker:
     
     def _get_stage_output_path(self, stage_name):
         """Get the expected output file path for a stage."""
-        if stage_name == DIR_DESCRIPTORS:
-            return self.base_path / DIR_DESCRIPTORS / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_DESCRIPTORS)
-        elif stage_name == DIR_STRUCT_FILTERS:
-            return self.base_path / DIR_STRUCT_FILTERS / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_STRUCT_FILTERS)
-        elif stage_name == DIR_BEFORE_DESCRIPTORS:
-            return self.base_path / f'{DIR_BEFORE_DESCRIPTORS}_StructFilters' / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_STRUCT_FILTERS)
+        if stage_name == DIR_DESCRIPTORS_INITIAL:
+            return self.base_path / DIR_DESCRIPTORS_INITIAL / 'filtered' / FILE_FILTERED_MOLECULES
+        elif stage_name == DIR_STRUCT_FILTERS_POST:
+            return self.base_path / DIR_STRUCT_FILTERS_POST / FILE_FILTERED_MOLECULES
+        elif stage_name == DIR_STRUCT_FILTERS_PRE:
+            return self.base_path / DIR_STRUCT_FILTERS_PRE / FILE_FILTERED_MOLECULES
         elif stage_name == DIR_SYNTHESIS:
-            return self.base_path / DIR_SYNTHESIS / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_SYNTHESIS)
+            return self.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
+        # Legacy paths for backwards compatibility
+        elif stage_name == 'Descriptors':
+            return self.base_path / 'Descriptors' / 'passDescriptorsSMILES.csv'
+        elif stage_name == 'StructFilters':
+            return self.base_path / 'StructFilters' / 'passStructFiltersSMILES.csv'
+        elif stage_name == 'beforeDescriptors':
+            return self.base_path / 'beforeDescriptors_StructFilters' / 'passStructFiltersSMILES.csv'
+        elif stage_name == 'Synthesis':
+            return self.base_path / 'Synthesis' / 'passSynthesisSMILES.csv'
         return None
 
 
 class PipelineStageRunner:
     """Executes individual pipeline stages and manages stage data flow."""
-    DATA_SOURCE_PRIORITY = [DIR_SYNTHESIS, DIR_STRUCT_FILTERS, DIR_DESCRIPTORS, DIR_BEFORE_DESCRIPTORS]
+    DATA_SOURCE_PRIORITY = [
+        DIR_SYNTHESIS,
+        DIR_STRUCT_FILTERS_POST,
+        DIR_DESCRIPTORS_INITIAL,
+        DIR_STRUCT_FILTERS_PRE
+    ]
     
     def __init__(self, config, data_checker):
         self.config = config
@@ -129,25 +159,30 @@ class PipelineStageRunner:
             return False
     
 
-    def run_structural_filters(self, prefix):
-        """Run structural filters on molecules."""
+    def run_structural_filters(self, stage_dir):
+        """Run structural filters on molecules.
+
+        Args:
+            stage_dir: The stage directory (e.g., DIR_STRUCT_FILTERS_PRE or DIR_STRUCT_FILTERS_POST)
+        """
         try:
-            if prefix != DIR_BEFORE_DESCRIPTORS and not self.data_checker.check_stage_data(prefix):
+            # Check if we have input data (only for post-descriptors filters)
+            if stage_dir != DIR_STRUCT_FILTERS_PRE and not self.data_checker.check_stage_data(DIR_DESCRIPTORS_INITIAL):
                 if self.config.get(OVERRIDE_SINGLE_STAGE) == STAGE_STRUCT_FILTERS:
                     logger.info(f'No previous stage data found, will use molecules from config')
                 else:
-                    logger.warning(f'No data available for structural filters with prefix: {prefix}')
+                    logger.warning(f'No data available for structural filters in {stage_dir}')
                     return False
-            
+
             config_struct_filters = load_config(self.config[CONFIG_STRUCT_FILTERS])
             if not config_struct_filters.get(CONFIG_RUN_KEY, False):
                 logger.info('Structural filters disabled in config')
                 return False
-                
-            structural_filters_main(self.config, prefix)
+
+            structural_filters_main(self.config, stage_dir)
             return True
         except Exception as e:
-            logger.error(f'Error running structural filters: {e}')  
+            logger.error(f'Error running structural filters: {e}')
             return False
     
 
@@ -173,8 +208,8 @@ class PipelineStageRunner:
                 return False
             
             synthesis_main(self.config)
-            
-            output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_SYNTHESIS)
+
+            output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
             if not output_path.exists():
                 logger.error('Synthesis finished but no output file detected')
                 return False
@@ -335,8 +370,16 @@ class MolecularAnalysisPipeline:
         
         if latest_source:
             try:
-                filename = FILE_PASS_SMILES_TEMPLATE.format(stage=latest_source)
-                path = self.data_checker.base_path / latest_source / filename
+                # For new structure, use standardized filename
+                if latest_source.startswith('stages/'):
+                    if 'descriptors' in latest_source:
+                        path = self.data_checker.base_path / latest_source / 'filtered' / FILE_FILTERED_MOLECULES
+                    else:
+                        path = self.data_checker.base_path / latest_source / FILE_FILTERED_MOLECULES
+                else:
+                    # Legacy path support
+                    filename = FILE_PASS_SMILES_TEMPLATE.format(stage=latest_source) if '{stage}' in FILE_PASS_SMILES_TEMPLATE else FILE_FILTERED_MOLECULES
+                    path = self.data_checker.base_path / latest_source / filename
                 data = pd.read_csv(path)
                 logger.info(f'Loaded latest data from {latest_source}: {len(data)} molecules')
                 
@@ -369,7 +412,7 @@ class MolecularAnalysisPipeline:
         # Stage 1': Pre-descriptors structural filters
         if self.stages[0].enabled:
             logger.info("---------> [#B29EEE]Stage 1': Pre-descriptors Structural Filters[/#B29EEE]")
-            if self.stage_runner.run_structural_filters(DIR_BEFORE_DESCRIPTORS):
+            if self.stage_runner.run_structural_filters(DIR_STRUCT_FILTERS_PRE):
                 self.stages[0].completed = True
                 success_count += 1
         
@@ -380,10 +423,10 @@ class MolecularAnalysisPipeline:
                 self.stages[1].completed = True
                 success_count += 1
         
-        # Stage 2: Post-descriptors structural filters 
+        # Stage 2: Post-descriptors structural filters
         if self.stages[2].enabled:
             logger.info('---------> [#B29EEE]Stage 2: Post-descriptors Structural Filters[/#B29EEE]')
-            if self.stage_runner.run_structural_filters(DIR_DESCRIPTORS):
+            if self.stage_runner.run_structural_filters(DIR_STRUCT_FILTERS_POST):
                 self.stages[2].completed = True
                 success_count += 1
             else:
@@ -398,7 +441,8 @@ class MolecularAnalysisPipeline:
                 if initial_count > 0:
                     logger.info(f'  Retention rate: {100*final_count/initial_count:.2f}%')
                 if final_data is not None and len(final_data) > 0:
-                    final_output_path = self.data_checker.base_path / 'finalMolecules.csv'
+                    final_output_path = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
+                    final_output_path.parent.mkdir(parents=True, exist_ok=True)
                     final_data.to_csv(final_output_path, index=False)
                     logger.info(f'Saved {final_count} final molecules to {final_output_path}')
                 return success_count == total_enabled_stages
@@ -410,7 +454,7 @@ class MolecularAnalysisPipeline:
                 self.stages[3].completed = True
                 success_count += 1
             else:
-                output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_PASS_SMILES_TEMPLATE.format(stage=DIR_SYNTHESIS)
+                output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
                 if output_path.exists():
                     try:
                         df_check = pd.read_csv(output_path)
@@ -426,7 +470,8 @@ class MolecularAnalysisPipeline:
                             if initial_count > 0:
                                 logger.info(f'Retention rate: {100*final_count/initial_count:.2f}%')
                             if final_data is not None and len(final_data) > 0:
-                                final_output_path = self.data_checker.base_path / 'finalMolecules.csv'
+                                final_output_path = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
+                                final_output_path.parent.mkdir(parents=True, exist_ok=True)
                                 final_data.to_csv(final_output_path, index=False)
                                 logger.info(f'Saved {final_count} final molecules to {final_output_path}')
                             return success_count == total_enabled_stages
@@ -471,7 +516,8 @@ class MolecularAnalysisPipeline:
             logger.info(f'Retention rate: {100*final_count/initial_count:.2f}%')
 
         if final_data is not None and len(final_data) > 0:
-            final_output_path = self.data_checker.base_path / 'finalMolecules.csv'
+            final_output_path = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
+            final_output_path.parent.mkdir(parents=True, exist_ok=True)
             final_data.to_csv(final_output_path, index=False)
             logger.info(f'Saved {final_count} final molecules to {final_output_path}')
         
@@ -503,7 +549,7 @@ def _save_config_snapshot(config):
     """Save a snapshot of configuration files for provenance."""
     try:
         base_path = Path(config[CONFIG_FOLDER_TO_SAVE])
-        dest_dir = base_path / DIR_RUN_CONFIGS
+        dest_dir = base_path / DIR_CONFIGS
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         master_config_path = dest_dir / FILE_MASTER_CONFIG

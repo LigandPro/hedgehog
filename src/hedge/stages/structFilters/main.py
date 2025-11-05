@@ -13,37 +13,62 @@ def _order_identity_columns(df):
     return df[ordered_cols]
 
 
-def _get_input_path(config, prefix, folder_to_save):
-    """Determine input path based on prefix.
-    
-    If running a stage independently and previous stage outputs don't exist,
-    falls back to original molecules from config.
+def _get_input_path(config, stage_dir, folder_to_save):
+    """Determine input path based on stage directory.
+
+    Args:
+        config: Configuration dictionary
+        stage_dir: Stage directory path (e.g., 'stages/02_structural_filters_pre' or 'stages/03_structural_filters_post')
+        folder_to_save: Base output folder
+
+    Returns:
+        Path to input file
     """
-    if prefix != 'beforeDescriptors':
-        descriptors_path = folder_to_save + 'Descriptors/passDescriptorsSMILES.csv'
+    # For post-descriptors filters, look for descriptors output
+    if '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters':
+        # New structure
+        descriptors_path = os.path.join(folder_to_save, 'stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv')
         if os.path.exists(descriptors_path):
             return descriptors_path
-        sampled_path = folder_to_save + 'sampledMols.csv'
+        # Legacy structure
+        legacy_path = folder_to_save + 'Descriptors/passDescriptorsSMILES.csv'
+        if os.path.exists(legacy_path):
+            return legacy_path
+        # Fallback to sampled molecules
+        sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
         if os.path.exists(sampled_path):
-            logger.info("Descriptors output not found, using sampledMols.csv")
+            logger.info("Descriptors output not found, using sampled_molecules.csv")
             return sampled_path
-        logger.info("Descriptors output not found, using molecules from config")
+        # Legacy sampled molecules
+        legacy_sampled = folder_to_save + 'sampledMols.csv'
+        if os.path.exists(legacy_sampled):
+            logger.info("Using legacy sampledMols.csv")
+            return legacy_sampled
+        logger.info("No processed data found, using molecules from config")
         return config['generated_mols_path']
-    
+
+    # For pre-descriptors filters, use original input
     matched = glob.glob(config['generated_mols_path'])
     if len(matched) > 1:
+        sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
+        if os.path.exists(sampled_path):
+            return sampled_path
+        # Legacy fallback
         return folder_to_save + 'sampledMols.csv'
-    
+
     single_path = matched[0]
     try:
         df_check = pd.read_csv(single_path)
         lower_cols = {c.lower(): c for c in df_check.columns}
         candidate = lower_cols.get('model_name') or lower_cols.get('name')
         if candidate and df_check[candidate].nunique(dropna=True) > 1:
+            sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
+            if os.path.exists(sampled_path):
+                return sampled_path
             return folder_to_save + 'sampledMols.csv'
     except Exception:
         pass
-    
+
     return config['generated_mols_path']
 
 
