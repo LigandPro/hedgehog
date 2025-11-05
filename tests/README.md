@@ -20,92 +20,76 @@ tests/
 
 ## Running Tests
 
-### Install Test Dependencies
+### Prerequisites
 
-**IMPORTANT: Tests with external dependencies (Lilly, SYBA) require conda environment.**
+HEDGE uses `uv` with system-site-packages enabled venv. This allows tests to access all pre-installed packages without re-downloading.
+
+**IMPORTANT:** Always use `UV_NO_SYNC=1` with `uv run` to prevent dependency re-installation:
 
 ```bash
-# Activate conda environment (required for Lilly and SYBA)
-conda activate hedge_env
-
-# Install hedge with test dependencies
-uv pip install -e ".[test]" --system
-```
-
-### Two Ways to Run Tests
-
-#### Method 1: Using system Python (RECOMMENDED for conda packages)
-```bash
-# Use this when you need conda packages (Lilly, SYBA)
-python3 -m pytest [options]
-```
-
-#### Method 2: Using uv run (for isolated testing)
-```bash
-# Use this for unit tests that don't need conda packages
-uv run pytest [options]
+# Run tests with uv (no package sync)
+UV_NO_SYNC=1 uv run pytest
 ```
 
 ### Run All Tests
 
 ```bash
-# Recommended: Use system Python for full compatibility
-python3 -m pytest
-
-# Or with uv run (may skip external deps tests)
-uv run pytest
+# Run all tests
+UV_NO_SYNC=1 uv run pytest
 ```
 
 ### Run Specific Test Categories
 
 ```bash
-# Unit tests only (fast, no external deps needed)
-python3 -m pytest -m unit
+# Unit tests only (fast, ~6 seconds, 47 tests)
+UV_NO_SYNC=1 uv run pytest -m unit
 
 # Integration tests only
-python3 -m pytest -m integration
+UV_NO_SYNC=1 uv run pytest -m integration
 
 # End-to-end tests only
-python3 -m pytest -m e2e
+UV_NO_SYNC=1 uv run pytest -m e2e
 
 # External dependencies tests (Lilly, SYBA, AiZynthFinder)
-python3 -m pytest -m external
+UV_NO_SYNC=1 uv run pytest -m external
 
 # Exclude slow tests
-python3 -m pytest -m "not slow"
+UV_NO_SYNC=1 uv run pytest -m "not slow"
 
-# Exclude external dependencies tests
-python3 -m pytest -m "not external"
+# Exclude external dependencies tests (fastest)
+UV_NO_SYNC=1 uv run pytest -m "not external"
 ```
 
 ### Run Specific Test Files
 
 ```bash
-python3 -m pytest tests/test_data_prep.py
-python3 -m pytest tests/test_e2e_pipeline.py
-python3 -m pytest tests/test_external_deps.py
+UV_NO_SYNC=1 uv run pytest tests/test_data_prep.py
+UV_NO_SYNC=1 uv run pytest tests/test_e2e_pipeline.py
+UV_NO_SYNC=1 uv run pytest tests/test_external_deps.py
 ```
 
 ### Run with Coverage
 
 ```bash
-python3 -m pytest --cov=src/hedge --cov-report=html
+UV_NO_SYNC=1 uv run pytest --cov=src/hedge --cov-report=html
 ```
 
 This will generate a coverage report in `htmlcov/index.html`.
 
-### Quick Test Run (No External Deps)
+### Quick Test Run (Recommended)
 
 ```bash
 # Fast unit tests only, skip external dependencies
-python3 -m pytest -m "unit and not external" -v
+UV_NO_SYNC=1 uv run pytest -m "unit and not external" -v
+
+# Output: 47 passed in ~6 seconds ✓
 ```
 
 ### Check External Dependencies Status
 
 ```bash
 # This will show which external tools are installed
-python3 -m pytest tests/test_external_deps.py::test_conda_packages_info -v -s
+UV_NO_SYNC=1 uv run pytest tests/test_external_deps.py::test_conda_packages_info -v -s
 ```
 
 **Example Output:**
@@ -114,15 +98,17 @@ python3 -m pytest tests/test_external_deps.py::test_conda_packages_info -v -s
 EXTERNAL DEPENDENCIES STATUS
 ============================================================
 Python: 3.11.14
-Environment: /usr
+Environment: /home/user/hedge/.venv
 ✓ RDKit: 2025.09.1
 ✓ medchem: Available
 ✓ datamol: Available
-✗ Lilly: Not found in PATH
-✗ SYBA: Not installed
-✗ AiZynthFinder: Not installed
+✗ Lilly: Not found in PATH (optional - conda package)
+✗ SYBA: Not installed (optional - conda package)
+✗ AiZynthFinder: Not installed (optional)
 ============================================================
 ```
+
+**Note:** External dependencies (Lilly, SYBA, AiZynthFinder) are optional. Core 47 unit tests will run without them.
 
 ## Test Categories
 
