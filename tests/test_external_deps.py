@@ -24,40 +24,33 @@ def test_rdkit_available():
 
 @pytest.mark.external
 def test_lilly_medchem_available():
-    """Test that Lilly MedChem Rules is available (conda package)."""
+    """Test that Lilly MedChem Rules is available via medchem."""
     try:
-        # Lilly is a conda package, check if module exists
-        import_successful = False
-        try:
-            # Try to import lilly_medchem_rules if it has Python bindings
-            import lilly_medchem_rules  # noqa: F401
+        # Lilly is used via medchem.structural.lilly_demerits
+        from medchem.structural.lilly_demerits import LillyDemeritsFilters
 
-            import_successful = True
-        except ImportError:
-            # If no Python module, check if the binary exists
-            # Lilly is often used as a command-line tool
-            import shutil
-
-            lilly_binary = shutil.which("Lilly_Medchem_Rules")
-            if lilly_binary:
-                import_successful = True
-
-        if not import_successful:
-            pytest.skip("Lilly MedChem Rules not installed (conda package required)")
-    except Exception as e:
-        pytest.skip(f"Lilly MedChem Rules check failed: {e}")
+        # Try to instantiate the filter
+        dfilter = LillyDemeritsFilters()
+        assert dfilter is not None
+    except ImportError as e:
+        if "lilly-medchem-rules" in str(e).lower() or "lilly binaries" in str(e).lower():
+            pytest.skip("Lilly binaries not installed (conda: mamba install lilly-medchem-rules)")
+        else:
+            pytest.skip(f"Lilly not available: {e}")
 
 
 @pytest.mark.external
 def test_syba_available():
     """Test that SYBA is available (conda package)."""
     try:
-        import syba_pkg  # SYBA conda package
+        from syba import syba
 
         # Test basic SYBA functionality
-        assert hasattr(syba_pkg, "SybaClassifier") or hasattr(syba_pkg, "__version__")
+        classifier = syba.SybaClassifier()
+        assert classifier is not None
+        classifier.fitDefaultScore()
     except ImportError:
-        pytest.skip("SYBA not installed (conda package required)")
+        pytest.skip("SYBA not installed (conda: conda install -c conda-forge syba)")
     except Exception as e:
         pytest.skip(f"SYBA check failed: {e}")
 
@@ -190,25 +183,30 @@ def test_conda_packages_info():
     conda_env = sys.prefix
     print(f"Environment: {conda_env}")
 
-    # Check for Lilly
+    # Check for Lilly (via medchem)
     try:
-        import shutil
+        from medchem.structural.lilly_demerits import LillyDemeritsFilters
 
-        lilly_binary = shutil.which("Lilly_Medchem_Rules")
-        if lilly_binary:
-            print(f"✓ Lilly: Found at {lilly_binary}")
+        LillyDemeritsFilters()  # Just check instantiation succeeds
+        print("✓ Lilly: Available via medchem (lilly-medchem-rules installed)")
+    except ImportError as e:
+        if "lilly-medchem-rules" in str(e).lower() or "lilly binaries" in str(e).lower():
+            print("✗ Lilly: Binaries not installed (conda: mamba install lilly-medchem-rules)")
         else:
-            print("✗ Lilly: Not found in PATH")
+            print(f"✗ Lilly: Error - {e}")
     except Exception as e:
         print(f"✗ Lilly: Error checking - {e}")
 
     # Check for SYBA
     try:
-        import syba_pkg
+        from syba import syba
 
-        print(f"✓ SYBA: {syba_pkg.__version__ if hasattr(syba_pkg, '__version__') else 'Available'}")
+        syba.SybaClassifier()  # Just check instantiation succeeds
+        print("✓ SYBA: Available")
     except ImportError:
-        print("✗ SYBA: Not installed")
+        print("✗ SYBA: Not installed (conda: conda install -c conda-forge syba)")
+    except Exception as e:
+        print(f"✗ SYBA: Error - {e}")
 
     # Check for AiZynthFinder
     try:
