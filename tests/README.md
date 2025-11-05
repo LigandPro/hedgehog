@@ -22,46 +22,107 @@ tests/
 
 ### Install Test Dependencies
 
+**IMPORTANT: Tests with external dependencies (Lilly, SYBA) require conda environment.**
+
 ```bash
-uv pip install -e ".[test]"
+# Activate conda environment (required for Lilly and SYBA)
+conda activate hedge_env
+
+# Install hedge with test dependencies
+uv pip install -e ".[test]" --system
+```
+
+### Two Ways to Run Tests
+
+#### Method 1: Using system Python (RECOMMENDED for conda packages)
+```bash
+# Use this when you need conda packages (Lilly, SYBA)
+python3 -m pytest [options]
+```
+
+#### Method 2: Using uv run (for isolated testing)
+```bash
+# Use this for unit tests that don't need conda packages
+uv run pytest [options]
 ```
 
 ### Run All Tests
 
 ```bash
-pytest
+# Recommended: Use system Python for full compatibility
+python3 -m pytest
+
+# Or with uv run (may skip external deps tests)
+uv run pytest
 ```
 
 ### Run Specific Test Categories
 
 ```bash
-# Unit tests only
-pytest -m unit
+# Unit tests only (fast, no external deps needed)
+python3 -m pytest -m unit
 
 # Integration tests only
-pytest -m integration
+python3 -m pytest -m integration
 
 # End-to-end tests only
-pytest -m e2e
+python3 -m pytest -m e2e
+
+# External dependencies tests (Lilly, SYBA, AiZynthFinder)
+python3 -m pytest -m external
 
 # Exclude slow tests
-pytest -m "not slow"
+python3 -m pytest -m "not slow"
+
+# Exclude external dependencies tests
+python3 -m pytest -m "not external"
 ```
 
 ### Run Specific Test Files
 
 ```bash
-pytest tests/test_data_prep.py
-pytest tests/test_e2e_pipeline.py
+python3 -m pytest tests/test_data_prep.py
+python3 -m pytest tests/test_e2e_pipeline.py
+python3 -m pytest tests/test_external_deps.py
 ```
 
 ### Run with Coverage
 
 ```bash
-pytest --cov=src/hedge --cov-report=html
+python3 -m pytest --cov=src/hedge --cov-report=html
 ```
 
 This will generate a coverage report in `htmlcov/index.html`.
+
+### Quick Test Run (No External Deps)
+
+```bash
+# Fast unit tests only, skip external dependencies
+python3 -m pytest -m "unit and not external" -v
+```
+
+### Check External Dependencies Status
+
+```bash
+# This will show which external tools are installed
+python3 -m pytest tests/test_external_deps.py::test_conda_packages_info -v -s
+```
+
+**Example Output:**
+```
+============================================================
+EXTERNAL DEPENDENCIES STATUS
+============================================================
+Python: 3.11.14
+Environment: /usr
+✓ RDKit: 2025.09.1
+✓ medchem: Available
+✓ datamol: Available
+✗ Lilly: Not found in PATH
+✗ SYBA: Not installed
+✗ AiZynthFinder: Not installed
+============================================================
+```
 
 ## Test Categories
 
@@ -88,6 +149,14 @@ Full pipeline execution tests:
 Tests that may take longer to execute:
 - Full pipeline runs
 - Large dataset processing
+
+### External Dependencies Tests (`@pytest.mark.external`)
+Tests for external tools and libraries:
+- Lilly MedChem Rules (conda package)
+- SYBA (conda package)
+- AiZynthFinder (retrosynthesis)
+- RDKit integration
+- These tests require conda environment to be activated
 
 ## Test Fixtures
 
