@@ -14,6 +14,8 @@ import seaborn as sns
 from pandarallel import pandarallel
 from rdkit import Chem
 
+from hedge.configs.logger import load_config, logger
+
 LILLY_BIN_DIR = (
     Path(__file__).resolve().parents[4] / "modules" / "lilly_medchem_rules" / "bin"
 )
@@ -28,8 +30,6 @@ try:
 except ImportError:
     LILLY_AVAILABLE = False
     LillyDemeritsFilters = None
-
-from hedge.configs.logger import load_config, logger
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -1008,8 +1008,6 @@ def plot_calculated_stats(config, prefix) -> None:
 
 def plot_restriction_ratios(config, prefix) -> None:
     folder_to_save = process_path(config["folder_to_save"])
-    folder_name = Path(config["folder_to_save"]).name
-
     config_structFilters = load_config(config["config_structFilters"])
 
     if prefix == "beforeDescriptors":
@@ -1459,7 +1457,7 @@ def analyze_filter_failures(
     _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path)
 
     all_reasons = {}
-    for filter_name, reasons in filter_reasons.items():
+    for _filter_name, reasons in filter_reasons.items():
         for reason, count in reasons:
             if reason in all_reasons:
                 all_reasons[reason] += count

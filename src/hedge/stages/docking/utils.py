@@ -4,7 +4,6 @@ import shlex
 import subprocess
 import time
 import uuid
-from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -91,7 +90,7 @@ def _load_smina_ini_content(cfg: dict[str, Any]) -> list[str]:
         try:
             with ini_path.open() as f:
                 return f.read().splitlines()
-        except (OSError, IOError) as e:
+        except OSError as e:
             logger.warning("Failed to read smina_ini file %s: %s", ini_path, e)
 
     return [
@@ -303,7 +302,9 @@ def _convert_with_rdkit(ligands_csv: Path, ligands_dir: Path) -> tuple[str, None
     writer = Chem.SDWriter(str(sdf_path))
     written_count = 0
 
-    for smi, name in zip(smiles_series.astype(str), name_series.astype(str)):
+    for smi, name in zip(
+        smiles_series.astype(str), name_series.astype(str), strict=False
+    ):
         try:
             mol = Chem.MolFromSmiles(smi)
             if mol is None:
@@ -695,7 +696,7 @@ def _save_job_ids(
                 f"smina: {job_ids.get('smina', '')}\n"
                 f"gnina: {job_ids.get('gnina', '')}\n"
             )
-    except (OSError, IOError) as e:
+    except OSError as e:
         logger.warning("Failed to write job_ids.txt: %s", e)
 
 
@@ -713,7 +714,7 @@ def _update_metadata_with_run_status(
         metadata["run_status"] = run_status
         with meta_path.open("w") as f:
             json.dump(metadata, f, indent=2)
-    except (OSError, IOError, json.JSONDecodeError) as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.warning("Failed to update metadata with run status: %s", e)
 
 
@@ -988,7 +989,7 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
 
     try:
         df = pd.read_csv(source)
-    except (OSError, IOError, pd.errors.ParserError) as e:
+    except (OSError, pd.errors.ParserError) as e:
         logger.exception("Failed to read docking input %s: %s", source, e)
         return False
 
@@ -1021,7 +1022,6 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
                 if prepared_receptor_path != original_receptor and prep_cmd:
                     try:
                         import subprocess  # noqa: PLC0415
-                        import time  # noqa: PLC0415
 
                         result = subprocess.run(  # noqa: S602
                             prep_cmd,
@@ -1071,12 +1071,7 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
                             return False
 
                         cfg["receptor_pdb"] = prepared_receptor_path
-                    except (
-                        OSError,
-                        IOError,
-                        subprocess.CalledProcessError,
-                        RuntimeError,
-                    ) as e:
+                    except (OSError, subprocess.CalledProcessError, RuntimeError) as e:
                         logger.exception("Failed to prepare protein: %s", e)
                         return False
 
@@ -1103,7 +1098,7 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
             if script:
                 scripts_prepared.append(str(script))
                 job_ids["gnina"] = _generate_job_id("gnina")
-        except (OSError, IOError, ValueError, RuntimeError, FileNotFoundError) as e:
+        except (OSError, ValueError, RuntimeError, FileNotFoundError) as e:
             logger.warning("GNINA setup failed, continuing without GNINA: %s", e)
             tools_list = [t for t in tools_list if t != "gnina"]
 
@@ -1126,7 +1121,7 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
         )
         _save_job_ids(ligands_dir, overall_job_id, job_ids)
         logger.info(f"Docking job ID: {overall_job_id}")
-    except (OSError, IOError, json.JSONEncodeError) as e:
+    except (OSError, json.JSONEncodeError) as e:
         logger.warning("Failed to save metadata: %s", e)
 
     auto_run = cfg.get("auto_run", True)
@@ -1146,13 +1141,13 @@ def run_docking(config: dict[str, Any]) -> bool:  # noqa: C901, PLR0911, PLR0912
                 run_status["gnina"] = _run_gnina(
                     ligands_dir, output_sdf, background, job_ids["gnina"]
                 )
-            except (OSError, IOError, subprocess.CalledProcessError, RuntimeError) as e:
+            except (OSError, subprocess.CalledProcessError, RuntimeError) as e:
                 logger.exception("GNINA execution failed: %s", e)
                 run_status["gnina"] = {"status": "failed", "error": str(e)}
 
         try:
             _update_metadata_with_run_status(ligands_dir, run_status)
-        except (OSError, IOError, json.JSONEncodeError) as e:
+        except (OSError, json.JSONEncodeError) as e:
             logger.warning("Failed to update metadata with run status: %s", e)
 
         if not background:

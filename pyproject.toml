@@ -42,7 +42,13 @@ src = ["src"]
 extend-exclude = [
     "modules",
 ]
-lint.select = ["ALL"]
+lint.select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "UP", # pyupgrade
+]
 lint.ignore = [
     "COM812",  # conflicts with formatter
     "ISC001",  # conflicts with formatter
