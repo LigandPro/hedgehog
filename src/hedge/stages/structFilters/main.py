@@ -1,5 +1,8 @@
-import glob
+"""Structural filters stage main entry point."""
+
 import os
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -18,32 +21,51 @@ from hedge.stages.structFilters.utils import (
 )
 
 
-def _order_identity_columns(df):
-    """Order dataframe columns with identity columns first."""
+def _order_identity_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Order dataframe columns with identity columns first.
+
+    Args:
+        df: Input dataframe
+
+    Returns
+    -------
+        Dataframe with identity columns first
+    """
     id_cols = ["smiles", "model_name", "mol_idx"]
     existing_id_cols = [c for c in id_cols if c in df.columns]
     ordered_cols = existing_id_cols + [c for c in df.columns if c not in id_cols]
     return df[ordered_cols]
 
 
-def _get_input_path(config, prefix, folder_to_save):
+def _get_input_path(config: dict[str, Any], prefix: str, folder_to_save: str) -> str:
     """Determine input path based on prefix.
-    
+
     If running a stage independently and previous stage outputs don't exist,
     falls back to original molecules from config.
+
+    Args:
+        config: Configuration dictionary
+        prefix: Stage prefix
+        folder_to_save: Base folder path
+
+    Returns
+    -------
+        Path to input file
     """
     if prefix != "beforeDescriptors":
-        descriptors_path = folder_to_save + "Descriptors/passDescriptorsSMILES.csv"
-        if os.path.exists(descriptors_path):
-            return descriptors_path
-        sampled_path = folder_to_save + "sampledMols.csv"
-        if os.path.exists(sampled_path):
+        descriptors_path = Path(
+            folder_to_save + "Descriptors/passDescriptorsSMILES.csv"
+        )
+        if descriptors_path.exists():
+            return str(descriptors_path)
+        sampled_path = Path(folder_to_save + "sampledMols.csv")
+        if sampled_path.exists():
             logger.info("Descriptors output not found, using sampledMols.csv")
-            return sampled_path
+            return str(sampled_path)
         logger.info("Descriptors output not found, using molecules from config")
         return config["generated_mols_path"]
 
-    matched = glob.glob(config["generated_mols_path"])
+    matched = list(Path().glob(config["generated_mols_path"]))
     if len(matched) > 1:
         return folder_to_save + "sampledMols.csv"
 
@@ -60,12 +82,20 @@ def _get_input_path(config, prefix, folder_to_save):
     return config["generated_mols_path"]
 
 
-def main(config, prefix):
-    """Main entry point for structural filters stage."""
+def main(config: dict[str, Any], prefix: str) -> None:
+    """Main entry point for structural filters stage.
+
+    Args:
+        config: Pipeline configuration dictionary
+        prefix: Stage prefix ('beforeDescriptors' or other)
+    """
     sample_size = config["sample_size"]
     folder_to_save = process_path(config["folder_to_save"])
 
-    subfolder = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
+    if prefix == "beforeDescriptors":
+        subfolder = f"{prefix}_StructFilters"
+    else:
+        subfolder = "StructFilters"
     os.makedirs(folder_to_save + f"{subfolder}/", exist_ok=True)
     input_path = _get_input_path(config, prefix, folder_to_save)
 
@@ -78,10 +108,11 @@ def main(config, prefix):
         raise
 
     config_structFilters = load_config(config["config_structFilters"])
-    filters_to_calculate = {k.replace("calculate_", ""): v
-                            for k, v in config_structFilters.items()
-                            if "calculate_" in k and v
-                          }
+    filters_to_calculate = {
+        k.replace("calculate_", ""): v
+        for k, v in config_structFilters.items()
+        if "calculate_" in k and v
+    }
 
     for filter_name in filters_to_calculate:
         apply_func = filter_function_applier(filter_name)
@@ -91,7 +122,12 @@ def main(config, prefix):
             logger.warning("No molecules to process")
             continue
 
-        final_res, final_extended = get_basic_stats(config_structFilters, filter_results, model_name, filter_name=filter_name)
+        final_res, final_extended = get_basic_stats(
+            config_structFilters,
+            filter_results,
+            model_name,
+            filter_name=filter_name,
+        )
         path_to_save = folder_to_save + f"{subfolder}/{camelcase(filter_name)}"
 
         final_res = _order_identity_columns(final_res)
@@ -104,7 +140,10 @@ def main(config, prefix):
             if "pass_filter" in final_extended.columns:
                 final_extended["pass"] = final_extended["pass_filter"]
             else:
-                logger.warning(f"'pass' column not found in {filter_name} extended results. Assuming all molecules pass.")
+                logger.warning(
+                    f"'pass' column not found in {filter_name} extended results. "
+                    "Assuming all molecules pass."
+                )
                 final_extended["pass"] = True
         filtered_mols = final_extended[final_extended["pass"]].copy()
 

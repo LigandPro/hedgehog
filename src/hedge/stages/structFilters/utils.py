@@ -1,6 +1,9 @@
-import glob
+"""Utility functions for structural filters stage."""
+
 import os
 import warnings
+from pathlib import Path
+from typing import Any
 
 import datamol as dm
 import matplotlib.pyplot as plt
@@ -13,6 +16,7 @@ from rdkit import Chem
 
 try:
     from medchem.structural.lilly_demerits import LillyDemeritsFilters
+
     LILLY_AVAILABLE = True
 except ImportError:
     LILLY_AVAILABLE = False
@@ -22,20 +26,41 @@ from hedge.configs.logger import load_config, logger
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-def camelcase(any_str):
+def camelcase(any_str: str) -> str:
+    """Convert snake_case to CamelCase.
+
+    Args:
+        any_str: String in snake_case format
+
+    Returns
+    -------
+        String in CamelCase format
+    """
     return "".join(word.capitalize() for word in any_str.split("_"))
 
 
-def build_identity_map_from_descriptors(config):
-    """Build a map of (smiles, model_name) -> mol_idx from descriptors output."""
+def build_identity_map_from_descriptors(
+    config: dict[str, Any],
+) -> tuple[dict[tuple[str, str], Any], pd.DataFrame | None]:
+    """Build a map of (smiles, model_name) -> mol_idx from descriptors output.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns
+    -------
+        Tuple of (identity_map, dataframe) or ({}, None) if not found
+    """
     base_folder = process_path(config["folder_to_save"])
-    id_path = base_folder + "Descriptors/passDescriptorsSMILES.csv"
+    id_path = Path(base_folder + "Descriptors/passDescriptorsSMILES.csv")
 
     try:
-        if os.path.exists(id_path):
+        if id_path.exists():
             id_df = pd.read_csv(id_path)
-            identity_map = {(row["smiles"], row["model_name"]): row["mol_idx"]
-                           for _, row in id_df.iterrows()}
+            identity_map = {
+                (row["smiles"], row["model_name"]): row["mol_idx"]
+                for _, row in id_df.iterrows()
+            }
             return identity_map, id_df
     except Exception:
         pass
@@ -43,8 +68,17 @@ def build_identity_map_from_descriptors(config):
     return {}, None
 
 
-def process_path(folder_to_save, key_word=None):
-    """Ensure path ends with '/' and create directory if needed."""
+def process_path(folder_to_save: str, key_word: str | None = None) -> str:
+    """Ensure path ends with '/' and create directory if needed.
+
+    Args:
+        folder_to_save: Base folder path
+        key_word: Optional subfolder name
+
+    Returns
+    -------
+        Processed folder path ending with /
+    """
     if not folder_to_save.endswith("/"):
         folder_to_save += "/"
 
@@ -55,8 +89,17 @@ def process_path(folder_to_save, key_word=None):
     return folder_to_save
 
 
-def sdf_to_mols(sdf_file, subsample):
-    """Read molecules from SDF file with subsampling."""
+def sdf_to_mols(sdf_file: str, subsample: int) -> tuple[list, list]:
+    """Read molecules from SDF file with subsampling.
+
+    Args:
+        sdf_file: Path to SDF file
+        subsample: Maximum number of molecules to read
+
+    Returns
+    -------
+        Tuple of (molecules list, SMILES list)
+    """
     molecules = dm.read_sdf(sdf_file)
     mols_list = []
     smiles_list = []
@@ -71,14 +114,32 @@ def sdf_to_mols(sdf_file, subsample):
     return mols_list, smiles_list
 
 
-def dropna(mols, smiles):
-    """Remove None values from molecule and SMILES lists."""
+def dropna(mols: list, smiles: list) -> tuple[list, list]:
+    """Remove None values from molecule and SMILES lists.
+
+    Args:
+        mols: List of molecule objects
+        smiles: List of SMILES strings
+
+    Returns
+    -------
+        Tuple of (cleaned mols, cleaned smiles)
+    """
     df = pd.DataFrame({"mols": mols, "smiles": smiles}).dropna()
     return df["mols"].tolist(), df["smiles"].tolist()
 
 
-def format_number(x, pos=None):
-    """Format number for display. pos parameter is for matplotlib FuncFormatter compatibility."""
+def format_number(x: float, pos: Any = None) -> str:
+    """Format number for display.
+
+    Args:
+        x: Number to format
+        pos: Position (for matplotlib FuncFormatter compatibility)
+
+    Returns
+    -------
+        Formatted number string
+    """
     if x >= 1e6:
         return f"{x/1e6:.1f}M"
     if x >= 1e3:
@@ -86,38 +147,85 @@ def format_number(x, pos=None):
     return f"{x:.0f}"
 
 
-def get_model_colors(model_names, cmap=None):
-    """Generate color map for models."""
+def get_model_colors(
+    model_names: list[str], cmap: str | None = None
+) -> dict[str, Any]:
+    """Generate color map for models.
+
+    Args:
+        model_names: List of model names
+        cmap: Optional colormap name
+
+    Returns
+    -------
+        Dictionary mapping model names to colors
+    """
     if cmap is None:
         colors = plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1))
     else:
-        colors = plt.colormaps.get_cmap(cmap)(np.linspace(1, 0, len(model_names) + 1))
+        colors = plt.colormaps.get_cmap(cmap)(
+            np.linspace(1, 0, len(model_names) + 1)
+        )
 
-    return dict(zip(model_names, colors))
+    return dict(zip(model_names, colors, strict=False))
 
 
-def clean_name(name):
-    """Clean metric names for display."""
+def clean_name(name: str) -> str:
+    """Clean metric names for display.
+
+    Args:
+        name: Name to clean
+
+    Returns
+    -------
+        Cleaned name
+    """
     for pattern in ["metrics", "_", ".csv"]:
         name = name.replace(pattern, "")
     return name.strip()
 
 
-def filter_alerts(config):
-    """Filter structural alerts based on configuration."""
+def filter_alerts(config: dict[str, Any]) -> pd.DataFrame:
+    """Filter structural alerts based on configuration.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns
+    -------
+        Filtered alerts dataframe
+    """
     df = pd.read_csv(config["alerts_data_path"])
     mask = df["rule_set_name"].isin(config["include_rulesets"])
 
     for ruleset in config["exclude_descriptions"]:
         is_other_ruleset = df["rule_set_name"] != ruleset
-        is_not_excluded = ~df["description"].isin(config["exclude_descriptions"][ruleset])
-        mask &= (is_other_ruleset | is_not_excluded)
+        is_not_excluded = ~df["description"].isin(
+            config["exclude_descriptions"][ruleset]
+        )
+        mask &= is_other_ruleset | is_not_excluded
 
     return df[mask]
 
 
-def common_postprocessing_statistics(filter_results, res_df, stat, extend):
-    """Combine filter results with statistics."""
+def common_postprocessing_statistics(
+    filter_results: pd.DataFrame,
+    res_df: pd.DataFrame,
+    stat: pd.DataFrame | None,
+    extend: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Combine filter results with statistics.
+
+    Args:
+        filter_results: Filter results dataframe
+        res_df: Results dataframe
+        stat: Optional statistics dataframe
+        extend: Optional extended dataframe
+
+    Returns
+    -------
+        Tuple of (results dataframe, extended dataframe)
+    """
     if stat is not None:
         res_df = pd.concat([stat, res_df])
 
@@ -130,7 +238,24 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
     return res_df, filter_extended
 
 
-def process_one_file(config, input_path, apply_filter, subsample):
+def process_one_file(
+    config: dict[str, Any],
+    input_path: str,
+    apply_filter: Any,
+    subsample: int,
+) -> pd.DataFrame | None:
+    """Process a single input file through filters.
+
+    Args:
+        config: Configuration dictionary
+        input_path: Path to input file
+        apply_filter: Filter function to apply
+        subsample: Maximum number of molecules to process
+
+    Returns
+    -------
+        Filter results dataframe or None if no molecules
+    """
     input_type = input_path[input_path.rfind(".")+1:]
     assert input_type in {"csv", "smi", "sdf", "txt"}
 
@@ -144,15 +269,20 @@ def process_one_file(config, input_path, apply_filter, subsample):
             model_names = data["model_name"].tolist()
             mols = [dm.to_mol(x) for x in smiles_str]
             mol_indices = data["mol_idx"].tolist()
-            smiles = list(zip(smiles_str, model_names, mols, mol_indices))
+            smiles = list(
+                zip(smiles_str, model_names, mols, mol_indices, strict=False)
+            )
         else:
             smiles = data[smiles_col].tolist()
             mols = [dm.to_mol(x) for x in smiles]
             mol_indices = data["mol_idx"].tolist()
-            smiles = list(zip(smiles, [None]*len(smiles), mols, mol_indices))
+            smiles = list(
+                zip(smiles, [None] * len(smiles), mols, mol_indices, strict=False)
+            )
 
-    elif input_type == "smi" or input_type == "txt":
-        with open(input_path) as file:
+    elif input_type in {"smi", "txt"}:
+        input_file = Path(input_path)
+        with input_file.open() as file:
             lines = [line.rstrip("\n") for line in file]
 
         if subsample <= len(lines):
@@ -170,7 +300,7 @@ def process_one_file(config, input_path, apply_filter, subsample):
                 smiles.append(parts[0])
         mols = [dm.to_mol(x) for x in smiles]
         if len(model_names) == len(smiles):
-            smiles = list(zip(smiles, model_names, mols))
+            smiles = list(zip(smiles, model_names, mols, strict=False))
 
     elif input_type == "sdf":
         mols, smiles = sdf_to_mols(input_path, subsample)
@@ -210,10 +340,24 @@ def process_one_file(config, input_path, apply_filter, subsample):
     return final_result
 
 
-def add_model_name_col(final_result, smiles_with_model):
-    """Add smiles, model_name, and mol_idx columns from input data."""
+def add_model_name_col(
+    final_result: pd.DataFrame, smiles_with_model: list[tuple]
+) -> pd.DataFrame:
+    """Add smiles, model_name, and mol_idx columns from input data.
+
+    Args:
+        final_result: Results dataframe to update
+        smiles_with_model: List of tuples with (smiles, model_name, mol, mol_idx)
+
+    Returns
+    -------
+        Updated dataframe with identity columns
+    """
     smiles_vals = [item[0] for item in smiles_with_model]
-    model_vals = [item[1] if item[1] is not None else "single" for item in smiles_with_model]
+    model_vals = [
+        item[1] if item[1] is not None else "single"
+        for item in smiles_with_model
+    ]
     mol_idx_vals = [item[3] if len(item) >= 4 else None for item in smiles_with_model]
 
     final_result["smiles"] = smiles_vals
@@ -223,20 +367,48 @@ def add_model_name_col(final_result, smiles_with_model):
     return final_result
 
 
-def filter_function_applier(filter_name):
-    filters = {"common_alerts": apply_structural_alerts,
-               "molgraph_stats": apply_molgraph_stats,
-               "molcomplexity": apply_molcomplexity_filters,
-               "NIBR": apply_nibr_filter,
-               "bredt": apply_bredt_filter,
-               "lilly": apply_lilly_filter
-              }
+def filter_function_applier(filter_name: str) -> Any:
+    """Get filter function by name.
+
+    Args:
+        filter_name: Name of the filter
+
+    Returns
+    -------
+        Filter function
+
+    Raises
+    ------
+        ValueError: If filter name is not recognized
+    """
+    filters = {
+        "common_alerts": apply_structural_alerts,
+        "molgraph_stats": apply_molgraph_stats,
+        "molcomplexity": apply_molcomplexity_filters,
+        "NIBR": apply_nibr_filter,
+        "bredt": apply_bredt_filter,
+        "lilly": apply_lilly_filter,
+    }
     if filter_name not in filters:
-        raise ValueError(f"Filter {filter_name} not found")
+        msg = f"Filter {filter_name} not found"
+        raise ValueError(msg)
     return filters[filter_name]
 
 
-def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
+def apply_structural_alerts(
+    config: dict[str, Any], mols: list, smiles_modelName_mols: list | None = None
+) -> pd.DataFrame:
+    """Apply structural alerts filters.
+
+    Args:
+        config: Configuration dictionary
+        mols: List of molecule objects
+        smiles_modelName_mols: Optional list of (smiles, model_name, mol) tuples
+
+    Returns
+    -------
+        Dataframe with filter results
+    """
     logger.info("Calculating Common Alerts...")
     def _apply_alerts(row):
         mol = row["mol"]
@@ -371,7 +543,8 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             "Lilly demerits filter is not available. "
             "This filter requires conda/mamba-installed binaries. "
             "Install with: conda install lilly-medchem-rules\n"
-            "Or disable this filter by setting 'calculate_lilly: False' in config_structFilters.yml"
+            "Or disable this filter by setting 'calculate_lilly: False' "
+            "in config_structFilters.yml"
         )
 
     logger.info("Calculating Lilly filter...")
@@ -560,9 +733,11 @@ def plot_calculated_stats(config, prefix):
     config_structFilters = load_config(config["config_structFilters"])
 
     if prefix == "beforeDescriptors":
-        paths = glob.glob(folder_to_save + f"{prefix}_StructFilters/" + "*metrics.csv")
+        folder_path = Path(folder_to_save + f"{prefix}_StructFilters/")
+        paths = list(folder_path.glob("*metrics.csv"))
     else:
-        paths = glob.glob(folder_to_save + "StructFilters/" + "*metrics.csv")
+        folder_path = Path(folder_to_save + "StructFilters/")
+        paths = list(folder_path.glob("*metrics.csv"))
     check_paths(config_structFilters, paths)
 
     datas = []
@@ -588,7 +763,8 @@ def plot_calculated_stats(config, prefix):
 
     filter_results = {}
     subdir = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
-    filters_to_find = glob.glob(folder_to_save + f"{subdir}/*filteredMols.csv")
+    subdir_path = Path(folder_to_save + f"{subdir}/")
+    filters_to_find = list(subdir_path.glob("*filteredMols.csv"))
 
     for path in filters_to_find:
         try:
@@ -641,7 +817,8 @@ def plot_calculated_stats(config, prefix):
                     bar_center_y = x[i]
                     model_total = data.loc[model, "num_mol"] if model in data.index else data["num_mol"].iloc[0]
                     if model_total != 0:
-                        text = f"Passed molecules: {passed} ({(passed/model_total*100):.1f}%)"
+                        pct = (passed / model_total * 100)
+                        text = f"Passed molecules: {passed} ({pct:.1f}%)"
                     else:
                         text = f"Passed molecules: {passed} (0%)"
                     ax.annotate(text, (bar_center_x, bar_center_y), ha="center", va="center", fontsize=12, color="black", fontweight="bold",
@@ -670,7 +847,10 @@ def plot_calculated_stats(config, prefix):
             if banned_percent == 0.0:
                 label = f"{ratio_name} (0%)"
             else:
-                label = f"{ratio_name} ({format_number(total_banned)}, {banned_percent:.1f}%)"
+                label = (
+                    f"{ratio_name} ({format_number(total_banned)}, "
+                    f"{banned_percent:.1f}%)"
+                )
 
             bar = ax.barh(x, banned_count, width, label=label, color=color, alpha=0.8)
             banned_bars.append(bar)
@@ -710,9 +890,11 @@ def plot_restriction_ratios(config, prefix):
     config_structFilters = load_config(config["config_structFilters"])
 
     if prefix == "beforeDescriptors":
-        paths = glob.glob(folder_to_save + f"{prefix}_StructFilters/" + "*metrics.csv")
+        folder_path = Path(folder_to_save + f"{prefix}_StructFilters/")
+        paths = list(folder_path.glob("*metrics.csv"))
     else:
-        paths = glob.glob(folder_to_save + "StructFilters/" + "*metrics.csv")
+        folder_path = Path(folder_to_save + "StructFilters/")
+        paths = list(folder_path.glob("*metrics.csv"))
     check_paths(config_structFilters, paths)
 
     if not paths:
@@ -816,12 +998,28 @@ def plot_restriction_ratios(config, prefix):
     plt.close()
 
 
-def filter_data(config, prefix):
-    subdir = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
+def filter_data(
+    config: dict[str, Any], prefix: str
+) -> pd.DataFrame:
+    """Filter and merge molecular data from different filters.
+
+    Args:
+        config: Configuration dictionary
+        prefix: Stage prefix
+
+    Returns
+    -------
+        Filtered dataframe
+    """
+    if prefix == "beforeDescriptors":
+        subdir = f"{prefix}_StructFilters"
+    else:
+        subdir = "StructFilters"
     base_folder = process_path(config["folder_to_save"])
     folder_to_save = process_path(config["folder_to_save"], key_word=subdir)
 
-    paths = glob.glob(folder_to_save + "*filteredMols.csv")
+    folder_path = Path(folder_to_save)
+    paths = list(folder_path.glob("*filteredMols.csv"))
 
     columns_to_drop = ["pass", "any_pass", "name", "pass_any"]
     datas = []
@@ -829,7 +1027,7 @@ def filter_data(config, prefix):
         data = pd.read_csv(path)
         for col in columns_to_drop:
             if col in data.columns:
-                data.drop(columns=[col], inplace=True)
+                data = data.drop(columns=[col])
         datas.append(data)
 
     if len(datas) > 0:
@@ -856,42 +1054,60 @@ def filter_data(config, prefix):
     out_df.to_csv(folder_to_save + "passStructFiltersSMILES.csv", index=False)
 
     if prefix != "beforeDescriptors":
-        descriptors_path = base_folder + "Descriptors/passDescriptorsSMILES.csv"
-        if os.path.exists(descriptors_path):
-            input_path = descriptors_path
+        descriptors_path = Path(base_folder + "Descriptors/passDescriptorsSMILES.csv")
+        if descriptors_path.exists():
+            input_path = str(descriptors_path)
         else:
-            sampled_path = base_folder + "sampledMols.csv"
-            if os.path.exists(sampled_path):
-                input_path = sampled_path
+            sampled_path = Path(base_folder + "sampledMols.csv")
+            if sampled_path.exists():
+                input_path = str(sampled_path)
             else:
                 try:
-                    from hedge.stages.structFilters.main import _get_input_path
+                    from hedge.stages.structFilters.main import (
+                        _get_input_path,
+                    )
+
                     input_path = _get_input_path(config, prefix, base_folder)
                 except Exception:
+                    logger.debug(
+                        "Could not determine input path from main module"
+                    )
                     input_path = None
     else:
-        sampled_path = base_folder + "sampledMols.csv"
-        if os.path.exists(sampled_path):
-            input_path = sampled_path
+        sampled_path = Path(base_folder + "sampledMols.csv")
+        if sampled_path.exists():
+            input_path = str(sampled_path)
         else:
             try:
-                from hedge.stages.structFilters.main import _get_input_path
+                from hedge.stages.structFilters.main import (
+                    _get_input_path,
+                )
+
                 input_path = _get_input_path(config, prefix, base_folder)
             except Exception:
+                logger.debug("Could not determine input path from main module")
                 input_path = None
 
-    if input_path and os.path.exists(input_path):
+    input_path_obj = Path(input_path) if input_path else None
+    if input_path_obj and input_path_obj.exists():
         try:
             all_input = pd.read_csv(input_path)
             if len(out_df) > 0:
                 merge_cols = ["smiles", "model_name"]
-                merged = all_input.merge(out_df[merge_cols], on=merge_cols, how="left", indicator=True)
-                fail_molecules = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+                merged = all_input.merge(
+                    out_df[merge_cols],
+                    on=merge_cols,
+                    how="left",
+                    indicator=True,
+                )
+                fail_molecules = merged[merged["_merge"] == "left_only"].drop(
+                    columns=["_merge"]
+                )
             else:
                 fail_molecules = all_input.copy()
 
             if len(fail_molecules) > 0:
-                extended_paths = glob.glob(folder_to_save + "*extended.csv")
+                extended_paths = list(folder_path.glob("*extended.csv"))
                 all_extended = None
                 for ext_path in extended_paths:
                     try:
@@ -900,43 +1116,88 @@ def filter_data(config, prefix):
                             all_extended = ext_df.copy()
                         else:
                             merge_cols = ["smiles", "model_name"]
-                            pass_cols = [col for col in ext_df.columns if col.startswith("pass_") or col == "pass"]
+                            pass_cols = [
+                                col
+                                for col in ext_df.columns
+                                if col.startswith("pass_") or col == "pass"
+                            ]
                             if pass_cols:
                                 cols_to_merge = merge_cols + pass_cols
-                                all_extended = all_extended.merge(ext_df[cols_to_merge], on=merge_cols, how="outer", suffixes=("", "_dup"))
+                                all_extended = all_extended.merge(
+                                    ext_df[cols_to_merge],
+                                    on=merge_cols,
+                                    how="outer",
+                                    suffixes=("", "_dup"),
+                                )
                                 for col in pass_cols:
                                     if f"{col}_dup" in all_extended.columns:
-                                        all_extended[col] = all_extended[col].fillna(all_extended[f"{col}_dup"])
-                                        all_extended = all_extended.drop(columns=[f"{col}_dup"])
+                                        all_extended[col] = all_extended[
+                                            col
+                                        ].fillna(all_extended[f"{col}_dup"])
+                                        all_extended = all_extended.drop(
+                                            columns=[f"{col}_dup"]
+                                        )
                     except Exception:
+                        logger.debug(
+                            f"Could not process extended file: {ext_path}"
+                        )
                         continue
 
                 if all_extended is not None:
                     merge_cols = ["smiles", "model_name"]
-                    pass_cols = [col for col in all_extended.columns if col.startswith("pass_") or col == "pass"]
+                    pass_cols = [
+                        col
+                        for col in all_extended.columns
+                        if col.startswith("pass_") or col == "pass"
+                    ]
                     if pass_cols:
                         cols_to_merge = merge_cols + pass_cols
-                        fail_molecules = fail_molecules.merge(all_extended[cols_to_merge], on=merge_cols, how="left")
+                        fail_molecules = fail_molecules.merge(
+                            all_extended[cols_to_merge],
+                            on=merge_cols,
+                            how="left",
+                        )
                         for col in pass_cols:
                             if col in fail_molecules.columns:
-                                fail_molecules[col] = fail_molecules[col].fillna(False)
+                                fail_molecules[col] = fail_molecules[col].fillna(
+                                    False
+                                )
 
                 id_cols = ["smiles", "model_name", "mol_idx"]
-                pass_cols_final = [col for col in fail_molecules.columns if col.startswith("pass_") or col == "pass"]
-                fail_cols = [c for c in id_cols if c in fail_molecules.columns] + pass_cols_final
-                fail_molecules[fail_cols].to_csv(folder_to_save + "failStructFiltersSMILES.csv", index=False)
+                pass_cols_final = [
+                    col
+                    for col in fail_molecules.columns
+                    if col.startswith("pass_") or col == "pass"
+                ]
+                fail_cols = [
+                    c for c in id_cols if c in fail_molecules.columns
+                ] + pass_cols_final
+                fail_molecules[fail_cols].to_csv(
+                    folder_to_save + "failStructFiltersSMILES.csv", index=False
+                )
         except Exception as e:
             logger.warning(f"Could not create failStructFiltersSMILES.csv: {e}")
 
     return filtered_data
 
 
-def inject_identity_columns_to_all_csvs(config, prefix):
-    """Ensure identity columns are ordered consistently in all CSVs."""
-    subdir = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
+def inject_identity_columns_to_all_csvs(
+    config: dict[str, Any], prefix: str
+) -> None:
+    """Ensure identity columns are ordered consistently in all CSVs.
+
+    Args:
+        config: Configuration dictionary
+        prefix: Stage prefix
+    """
+    if prefix == "beforeDescriptors":
+        subdir = f"{prefix}_StructFilters"
+    else:
+        subdir = "StructFilters"
     target_folder = process_path(config["folder_to_save"], key_word=subdir)
 
-    csv_paths = glob.glob(target_folder + "*.csv")
+    folder_path = Path(target_folder)
+    csv_paths = list(folder_path.glob("*.csv"))
     for path in csv_paths:
         try:
             df = pd.read_csv(path)
@@ -944,15 +1205,29 @@ def inject_identity_columns_to_all_csvs(config, prefix):
                 continue
 
             identity_order = ["smiles", "model_name", "mol_idx"]
-            ordered = [c for c in identity_order if c in df.columns] + [c for c in df.columns if c not in identity_order]
+            ordered = [c for c in identity_order if c in df.columns] + [
+                c for c in df.columns if c not in identity_order
+            ]
             df = df[ordered]
             df.to_csv(path, index=False)
         except Exception:
+            logger.debug(f"Could not process CSV file: {path}")
             continue
 
 
-def analyze_filter_failures(file_path):
-    """Analyze filter failures from extended CSV file and generate visualizations."""
+def analyze_filter_failures(
+    file_path: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | tuple[None, None, None]:
+    """Analyze filter failures from extended CSV file and generate visualizations.
+
+    Args:
+        file_path: Path to extended CSV file
+
+    Returns
+    -------
+        Tuple of (filter_failures, filter_reasons, all_detailed_reasons)
+        or (None, None, None) if no filter columns found
+    """
     logger.debug(f"Analyzing filter failures from: {file_path}")
     df = pd.read_csv(file_path, low_memory=False)
 
@@ -1008,7 +1283,10 @@ def analyze_filter_failures(file_path):
     top_reasons = sorted(all_reasons.items(), key=lambda x: x[1], reverse=True)[:5]
 
     if top_reasons:
-        logger.info("Top 5 most common filter failure reasons (molecules may have multiple reasons):")
+        logger.info(
+            "Top 5 most common filter failure reasons "
+            "(molecules may have multiple reasons):"
+        )
         for i, (reason, count) in enumerate(top_reasons, 1):
             logger.info("  %d. %s: %s failures", i, reason, count)
 
@@ -1019,35 +1297,69 @@ def analyze_filter_failures(file_path):
     return filter_failures, filter_reasons, all_detailed_reasons
 
 
-def _create_main_filter_plot(filter_failures, file_path):
-    """Create main filter failures bar chart."""
+def _create_main_filter_plot(
+    filter_failures: dict[str, Any], file_path: str
+) -> None:
+    """Create main filter failures bar chart.
+
+    Args:
+        filter_failures: Dictionary of filter failure statistics
+        file_path: Path to save output
+    """
     plot_data = []
     for filter_name, stats in filter_failures.items():
-        plot_data.append({"filter": filter_name,
-                          "failures": stats["failures"],
-                          "percentage": stats["percentage"]
-                        })
+        plot_data.append(
+            {
+                "filter": filter_name,
+                "failures": stats["failures"],
+                "percentage": stats["percentage"],
+            }
+        )
 
     plot_df = pd.DataFrame(plot_data)
     plot_df = plot_df.sort_values("failures", ascending=False)
 
     plt.figure(figsize=(max(16, len(plot_df) * 0.6), 16))
-    plt.bar(range(len(plot_df)), plot_df["failures"], color="steelblue", alpha=0.8, width=0.3)
+    plt.bar(
+        range(len(plot_df)),
+        plot_df["failures"],
+        color="steelblue",
+        alpha=0.8,
+        width=0.3,
+    )
 
     plt.xlabel("Filters", fontsize=20)
     plt.ylabel("Number of Molecules Failed", fontsize=20)
-    plt.title("Number of Molecules Failed by Each Filter", fontsize=26, fontweight="bold")
-    plt.xticks(range(len(plot_df)), plot_df["filter"], rotation=45, ha="right", fontsize=16)
+    plt.title(
+        "Number of Molecules Failed by Each Filter",
+        fontsize=26,
+        fontweight="bold",
+    )
+    plt.xticks(
+        range(len(plot_df)),
+        plot_df["filter"],
+        rotation=45,
+        ha="right",
+        fontsize=16,
+    )
 
     for i, (_, row) in enumerate(plot_df.iterrows()):
-        plt.text(i, row["failures"] + max(plot_df["failures"]) * 0.01, f"{row['failures']}\n({row['percentage']:.1f}%)", ha="center", va="bottom", fontsize=14)
+        plt.text(
+            i,
+            row["failures"] + max(plot_df["failures"]) * 0.01,
+            f"{row['failures']}\n({row['percentage']:.1f}%)",
+            ha="center",
+            va="bottom",
+            fontsize=14,
+        )
 
     plt.grid(axis="y", alpha=0.3)
     plt.tight_layout()
 
-    path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, "filter_failures_plot.png")
+    file_path_obj = Path(file_path)
+    path_to_save = file_path_obj.parent / "CommonAlertsBreakdown"
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    output_path = path_to_save / "filter_failures_plot.png"
     plt.savefig(output_path, dpi=600, bbox_inches="tight")
     plt.close()
 
@@ -1079,7 +1391,11 @@ def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
 
             plt.xlabel("Failure Reasons", fontsize=20)
             plt.ylabel("Number of Molecules Failed", fontsize=20)
-            plt.title(f'{filter_name.upper()} - Failure Reasons ({len(plot_df)} reasons, {stats["failures"]} total failures)', fontsize=26, fontweight="bold")
+            title_text = (
+                f'{filter_name.upper()} - Failure Reasons '
+                f'({len(plot_df)} reasons, {stats["failures"]} total failures)'
+            )
+            plt.title(title_text, fontsize=26, fontweight="bold")
             plt.xticks(range(len(plot_df)), plot_df["Reason"], rotation=45, ha="right", fontsize=max(10, min(16, 300 // len(plot_df))))
 
             for i, (bar, count) in enumerate(zip(bars, plot_df["Count"])):
@@ -1088,9 +1404,10 @@ def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
             plt.grid(axis="y", alpha=0.3)
             plt.tight_layout()
 
-            path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-            os.makedirs(path_to_save, exist_ok=True)
-            output_path = os.path.join(path_to_save, f"{filter_name}_reasons_plot.png")
+            file_path_obj = Path(file_path)
+            path_to_save = file_path_obj.parent / "CommonAlertsBreakdown"
+            path_to_save.mkdir(parents=True, exist_ok=True)
+            output_path = path_to_save / f"{filter_name}_reasons_plot.png"
             plt.savefig(output_path, dpi=600, bbox_inches="tight")
             plt.close()
 
@@ -1158,34 +1475,55 @@ def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path):
 
     plt.tight_layout(h_pad=1.5, w_pad=1.0)
 
-    path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, "all_filters_reasons_plot.png")
+    file_path_obj = Path(file_path)
+    path_to_save = file_path_obj.parent / "CommonAlertsBreakdown"
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    output_path = path_to_save / "all_filters_reasons_plot.png"
     plt.savefig(output_path, dpi=600, bbox_inches="tight")
     plt.close()
 
 
-def _create_complete_reasons_breakdown(all_detailed_reasons, filter_failures, file_path):
-    """Create complete CSV breakdown of all reasons."""
+def _create_complete_reasons_breakdown(
+    all_detailed_reasons: dict[str, Any],
+    filter_failures: dict[str, Any],
+    file_path: str,
+) -> pd.DataFrame:
+    """Create complete CSV breakdown of all reasons.
+
+    Args:
+        all_detailed_reasons: Dictionary of detailed failure reasons
+        filter_failures: Dictionary of filter failure statistics
+        file_path: Path to save output
+
+    Returns
+    -------
+        Breakdown dataframe
+    """
     breakdown_data = []
 
     for filter_name, reasons_dict in all_detailed_reasons.items():
         total_failures = filter_failures[filter_name]["failures"]
 
-        for reason, count in sorted(reasons_dict.items(), key=lambda x: x[1], reverse=True):
+        for reason, count in sorted(
+            reasons_dict.items(), key=lambda x: x[1], reverse=True
+        ):
             percentage = (count / total_failures) * 100 if total_failures > 0 else 0
-            breakdown_data.append({"Ruleset": filter_name,
-                                   "Reason": reason,
-                                   "Count": count,
-                                   "Percentage_of_Filter_Failures": percentage,
-                                   "Total_Filter_Failures": total_failures
-                                  })
+            breakdown_data.append(
+                {
+                    "Ruleset": filter_name,
+                    "Reason": reason,
+                    "Count": count,
+                    "Percentage_of_Filter_Failures": percentage,
+                    "Total_Filter_Failures": total_failures,
+                }
+            )
 
     breakdown_df = pd.DataFrame(breakdown_data)
 
-    path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, "complete_reasons_breakdown.csv")
+    file_path_obj = Path(file_path)
+    path_to_save = file_path_obj.parent / "CommonAlertsBreakdown"
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    output_path = path_to_save / "complete_reasons_breakdown.csv"
     breakdown_df.to_csv(output_path, index=False)
 
     return breakdown_df
@@ -1224,7 +1562,11 @@ def _create_comprehensive_overview(filter_reasons, filter_failures, file_path):
 
     plt.xlabel("Failure Reasons", fontsize=20)
     plt.ylabel("Total Number of Molecules Failed", fontsize=20)
-    plt.title(f"Most Common Molecular Filter Failure Reasons (Top {display_count} of {len(top_reasons)})", fontsize=26, fontweight="bold")
+    title_text = (
+        f"Most Common Molecular Filter Failure Reasons "
+        f"(Top {display_count} of {len(top_reasons)})"
+    )
+    plt.title(title_text, fontsize=26, fontweight="bold")
     plt.xticks(range(len(reason_names)), reason_names, rotation=45, ha="right", fontsize=16)
 
     for i, (bar, count) in enumerate(zip(bars, reason_counts)):
@@ -1233,22 +1575,37 @@ def _create_comprehensive_overview(filter_reasons, filter_failures, file_path):
     plt.grid(axis="y", alpha=0.3)
     plt.tight_layout()
 
-    path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, "comprehensive_reasons_overview.png")
+    file_path_obj = Path(file_path)
+    path_to_save = file_path_obj.parent / "CommonAlertsBreakdown"
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    output_path = path_to_save / "comprehensive_reasons_overview.png"
     plt.savefig(output_path, dpi=600, bbox_inches="tight")
 
     plt.close()
 
     all_reasons_df = pd.DataFrame(top_reasons, columns=["Reason", "Total_Count"])
-    path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, "all_reasons_summary.csv")
+    path_to_save = file_path_obj.parent / "CommonAlertsBreakdown"
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    output_path = path_to_save / "all_reasons_summary.csv"
     all_reasons_df.to_csv(output_path, index=False)
 
 
-def _create_summary_table(filter_failures, filter_reasons, file_path):
-    """Create summary table CSV with filter statistics."""
+def _create_summary_table(
+    filter_failures: dict[str, Any],
+    filter_reasons: dict[str, Any],
+    file_path: str,
+) -> pd.DataFrame:
+    """Create summary table CSV with filter statistics.
+
+    Args:
+        filter_failures: Dictionary of filter failure statistics
+        filter_reasons: Dictionary of filter reasons
+        file_path: Path to save output
+
+    Returns
+    -------
+        Summary dataframe
+    """
     summary_data = []
 
     for filter_name, stats in filter_failures.items():
@@ -1263,32 +1620,48 @@ def _create_summary_table(filter_failures, filter_reasons, file_path):
             for i, (reason, count) in enumerate(filter_reasons[filter_name][:5], 1):
                 row[f"Top_Reason_{i}"] = reason
                 row[f"Top_Reason_{i}_Count"] = count
-                row[f"Top_Reason_{i}_Percentage"] = (count / stats["failures"]) * 100 if stats["failures"] > 0 else 0
+                if stats["failures"] > 0:
+                    row[f"Top_Reason_{i}_Percentage"] = (
+                        count / stats["failures"]
+                    ) * 100
+                else:
+                    row[f"Top_Reason_{i}_Percentage"] = 0
 
         summary_data.append(row)
 
     summary_df = pd.DataFrame(summary_data)
     summary_df = summary_df.sort_values("Total_Failures", ascending=False)
 
-    path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, "filter_summary_table.csv")
+    file_path_obj = Path(file_path)
+    path_to_save = file_path_obj.parent / "CommonAlertsBreakdown"
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    output_path = path_to_save / "filter_summary_table.csv"
     summary_df.to_csv(output_path, index=False)
     logger.debug(f"Summary table saved to: {output_path}")
 
     return summary_df
 
 
-def plot_filter_failures_analysis(config, prefix):
-    """Analyze and plot filter failures for extended CSV files."""
-    folder_to_save = process_path(config["folder_to_save"])
-    subfolder = f"{prefix}_StructFilters" if prefix == "beforeDescriptors" else "StructFilters"
-    struct_folder = folder_to_save + f"{subfolder}/"
+def plot_filter_failures_analysis(
+    config: dict[str, Any], prefix: str
+) -> None:
+    """Analyze and plot filter failures for extended CSV files.
 
-    if not os.path.exists(struct_folder):
+    Args:
+        config: Configuration dictionary
+        prefix: Stage prefix
+    """
+    folder_to_save = process_path(config["folder_to_save"])
+    if prefix == "beforeDescriptors":
+        subfolder = f"{prefix}_StructFilters"
+    else:
+        subfolder = "StructFilters"
+    struct_folder_path = Path(folder_to_save + f"{subfolder}/")
+
+    if not struct_folder_path.exists():
         return
 
-    extended_files = glob.glob(os.path.join(struct_folder, "*_extended.csv"))
+    extended_files = list(struct_folder_path.glob("*_extended.csv"))
 
     if not extended_files:
         logger.debug("No extended CSV files found for failure analysis")
@@ -1296,6 +1669,6 @@ def plot_filter_failures_analysis(config, prefix):
 
     for file_path in extended_files:
         try:
-            analyze_filter_failures(file_path)
+            analyze_filter_failures(str(file_path))
         except Exception as e:
             logger.debug(f"Error analyzing filter failures for {file_path}: {e}")
