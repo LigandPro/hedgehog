@@ -445,6 +445,8 @@ class MolecularAnalysisPipeline:
                     final_output_path.parent.mkdir(parents=True, exist_ok=True)
                     final_data.to_csv(final_output_path, index=False)
                     logger.info(f'Saved {final_count} final molecules to {final_output_path}')
+                # Generate structure documentation
+                _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
                 return success_count == total_enabled_stages
         
         # Stage 3: Synthesis
@@ -474,6 +476,8 @@ class MolecularAnalysisPipeline:
                                 final_output_path.parent.mkdir(parents=True, exist_ok=True)
                                 final_data.to_csv(final_output_path, index=False)
                                 logger.info(f'Saved {final_count} final molecules to {final_output_path}')
+                            # Generate structure documentation
+                            _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
                             return success_count == total_enabled_stages
                         else:
                             logger.warning('Synthesis stage failed but output file exists. Continuing with available molecules.')
@@ -520,7 +524,10 @@ class MolecularAnalysisPipeline:
             final_output_path.parent.mkdir(parents=True, exist_ok=True)
             final_data.to_csv(final_output_path, index=False)
             logger.info(f'Saved {final_count} final molecules to {final_output_path}')
-        
+
+        # Generate structure documentation
+        _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
+
         return success_count == total_enabled_stages
     
     def _log_pipeline_summary(self):
@@ -570,6 +577,178 @@ def _save_config_snapshot(config):
         logger.info(f'Saved run config snapshot to: {dest_dir}')
     except Exception as snapshot_err:
         logger.warning(f'Config snapshot failed: {snapshot_err}')
+
+
+def _generate_structure_readme(base_path, stages, initial_count, final_count):
+    """Generate README.md documenting the output structure for this run."""
+    try:
+        from datetime import datetime
+
+        readme_path = base_path / 'README.md'
+
+        # Determine which stages were enabled
+        enabled_stages = [s for s in stages if s.enabled]
+        completed_stages = [s for s in stages if s.completed]
+
+        content = f"""# HEDGE Pipeline Output
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## Summary
+
+- Initial molecules: {initial_count}
+- Final molecules: {final_count}
+- Retention rate: {100*final_count/initial_count:.2f}% (if initial > 0)
+- Stages enabled: {len(enabled_stages)}
+- Stages completed: {len(completed_stages)}
+
+## Directory Structure
+
+```
+{base_path.name}/
+├── input/
+│   └── sampled_molecules.csv           Input molecules
+│
+├── stages/                             Pipeline stages (numbered by execution order)
+"""
+
+        # Add stage-specific documentation based on what was enabled
+        if any(s.name == STAGE_STRUCT_INI_FILTERS for s in enabled_stages):
+            content += """│   ├── 02_structural_filters_pre/      Pre-descriptors structural filters
+│   │   ├── {filter_name}/             Per-filter results
+│   │   │   ├── metrics.csv
+│   │   │   ├── extended.csv
+│   │   │   └── filtered_molecules.csv
+│   │   ├── filtered_molecules.csv     Combined passed molecules
+│   │   ├── failed_molecules.csv       Combined failed molecules
+│   │   ├── molecule_counts_comparison.png
+│   │   └── restriction_ratios_comparison.png
+│
+"""
+
+        if any(s.name == STAGE_DESCRIPTORS for s in enabled_stages):
+            content += """│   ├── 01_descriptors_initial/         Physicochemical descriptors
+│   │   ├── metrics/
+│   │   │   ├── descriptors_all.csv    All computed descriptors
+│   │   │   └── skipped_molecules.csv  Failed to parse
+│   │   ├── filtered/
+│   │   │   ├── filtered_molecules.csv Passed descriptor thresholds
+│   │   │   ├── failed_molecules.csv   Failed descriptor thresholds
+│   │   │   ├── descriptors_passed.csv Detailed metrics (passed)
+│   │   │   ├── descriptors_failed.csv Detailed metrics (failed)
+│   │   │   └── pass_flags.csv         Pass/fail flags per descriptor
+│   │   └── plots/
+│   │       └── descriptors_distribution.png
+│
+"""
+
+        if any(s.name == STAGE_STRUCT_FILTERS for s in enabled_stages):
+            content += """│   ├── 03_structural_filters_post/     Post-descriptors structural filters
+│   │   ├── {filter_name}/             Per-filter results (pains, brenk, nih, etc.)
+│   │   │   ├── metrics.csv
+│   │   │   ├── extended.csv
+│   │   │   └── filtered_molecules.csv
+│   │   ├── filtered_molecules.csv     Combined passed molecules
+│   │   ├── failed_molecules.csv       Combined failed molecules
+│   │   ├── molecule_counts_comparison.png
+│   │   └── restriction_ratios_comparison.png
+│
+"""
+
+        if any(s.name == STAGE_SYNTHESIS for s in enabled_stages):
+            content += """│   ├── 04_synthesis/                   Retrosynthesis analysis
+│   │   ├── synthesis_scores.csv       RAScore, SAScore, SCScore, SYBA
+│   │   ├── synthesis_extended.csv     With retrosynthesis results
+│   │   ├── filtered_molecules.csv     Synthesizable molecules
+│   │   ├── input_smiles.smi           Input for AiZynthFinder
+│   │   └── retrosynthesis_results.json
+│
+"""
+
+        if any(s.name == STAGE_DOCKING for s in enabled_stages):
+            content += """│   ├── 05_docking/                     Molecular docking
+│   │   ├── ligands.csv                Prepared ligands
+│   │   ├── smina/
+│   │   │   ├── poses/                 Docking poses (.pdbqt)
+│   │   │   └── scores.csv
+│   │   └── gnina/
+│   │       ├── output.sdf
+│   │       └── scores.csv
+│
+"""
+
+        if any(s.name == STAGE_FINAL_DESCRIPTORS for s in enabled_stages):
+            content += """│   └── 06_descriptors_final/           Final descriptor calculation
+│       ├── metrics/
+│       ├── filtered/
+│       └── plots/
+│
+"""
+
+        content += """├── output/                             Final results
+│   └── final_molecules.csv            Final filtered molecules
+│
+├── configs/                            Configuration snapshots
+│   ├── master_config_resolved.yml
+│   └── config_*.yml
+│
+└── logs/                               Pipeline logs
+    └── pipeline_*.log
+
+```
+
+## File Naming Conventions
+
+### Standard Output Files
+
+- `filtered_molecules.csv` - Molecules that passed filters
+- `failed_molecules.csv` - Molecules that failed filters
+- `descriptors_all.csv` - All computed descriptors
+- `metrics.csv` - Summary statistics
+- `extended.csv` - Detailed results with all columns
+
+### Column Structure
+
+All CSV files use consistent column ordering:
+1. `smiles` - SMILES string
+2. `model_name` - Model/source identifier
+3. `mol_idx` - Molecule index
+4. Additional columns (stage-specific)
+
+## Stage Execution Summary
+
+"""
+
+        for stage in stages:
+            if stage.enabled:
+                status = "COMPLETED" if stage.completed else "FAILED"
+                content += f"- {stage.name}: {status}\n"
+            else:
+                content += f"- {stage.name}: DISABLED\n"
+
+        content += """
+## Notes
+
+- This structure follows the new HEDGE hierarchical organization
+- Legacy flat structure is no longer used for new runs
+- All paths use snake_case naming convention
+- Stage numbering (01, 02, 03...) indicates execution order
+
+## Related Documentation
+
+See project repository for full documentation on:
+- Configuration options
+- Stage-specific parameters
+- File format specifications
+- Pipeline API reference
+"""
+
+        with open(readme_path, 'w') as f:
+            f.write(content)
+
+        logger.info(f'Generated structure documentation: {readme_path}')
+    except Exception as e:
+        logger.warning(f'Failed to generate structure README: {e}')
 
 
 def calculate_metrics(data, config):
