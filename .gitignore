@@ -40,11 +40,16 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.mypy_cache/
+.pyrightcache/
 nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+.ruff_cache/
+.claude/
+pyrightconfig.json
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/

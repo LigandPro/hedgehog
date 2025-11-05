@@ -13,19 +13,15 @@ mcf_file_path: data/mcf.csv
 ## Ligand preparation tool
 ## Tool will be called as: ligand_preparation_tool -icsv <input.csv> -osd <input.sdf>
 ## If not provided, built-in RDKit conversion will be used
-ligand_preparation_tool: path/to/ligand_preparation_tool
+ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
 
 ## Protein preparation tool (Recommended for docking)
 ## Tool will be called as: protein_preparation_tool <input.pdb> <output.pdb>
 ## If not provided, original receptor_pdb from config_docking.yml will be used as-is
-protein_preparation_tool: path/to/protein_preparation_tool
+protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
 
 config_descriptors: src/hedge/configs/config_descriptors.yml
 config_structFilters: src/hedge/configs/config_structFilters.yml
 config_synthesis: src/hedge/configs/config_synthesis.yml
 config_docking: src/hedge/configs/config_docking.yml
-
-
-
-
 
