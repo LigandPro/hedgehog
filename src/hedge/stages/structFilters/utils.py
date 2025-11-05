@@ -15,6 +15,15 @@ from pandarallel import pandarallel
 import datamol as dm
 import medchem as mc
 
+# Add local Lilly binaries to PATH before importing LillyDemeritsFilters
+_LILLY_BIN_PATH = os.path.join(os.path.dirname(__file__), '../../../../modules/lilly_medchem_rules/bin')
+_LILLY_BIN_PATH = os.path.abspath(_LILLY_BIN_PATH)
+if os.path.exists(_LILLY_BIN_PATH):
+    # Add to PATH if not already there
+    current_path = os.environ.get('PATH', '')
+    if _LILLY_BIN_PATH not in current_path:
+        os.environ['PATH'] = f"{_LILLY_BIN_PATH}:{current_path}"
+
 try:
     from medchem.structural.lilly_demerits import LillyDemeritsFilters
     LILLY_AVAILABLE = True
@@ -258,8 +267,7 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
                                                                 if any(matches 
                                                                        for matches in group["matches"]) 
                                                                 else "",
-                                    }),
-            include_groups=False
+                                    })
         ).reset_index()
         grouped["pass_filter"] = grouped["matches"].apply(lambda x: True if not x else False)
         for _, g_row in grouped.iterrows():
@@ -548,13 +556,34 @@ def check_paths(config, paths):
             k = k.replace('calculate_', '')
             all_filters[k] = v
 
-    required_patterns = [''.join(k.split('_')) for k, v in all_filters.items() if v]
-    missing_patterns = [pattern 
-                        for pattern in required_patterns 
-                        if not any(pattern.lower() in path.lower() 
-                            for path in paths)]
-    if len(missing_patterns) > 0:
-        raise AssertionError(f"Invalid filter name(s) missing: {', '.join(missing_patterns)}")
+    # Extract folder names from paths (e.g., 'common_alerts' from '.../common_alerts/metrics.csv')
+    path_folders = []
+    for path in paths:
+        # Extract the folder name from path like '.../common_alerts/metrics.csv'
+        parts = path.split('/')
+        if len(parts) >= 2:
+            folder_name = parts[-2]  # Get the folder name before 'metrics.csv'
+            path_folders.append(folder_name.lower())
+    
+    # Check if each enabled filter has a corresponding folder
+    missing_filters = []
+    for filter_name, enabled in all_filters.items():
+        if enabled:
+            # Check both with underscores and without
+            filter_name_lower = filter_name.lower()
+            filter_name_no_underscore = filter_name_lower.replace('_', '')
+            found = any(
+                filter_name_lower == folder or 
+                filter_name_no_underscore == folder.replace('_', '') or
+                filter_name_lower in folder or
+                filter_name_no_underscore in folder.replace('_', '')
+                for folder in path_folders
+            )
+            if not found:
+                missing_filters.append(filter_name_no_underscore)
+    
+    if len(missing_filters) > 0:
+        raise AssertionError(f"Invalid filter name(s) missing: {', '.join(missing_filters)}")
     return True
 
 
