@@ -1,4 +1,5 @@
-import os 
+import os
+import json
 
 import numpy as np
 import pandas as pd
@@ -200,37 +201,11 @@ def filter_molecules(df, borders, folder_to_save):
     """
     folder_to_save = process_path(folder_to_save)
 
-    # Format borders for better readability
+    # Format borders for better readability - output as formatted JSON
     logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
-    logger.info("  [bold]Size:[/bold] atoms={}-{}, heavy={}-{}, MW={}-{}".format(
-        borders.get('n_atoms_min', 'N/A'), borders.get('n_atoms_max', 'N/A'),
-        borders.get('n_heavy_atoms_min', 'N/A'), borders.get('n_heavy_atoms_max', 'N/A'),
-        borders.get('molWt_min', 'N/A'), borders.get('molWt_max', 'N/A')
-    ))
-    logger.info("  [bold]Composition:[/bold] heteroatoms={}-{}, N={}-{}, allowed_chars={}".format(
-        borders.get('n_het_atoms_min', 'N/A'), borders.get('n_het_atoms_max', 'N/A'),
-        borders.get('n_N_atoms_min', 'N/A'), borders.get('n_N_atoms_max', 'N/A'),
-        ', '.join(borders.get('allowed_chars', [])) if borders.get('allowed_chars') else 'N/A'
-    ))
-    logger.info("  [bold]Rings:[/bold] total={}-{}, aromatic={}-{}, size={}-{}".format(
-        borders.get('n_rings_min', 'N/A'), borders.get('n_rings_max', 'N/A'),
-        borders.get('n_aroma_rings_min', 'N/A'), borders.get('n_aroma_rings_max', 'N/A'),
-        borders.get('ring_size_min', 'N/A'), borders.get('ring_size_max', 'N/A')
-    ))
-    logger.info("  [bold]Properties:[/bold] logP={}-{}, TPSA={}-{}, QED={}-{}".format(
-        borders.get('logP_min', 'N/A'), borders.get('logP_max', 'N/A'),
-        borders.get('tpsa_min', 'N/A'), borders.get('tpsa_max', 'N/A'),
-        borders.get('qed_min', 'N/A'), borders.get('qed_max', 'N/A')
-    ))
-    logger.info("  [bold]Bonds:[/bold] rotatable={}-{}, rigid={}-{}, fsp3={}-{}".format(
-        borders.get('n_rot_bonds_min', 'N/A'), borders.get('n_rot_bonds_max', 'N/A'),
-        borders.get('n_rigid_bonds_min', 'N/A'), borders.get('n_rigid_bonds_max', 'N/A'),
-        borders.get('fsp3_min', 'N/A'), borders.get('fsp3_max', 'N/A')
-    ))
-    logger.info("  [bold]H-bonding:[/bold] donors={}-{}, acceptors={}-{}".format(
-        borders.get('hbd_min', 'N/A'), borders.get('hbd_max', 'N/A'),
-        borders.get('hba_min', 'N/A'), borders.get('hba_max', 'N/A')
-    ))
+    borders_json = json.dumps(borders, indent=2, ensure_ascii=False)
+    for line in borders_json.split('\n'):
+        logger.info(f"  {line}")
     filtered_data = {}
     for col in df.columns.tolist():
         col_in_borders = any(col.lower() in k.lower() for k in borders.keys())

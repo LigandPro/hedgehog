@@ -302,21 +302,15 @@ def run(
     # Force create new folder even for stage rerun
     uv run hedge run --stage docking --force-new
     """
-    # Display banner - centered with Rich Table
-    banner_table = Table.grid(padding=(0, 2))
-    banner_table.add_column(justify="center")
-
-    banner_content = (
-        "[#B29EEE]╔═══════════════════════════════════════════╗[/#B29EEE]\n"
-        "[#B29EEE]║[/#B29EEE]  [bold #B29EEE]🦔 HEDGE[/bold #B29EEE]                                 [#B29EEE]║[/#B29EEE]\n"
-        "[#B29EEE]║[/#B29EEE]  [dim]Hierarchical Evaluation of Drug[/dim]          [#B29EEE]║[/#B29EEE]\n"
-        "[#B29EEE]║[/#B29EEE]  [dim]GEnerators[/dim]                                [#B29EEE]║[/#B29EEE]\n"
-        "[#B29EEE]║[/#B29EEE]  [dim italic]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim italic]              [#B29EEE]║[/#B29EEE]\n"
-        "[#B29EEE]╚═══════════════════════════════════════════╝[/#B29EEE]"
-    )
-
-    banner_table.add_row(banner_content)
-    console.print(banner_table)
+    # Display banner
+    console.print("")  # Empty line for spacing
+    console.print("[#B29EEE]╔═══════════════════════════════════════════╗[/#B29EEE]")
+    console.print("[#B29EEE]║[/#B29EEE]  [bold #B29EEE]🦔 HEDGE[/bold #B29EEE]                                 [#B29EEE]║[/#B29EEE]")
+    console.print("[#B29EEE]║[/#B29EEE]  [dim]Hierarchical Evaluation of Drug[/dim]          [#B29EEE]║[/#B29EEE]")
+    console.print("[#B29EEE]║[/#B29EEE]  [dim]GEnerators[/dim]                                [#B29EEE]║[/#B29EEE]")
+    console.print("[#B29EEE]║[/#B29EEE]  [dim italic]Developed by Ligand Pro[/dim italic]                [#B29EEE]║[/#B29EEE]")
+    console.print("[#B29EEE]╚═══════════════════════════════════════════╝[/#B29EEE]")
+    console.print("")  # Empty line for spacing
 
     config_dict = load_config(DEFAULT_CONFIG_PATH)
 
