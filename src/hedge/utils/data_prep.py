@@ -63,22 +63,24 @@ def _apply_sampling(
     sample_size: int | None,
     logger: logging.Logger,
     model_name: str | None = None,
-) -> pd.DataFrame:
-    """Apply sampling to dataframe if sample_size is specified."""
+) -> tuple[pd.DataFrame, dict | None]:
+    """Apply sampling to dataframe if sample_size is specified.
+
+    Returns:
+        tuple: (sampled_dataframe, warning_info_dict or None)
+    """
     if sample_size is None:
-        return df
+        return df, None
 
     if len(df) < sample_size:
-        model_info = f" for {model_name} model" if model_name else ""
-        logger.warning(
-            "Sample size %s exceeds data size %s%s",
-            sample_size,
-            len(df),
-            model_info,
-        )
-        return df
+        warning_info = {
+            'model_name': model_name or 'unknown',
+            'requested': sample_size,
+            'available': len(df)
+        }
+        return df, warning_info
 
-    return df.sample(sample_size, random_state=42)
+    return df.sample(sample_size, random_state=42), None
 
 
 def _detect_mode_and_paths(
@@ -143,6 +145,7 @@ def _load_multi_comparison_data(
 ) -> pd.DataFrame:
     """Load and merge data from multiple model files."""
     dataframes = []
+    sampling_warnings = []
 
     for path in paths:
         try:
@@ -160,8 +163,18 @@ def _load_multi_comparison_data(
             if MODEL_NAME_COLUMN in df.columns
             else "unknown"
         )
-        df = _apply_sampling(df, sample_size, logger, model_name)
+        df, warning_info = _apply_sampling(df, sample_size, logger, model_name)
+        if warning_info:
+            sampling_warnings.append(warning_info)
         dataframes.append(df)
+
+    # Output all sampling warnings together in a nice format
+    if sampling_warnings:
+        logger.warning("")
+        logger.warning("[yellow]Sample size exceeded for %d model(s):[/yellow]", len(sampling_warnings))
+        for warn in sampling_warnings:
+            logger.warning("  [dim]•[/dim] [bold]%s[/bold]: %d requested, %d available",
+                          warn['model_name'], warn['requested'], warn['available'])
 
     return pd.concat(dataframes, axis=0, ignore_index=True)
 
@@ -203,7 +216,14 @@ def _load_single_comparison_data(
                 "Removed %s duplicate molecules", duplicates_removed
             )
 
-    return _apply_sampling(data, sample_size, logger)
+    data, warning_info = _apply_sampling(data, sample_size, logger)
+    if warning_info:
+        logger.warning(
+            "Sample size %s exceeds data size %s",
+            warning_info['requested'],
+            warning_info['available']
+        )
+    return data
 
 
 def _load_multi_file_with_model_column(
@@ -247,9 +267,21 @@ def _load_multi_file_with_model_column(
 
     if sample_size is not None:
         sampled = []
+        sampling_warnings = []
         for model, grp in df.groupby(MODEL_NAME_COLUMN):
-            sampled.append(_apply_sampling(grp, sample_size, logger, model))
+            sampled_grp, warning_info = _apply_sampling(grp, sample_size, logger, model)
+            sampled.append(sampled_grp)
+            if warning_info:
+                sampling_warnings.append(warning_info)
         df = pd.concat(sampled, axis=0, ignore_index=True)
+
+        # Output all sampling warnings together in a nice format
+        if sampling_warnings:
+            logger.warning("")
+            logger.warning("[yellow]Sample size exceeded for %d model(s):[/yellow]", len(sampling_warnings))
+            for warn in sampling_warnings:
+                logger.warning("  [dim]•[/dim] [bold]%s[/bold]: %d requested, %d available",
+                              warn['model_name'], warn['requested'], warn['available'])
 
     return df
 
