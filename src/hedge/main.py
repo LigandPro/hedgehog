@@ -303,14 +303,20 @@ def run(
     uv run hedge run --stage docking --force-new
     """
     # Display banner
-    console.print("")  # Empty line for spacing
-    console.print("[#B29EEE]╔═══════════════════════════════════════════╗[/#B29EEE]")
-    console.print("[#B29EEE]║[/#B29EEE]  [bold #B29EEE]🦔 HEDGE[/bold #B29EEE]                                 [#B29EEE]║[/#B29EEE]")
-    console.print("[#B29EEE]║[/#B29EEE]  [dim]Hierarchical Evaluation of Drug[/dim]          [#B29EEE]║[/#B29EEE]")
-    console.print("[#B29EEE]║[/#B29EEE]  [dim]GEnerators[/dim]                                [#B29EEE]║[/#B29EEE]")
-    console.print("[#B29EEE]║[/#B29EEE]  [dim italic]Developed by Ligand Pro[/dim italic]                [#B29EEE]║[/#B29EEE]")
-    console.print("[#B29EEE]╚═══════════════════════════════════════════╝[/#B29EEE]")
-    console.print("")  # Empty line for spacing
+    banner_content = (
+        "[bold #B29EEE]🦔 HEDGE[/bold #B29EEE]\n"
+        "[dim]Hierarchical Evaluation of Drug GEnerators[/dim]\n"
+        "[dim italic]Developed by Ligand Pro[/dim italic]"
+    )
+    banner = Panel(
+        banner_content,
+        border_style="#B29EEE",
+        padding=(0, 1),
+        expand=False
+    )
+    console.print("")
+    console.print(banner)
+    console.print("")
 
     config_dict = load_config(DEFAULT_CONFIG_PATH)
 
