@@ -27,7 +27,7 @@ class LoggerSingleton:
         config_path = os.path.join(script_dir, 'config.yml')
         config = yaml.safe_load(open(config_path))
         folder_to_save = config['folder_to_save']
-        logs_dir = f'{folder_to_save}/'
+        logs_dir = os.path.join(folder_to_save, 'logs')
         os.makedirs(logs_dir, exist_ok=True)
 
         logger = logging.getLogger(name)
