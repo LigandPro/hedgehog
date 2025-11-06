@@ -311,7 +311,7 @@ def run(
         "[#B29EEE]║[/#B29EEE]  [bold #B29EEE]🦔 HEDGE[/bold #B29EEE]                                 [#B29EEE]║[/#B29EEE]\n"
         "[#B29EEE]║[/#B29EEE]  [dim]Hierarchical Evaluation of Drug[/dim]          [#B29EEE]║[/#B29EEE]\n"
         "[#B29EEE]║[/#B29EEE]  [dim]GEnerators[/dim]                                [#B29EEE]║[/#B29EEE]\n"
-        "[#B29EEE]║[/#B29EEE]  [dim italic]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim italic]                   [#B29EEE]║[/#B29EEE]\n"
+        "[#B29EEE]║[/#B29EEE]  [dim italic]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim italic]              [#B29EEE]║[/#B29EEE]\n"
         "[#B29EEE]╚═══════════════════════════════════════════╝[/#B29EEE]"
     )
 

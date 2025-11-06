@@ -202,44 +202,32 @@ def filter_molecules(df, borders, folder_to_save):
 
     # Format borders for better readability
     logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
-
-    # Group 1: Molecular Size
-    logger.info("  [dim]•[/dim] [bold]Size:[/bold] atoms={}-{}, heavy={}-{}, MW={}-{}".format(
+    logger.info("  [bold]Size:[/bold] atoms={}-{}, heavy={}-{}, MW={}-{}".format(
         borders.get('n_atoms_min', 'N/A'), borders.get('n_atoms_max', 'N/A'),
         borders.get('n_heavy_atoms_min', 'N/A'), borders.get('n_heavy_atoms_max', 'N/A'),
         borders.get('molWt_min', 'N/A'), borders.get('molWt_max', 'N/A')
     ))
-
-    # Group 2: Composition
-    logger.info("  [dim]•[/dim] [bold]Composition:[/bold] heteroatoms={}-{}, N={}-{}, allowed_chars={}".format(
+    logger.info("  [bold]Composition:[/bold] heteroatoms={}-{}, N={}-{}, allowed_chars={}".format(
         borders.get('n_het_atoms_min', 'N/A'), borders.get('n_het_atoms_max', 'N/A'),
         borders.get('n_N_atoms_min', 'N/A'), borders.get('n_N_atoms_max', 'N/A'),
         ', '.join(borders.get('allowed_chars', [])) if borders.get('allowed_chars') else 'N/A'
     ))
-
-    # Group 3: Rings
-    logger.info("  [dim]•[/dim] [bold]Rings:[/bold] total={}-{}, aromatic={}-{}, size={}-{}".format(
+    logger.info("  [bold]Rings:[/bold] total={}-{}, aromatic={}-{}, size={}-{}".format(
         borders.get('n_rings_min', 'N/A'), borders.get('n_rings_max', 'N/A'),
         borders.get('n_aroma_rings_min', 'N/A'), borders.get('n_aroma_rings_max', 'N/A'),
         borders.get('ring_size_min', 'N/A'), borders.get('ring_size_max', 'N/A')
     ))
-
-    # Group 4: Properties
-    logger.info("  [dim]•[/dim] [bold]Properties:[/bold] logP={}-{}, TPSA={}-{}, QED={}-{}".format(
+    logger.info("  [bold]Properties:[/bold] logP={}-{}, TPSA={}-{}, QED={}-{}".format(
         borders.get('logP_min', 'N/A'), borders.get('logP_max', 'N/A'),
         borders.get('tpsa_min', 'N/A'), borders.get('tpsa_max', 'N/A'),
         borders.get('qed_min', 'N/A'), borders.get('qed_max', 'N/A')
     ))
-
-    # Group 5: Bonds & Flexibility
-    logger.info("  [dim]•[/dim] [bold]Bonds:[/bold] rotatable={}-{}, rigid={}-{}, fsp3={}-{}".format(
+    logger.info("  [bold]Bonds:[/bold] rotatable={}-{}, rigid={}-{}, fsp3={}-{}".format(
         borders.get('n_rot_bonds_min', 'N/A'), borders.get('n_rot_bonds_max', 'N/A'),
         borders.get('n_rigid_bonds_min', 'N/A'), borders.get('n_rigid_bonds_max', 'N/A'),
         borders.get('fsp3_min', 'N/A'), borders.get('fsp3_max', 'N/A')
     ))
-
-    # Group 6: H-bonding
-    logger.info("  [dim]•[/dim] [bold]H-bonding:[/bold] donors={}-{}, acceptors={}-{}".format(
+    logger.info("  [bold]H-bonding:[/bold] donors={}-{}, acceptors={}-{}".format(
         borders.get('hbd_min', 'N/A'), borders.get('hbd_max', 'N/A'),
         borders.get('hba_min', 'N/A'), borders.get('hba_max', 'N/A')
     ))
