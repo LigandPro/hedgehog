@@ -12,21 +12,6 @@
    ```
    If you skip this, MolScore will create it automatically when needed (may take a few minutes).
 
-## Add pyscreener module:
-1. Clone `pyscreener` repo from source:
-    ```bash
-    git clone https://github.com/coleygroup/pyscreener.git
-    ```
-2. Create pyscreener environment and install pyscreener module:
-    ```bash
-    conda env create -f modules/pyscreener/environment.yml
-    conda activate pyscreener
-    conda install autodock-vina mgltools -c conda-forge -c bioconda -y
-    cd pyscreener
-    pip install -e .
-    cd $CONDA_PREFIX/bin && ln -sf prepare_receptor4.py prepare_receptor
-    ```
-
 ## Add MCE-18 module:
 1.  `MCE-18` implementation file was loaded from source: 
     [https://github.com/Tong-Du/MCE-18.git](https://github.com/Tong-Du/MCE-18.git)

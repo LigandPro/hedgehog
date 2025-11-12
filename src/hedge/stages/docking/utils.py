@@ -18,13 +18,11 @@ def _find_latest_input_source(base_folder):
 
     Supports both new hierarchical structure and legacy flat structure.
     """
-    # New structure paths (in priority order)
     candidates = [
         base_folder / 'stages' / '04_synthesis' / 'filtered_molecules.csv',
         base_folder / 'stages' / '03_structural_filters_post' / 'filtered_molecules.csv',
         base_folder / 'stages' / '01_descriptors_initial' / 'filtered' / 'filtered_molecules.csv',
         base_folder / 'input' / 'sampled_molecules.csv',
-        # Legacy structure paths
         base_folder / 'Synthesis' / 'passSynthesisSMILES.csv',
         base_folder / 'StructFilters' / 'passStructFiltersSMILES.csv',
         base_folder / 'Descriptors' / 'passDescriptorsSMILES.csv',
@@ -83,69 +81,145 @@ def _prepare_ligands_dataframe(df, output_csv):
            }
 
 
-def _load_smina_ini_content(cfg):
-    """Load SMINA INI configuration content."""
-    inline_content = cfg.get('smina_ini_content')
-    if inline_content and isinstance(inline_content, str):
-        return inline_content.splitlines()
-    
-    ini_path = Path(cfg.get('smina_ini', ''))
-    if ini_path.exists():
-        try:
-            with open(ini_path, 'r') as f:
-                return f.read().splitlines()
-        except Exception as e:
-            logger.warning(f'Failed to read smina_ini file {ini_path}: {e}')
-    
-    return ['output-dir = smina_results',
-            'screen-type = smina',
-            'metadata-template = {"software": "smina"}',
-           ]
+def _resolve_path(path, base_dir):
+    """Resolve path to absolute, using base_dir if relative."""
+    path_obj = Path(path)
+    if path_obj.is_absolute():
+        return str(path_obj.resolve())
+    return str((base_dir / path).resolve())
 
 
-def _update_ini_key_value(lines, key, value):
-    """Update or add a key-value pair in INI file lines."""
-    updated_lines = []
-    found = False
-    for line in lines:
-        if line.strip().startswith(f'{key} '):
-            updated_lines.append(f'{key} = {value}')
-            found = True
+def _resolve_autobox_path(autobox_ligand, project_root):
+    """Resolve autobox_ligand path to absolute."""
+    autobox_path = Path(autobox_ligand)
+    if not autobox_path.is_absolute():
+        autobox_path = (project_root / autobox_ligand).resolve()
+        if not autobox_path.exists():
+            autobox_path = Path(autobox_ligand).resolve()
+    return autobox_path if autobox_path.exists() else None
+
+
+def _create_smina_config_file(cfg, ligands_dir, receptor, ligands_path, config_path, output_sdf):
+    """Create SMINA config file from configuration arguments."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    Path(output_sdf).parent.mkdir(parents=True, exist_ok=True)
+    
+    smina_config = cfg.get('smina_config', {})
+    
+    receptor = _resolve_path(receptor, ligands_dir)
+    ligands_path = _resolve_path(ligands_path, ligands_dir)
+    output_sdf = _resolve_path(output_sdf, ligands_dir)
+    
+    lines = [
+        f'receptor = {receptor}',
+        f'ligand = {ligands_path}',
+        f'out = {output_sdf}'
+    ]
+    
+    center = smina_config.get('center') or cfg.get('center')
+    if center and isinstance(center, (list, tuple)) and len(center) >= 3:
+        lines.extend([
+            f'center_x = {center[0]}',
+            f'center_y = {center[1]}',
+            f'center_z = {center[2]}'
+        ])
+    
+    size = smina_config.get('size') or cfg.get('size')
+    if size and isinstance(size, (list, tuple)) and len(size) >= 3:
+        lines.extend([
+            f'size_x = {size[0]}',
+            f'size_y = {size[1]}',
+            f'size_z = {size[2]}'
+        ])
+    
+    autobox_ligand = smina_config.get('autobox_ligand')
+    if autobox_ligand:
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
+        if autobox_path:
+            smina_config['autobox_ligand'] = str(autobox_path)
+    
+    skip_keys = {'bin', 'center', 'size'}
+    for key, value in smina_config.items():
+        if value is None or key in skip_keys:
+            continue
+        if isinstance(value, (list, tuple)):
+            lines.append(f'{key} = [{", ".join(str(v) for v in value)}]')
+        elif isinstance(value, bool):
+            lines.append(f'{key} = {str(value).lower()}')
         else:
-            updated_lines.append(line)
-    if not found:
-        updated_lines.append(f'{key} = {value}')
-    return updated_lines
-
-
-def _create_smina_config(cfg, ligands_csv, output_ini):
-    """Create SMINA INI configuration file."""
-    lines = _load_smina_ini_content(cfg)
+            lines.append(f'{key} = {value}')
     
-    if not any(line.strip().startswith('screen-type') for line in lines):
-        lines.insert(0, 'screen-type = smina')
-
-    lines = _update_ini_key_value(lines, 'input-files', f'[{ligands_csv.name}]')
-    lines = _update_ini_key_value(lines, 'smiles-col', '0')
-    lines = _update_ini_key_value(lines, 'name-col', '1')
-    
-    receptor = cfg.get('receptor_pdb')
-    if receptor:
-        lines = _update_ini_key_value(lines, 'receptors', f'[{receptor}]')
-    
-    output_ini.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_ini, 'w') as f:
+    with open(config_path, 'w') as f:
         f.write('\n'.join(lines) + '\n')
+    
+    logger.debug(f'Created SMINA config file: {config_path}')
+    return config_path
 
 
-def _create_smina_script(ligands_dir, ini_file, activate_cmd, protein_prep_cmd):
+def _create_gnina_config_file(cfg, ligands_dir, receptor, ligands_path, output_sdf, config_path):
+    """Create GNINA config file from configuration arguments."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    gnina_config = cfg.get('gnina_config', {})
+    
+    receptor = _resolve_path(receptor, ligands_dir)
+    ligands_path = _resolve_path(ligands_path, ligands_dir)
+    output_sdf = _resolve_path(output_sdf, ligands_dir)
+    
+    lines = [
+        f'receptor = {receptor}',
+        f'ligand = {ligands_path}',
+        f'out = {output_sdf}'
+    ]
+    
+    center = gnina_config.get('center') or cfg.get('center')
+    if center and isinstance(center, (list, tuple)) and len(center) >= 3:
+        lines.extend([
+            f'center_x = {center[0]}',
+            f'center_y = {center[1]}',
+            f'center_z = {center[2]}'
+        ])
+    
+    size = gnina_config.get('size') or cfg.get('size')
+    if size and isinstance(size, (list, tuple)) and len(size) >= 3:
+        lines.extend([
+            f'size_x = {size[0]}',
+            f'size_y = {size[1]}',
+            f'size_z = {size[2]}'
+        ])
+    
+    autobox_ligand = gnina_config.get('autobox_ligand')
+    if autobox_ligand:
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
+        if autobox_path:
+            gnina_config['autobox_ligand'] = str(autobox_path)
+    
+    skip_keys = {'bin', 'env_path', 'ld_library_path', 'activate', 'output_dir', 'center', 'size'}
+    for key, value in gnina_config.items():
+        if value is None or key in skip_keys:
+            continue
+        if isinstance(value, (list, tuple)):
+            lines.append(f'{key} = [{", ".join(str(v) for v in value)}]')
+        elif isinstance(value, bool):
+            lines.append(f'{key} = {str(value).lower()}')
+        else:
+            lines.append(f'{key} = {value}')
+    
+    with open(config_path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    
+    logger.debug(f'Created GNINA config file: {config_path}')
+    return config_path
+
+
+def _create_smina_script(ligands_dir, smina_bin, config_file, protein_prep_cmd, preparation_cmd=None, prepared_output_relative=None):
     """Create SMINA run script."""
     script_path = ligands_dir / 'run_smina.sh'
     with open(script_path, 'w') as f:
         f.write('#!/usr/bin/env bash\n')
         f.write('set -eo pipefail\n')
-        if activate_cmd:
-            f.write(f'{activate_cmd}\n')
         
         if protein_prep_cmd:
             f.write(f'cd {ligands_dir}\n')
@@ -194,8 +268,25 @@ def _create_smina_script(ligands_dir, ini_file, activate_cmd, protein_prep_cmd):
                 f.write(f'  echo "Protein preparation completed successfully"\n')
                 f.write(f'fi\n')
         
+        if preparation_cmd and prepared_output_relative:
+            f.write(f'mkdir -p "$(dirname "{prepared_output_relative}")"\n')
+            f.write(f'{preparation_cmd}\n')
+            _write_file_wait_check(
+                f, prepared_output_relative,
+                f'ERROR: Preparation tool failed - output file {prepared_output_relative} not found after waiting',
+                'ligand preparation'
+            )
+            f.write('rm -f ligands_raw.smi || true\n')
+        
         f.write(f'cd {ligands_dir}\n')
-        f.write(f'pyscreener --config {ini_file.name}\n')
+        f.write(f'echo "Starting SMINA docking with config: {config_file.name}"\n')
+        f.write(f'{smina_bin} --config {config_file.name}\n')
+        f.write('if [ $? -eq 0 ]; then\n')
+        f.write('  echo "SMINA docking completed successfully"\n')
+        f.write('else\n')
+        f.write('  echo "SMINA docking failed with exit code $?"\n')
+        f.write('  exit 1\n')
+        f.write('fi\n')
     os.chmod(script_path, 0o755)
     return script_path
 
@@ -230,9 +321,22 @@ def _prepare_protein_for_docking(receptor_pdb, ligands_dir, protein_preparation_
     return str(prepared_output_path.resolve()), cmd_line
 
 
-def _prepare_ligands_for_gnina(ligands_csv, ligands_dir, ligand_preparation_tool, cfg):
-    """Prepare ligands file for GNINA docking."""
-    ligands_arg = cfg.get('gnina_ligands')
+def _prepare_ligands_for_docking(ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name='docking'):
+    """Prepare ligands file for docking (shared for SMINA and GNINA).
+    
+    Args:
+        ligands_csv: Path to input CSV file with ligands
+        ligands_dir: Directory where docking files are prepared
+        ligand_preparation_tool: Path to ligand preparation tool (optional)
+        cfg: Configuration dict
+        tool_name: Name of tool ('smina' or 'gnina') for output file naming
+    
+    Returns:
+        Tuple of (ligands_path, preparation_cmd) where:
+        - ligands_path: Absolute path to prepared SDF file
+        - preparation_cmd: Command to run ligand preparation (None if already SDF or using RDKit)
+    """
+    ligands_arg = cfg.get(f'{tool_name}_ligands')
     if ligands_arg:
         ligands_val = str(ligands_arg)
     else:
@@ -242,8 +346,10 @@ def _prepare_ligands_for_gnina(ligands_csv, ligands_dir, ligand_preparation_tool
     needs_conversion = not ligands_val.lower().endswith(sdf_extensions)
     
     if not needs_conversion:
-        return ligands_val, None
-    
+        ligands_path = Path(ligands_val)
+        if not ligands_path.is_absolute():
+            ligands_path = (ligands_dir / ligands_val).resolve()
+        return str(ligands_path), None
     if ligand_preparation_tool:
         ligands_val_lower = ligands_val.lower()
         if ligands_val_lower.endswith('.csv'):
@@ -253,14 +359,15 @@ def _prepare_ligands_for_gnina(ligands_csv, ligands_dir, ligand_preparation_tool
         else:
             input_format = '-icsv'
         
-        prepared_output_path = ligands_dir / 'docking' / 'prepared_for_gnina.sdf'
+        prepared_output_path = ligands_dir / f'prepared_for_{tool_name}.sdf'
         prepared_output_path.parent.mkdir(parents=True, exist_ok=True)
         prepared_output_relative = str(prepared_output_path.relative_to(ligands_dir))
         
         cmd_line = f"{ligand_preparation_tool} {input_format} {ligands_val} -osd {prepared_output_relative}"
         return str(prepared_output_path.resolve()), cmd_line
     else:
-        return _convert_with_rdkit(ligands_csv, ligands_dir)
+        ligands_path, _ = _convert_with_rdkit(ligands_csv, ligands_dir)
+        return ligands_path, None
 
 
 def _convert_with_rdkit(ligands_csv, ligands_dir) :
@@ -306,91 +413,41 @@ def _convert_with_rdkit(ligands_csv, ligands_dir) :
     return str(sdf_path.resolve()), None
 
 
-def _build_gnina_command(cfg, receptor, ligands_path, output_sdf):
-    """Build GNINA command line arguments."""
-    user_path = cfg.get('gnina_path')
-    user_args = cfg.get('gnina_args')
-    if user_path and user_args:
-        formatted = user_args.format(receptor=receptor, ligands=ligands_path, out=str(output_sdf))
-        return [str(user_path)] + shlex.split(formatted)
-    
-    gnina_bin = cfg.get('gnina_bin', 'gnina')
-    cmd = [gnina_bin, '-r', receptor, '-l', ligands_path, '-o', str(output_sdf)]
-    
-    center = cfg.get('center')
-    if isinstance(center, (list, tuple)) and len(center) >= 3:
-        cmd.extend(['--center_x', str(center[0]), '--center_y', str(center[1]), '--center_z', str(center[2])])
-    
-    size = cfg.get('size')
-    if isinstance(size, (list, tuple)) and len(size) >= 3:
-        cmd.extend(['--size_x', str(size[0]), '--size_y', str(size[1]), '--size_z', str(size[2])])
-    
-    autobox_ligand = cfg.get('gnina_autobox_ligand')
-    if autobox_ligand:
-        autobox_ligand_path = Path(autobox_ligand)
-        if not autobox_ligand_path.is_absolute():
-            project_root = Path(__file__).parent.parent.parent.parent.parent
-            autobox_ligand_path = (project_root / autobox_ligand).resolve()
-            if not autobox_ligand_path.exists():
-                autobox_ligand_path = Path(autobox_ligand).resolve()
-        
-        if not autobox_ligand_path.exists():
-            raise FileNotFoundError(
-                f'GNINA: autobox_ligand file not found: {autobox_ligand} (resolved to: {autobox_ligand_path}). '
-                f'Please check that the file exists or remove gnina_autobox_ligand from config if not needed.'
-            )
-        cmd.extend(['--autobox_ligand', str(autobox_ligand_path)])
-    
-    optional_params = {'exhaustiveness': '--exhaustiveness',
-                       'num_modes': '--num_modes',
-                       'gnina_autobox_add': '--autobox_add',
-                       'gnina_cpu': '--cpu',
-                       'gnina_seed': '--seed',
-                      }
-    
-    for cfg_key, arg_name in optional_params.items():
-        value = cfg.get(cfg_key)
-        if value is not None:
-            cmd.extend([arg_name, str(value)])
-    
-    extra_args = cfg.get('gnina_extra_args')
-    if extra_args:
-        extra = str(extra_args).strip()
-        if extra:
-            cmd.extend(extra.split())
-    
-    return cmd
-
-
 def _get_gnina_environment(cfg, base_folder):
     """Get GNINA activation command and LD_LIBRARY_PATH."""
+    gnina_config = cfg.get('gnina_config', {})
+    env_path = gnina_config.get('env_path') or cfg.get('gnina_env_path')
+    
     gnina_activate = cfg.get('gnina_activate')
-    if not gnina_activate:
-        env_path = cfg.get('gnina_env_path')
-        if env_path:
-            conda_sh = cfg.get('conda_sh', os.path.expanduser('~/miniconda3/etc/profile.d/conda.sh'))
-            gnina_activate = f'source {conda_sh} && conda activate {env_path}'
-        
+    if not gnina_activate and env_path:
+        conda_sh = cfg.get('conda_sh', os.path.expanduser('~/miniconda3/etc/profile.d/conda.sh'))
+        gnina_activate = f'source {conda_sh} && conda activate {env_path}'
+    
     ld_library_path = cfg.get('gnina_ld_library_path')
-    if not ld_library_path:
-        env_path = cfg.get('gnina_env_path')
-        if env_path:
-            env_path_obj = Path(env_path)
+    if not ld_library_path and env_path:
+        env_path_obj = Path(env_path)
+        if env_path_obj.exists():
             torch_libs = list(env_path_obj.glob('lib/python*/site-packages/torch/lib'))
             if torch_libs and (torch_libs[0] / 'libcudnn.so.9').exists():
                 ld_library_path = str(torch_libs[0])
+            else:
+                lib_dirs = list(env_path_obj.glob('lib'))
+                for lib_dir in lib_dirs:
+                    if (lib_dir / 'libcudnn.so.9').exists() or list(lib_dir.glob('libcudnn.so*')):
+                        ld_library_path = str(lib_dir)
+                        break
     
     return gnina_activate, ld_library_path
 
 
 def _get_gnina_output_directory(cfg, base_folder):
     """Get GNINA output directory path."""
-    cfg_out_dir = cfg.get('gnina_output_dir')
+    gnina_config = cfg.get('gnina_config', {})
+    cfg_out_dir = gnina_config.get('output_dir') or cfg.get('gnina_output_dir')
     if cfg_out_dir:
         out_dir_candidate = Path(cfg_out_dir)
         return out_dir_candidate if out_dir_candidate.is_absolute() else (base_folder / out_dir_candidate)
-    else:
-        return base_folder / 'Docking' / 'gnina_results'
+    return base_folder / 'stages' / '05_docking' / 'gnina'
 
 
 def _write_file_wait_check(f, output_file, error_msg, prep_type="preparation"):
@@ -425,7 +482,7 @@ def _write_file_wait_check(f, output_file, error_msg, prep_type="preparation"):
     f.write(f'echo "{prep_type} output file found: {output_file}"\n')
 
 
-def _create_gnina_script(ligands_dir, cmd, output_sdf, activate_cmd, ld_library_path, preparation_cmd, prepared_output_relative, protein_preparation_cmd):
+def _create_gnina_script(ligands_dir, gnina_bin, config_file, activate_cmd, ld_library_path, preparation_cmd, prepared_output_relative, protein_preparation_cmd, receptor):
     """Create GNINA run script."""
     script_path = ligands_dir / 'run_gnina.sh'
     with open(script_path, 'w') as f:
@@ -497,41 +554,34 @@ def _create_gnina_script(ligands_dir, cmd, output_sdf, activate_cmd, ld_library_
             )
             f.write('rm -f ligands_raw.smi || true\n')
         
-        receptor_path_in_cmd = None
-        for i, arg in enumerate(cmd):
-            if arg == '-r' and i + 1 < len(cmd):
-                receptor_path_in_cmd = cmd[i + 1]
-                break
-        
-        if receptor_path_in_cmd:
+        if receptor:
             f.write(f'echo "Checking receptor file before GNINA docking..."\n')
             f.write(f'# Final check - wait a moment and verify file still exists and is readable\n')
             f.write(f'sleep 1\n')
-            f.write(f'if [ ! -f "{receptor_path_in_cmd}" ]; then\n')
-            f.write(f'  echo "ERROR: Receptor file not found: {receptor_path_in_cmd}"\n')
+            f.write(f'if [ ! -f "{receptor}" ]; then\n')
+            f.write(f'  echo "ERROR: Receptor file not found: {receptor}"\n')
             f.write(f'  echo "Current directory: $(pwd)"\n')
             f.write(f'  echo "Listing files in current directory:"\n')
             f.write(f'  ls -la\n')
-            f.write(f'  if [ -d "$(dirname "{receptor_path_in_cmd}")" ]; then\n')
+            f.write(f'  if [ -d "$(dirname "{receptor}")" ]; then\n')
             f.write(f'    echo "Listing files in receptor directory:"\n')
-            f.write(f'    ls -la "$(dirname "{receptor_path_in_cmd}")"\n')
+            f.write(f'    ls -la "$(dirname "{receptor}")"\n')
             f.write(f'  fi\n')
             f.write(f'  exit 1\n')
-            f.write(f'elif [ ! -s "{receptor_path_in_cmd}" ]; then\n')
-            f.write(f'  echo "ERROR: Receptor file is empty: {receptor_path_in_cmd}"\n')
+            f.write(f'elif [ ! -s "{receptor}" ]; then\n')
+            f.write(f'  echo "ERROR: Receptor file is empty: {receptor}"\n')
             f.write(f'  exit 1\n')
-            f.write(f'elif [ ! -r "{receptor_path_in_cmd}" ]; then\n')
-            f.write(f'  echo "ERROR: Receptor file is not readable: {receptor_path_in_cmd}"\n')
+            f.write(f'elif [ ! -r "{receptor}" ]; then\n')
+            f.write(f'  echo "ERROR: Receptor file is not readable: {receptor}"\n')
             f.write(f'  exit 1\n')
             f.write(f'else\n')
-            f.write(f'  echo "Receptor file verified: {receptor_path_in_cmd}"\n')
-            f.write(f'  ls -lh "{receptor_path_in_cmd}"\n')
+            f.write(f'  echo "Receptor file verified: {receptor}"\n')
+            f.write(f'  ls -lh "{receptor}"\n')
             f.write(f'fi\n')
         
-        f.write(f'mkdir -p "$(dirname "{str(output_sdf)}")"\n')
-        f.write(f': > "{str(output_sdf)}"\n')
-        f.write(f'echo "Starting GNINA docking..."\n')
-        f.write(' '.join(cmd) + '\n')
+        f.write(f'cd {ligands_dir}\n')
+        f.write(f'echo "Starting GNINA docking with config: {config_file.name}"\n')
+        f.write(f'{gnina_bin} --config {config_file.name}\n')
         f.write('if [ $? -eq 0 ]; then\n')
         f.write('  echo "GNINA docking completed successfully"\n')
         f.write('else\n')
@@ -704,12 +754,28 @@ def _setup_smina(cfg, ligands_dir, ligands_csv, protein_preparation_tool, base_f
         else:
             logger.info(f'SMINA: Using receptor: {receptor}')
         
-        logger.debug(f'SMINA: Final protein_prep_cmd for script: {protein_prep_cmd}')
+        smina_config = cfg.get('smina_config', {})
+        smina_bin = smina_config.get('bin') if smina_config else None
+        if not smina_bin:
+            smina_bin = cfg.get('smina_bin', 'smina')
         
-        ini_file = ligands_dir / 'smina_auto.ini'
-        _create_smina_config(cfg, ligands_csv, ini_file)
-        activate_cmd = cfg.get('pyscreener_activate')
-        script_path = _create_smina_script(ligands_dir, ini_file, activate_cmd, protein_prep_cmd)
+        ligand_preparation_tool = cfg.get('ligand_preparation_tool')
+        ligands_path, prep_cmd = _prepare_ligands_for_docking(ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name='smina')
+
+        smina_output_dir = ligands_dir / 'smina'
+        smina_output_dir.mkdir(parents=True, exist_ok=True)
+        output_sdf = smina_output_dir / 'smina_out.sdf'
+        
+        config_file = ligands_dir / 'smina_config.ini'
+        _create_smina_config_file(cfg, ligands_dir, receptor, ligands_path, config_file, output_sdf)
+        
+        prepared_output_relative = None
+        if prep_cmd and '-osd' in prep_cmd:
+            parts = prep_cmd.split()
+            idx = parts.index('-osd')
+            if idx + 1 < len(parts):
+                prepared_output_relative = parts[idx + 1]
+        script_path = _create_smina_script(ligands_dir, smina_bin, config_file, protein_prep_cmd, prep_cmd, prepared_output_relative)
         logger.info('SMINA configuration prepared')
         return script_path
     except Exception as e:
@@ -769,12 +835,13 @@ def _setup_gnina(cfg, base_folder, ligands_dir, ligands_csv, ligand_preparation_
             else:
                 cfg['receptor_pdb'] = original_receptor
         
-        ligands_path, prep_cmd = _prepare_ligands_for_gnina(ligands_csv, ligands_dir, ligand_preparation_tool, cfg)
+        ligands_path, prep_cmd = _prepare_ligands_for_docking(ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name='gnina')
         gnina_dir = _get_gnina_output_directory(cfg, base_folder)
         gnina_dir.mkdir(parents=True, exist_ok=True)
         output_sdf = gnina_dir / 'gnina_out.sdf'
+        gnina_config = cfg.get('gnina_config', {})
+        gnina_bin = gnina_config.get('bin') or cfg.get('gnina_bin', 'gnina')
         
-        cmd = _build_gnina_command(cfg, receptor, ligands_path, output_sdf)
         activate_cmd, ld_library_path = _get_gnina_environment(cfg, base_folder)
         
         prepared_output_relative = None
@@ -783,8 +850,10 @@ def _setup_gnina(cfg, base_folder, ligands_dir, ligands_csv, ligand_preparation_
             idx = parts.index('-osd')
             if idx + 1 < len(parts):
                 prepared_output_relative = parts[idx + 1]
+        config_file = ligands_dir / 'gnina_config.ini'
+        _create_gnina_config_file(cfg, ligands_dir, receptor, ligands_path, output_sdf, config_file)
         
-        script_path = _create_gnina_script(ligands_dir, cmd, output_sdf, activate_cmd, ld_library_path, prep_cmd, prepared_output_relative, protein_prep_cmd)
+        script_path = _create_gnina_script(ligands_dir, gnina_bin, config_file, activate_cmd, ld_library_path, prep_cmd, prepared_output_relative, protein_prep_cmd, receptor)
         logger.info('GNINA configuration prepared')
         return script_path
     except Exception as e:
