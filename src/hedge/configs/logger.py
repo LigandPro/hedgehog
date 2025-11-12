@@ -1,5 +1,3 @@
-"""Logger utilities with Rich formatting."""
-
 from __future__ import annotations
 
 import logging
@@ -108,20 +106,16 @@ def load_config(config_path: str | Path = CONFIG_PATH) -> dict[str, Any]:
 
     Parameters
     ----------
-    config_path:
-        Path to the YAML configuration file.
+    config_path: Path to the YAML configuration file.
 
     Returns
     -------
-    dict[str, Any]
-        Parsed configuration dictionary.
+    dict[str, Any]: Parsed configuration dictionary.
 
     Raises
     ------
-    FileNotFoundError
-        If configuration file doesn't exist.
-    yaml.YAMLError
-        If YAML parsing fails.
+    FileNotFoundError: If configuration file doesn't exist.
+    yaml.YAMLError: If YAML parsing fails.
     """
     config_path = Path(config_path)
     root_logger = logging.getLogger(__name__)
