@@ -5,7 +5,7 @@ description = "Hierarchical Evaluation of Drug GEnerators"
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=1.3.0,<2.2",
-    "numpy>=1.21.0",
+    "numpy>=1.21.0,<2.0",
     "matplotlib>=3.4.0",
     "seaborn>=0.11.0",
     "pyyaml>=5.4.0",
@@ -32,7 +32,6 @@ hedge = "hedge.main:app"
 [tool.setuptools]
 packages = {find = {where = ["src"]}}
 package-dir = {"" = "src"}
-py-modules = ["sitecustomize"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yml", "*.yaml", "*.csv", "*.json"]
