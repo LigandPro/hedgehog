@@ -21,11 +21,7 @@ TEMP_MODEL_NUMBER = "_model_number"
 TEMP_COUNTER = "_per_model_counter"
 
 
-def assign_mol_idx(
-    df: pd.DataFrame,
-    run_base: Path,
-    logger: logging.Logger | None = None,
-) -> pd.DataFrame:
+def assign_mol_idx(df, run_base, logger=None):
     """
     Assign a stable mol_idx for each row in the dataframe.
 
@@ -76,11 +72,7 @@ def assign_mol_idx(
     return df.drop(columns=[TEMP_MODEL_NUMBER, TEMP_COUNTER])
 
 
-def _save_model_index_map(
-    run_base: Path,
-    model_map: dict[str, int],
-    logger: logging.Logger | None,
-) -> None:
+def _save_model_index_map(run_base, model_map, logger=None):
     """Save model index mapping to JSON file for this run."""
     try:
         dest_dir = run_base / RUN_CONFIGS_DIR
@@ -92,4 +84,3 @@ def _save_model_index_map(
     except OSError as exc:
         if logger is not None:
             logger.warning("Failed to persist model index map: %s", exc)
-
