@@ -1,17 +1,5 @@
 # Adding external modules
 
-## Add MolScore module:
-1. Clone `MolSCore` from source:
-    ```bash
-    cd modules
-    git clone https://github.com/MorganCThomas/MolScore.git
-    ```
-2. Create Retrosynthetic Accessibility (RA) score conda environment (RA score requires Python 3.7 and conflicts with other environments):
-   ```bash
-   conda env create -f MolScore/molscore/data/models/RAScore/environment.yml
-   ```
-   If you skip this, MolScore will create it automatically when needed (may take a few minutes).
-
 ## Add MCE-18 module:
 1.  `MCE-18` implementation file was loaded from source: 
     [https://github.com/Tong-Du/MCE-18.git](https://github.com/Tong-Du/MCE-18.git)
