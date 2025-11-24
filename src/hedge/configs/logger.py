@@ -19,20 +19,20 @@ class LoggerSingleton:
     _logger: logging.Logger | None = None
     _console: Console | None = None
 
-    def __new__(cls) -> Self:
+    def __new__(cls):
         """Create or reuse singleton instance."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._console = Console()
         return cls._instance
 
-    def get_logger(self, name: str = "run") -> logging.Logger:
+    def get_logger(self, name="run"):
         """Return shared logger instance configured with Rich handlers."""
         if self._logger is None:
             self._logger = self._setup_logger(name)
         return self._logger
 
-    def _setup_logger(self, name: str = "run") -> logging.Logger:
+    def _setup_logger(self, name="run"):
         """Configure console and file handlers for Rich logging output."""
         config = load_config(CONFIG_PATH)
         folder_to_save = Path(config["folder_to_save"])
@@ -79,12 +79,12 @@ class LoggerSingleton:
         return logger
 
 
-def setup_logger(name: str = "run") -> logging.Logger:
+def setup_logger(name="run"):
     """Initialise logger singleton and return configured logger."""
     return LoggerSingleton().get_logger(name)
 
 
-def get_logger() -> logging.Logger:
+def get_logger():
     """Return the shared logger instance."""
     return LoggerSingleton().get_logger()
 
@@ -92,7 +92,7 @@ def get_logger() -> logging.Logger:
 class LazyLogger:
     """Proxy that lazily resolves attributes on first use."""
 
-    def __getattr__(self, name: str) -> object:
+    def __getattr__(self, name):
         """Resolve attribute lookups against the underlying logger."""
         logger_instance = get_logger()
         return getattr(logger_instance, name)
