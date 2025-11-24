@@ -91,12 +91,21 @@ def _resolve_path(path, base_dir):
 
 def _resolve_autobox_path(autobox_ligand, project_root):
     """Resolve autobox_ligand path to absolute."""
-    autobox_path = Path(autobox_ligand)
-    if not autobox_path.is_absolute():
-        autobox_path = (project_root / autobox_ligand).resolve()
-        if not autobox_path.exists():
-            autobox_path = Path(autobox_ligand).resolve()
-    return autobox_path if autobox_path.exists() else None
+    path = Path(autobox_ligand)
+    if path.is_absolute():
+        return path if path.exists() else None
+    
+    candidate = (project_root / autobox_ligand).resolve()
+    if candidate.exists():
+        return candidate
+    
+    if 'data/' in autobox_ligand:
+        data_path = autobox_ligand[autobox_ligand.find('data/'):]
+        candidate = (project_root / data_path).resolve()
+        if candidate.exists():
+            return candidate
+    
+    return None
 
 
 def _create_smina_config_file(cfg, ligands_dir, receptor, ligands_path, config_path, output_sdf):
@@ -138,6 +147,8 @@ def _create_smina_config_file(cfg, ligands_dir, receptor, ligands_path, config_p
         autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
         if autobox_path:
             smina_config['autobox_ligand'] = str(autobox_path)
+        else:
+            logger.warning(f'Could not resolve autobox_ligand path: {autobox_ligand}. Using as-is (may fail if relative path is incorrect).')
     
     skip_keys = {'bin', 'center', 'size'}
     for key, value in smina_config.items():
@@ -195,6 +206,8 @@ def _create_gnina_config_file(cfg, ligands_dir, receptor, ligands_path, output_s
         autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
         if autobox_path:
             gnina_config['autobox_ligand'] = str(autobox_path)
+        else:
+            logger.warning(f'Could not resolve autobox_ligand path: {autobox_ligand}. Using as-is (may fail if relative path is incorrect).')
     
     skip_keys = {'bin', 'env_path', 'ld_library_path', 'activate', 'output_dir', 'center', 'size'}
     for key, value in gnina_config.items():
