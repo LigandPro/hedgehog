@@ -287,15 +287,20 @@ def run(
     uv run hedge run --stage docking --force-new
     """
     # Display banner
-    console.print(
-        Panel.fit(
-            "[bold #B29EEE]🦔 HEDGE[/bold #B29EEE]\n"
-            "[dim]Hierarchical Evaluation of Drug GEnerators[/dim]\n"
-            "[dim italic]Developed by "
-            "[bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim italic]",
-            border_style="#B29EEE",
-        )
+    banner_content = (
+        "[bold #B29EEE]🦔 HEDGE[/bold #B29EEE]\n"
+        "[dim]Hierarchical Evaluation of Drug GEnerators[/dim]\n"
+        "[dim italic]Developed by Ligand Pro[/dim italic]"
     )
+    banner = Panel(
+        banner_content,
+        border_style="#B29EEE",
+        padding=(0, 1),
+        expand=False
+    )
+    console.print("")
+    console.print(banner)
+    console.print("")
 
     config_dict = load_config(DEFAULT_CONFIG_PATH)
 

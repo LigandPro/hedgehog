@@ -408,21 +408,33 @@ class MolecularAnalysisPipeline:
         
         # Stage 1': Pre-descriptors structural filters
         if self.stages[0].enabled:
-            logger.info("---------> [#B29EEE]Stage 1': Pre-descriptors Structural Filters[/#B29EEE]")
+            logger.info("")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("[#B29EEE]  Stage 1': Pre-descriptors Structural Filters[/#B29EEE]")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("")
             if self.stage_runner.run_structural_filters(DIR_STRUCT_FILTERS_PRE):
                 self.stages[0].completed = True
                 success_count += 1
         
-        # Stage 1: Descriptors calculation  
+        # Stage 1: Descriptors calculation
         if self.stages[1].enabled:
-            logger.info('---------> [#B29EEE]Stage 1: Molecular Descriptors[/#B29EEE]')
+            logger.info("")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("[#B29EEE]  Stage 1: Molecular Descriptors[/#B29EEE]")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("")
             if self.stage_runner.run_descriptors(data):
                 self.stages[1].completed = True
                 success_count += 1
         
         # Stage 2: Post-descriptors structural filters
         if self.stages[2].enabled:
-            logger.info('---------> [#B29EEE]Stage 2: Post-descriptors Structural Filters[/#B29EEE]')
+            logger.info("")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("[#B29EEE]  Stage 2: Post-descriptors Structural Filters[/#B29EEE]")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("")
             if self.stage_runner.run_structural_filters(DIR_STRUCT_FILTERS_POST):
                 self.stages[2].completed = True
                 success_count += 1
@@ -448,7 +460,11 @@ class MolecularAnalysisPipeline:
         
         # Stage 3: Synthesis
         if self.stages[3].enabled:
-            logger.info('---------> [#B29EEE]Stage 3: Synthesis Analysis[/#B29EEE]')
+            logger.info("")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("[#B29EEE]  Stage 3: Synthesis Analysis[/#B29EEE]")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("")
             if self.stage_runner.run_synthesis():
                 self.stages[3].completed = True
                 success_count += 1
@@ -486,14 +502,22 @@ class MolecularAnalysisPipeline:
         
         # Stage 4: Docking
         if self.stages[4].enabled:
-            logger.info('---------> [#B29EEE]Stage 4: Molecular Docking[/#B29EEE]')
+            logger.info("")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("[#B29EEE]  Stage 4: Molecular Docking[/#B29EEE]")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("")
             if self.stage_runner.run_docking():
                 self.stages[4].completed = True
                 success_count += 1
         
         # Stage 5': Final descriptors calculation
         if self.stages[5].enabled:
-            logger.info("---------> [#B29EEE]Stage 5': Final Descriptors Calculation[/#B29EEE]")
+            logger.info("")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("[#B29EEE]  Stage 5': Final Descriptors Calculation[/#B29EEE]")
+            logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+            logger.info("")
             final_data = self.get_latest_data(skip_descriptors=True)
             if final_data is not None and len(final_data) > 0:
                 if self.stage_runner.run_descriptors(final_data, subfolder=DIR_FINAL_DESCRIPTORS):
@@ -529,7 +553,11 @@ class MolecularAnalysisPipeline:
     
     def _log_pipeline_summary(self):
         """Log a summary of pipeline execution status."""
-        logger.info('---------> [#B29EEE]Pipeline Execution Summary[/#B29EEE]')
+        logger.info("")
+        logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+        logger.info("[#B29EEE]  Pipeline Execution Summary[/#B29EEE]")
+        logger.info("[#B29EEE]───────────────────────────────────────────────────────────[/#B29EEE]")
+        logger.info("")
         
         for stage in self.stages:
             if stage.enabled:

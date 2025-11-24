@@ -1,4 +1,5 @@
-import os 
+import os
+import json
 
 import numpy as np
 import pandas as pd
@@ -192,14 +193,19 @@ def compute_metrics(df, save_path, config=None):
 def filter_molecules(df, borders, folder_to_save):
     """
     Filter molecules based on descriptor thresholds.
-    
+
     Args:
         df: DataFrame with computed descriptors
         borders: Dictionary with min/max thresholds for each descriptor
         folder_to_save: Output folder path (should already include 'Descriptors' subfolder)
     """
     folder_to_save = process_path(folder_to_save)
-    logger.info(f'Borders: {borders}')
+
+    # Format borders for better readability - output as formatted JSON
+    logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
+    borders_json = json.dumps(borders, indent=2, ensure_ascii=False)
+    for line in borders_json.split('\n'):
+        logger.info(f"  {line}")
     filtered_data = {}
     for col in df.columns.tolist():
         col_in_borders = any(col.lower() in k.lower() for k in borders.keys())
