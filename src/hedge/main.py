@@ -27,7 +27,7 @@ SAMPLED_MOLS_FILENAME = "sampledMols.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
 
 
-def _validate_input_path(input_path: str) -> Path | None:
+def _validate_input_path(input_path):
     """Validate input path and return Path object if valid, None otherwise."""
     if "*" in input_path or "?" in input_path:
         return None
@@ -35,7 +35,7 @@ def _validate_input_path(input_path: str) -> Path | None:
     return input_path_obj if input_path_obj.exists() else None
 
 
-def _get_unique_results_folder(base_folder: Path | str) -> Path:
+def _get_unique_results_folder(base_folder):
     """
     Generate a unique folder name by appending a number if the folder already exists.
 
@@ -54,17 +54,13 @@ def _get_unique_results_folder(base_folder: Path | str) -> Path:
     """
     base_folder = Path(base_folder)
 
-    # If folder doesn't exist, return as is
     if not base_folder.exists():
         return base_folder
 
-    # Check if folder exists and is not empty
     if base_folder.exists() and any(base_folder.iterdir()):
-        # Extract base name and try to find a counter suffix
         base_name = base_folder.name
         parent = base_folder.parent
 
-        # Try to extract existing counter from base name
         match = re.match(r"^(.+?)(\d+)$", base_name)
         if match:
             name_without_counter = match.group(1)
@@ -73,7 +69,6 @@ def _get_unique_results_folder(base_folder: Path | str) -> Path:
             name_without_counter = base_name
             start_counter = 1
 
-        # Find the next available folder name
         counter = start_counter
         while True:
             new_folder = parent / f"{name_without_counter}{counter}"
@@ -84,11 +79,7 @@ def _get_unique_results_folder(base_folder: Path | str) -> Path:
     return base_folder
 
 
-def preprocess_input_with_rdkit(
-    input_path: str,
-    folder_to_save: Path,
-    logger: logging.Logger,
-) -> str | None:
+def preprocess_input_with_rdkit(input_path, folder_to_save, logger):
     """
     Preprocess input CSV file using RDKit.
 
@@ -134,7 +125,7 @@ def preprocess_input_with_rdkit(
                 if "model_name" in row:
                     row_data["model_name"] = row["model_name"]
                 cleaned_data.append(row_data)
-            except Exception:  # noqa: BLE001, S112
+            except Exception:
                 continue
 
         if not cleaned_data:
@@ -163,17 +154,12 @@ def preprocess_input_with_rdkit(
             prepared_output,
         )
         return str(prepared_output)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug("RDKit preprocessing failed: %s", e)
         return None
 
 
-def preprocess_input_with_tool(
-    input_path: str,
-    ligand_preparation_tool: str,
-    folder_to_save: Path,
-    logger: logging.Logger,  # noqa: ARG001
-) -> str | None:
+def preprocess_input_with_tool(input_path, ligand_preparation_tool, folder_to_save, logger):
     """
     Preprocess input file using external ligand preparation tool.
 
@@ -218,11 +204,9 @@ def preprocess_input_with_tool(
     ]
 
     try:
-        subprocess.run(  # noqa: S603
-            cmd, capture_output=True, text=True, check=True
-        )
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
         return str(prepared_output) if prepared_output.exists() else None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 # Initialize Typer app and Rich console
@@ -255,7 +239,7 @@ def run(
         "-m",
         help="Path or glob pattern to generated SMILES files (overrides config)",
     ),
-    stage: Stage | None = typer.Option(  # noqa: B008
+    stage: Stage | None = typer.Option(
         None,
         "--stage",
         "-s",
@@ -335,26 +319,21 @@ def run(
             stage.value,
         )
 
-    # Validate conflicting flags
     if reuse_folder and force_new_folder:
         logger.error(
             "[red]Error:[/red] Cannot use --reuse and --force-new together. "
             "Please choose one."
         )
         raise typer.Exit(code=1)
-
-    # Determine folder strategy based on flags and context
     original_folder = Path(config_dict["folder_to_save"])
 
     if reuse_folder:
-        # Explicit reuse: always use configured folder
         folder_to_save = original_folder
         logger.info(
             "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' (--reuse flag)",
             folder_to_save,
         )
     elif force_new_folder:
-        # Explicit new: always create incremented folder
         folder_to_save = _get_unique_results_folder(original_folder)
         if folder_to_save != original_folder:
             logger.info(
@@ -363,9 +342,7 @@ def run(
                 folder_to_save,
             )
     else:
-        # Automatic logic (Hybrid Variant 4)
         if stage and not generated_mols_path:
-            # Stage rerun on existing data → reuse folder
             folder_to_save = original_folder
             logger.info(
                 "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' "
@@ -373,7 +350,6 @@ def run(
                 folder_to_save,
             )
         else:
-            # Full run OR stage with new molecules → create new folder
             folder_to_save = _get_unique_results_folder(original_folder)
             if folder_to_save != original_folder:
                 logger.info(
@@ -383,7 +359,6 @@ def run(
                     folder_to_save,
                 )
 
-    # Update config with the chosen folder path
     config_dict["folder_to_save"] = str(folder_to_save)
 
     ligand_preparation_tool = config_dict.get("ligand_preparation_tool")

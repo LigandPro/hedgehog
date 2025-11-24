@@ -166,7 +166,6 @@ class PipelineStageRunner:
             stage_dir: The stage directory (e.g., DIR_STRUCT_FILTERS_PRE or DIR_STRUCT_FILTERS_POST)
         """
         try:
-            # Check if we have input data (only for post-descriptors filters)
             if stage_dir != DIR_STRUCT_FILTERS_PRE and not self.data_checker.check_stage_data(DIR_DESCRIPTORS_INITIAL):
                 if self.config.get(OVERRIDE_SINGLE_STAGE) == STAGE_STRUCT_FILTERS:
                     logger.info(f'No previous stage data found, will use molecules from config')
@@ -370,14 +369,12 @@ class MolecularAnalysisPipeline:
         
         if latest_source:
             try:
-                # For new structure, use standardized filename
                 if latest_source.startswith('stages/'):
                     if 'descriptors' in latest_source:
                         path = self.data_checker.base_path / latest_source / 'filtered' / FILE_FILTERED_MOLECULES
                     else:
                         path = self.data_checker.base_path / latest_source / FILE_FILTERED_MOLECULES
                 else:
-                    # Legacy path support
                     filename = FILE_PASS_SMILES_TEMPLATE.format(stage=latest_source) if '{stage}' in FILE_PASS_SMILES_TEMPLATE else FILE_FILTERED_MOLECULES
                     path = self.data_checker.base_path / latest_source / filename
                 data = pd.read_csv(path)
