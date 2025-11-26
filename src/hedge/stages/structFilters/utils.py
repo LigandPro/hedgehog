@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from collections import Counter
 
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -395,6 +396,34 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                       n_jobs=n_jobs,
                       scheduler=scheduler,
                       )
+
+    # Some molecules can be dropped by the Lilly binaries (unsupported atoms).
+    # When that happens the medchem result length is smaller than the input list,
+    # which downstream code cannot handle. Pad back the missing rows and mark
+    # them as failed.
+    if len(results) != len(mols):
+        smiles_in = [dm.to_smiles(m) for m in mols]
+        in_counts = Counter(smiles_in)
+        out_counts = Counter(results["smiles"].astype(str))
+        missing_rows = []
+        for smi, cnt in in_counts.items():
+            diff = cnt - out_counts.get(smi, 0)
+            if diff > 0:
+                for _ in range(diff):
+                    missing_rows.append(
+                        {
+                            "smiles": smi,
+                            "status": "exclude",
+                            "pass_filter": False,
+                            "demerit_score": None,
+                            "reasons": "unsupported_or_missing",
+                        }
+                    )
+        if missing_rows:
+            pad_df = pd.DataFrame(missing_rows)
+            results = pd.concat([results, pad_df], ignore_index=True)
+        # Safety: trim any excess and keep order consistent
+        results = results.iloc[: len(mols)].reset_index(drop=True)
         
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
