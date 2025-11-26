@@ -89,6 +89,12 @@ def main(config, stage_dir):
     
     try:
         input_df = pd.read_csv(input_path)
+        if 'model_name' not in input_df.columns:
+            inferred_model = os.path.splitext(os.path.basename(input_path))[0]
+            input_df['model_name'] = inferred_model
+            logger.info("model_name column missing; using '%s'", inferred_model)
+        if 'mol_idx' not in input_df.columns:
+            input_df['mol_idx'] = range(len(input_df))
         model_names = sorted(input_df['model_name'].dropna().unique().tolist())
         model_name = model_names[0] if len(model_names) == 1 else model_names
     except Exception as e:
