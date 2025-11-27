@@ -154,12 +154,12 @@ def process_one_file(config, input_path, apply_filter, subsample):
         if is_multi:
             smiles_str = data[smiles_col].tolist()
             model_names = data['model_name'].tolist()
-            mols = [dm.to_mol(x) for x in smiles_str]
+            mols = [dm.to_mol(x, sanitize=True) for x in smiles_str]
             mol_indices = data['mol_idx'].tolist()
             smiles = list(zip(smiles_str, model_names, mols, mol_indices))
         else:
             smiles = data[smiles_col].tolist()
-            mols = [dm.to_mol(x) for x in smiles]
+            mols = [dm.to_mol(x, sanitize=True) for x in smiles]
             mol_indices = data['mol_idx'].tolist()
             smiles = list(zip(smiles, [None]*len(smiles), mols, mol_indices))
 
@@ -212,7 +212,6 @@ def process_one_file(config, input_path, apply_filter, subsample):
         assert mol is not None, f"{smi_val}"
 
     final_result = None
-
     if len(mols) > 0:
         if isinstance(smiles[0], tuple):
             final_result = apply_filter(config, mols, smiles)
@@ -224,13 +223,82 @@ def process_one_file(config, input_path, apply_filter, subsample):
 
 def add_model_name_col(final_result, smiles_with_model):
     """Add smiles, model_name, and mol_idx columns from input data."""
-    smiles_vals = [item[0] for item in smiles_with_model]
-    model_vals = [item[1] if item[1] is not None else 'single' for item in smiles_with_model]
-    mol_idx_vals = [item[3] if len(item) >= 4 else None for item in smiles_with_model]
+    expected_len = len(smiles_with_model)
+    actual_len = len(final_result)
     
-    final_result['smiles'] = smiles_vals
-    final_result['model_name'] = model_vals
-    final_result['mol_idx'] = mol_idx_vals
+    if actual_len != expected_len:
+        logger.error(f"Length mismatch in add_model_name_col: final_result has {actual_len} rows, but smiles_with_model has {expected_len} items.")
+        logger.error(f"final_result shape: {final_result.shape}")
+        logger.error(f"final_result columns: {list(final_result.columns)}")
+        
+        if actual_len < expected_len:
+            logger.warning(f"Padding final_result from {actual_len} to {expected_len} rows.")
+            missing_count = expected_len - actual_len
+            
+            if len(final_result) > 0:
+                all_columns = list(final_result.columns)
+                template_row = final_result.iloc[-1].to_dict()
+                
+                missing_rows = []
+                for i in range(missing_count):
+                    missing_row = {col: None for col in all_columns}
+                    for col, val in template_row.items():
+                        missing_row[col] = val
+                    missing_row['smiles'] = None
+                    missing_row['status'] = 'exclude'
+                    missing_row['pass_filter'] = False
+                    missing_row['demerit_score'] = None
+                    if 'reasons' in missing_row:
+                        missing_row['reasons'] = 'unsupported_or_missing'
+                    missing_rows.append(missing_row)
+                
+                missing_df = pd.DataFrame(missing_rows)
+                final_result = pd.concat([final_result, missing_df], ignore_index=True)
+                logger.info(f"Padded {missing_count} rows. New length: {len(final_result)}")
+            else:
+                logger.error("final_result is empty but smiles_with_model is not. Creating all rows from scratch.")
+                all_rows = []
+                base_columns = ["smiles", "status", "pass_filter", "demerit_score", "reasons"]
+                for item in smiles_with_model:
+                    smi = item[0] if isinstance(item, tuple) and len(item) > 0 else None
+                    all_rows.append({
+                        "smiles": smi,
+                        "status": "exclude",
+                        "pass_filter": False,
+                        "demerit_score": None,
+                        "reasons": "unsupported_or_missing",
+                    })
+                final_result = pd.DataFrame(all_rows)
+        else:
+            logger.warning(f"Trimming final_result from {actual_len} to {expected_len} rows.")
+            final_result = final_result.iloc[:expected_len].reset_index(drop=True)
+    
+    if len(final_result) != expected_len:
+        logger.error(f"CRITICAL: After padding/trimming, final_result length ({len(final_result)}) still doesn't match expected ({expected_len}).")
+        logger.error(f"final_result shape: {final_result.shape}")
+        raise ValueError(f"CRITICAL: After padding/trimming, final_result length ({len(final_result)}) still doesn't match expected ({expected_len}). Cannot assign columns.")
+    
+    try:
+        smiles_vals = [item[0] for item in smiles_with_model]
+        model_vals = [item[1] if item[1] is not None else 'single' for item in smiles_with_model]
+        mol_idx_vals = [item[3] if len(item) >= 4 else None for item in smiles_with_model]
+        
+        if len(smiles_vals) != len(final_result):
+            raise ValueError(f"Cannot assign: smiles_vals has {len(smiles_vals)} items but final_result has {len(final_result)} rows")
+        if len(model_vals) != len(final_result):
+            raise ValueError(f"Cannot assign: model_vals has {len(model_vals)} items but final_result has {len(final_result)} rows")
+        if len(mol_idx_vals) != len(final_result):
+            raise ValueError(f"Cannot assign: mol_idx_vals has {len(mol_idx_vals)} items but final_result has {len(final_result)} rows")
+        
+        final_result['smiles'] = smiles_vals
+        final_result['model_name'] = model_vals
+        final_result['mol_idx'] = mol_idx_vals
+        
+    except ValueError as e:
+        logger.error(f"Assignment failed: {e}")
+        logger.error(f"final_result length: {len(final_result)}, expected: {expected_len}")
+        logger.error(f"smiles_vals length: {len(smiles_vals)}, model_vals length: {len(model_vals)}, mol_idx_vals length: {len(mol_idx_vals)}")
+        raise
     
     return final_result
 
@@ -391,36 +459,257 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     config_strcuFilters = load_config(config['config_structFilters'])
     scheduler = config_strcuFilters['lilly_scheduler']
 
-    dfilter = LillyDemeritsFilters()
-    results = dfilter(mols=mols,
-                      n_jobs=n_jobs,
-                      scheduler=scheduler,
-                      )
+    if smiles_modelName_mols is not None:
+        expected_len = len(smiles_modelName_mols)
+        input_smiles = [item[0] if isinstance(item, tuple) and len(item) > 0 else None for item in smiles_modelName_mols]
+    else:
+        expected_len = len(mols)
+        input_smiles = [dm.to_smiles(mol) if mol is not None else None for mol in mols]
 
-    # Some molecules can be dropped by the Lilly binaries (unsupported atoms).
-    # When that happens the medchem result length is smaller than the input list,
-    # which downstream code cannot handle. Pad back missing rows and mark them as failed.
-    expected_len = len(mols)
-    results = results.reset_index(drop=True)
-    if len(results) != expected_len:
-        missing_rows = []
-        # Assume Lilly keeps order; pad sequentially with remaining mols
-        if len(results) < expected_len:
-            for idx in range(len(results), expected_len):
-                smi = dm.to_smiles(mols[idx]) if idx < len(mols) else None
-                missing_rows.append(
-                    {
-                        "smiles": smi,
-                        "status": "exclude",
-                        "pass_filter": False,
-                        "demerit_score": None,
-                        "reasons": "unsupported_or_missing",
-                    }
-                )
-            results = pd.concat([results, pd.DataFrame(missing_rows)], ignore_index=True)
-        # Safety: trim any excess and keep order consistent
-        results = results.iloc[: expected_len].reset_index(drop=True)
+    valid_mols = []
+    valid_indices = []
+    for idx, mol in enumerate(mols):
+        if mol is not None:
+            try:
+                smi = dm.to_smiles(mol)
+                if smi:
+                    valid_mols.append(mol)
+                    valid_indices.append(idx)
+            except:
+                pass
+    
+    logger.info(f"Filtered {len(valid_mols)} valid molecules out of {len(mols)} input molecules for lilly")
+    
+    dfilter = LillyDemeritsFilters()
+    try:
+        if len(valid_mols) > 0:
+            results = dfilter(mols=valid_mols,
+                              n_jobs=n_jobs,
+                              scheduler=scheduler,
+                              )
+        else:
+            results = pd.DataFrame(columns=["smiles", "status", "pass_filter", "demerit_score", "reasons"])
+    except ValueError as e:
+        if "Length of values" in str(e) or "does not match length of index" in str(e):
+            logger.warning(f"Lilly filter internal error (this is a known lilly library bug): {e}")
+            logger.info(f"Attempting workaround: processing in smaller batches...")
         
+            batch_size = 500
+            batch_results = []
+            for i in range(0, len(valid_mols), batch_size):
+                batch = valid_mols[i:i+batch_size]
+                batch_num = i // batch_size
+                try:
+                    batch_result = dfilter(mols=batch,
+                                          n_jobs=n_jobs,
+                                          scheduler=scheduler,
+                                          )
+                    if len(batch_result) != len(batch):
+                        logger.warning(f"Batch {batch_num}: Lilly returned {len(batch_result)} results for {len(batch)} molecules. Padding missing molecules.")
+                        missing = len(batch) - len(batch_result)
+                        if len(batch_result) > 0:
+                            template = batch_result.iloc[-1].to_dict()
+                            missing_rows = []
+                            for j in range(missing):
+                                row = template.copy()
+                                row['smiles'] = None
+                                row['status'] = 'exclude'
+                                row['pass_filter'] = False
+                                row['demerit_score'] = None
+                                if 'reasons' in row:
+                                    row['reasons'] = 'unsupported_or_missing'
+                                missing_rows.append(row)
+                            missing_df = pd.DataFrame(missing_rows)
+                            batch_result = pd.concat([batch_result, missing_df], ignore_index=True)
+                        else:
+                            batch_result = pd.DataFrame({
+                                "smiles": [None] * len(batch),
+                                "status": ["exclude"] * len(batch),
+                                "pass_filter": [False] * len(batch),
+                                "demerit_score": [None] * len(batch),
+                                "reasons": ["unsupported_or_missing"] * len(batch),
+                            })
+                    batch_results.append(batch_result)
+                except Exception as batch_error:
+                    if "Length of values" in str(batch_error) or "does not match length of index" in str(batch_error):
+                        logger.warning(f"Batch {batch_num} failed with length mismatch (lilly bug). Processing one-by-one as fallback...")
+                        one_by_one_results = []
+                        for mol in batch:
+                            try:
+                                single_result = dfilter(mols=[mol], n_jobs=1, scheduler=scheduler)
+                                if len(single_result) > 0:
+                                    one_by_one_results.append(single_result.iloc[0].to_dict())
+                                else:
+                                    one_by_one_results.append({
+                                        "smiles": dm.to_smiles(mol) if mol else None,
+                                        "status": "exclude",
+                                        "pass_filter": False,
+                                        "demerit_score": None,
+                                        "reasons": "unsupported_or_missing",
+                                    })
+                            except:
+                                one_by_one_results.append({
+                                    "smiles": dm.to_smiles(mol) if mol else None,
+                                    "status": "exclude",
+                                    "pass_filter": False,
+                                    "demerit_score": None,
+                                    "reasons": "processing_failed",
+                                })
+                        batch_result = pd.DataFrame(one_by_one_results)
+                        batch_results.append(batch_result)
+                    else:
+                        logger.warning(f"Batch {batch_num} failed: {batch_error}. Creating failed entries for this batch.")
+                        batch_failed = pd.DataFrame({
+                            "smiles": [dm.to_smiles(m) if m else None for m in batch],
+                            "status": ["exclude"] * len(batch),
+                            "pass_filter": [False] * len(batch),
+                            "demerit_score": [None] * len(batch),
+                            "reasons": ["batch_processing_failed"] * len(batch),
+                        })
+                        batch_results.append(batch_failed)
+            
+            if batch_results:
+                results = pd.concat(batch_results, ignore_index=True)
+                logger.info(f"Successfully processed {len(valid_mols)} molecules in batches, got {len(results)} results")
+            else:
+                raise ValueError(f"All batches failed. Cannot process lilly filter. Original error: {e}")
+        else:
+            raise
+    
+    if len(results) != len(valid_mols):
+        logger.warning(f"Results length {len(results)} doesn't match valid_mols length {len(valid_mols)}. Padding/trimming.")
+        if len(results) < len(valid_mols):
+            missing = len(valid_mols) - len(results)
+            if len(results) > 0:
+                template = results.iloc[-1].to_dict()
+                missing_rows = []
+                for i in range(missing):
+                    row = template.copy()
+                    row['smiles'] = None
+                    row['status'] = 'exclude'
+                    row['pass_filter'] = False
+                    row['demerit_score'] = None
+                    if 'reasons' in row:
+                        row['reasons'] = 'unsupported_or_missing'
+                    missing_rows.append(row)
+                missing_df = pd.DataFrame(missing_rows)
+                results = pd.concat([results, missing_df], ignore_index=True)
+            else:
+                results = pd.DataFrame({
+                    "smiles": [None] * len(valid_mols),
+                    "status": ["exclude"] * len(valid_mols),
+                    "pass_filter": [False] * len(valid_mols),
+                    "demerit_score": [None] * len(valid_mols),
+                    "reasons": ["unsupported_or_missing"] * len(valid_mols),
+                })
+        else:
+            results = results.iloc[:len(valid_mols)].reset_index(drop=True)
+    
+    logger.info(f"Lilly returned {len(results)} results from {len(valid_mols)} valid molecules, expected {expected_len} total (input had {len(mols)} mols)")
+    results = results.reset_index(drop=True)
+    
+    if len(results) < len(valid_mols):
+        logger.warning(f"Lilly returned {len(results)} results but processed {len(valid_mols)} valid molecules")
+        if len(results) > 0:
+            missing_count = len(valid_mols) - len(results)
+            template = results.iloc[-1].to_dict()
+            missing_rows = []
+            for i in range(missing_count):
+                row = template.copy()
+                row['smiles'] = None
+                row['status'] = 'exclude'
+                row['pass_filter'] = False
+                row['demerit_score'] = None
+                if 'reasons' in row:
+                    row['reasons'] = 'unsupported_or_missing'
+                missing_rows.append(row)
+            if missing_rows:
+                missing_df = pd.DataFrame(missing_rows)
+                results = pd.concat([results, missing_df], ignore_index=True)
+        else:
+            results = pd.DataFrame({
+                "smiles": [None] * len(valid_mols),
+                "status": ["exclude"] * len(valid_mols),
+                "pass_filter": [False] * len(valid_mols),
+                "demerit_score": [None] * len(valid_mols),
+                "reasons": ["unsupported_or_missing"] * len(valid_mols),
+            })
+    
+    complete_results = []
+    valid_idx = 0
+    for orig_idx in range(expected_len):
+        if orig_idx in valid_indices:
+            if valid_idx < len(results):
+                complete_results.append(results.iloc[valid_idx].to_dict())
+            else:
+                complete_results.append({
+                    "smiles": input_smiles[orig_idx] if orig_idx < len(input_smiles) else None,
+                    "status": "exclude",
+                    "pass_filter": False,
+                    "demerit_score": None,
+                    "reasons": "unsupported_or_missing",
+                })
+            valid_idx += 1
+        else:
+            complete_results.append({
+                "smiles": input_smiles[orig_idx] if orig_idx < len(input_smiles) else None,
+                "status": "exclude",
+                "pass_filter": False,
+                "demerit_score": None,
+                "reasons": "invalid_molecule",
+            })
+    
+    results = pd.DataFrame(complete_results)
+    
+    if len(results) < expected_len:
+        logger.warning(f"Lilly returned {len(results)} results but expected {expected_len}. Padding missing molecules.")
+        
+        if smiles_modelName_mols is not None:
+            input_smiles = [item[0] if isinstance(item, tuple) and len(item) > 0 else None for item in smiles_modelName_mols]
+        else:
+            input_smiles = [dm.to_smiles(mol) if mol is not None else None for mol in mols]
+        
+        result_columns = list(results.columns) if len(results) > 0 else ["smiles", "status", "pass_filter", "demerit_score", "reasons"]
+        
+        results_by_smiles = {}
+        if 'smiles' in results.columns and len(results) > 0:
+            for _, row in results.iterrows():
+                smi = str(row['smiles']).strip() if pd.notna(row['smiles']) else None
+                if smi:
+                    results_by_smiles[smi] = row.to_dict()
+        
+        complete_results = []
+        matched_count = 0
+        
+        for smi in input_smiles:
+            smi_normalized = str(smi).strip() if smi else None
+            if smi_normalized and smi_normalized in results_by_smiles:
+                row_dict = results_by_smiles[smi_normalized].copy()
+                for col in result_columns:
+                    if col not in row_dict:
+                        row_dict[col] = None
+                complete_results.append(row_dict)
+                matched_count += 1
+            else:
+                failed_row = {col: None for col in result_columns}
+                failed_row["smiles"] = smi
+                failed_row["status"] = "exclude"
+                failed_row["pass_filter"] = False
+                failed_row["demerit_score"] = None
+                if "reasons" in failed_row:
+                    failed_row["reasons"] = "unsupported_or_missing"
+                complete_results.append(failed_row)
+        
+        results = pd.DataFrame(complete_results)
+        logger.info(f"Matched {matched_count} lilly results, padded {expected_len - matched_count} missing molecules")
+    
+    if len(results) > expected_len:
+        logger.warning(f"Trimming results from {len(results)} to {expected_len}")
+        results = results.iloc[:expected_len].reset_index(drop=True)
+    
+    if len(results) != expected_len:
+        raise ValueError(f"CRITICAL: Results length ({len(results)}) doesn't match expected ({expected_len})")
+    
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
     return results 

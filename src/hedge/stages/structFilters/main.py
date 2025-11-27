@@ -24,51 +24,51 @@ def _get_input_path(config, stage_dir, folder_to_save):
     Returns:
         Path to input file
     """
-    # For post-descriptors filters, look for descriptors output
-    if '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters':
-        # New structure
-        descriptors_path = os.path.join(folder_to_save, 'stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv')
-        if os.path.exists(descriptors_path):
-            return descriptors_path
-        # Legacy structure
-        legacy_path = folder_to_save + 'Descriptors/passDescriptorsSMILES.csv'
-        if os.path.exists(legacy_path):
-            return legacy_path
-        # Fallback to sampled molecules
+    descriptors_enabled = False
+    if 'config_descriptors' in config:
+        try:
+            desc_config = load_config(config['config_descriptors'])
+            descriptors_enabled = desc_config.get('run', False)
+        except:
+            pass
+    
+    struct_filters_config = load_config(config.get('config_structFilters', ''))
+    run_before_descriptors = struct_filters_config.get('run_before_descriptors', False)
+    
+    is_pre_descriptors = '02_structural_filters_pre' in stage_dir or 'pre' in stage_dir.lower()
+    is_post_descriptors = '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters'
+
+    use_sampled_mols = (not descriptors_enabled) or (descriptors_enabled and (is_pre_descriptors or run_before_descriptors))
+    
+    if use_sampled_mols:
         sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
         if os.path.exists(sampled_path):
-            logger.info("Descriptors output not found, using sampled_molecules.csv")
+            logger.info("Using sampled_molecules.csv")
             return sampled_path
-        # Legacy sampled molecules
         legacy_sampled = folder_to_save + 'sampledMols.csv'
         if os.path.exists(legacy_sampled):
             logger.info("Using legacy sampledMols.csv")
             return legacy_sampled
-        logger.info("No processed data found, using molecules from config")
-        return config['generated_mols_path']
-
-    # For pre-descriptors filters, use original input
-    matched = glob.glob(config['generated_mols_path'])
-    if len(matched) > 1:
+    
+    if is_post_descriptors and descriptors_enabled:
+        descriptors_path = os.path.join(folder_to_save, 'stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv')
+        if os.path.exists(descriptors_path):
+            logger.info("Using descriptors output")
+            return descriptors_path
+        legacy_path = folder_to_save + 'Descriptors/passDescriptorsSMILES.csv'
+        if os.path.exists(legacy_path):
+            logger.info("Using legacy descriptors output")
+            return legacy_path
         sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
         if os.path.exists(sampled_path):
+            logger.info("Descriptors output not found, using sampled_molecules.csv")
             return sampled_path
-        # Legacy fallback
-        return folder_to_save + 'sampledMols.csv'
-
-    single_path = matched[0]
-    try:
-        df_check = pd.read_csv(single_path)
-        lower_cols = {c.lower(): c for c in df_check.columns}
-        candidate = lower_cols.get('model_name') or lower_cols.get('name')
-        if candidate and df_check[candidate].nunique(dropna=True) > 1:
-            sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
-            if os.path.exists(sampled_path):
-                return sampled_path
-            return folder_to_save + 'sampledMols.csv'
-    except Exception:
-        pass
-
+        legacy_sampled = folder_to_save + 'sampledMols.csv'
+        if os.path.exists(legacy_sampled):
+            logger.info("Using legacy sampledMols.csv as fallback")
+            return legacy_sampled
+    
+    logger.info("No processed data found, using molecules from config")
     return config['generated_mols_path']
 
 
@@ -82,7 +82,6 @@ def main(config, stage_dir):
     sample_size = config['sample_size']
     folder_to_save = process_path(config['folder_to_save'])
 
-    # Determine output directory
     output_dir = os.path.join(folder_to_save, stage_dir)
     os.makedirs(output_dir, exist_ok=True)
     input_path = _get_input_path(config, stage_dir, folder_to_save)
@@ -101,6 +100,8 @@ def main(config, stage_dir):
         logger.error(f"Could not load input data: {e}")
         raise
     
+    process_input_path = input_path
+    
     config_structFilters = load_config(config['config_structFilters'])
     filters_to_calculate = {k.replace('calculate_', ''): v 
                             for k, v in config_structFilters.items() 
@@ -109,15 +110,12 @@ def main(config, stage_dir):
  
     for filter_name in filters_to_calculate:
         apply_func = filter_function_applier(filter_name)
-        filter_results = process_one_file(config, input_path, apply_func, sample_size)
-        
+        filter_results = process_one_file(config, process_input_path, apply_func, sample_size)
         if filter_results is None:
             logger.warning(f"No molecules to process")
             continue
-        
         final_res, final_extended = get_basic_stats(config_structFilters, filter_results, model_name, filter_name=filter_name)
 
-        # Create filter-specific subdirectory
         filter_subdir = os.path.join(output_dir, filter_name)
         os.makedirs(filter_subdir, exist_ok=True)
 
@@ -141,7 +139,6 @@ def main(config, stage_dir):
     plot_calculated_stats(config, stage_dir)
     plot_restriction_ratios(config, stage_dir)
 
-    # Only run failure analysis for post-descriptors filters
     is_post_descriptors = '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters'
     if is_post_descriptors:
         plot_filter_failures_analysis(config, stage_dir)
