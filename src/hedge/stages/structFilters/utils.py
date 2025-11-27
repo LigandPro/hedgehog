@@ -478,8 +478,6 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             except:
                 pass
     
-    logger.info(f"Filtered {len(valid_mols)} valid molecules out of {len(mols)} input molecules for lilly")
-    
     dfilter = LillyDemeritsFilters()
     try:
         if len(valid_mols) > 0:
@@ -491,8 +489,6 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             results = pd.DataFrame(columns=["smiles", "status", "pass_filter", "demerit_score", "reasons"])
     except ValueError as e:
         if "Length of values" in str(e) or "does not match length of index" in str(e):
-            logger.warning(f"Lilly filter internal error (this is a known lilly library bug): {e}")
-            logger.info(f"Attempting workaround: processing in smaller batches...")
         
             batch_size = 500
             batch_results = []
@@ -532,7 +528,6 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                     batch_results.append(batch_result)
                 except Exception as batch_error:
                     if "Length of values" in str(batch_error) or "does not match length of index" in str(batch_error):
-                        logger.warning(f"Batch {batch_num} failed with length mismatch (lilly bug). Processing one-by-one as fallback...")
                         one_by_one_results = []
                         for mol in batch:
                             try:
@@ -558,7 +553,6 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                         batch_result = pd.DataFrame(one_by_one_results)
                         batch_results.append(batch_result)
                     else:
-                        logger.warning(f"Batch {batch_num} failed: {batch_error}. Creating failed entries for this batch.")
                         batch_failed = pd.DataFrame({
                             "smiles": [dm.to_smiles(m) if m else None for m in batch],
                             "status": ["exclude"] * len(batch),
@@ -570,7 +564,6 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             
             if batch_results:
                 results = pd.concat(batch_results, ignore_index=True)
-                logger.info(f"Successfully processed {len(valid_mols)} molecules in batches, got {len(results)} results")
             else:
                 raise ValueError(f"All batches failed. Cannot process lilly filter. Original error: {e}")
         else:
@@ -605,11 +598,9 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
         else:
             results = results.iloc[:len(valid_mols)].reset_index(drop=True)
     
-    logger.info(f"Lilly returned {len(results)} results from {len(valid_mols)} valid molecules, expected {expected_len} total (input had {len(mols)} mols)")
     results = results.reset_index(drop=True)
     
     if len(results) < len(valid_mols):
-        logger.warning(f"Lilly returned {len(results)} results but processed {len(valid_mols)} valid molecules")
         if len(results) > 0:
             missing_count = len(valid_mols) - len(results)
             template = results.iloc[-1].to_dict()
@@ -662,8 +653,6 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     results = pd.DataFrame(complete_results)
     
     if len(results) < expected_len:
-        logger.warning(f"Lilly returned {len(results)} results but expected {expected_len}. Padding missing molecules.")
-        
         if smiles_modelName_mols is not None:
             input_smiles = [item[0] if isinstance(item, tuple) and len(item) > 0 else None for item in smiles_modelName_mols]
         else:
@@ -701,10 +690,8 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                 complete_results.append(failed_row)
         
         results = pd.DataFrame(complete_results)
-        logger.info(f"Matched {matched_count} lilly results, padded {expected_len - matched_count} missing molecules")
     
     if len(results) > expected_len:
-        logger.warning(f"Trimming results from {len(results)} to {expected_len}")
         results = results.iloc[:expected_len].reset_index(drop=True)
     
     if len(results) != expected_len:
