@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 import pandas as pd
 import datamol as dm
 
-from hedge.configs.logger import logger, load_config
+from hedgehog.configs.logger import logger, load_config
 
 
 def _find_latest_input_source(base_folder):

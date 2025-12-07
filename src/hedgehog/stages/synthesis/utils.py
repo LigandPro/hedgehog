@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 from rdkit import Chem
 
-from hedge.configs.logger import logger
+from hedgehog.configs.logger import logger
 
 _sascorer = None
 _syba_model = None

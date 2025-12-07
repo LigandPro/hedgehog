@@ -13,7 +13,7 @@ from rdkit.Chem import AllChem as Chem
 
 from medchem.rules._utils import n_fused_aromatic_rings
 
-from hedge.configs.logger import logger, load_config
+from hedgehog.configs.logger import logger, load_config
 
 # Disable RDKit warnings
 RDLogger.DisableLog('rdApp.*')

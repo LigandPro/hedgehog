@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from hedge.configs.logger import logger, load_config
+from hedgehog.configs.logger import logger, load_config
 
-from hedge.stages.descriptors.main import main as descriptors_main
-from hedge.stages.structFilters.main import main as structural_filters_main
-from hedge.stages.synthesis.main import main as synthesis_main
-from hedge.stages.docking.utils import run_docking as docking_main
+from hedgehog.stages.descriptors.main import main as descriptors_main
+from hedgehog.stages.structFilters.main import main as structural_filters_main
+from hedgehog.stages.synthesis.main import main as synthesis_main
+from hedgehog.stages.docking.utils import run_docking as docking_main
 
 
 # Constants - Directory names (New structure)
@@ -615,7 +615,7 @@ def _generate_structure_readme(base_path, stages, initial_count, final_count):
         enabled_stages = [s for s in stages if s.enabled]
         completed_stages = [s for s in stages if s.completed]
 
-        content = f"""# HEDGE Pipeline Output
+        content = f"""# HEDGEHOG Pipeline Output
 
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
@@ -754,7 +754,7 @@ All CSV files use consistent column ordering:
         content += """
 ## Notes
 
-- This structure follows the new HEDGE hierarchical organization
+- This structure follows the new HEDGEHOG hierarchical organization
 - Legacy flat structure is no longer used for new runs
 - All paths use snake_case naming convention
 - Stage numbering (01, 02, 03...) indicates execution order

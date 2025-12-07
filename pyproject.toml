@@ -1,7 +1,7 @@
 [project]
-name = "hedge"
+name = "hedgehog"
 version = "1.0.0"
-description = "Hierarchical Evaluation of Drug GEnerators"
+description = "Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration"
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=1.3.0,<2.2",
@@ -27,7 +27,9 @@ lint = ["ruff", "mypy", "pyright"]
 test = ["pytest"]
 
 [project.scripts]
-hedge = "hedge.main:app"
+hedgehog = "hedgehog.main:app"
+hedge = "hedgehog.main:app"
+
 
 [tool.setuptools]
 packages = {find = {where = ["src"]}}

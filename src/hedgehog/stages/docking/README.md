@@ -5,16 +5,22 @@ Prepares ligands and generates runnable scripts for Gnina and/or smina.
 
 ### Config
 Please extend config with proper information, fitting your task in 
-`src/hedge/configs/config_docking.yml`:
+`src/hedgehog/configs/config_docking.yml`:
 
 
-### How to use in pipeline
-1) Ensure updated config
-2) Set `run: True` in `src/hedge/configs/config_docking.yml` and correct all absolute paths.
-3) Run the main pipeline:
+**Run docking stage within entire pipeline:**\
+Set `run: True` and adjust if needed [config_docking.yml](/src/hedgehog/configs/config_docking.yml).
+
+**Run docking stage only:**
+```bash
+uv run hedgehog run --stage docking
+
+# Alternatively, using the short-name alias:
+uv run hedge run --stage docking
+```
 
 ### Running the generated scripts manually
-From the `Docking` directory:
+Use prepared running scripts in `results` folder for your run:
 
 ```bash
 ./run_gnina.sh    
@@ -35,14 +41,14 @@ Notes:
 GNINA requires SDF format input files. The pipeline supports two modes for converting SMILES/CSV inputs to SDF:
 
 #### With `ligand_preparation_tool`
-If `ligand_preparation_tool` is configured in `src/hedge/configs/config.yml`, the pipeline uses the ligand preparation tool to convert input files:
+If `ligand_preparation_tool` is configured in `src/hedgehog/configs/config.yml`, the pipeline uses the ligand preparation tool to convert input files:
 
 - **Input format detection**: Automatically detects CSV (uses `-icsv`) or SMI files (uses `-ismi`)
 - **Output**: Converts to SDF format saved to `docking/prepared_for_gnina.sdf`
 - **Command**: `ligand_preparation_tool -icsv ligands.csv -osd docking/prepared_for_gnina.sdf`
 - **Benefits**: Provides advanced preprocessing including stereo expansion, tautomerization, 3D geometry optimization, and other chemical transformations
 
-To enable, add to `src/hedge/configs/config.yml`:
+To enable, add to `src/hedgehog/configs/config.yml`:
 ```yaml
 ligand_preparation_tool: /path/to/ligand_preparation_tool
 ```

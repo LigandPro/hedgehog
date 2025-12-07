@@ -1,6 +1,6 @@
 # Data Directory
 
-This directory contains filter definitions used by the **🦔 HEDGE** framework, and a test dataset folder. 
+This directory contains filter definitions used by the **🦔 HEDGEHOG** framework, and a test dataset folder. 
 
 
 **`common_alerts_collection.csv`** (442KB, 2,459 rows)

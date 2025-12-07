@@ -41,18 +41,34 @@ conda install -c conda-forge lilly-medchem-rules
 
 
 ## Add AiZynthFinder retrosynthesis module 
+### Automated Installation (Recommended)
+
+**Quick setup using the installation script:**
+```bash
+cd modules
+./install_aizynthfinder.sh
+```
+
+The script will automatically:
+- Clone the retrosynthesis repository (if not already present)
+- Download public data 
+- Set up logging configuration
+
+### Manual Installation
+If you prefer to install manually:
+
 1. **Clone the retrosynthesis repository**:
     ```bash
     git clone git@github.com:LigandPro/retrosynthesis.git
     ```
 
-2. **Download public data** (model files):
+2. **Download public data**:
     ```bash
     cd retrosynthesis/aizynthfinder
     mkdir -p public aizynthfinder/data
     # Using uv run
     uv run python -m aizynthfinder.tools.download_public_data ./public
-    mv ../../../src/hedge/stages/synthesis/logging.yml aizynthfinder/data/
+    mv ../../../src/hedgehog/stages/synthesis/logging.yml aizynthfinder/data/
     ```
 3. **Continue environment setup** following main [README.md](/README.md)
 

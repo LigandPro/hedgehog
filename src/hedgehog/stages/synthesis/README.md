@@ -10,7 +10,7 @@ All scores are calculated for each molecule, and filters can be applied based on
 
 ### Configuration
 
-Configure the synthesis stage in `src/hedge/configs/config_synthesis.yml`:
+Configure the synthesis stage in `src/hedgehog/configs/config_synthesis.yml`:
 
 - `run`: Set to `True` to enable the synthesis stage
 - `filter_solved_only`: If `True`, only keep molecules that were solved (retrosynthesis path found). If `False`, keep all molecules.
@@ -18,13 +18,15 @@ Configure the synthesis stage in `src/hedge/configs/config_synthesis.yml`:
 ### Usage
 
 **Run synthesis stage within entire pipeline:**
-Set `run: True` in `src/hedge/configs/config_synthesis.yml` and run:
+Set `run: True` in `src/hedgehog/configs/config_synthesis.yml` and run:
 ```bash
-uv run hedge run
-```
+uv run hedgehog run
 
-**Run synthesis stage only:**
+# Run synthesis stage only:**
 ```bash
+uv run hedgehog run --stage synthesis
+
+# Alternatively, using the short-name alias:
 uv run hedge run --stage synthesis
 ```
 

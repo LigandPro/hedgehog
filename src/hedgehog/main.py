@@ -14,15 +14,15 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from hedge.configs.logger import load_config, logger
-from hedge.pipeline import calculate_metrics
-from hedge.utils.data_prep import prepare_input_data
-from hedge.utils.mol_index import assign_mol_idx
+from hedgehog.configs.logger import load_config, logger
+from hedgehog.pipeline import calculate_metrics
+from hedgehog.utils.data_prep import prepare_input_data
+from hedgehog.utils.mol_index import assign_mol_idx
 
 mpl.use("Agg")
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 
-DEFAULT_CONFIG_PATH = "./src/hedge/configs/config.yml"
+DEFAULT_CONFIG_PATH = "./src/hedgehog/configs/config.yml"
 SAMPLED_MOLS_FILENAME = "sampledMols.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
 
@@ -211,9 +211,9 @@ def preprocess_input_with_tool(input_path, ligand_preparation_tool, folder_to_sa
 
 # Initialize Typer app and Rich console
 app = typer.Typer(
-    name="HEDGE",
+    name="HEDGEHOG",
     help=(
-        "🦔 Hierarchical Evaluation of Drug GEnerators - "
+        "🦔 Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration - "
         "Benchmark pipeline for generative models"
     ),
     add_completion=False,
@@ -261,35 +261,39 @@ def run(
         help="Force creation of a new results folder even when rerunning stages",
     ),
 ) -> None:
-    r"""
+    """
     Run the molecular analysis pipeline.
 
     Examples
     --------
     \b
     # Run full pipeline (auto-creates new folder if results exist)
+    uv run hedgehog run
+
+    \b
+    # Alternatively, using the short-name alias:
     uv run hedge run
 
     \b
     # Rerun specific stage (auto-reuses existing folder)
-    uv run hedge run --stage docking
+    uv run hedgehog run --stage docking
 
     \b
     # Run stage with new molecules (auto-creates new folder)
-    uv run hedge run --stage descriptors --mols data/*.csv
+    uv run hedgehog run --stage descriptors --mols data/*.csv
 
     \b
     # Force reuse existing folder
-    uv run hedge run --reuse
+    uv run hedgehog run --reuse
 
     \b
     # Force create new folder even for stage rerun
-    uv run hedge run --stage docking --force-new
+    uv run hedgehog run --stage docking --force-new
     """
     # Display banner
     banner_content = (
-        "[bold #B29EEE]🦔 HEDGE[/bold #B29EEE]\n"
-        "[dim]Hierarchical Evaluation of Drug GEnerators[/dim]\n"
+        "[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE]\n"
+        "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]\n"
         "[dim italic]Developed by Ligand Pro[/dim italic]"
     )
     banner = Panel(
@@ -416,7 +420,7 @@ def run(
     calculate_metrics(data, config_dict)
     logger.info(
         "[bold][#B29EEE]Ligand Pro[/#B29EEE] thanks you for using "
-        "[#B29EEE]🦔 HEDGE[/#B29EEE]![/bold]"
+        "[#B29EEE]🦔 HEDGEHOG[/#B29EEE]![/bold]"
     )
 
 
@@ -448,7 +452,7 @@ def info() -> None:
 
     console.print(table)
     console.print(
-        "\n[dim]Example (1): uv run hedge run --stage descriptors[/dim]"
+        "\n[dim]Example (1): uv run hedgehog run --stage descriptors[/dim]"
     )
     console.print("[dim]Example (2): uv run hedge run --help [/dim]")
 
@@ -458,9 +462,9 @@ def info() -> None:
 def version() -> None:
     """Display version information."""
     console.print(
-        "[bold #B29EEE]🦔 HEDGE[/bold #B29EEE] version [bold]1.0.0[/bold]"
+        "[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE] version [bold]1.0.0[/bold]"
     )
-    console.print("[dim]Hierarchical Evaluation of Drug GEnerators[/dim]")
+    console.print("[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]")
     console.print(
         "[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]"
     )

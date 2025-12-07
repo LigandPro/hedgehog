@@ -2,7 +2,7 @@
 
 Computes 22 physicochemical descriptors per molecule using RDKit. 
 
-The stage reads [config_descriptors](/src/hedge/configs/config_descriptors.yml) file.
+The stage reads [config_descriptors](/src/hedgehog/configs/config_descriptors.yml) file.
 
 Descriptors:
 - **Molecular properties**: chars, number of atoms, heavy atoms, hetero atoms.
@@ -11,15 +11,17 @@ Descriptors:
 - **Drug-likeness**: quantitative estimation of druglikeness (QED).
 
 ### Usage
-Physicochemical Descriptors are calculated **twice** in **🦔 HEDGE**: as a first stage (*could be tuned off*) and after any last stage of a pipeline to collect final molecules statistics (*counld not be turned off*).
+Physicochemical Descriptors are calculated **twice** in **🦔 HEDGEHOG**: as a first stage (*could be tuned off*) and after any last stage of a pipeline to collect final molecules statistics (*counld not be turned off*).
 
 **Run descriptors stage within entire pipeline:**\
-Set `run: True` and adjust if needed [config_descriptors.yml](/src/hedge/configs/config_descriptors.yml).
+Set `run: True` and adjust if needed [config_descriptors.yml](/src/hedgehog/configs/config_descriptors.yml).
 
 **Run descriptors stage only:**
 ```bash
-conda activate hedge_env
+uv run hedgehog run --stage descriptors
+
+# Alternatively, using the short-name alias:
 uv run hedge run --stage descriptors
 ```
 
-**Note:** Ensure [config.yml](/src/hedge/configs/config.yml) and [config_descriptors.yml](/src/hedge/configs/config_descriptors.yml) are properly configured.
+**Note:** Ensure [config.yml](/src/hedgehog/configs/config.yml) and [config_descriptors.yml](/src/hedgehog/configs/config_descriptors.yml) are properly configured.

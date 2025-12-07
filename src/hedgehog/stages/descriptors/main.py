@@ -1,7 +1,7 @@
 import os 
 
-from hedge.configs.logger import logger, load_config
-from hedge.stages.descriptors.utils import compute_metrics, filter_molecules, draw_filtered_mols, process_path
+from hedgehog.configs.logger import logger, load_config
+from hedgehog.stages.descriptors.utils import compute_metrics, filter_molecules, draw_filtered_mols, process_path
 
 
 def main(data, config, subfolder):

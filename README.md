@@ -1,38 +1,41 @@
-# 🦔 HEDGE
-**Hierarchical Evaluation of Drug GEnerators**
+# 🦔 HEDGEHOG
+**Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration**
 
-![HEDGE Pipeline](data/imgs/pipeline_structure.png)
+![HEDGEHOG Pipeline](data/imgs/pipeline_structure.png)
 
 
 Comprehensive benchmark pipeline for evaluating generative models in molecular design.
 
 ### 5-Stage Filtering Pipeline:
-1) Physicochemical Descriptors: 22 descriptors ([descriptors folder](src/hedge/stages/descriptors/))
-2) Structural Filters: 6 structural criteria with ~2500 SMARTS patterns ([structural filters folder](src/hedge/stages/structFilters/))
-3) Synthesis evaluation ([synthesis folder](src/hedge/stages/synthesis/))
-4) Docking: able to calculate docking score with smina and/or GNINA docking tools ([docking folder](src/hedge/stages/docking/))
+1) Physicochemical Descriptors: 22 descriptors ([descriptors folder](src/hedgehog/stages/descriptors/))
+2) Structural Filters: 6 structural criteria with ~2500 SMARTS patterns ([structural filters folder](src/hedgehog/stages/structFilters/))
+3) Synthesis evaluation ([synthesis folder](src/hedgehog/stages/synthesis/))
+4) Docking: able to calculate docking score with smina and/or GNINA docking tools ([docking folder](src/hedgehog/stages/docking/))
 5) Medicinal Chemists evaluation: calculate 4 medichinal chemists evaluation criteria (*in development*)
 
 ## Setup & Run
 
 ```bash
 # Clone repository
-git clone https://github.com/LigandPro/hedge.git
-cd hedge
+git clone https://github.com/LigandPro/hedgehog.git
+cd hedgehog
 
 # Install package with uv
 uv sync
 
+# Install AiZynthFinder (for synthesis stage):**
+./modules/install_aizynthfinder.sh
 ```
 
-Before running the pipeline you should download external modules: go to [modules folder](modules/) and follow [README.md](modules/README.md) inside.
-
-You are ready to use **🦔 HEDGE** for your purpose!
+You are ready to use **🦔 HEDGEHOG** for your purpose!
 
 **Usage**
 
 ```bash
 # Run full pipeline on a proposed small test data from `data/test/`
+uv run hedgehog run
+
+# Alternatively, using the short-name alias:
 uv run hedge run
 
 # Run specific stage
@@ -44,7 +47,7 @@ uv run hedge --help
 
 
 **Configure your run**
-Edit config for each stage in [configs folder](src/hedge/configs/) based on metrics you want to calculate.
+Edit config for each stage in [configs folder](src/hedgehog/configs/) based on metrics you want to calculate.
 
 
 <!-- ## REINVENT4 fine-tune

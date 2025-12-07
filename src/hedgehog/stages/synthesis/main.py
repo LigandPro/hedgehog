@@ -2,8 +2,8 @@ import os
 import pandas as pd
 from pathlib import Path
 
-from hedge.configs.logger import logger, load_config
-from hedge.stages.synthesis.utils import *
+from hedgehog.configs.logger import logger, load_config
+from hedgehog.stages.synthesis.utils import *
 
 def _order_identity_columns(df):
     """Order dataframe columns with identity columns first."""

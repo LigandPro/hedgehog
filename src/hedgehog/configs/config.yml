@@ -1,5 +1,7 @@
-generated_mols_path: data/test/generated_mols.csv
-target_mols_path: data/test/target_mols.csv
+# generated_mols_path: data/test/generated_mols.csv
+# target_mols_path: data/test/target_mols.csv
+generated_mols_path: /home/dorochka/data/pashas/*
+target_mols_path: /home/dorochka/data/experiments_input_data/KRAS_ligands/KRAS_first_dataset_prepared_no_dups.csv
 folder_to_save: results/test
 
 n_jobs: 62
@@ -20,8 +22,8 @@ ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
 ## If not provided, original receptor_pdb from config_docking.yml will be used as-is
 protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
 
-config_descriptors: src/hedge/configs/config_descriptors.yml
-config_structFilters: src/hedge/configs/config_structFilters.yml
-config_synthesis: src/hedge/configs/config_synthesis.yml
-config_docking: src/hedge/configs/config_docking.yml
+config_descriptors: src/hedgehog/configs/config_descriptors.yml
+config_structFilters: src/hedgehog/configs/config_structFilters.yml
+config_synthesis: src/hedgehog/configs/config_synthesis.yml
+config_docking: src/hedgehog/configs/config_docking.yml
 

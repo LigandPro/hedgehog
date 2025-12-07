@@ -32,7 +32,7 @@ except ImportError:
     LILLY_AVAILABLE = False
     LillyDemeritsFilters = None
 
-from hedge.configs.logger import logger, load_config
+from hedgehog.configs.logger import logger, load_config
 
 def camelcase(any_str):
     return ''.join(word.capitalize() for word in any_str.split('_'))
@@ -1213,7 +1213,7 @@ def filter_data(config, stage_dir):
                 input_path = sampled_path
             else:
                 try:
-                    from hedge.stages.structFilters.main import _get_input_path
+                    from hedgehog.stages.structFilters.main import _get_input_path
                     input_path = _get_input_path(config, stage_dir, base_folder)
                 except Exception:
                     input_path = None
@@ -1223,7 +1223,7 @@ def filter_data(config, stage_dir):
             input_path = sampled_path
         else:
             try:
-                from hedge.stages.structFilters.main import _get_input_path
+                from hedgehog.stages.structFilters.main import _get_input_path
                 input_path = _get_input_path(config, stage_dir, base_folder)
             except Exception:
                 input_path = None

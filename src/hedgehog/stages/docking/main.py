@@ -1,4 +1,4 @@
-from hedge.stages.docking.utils import run_docking
+from hedgehog.stages.docking.utils import run_docking
 
 
 def main(config: dict):
