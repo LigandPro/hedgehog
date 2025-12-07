@@ -1,7 +1,5 @@
-# generated_mols_path: data/test/generated_mols.csv
-# target_mols_path: data/test/target_mols.csv
-generated_mols_path: /home/dorochka/data/pashas/*
-target_mols_path: /home/dorochka/data/experiments_input_data/KRAS_ligands/KRAS_first_dataset_prepared_no_dups.csv
+generated_mols_path: data/test/generated_mols.csv
+target_mols_path: data/test/target_mols.csv
 folder_to_save: results/test
 
 n_jobs: 62
