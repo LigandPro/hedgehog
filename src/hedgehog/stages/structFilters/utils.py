@@ -4,13 +4,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from collections import Counter
 
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 from rdkit import Chem
-from functools import reduce
 from pandarallel import pandarallel
 
 import datamol as dm
@@ -857,20 +855,16 @@ def check_paths(config, paths):
             k = k.replace('calculate_', '')
             all_filters[k] = v
 
-    # Extract folder names from paths (e.g., 'common_alerts' from '.../common_alerts/metrics.csv')
     path_folders = []
     for path in paths:
-        # Extract the folder name from path like '.../common_alerts/metrics.csv'
         parts = path.split('/')
         if len(parts) >= 2:
-            folder_name = parts[-2]  # Get the folder name before 'metrics.csv'
+            folder_name = parts[-2] 
             path_folders.append(folder_name.lower())
     
-    # Check if each enabled filter has a corresponding folder
     missing_filters = []
     for filter_name, enabled in all_filters.items():
         if enabled:
-            # Check both with underscores and without
             filter_name_lower = filter_name.lower()
             filter_name_no_underscore = filter_name_lower.replace('_', '')
             found = any(
@@ -893,10 +887,9 @@ def plot_calculated_stats(config, stage_dir):
     folder_to_save = process_path(config['folder_to_save'])
     config_structFilters = load_config(config['config_structFilters'])
 
-    # Find metrics files (new structure with subdirectories or legacy flat structure)
     struct_folder = os.path.join(folder_to_save, stage_dir) + '/'
     paths = glob.glob(struct_folder + '*/metrics.csv')
-    if not paths:  # Fallback to legacy naming
+    if not paths: 
         paths = glob.glob(struct_folder + '*metrics.csv')
     check_paths(config_structFilters, paths)
 
@@ -922,9 +915,8 @@ def plot_calculated_stats(config, stage_dir):
     model_name_set = sorted(list(all_model_names))
 
     filter_results = {}
-    # Find filtered molecule files (new structure with subdirectories or legacy flat structure)
     filters_to_find = glob.glob(struct_folder + '*/filtered_molecules.csv')
-    if not filters_to_find:  # Fallback to legacy naming
+    if not filters_to_find:
         filters_to_find = glob.glob(struct_folder + '*filteredMols.csv')
     
     for path in filters_to_find:
@@ -1048,7 +1040,7 @@ def plot_restriction_ratios(config, stage_dir):
 
     struct_folder = os.path.join(folder_to_save, stage_dir) + '/'
     paths = glob.glob(struct_folder + '*/metrics.csv')
-    if not paths:  # Fallback to legacy naming
+    if not paths:
         paths = glob.glob(struct_folder + '*metrics.csv')
     check_paths(config_structFilters, paths)
     
@@ -1164,9 +1156,8 @@ def filter_data(config, stage_dir):
     base_folder = process_path(config['folder_to_save'])
     folder_to_save = os.path.join(base_folder, stage_dir) + '/'
 
-    # Find all filter result files (both new and legacy naming)
     paths = glob.glob(folder_to_save + '*/filtered_molecules.csv')
-    if not paths:  # Fallback to legacy naming
+    if not paths:
         paths = glob.glob(folder_to_save + '*filteredMols.csv')
 
     columns_to_drop = ['pass', 'any_pass', 'name', 'pass_any']
@@ -1201,14 +1192,13 @@ def filter_data(config, stage_dir):
     out_df = filtered_data[cols].copy()
     out_df.to_csv(folder_to_save + 'filtered_molecules.csv', index=False)
 
-    # Determine if this is post-descriptors filters
     is_post_descriptors = '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters'
     if is_post_descriptors:
         descriptors_path = base_folder + 'Descriptors/passDescriptorsSMILES.csv'
         if os.path.exists(descriptors_path):
             input_path = descriptors_path
         else:
-            sampled_path = base_folder + 'sampledMols.csv'
+            sampled_path = os.path.join(base_folder, 'sampled_molecules.csv')
             if os.path.exists(sampled_path):
                 input_path = sampled_path
             else:
@@ -1218,7 +1208,7 @@ def filter_data(config, stage_dir):
                 except Exception:
                     input_path = None
     else:
-        sampled_path = base_folder + 'sampledMols.csv'
+        sampled_path = os.path.join(base_folder, 'sampled_molecules.csv')
         if os.path.exists(sampled_path):
             input_path = sampled_path
         else:

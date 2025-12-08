@@ -1,5 +1,4 @@
 import os
-import glob
 import pandas as pd
 
 from hedgehog.configs.logger import logger, load_config
@@ -38,37 +37,37 @@ def _get_input_path(config, stage_dir, folder_to_save):
     is_pre_descriptors = '02_structural_filters_pre' in stage_dir or 'pre' in stage_dir.lower()
     is_post_descriptors = '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters'
 
-    use_sampled_mols = (not descriptors_enabled) or (descriptors_enabled and (is_pre_descriptors or run_before_descriptors))
-    
-    if use_sampled_mols:
-        sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
-        if os.path.exists(sampled_path):
-            logger.info("Using sampled_molecules.csv")
-            return sampled_path
-        legacy_sampled = folder_to_save + 'sampledMols.csv'
-        if os.path.exists(legacy_sampled):
-            logger.info("Using legacy sampledMols.csv")
-            return legacy_sampled
-    
-    if is_post_descriptors and descriptors_enabled:
+    if is_post_descriptors:
         descriptors_path = os.path.join(folder_to_save, 'stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv')
-        if os.path.exists(descriptors_path):
-            logger.info("Using descriptors output")
+        if os.path.exists(descriptors_path) and os.path.getsize(descriptors_path) > 0:
             return descriptors_path
         legacy_path = folder_to_save + 'Descriptors/passDescriptorsSMILES.csv'
-        if os.path.exists(legacy_path):
-            logger.info("Using legacy descriptors output")
+        if os.path.exists(legacy_path) and os.path.getsize(legacy_path) > 0:
             return legacy_path
+        
+        if descriptors_enabled:
+            logger.error("Descriptors are enabled but output not found. Cannot proceed with post-descriptors filters.")
+            raise FileNotFoundError(f"Descriptors output not found at {descriptors_path} or {legacy_path}")
+        
+        pre_filters_path = os.path.join(folder_to_save, 'stages', '02_structural_filters_pre', 'filtered_molecules.csv')
+        if os.path.exists(pre_filters_path) and os.path.getsize(pre_filters_path) > 0:
+            return pre_filters_path
+        
         sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
         if os.path.exists(sampled_path):
-            logger.info("Descriptors output not found, using sampled_molecules.csv")
             return sampled_path
-        legacy_sampled = folder_to_save + 'sampledMols.csv'
+        legacy_sampled = os.path.join(folder_to_save, 'sampled_molecules.csv')
         if os.path.exists(legacy_sampled):
-            logger.info("Using legacy sampledMols.csv as fallback")
             return legacy_sampled
     
-    logger.info("No processed data found, using molecules from config")
+    if is_pre_descriptors:
+        sampled_path = os.path.join(folder_to_save, 'input', 'sampled_molecules.csv')
+        if os.path.exists(sampled_path):
+            return sampled_path
+        legacy_sampled = os.path.join(folder_to_save, 'sampled_molecules.csv')
+        if os.path.exists(legacy_sampled):
+            return legacy_sampled
+    
     return config['generated_mols_path']
 
 
@@ -97,7 +96,7 @@ def main(config, stage_dir):
         model_names = sorted(input_df['model_name'].dropna().unique().tolist())
         model_name = model_names[0] if len(model_names) == 1 else model_names
     except Exception as e:
-        logger.error(f"Could not load input data: {e}")
+        logger.error(f"Could not load input data from {input_path}: {e}")
         raise
     
     process_input_path = input_path
