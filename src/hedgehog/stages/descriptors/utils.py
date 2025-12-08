@@ -105,7 +105,7 @@ def _parse_ring_size_column(series):
 def compute_metrics(df, save_path, config=None):
     """
     Compute 22 physicochemical descriptors for each molecule.
-    model_name and mol_idx are already in df from sampledMols.csv.
+    model_name and mol_idx are already in df from sampled_molecules.csv.
     
     Args:
         df: DataFrame with molecules (must have 'smiles', 'model_name', 'mol_idx')
@@ -201,7 +201,6 @@ def filter_molecules(df, borders, folder_to_save):
     """
     folder_to_save = process_path(folder_to_save)
 
-    # Format borders for better readability - output as formatted JSON
     logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
     borders_json = json.dumps(borders, indent=2, ensure_ascii=False)
     for line in borders_json.split('\n'):
