@@ -23,7 +23,7 @@ mpl.use("Agg")
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 
 DEFAULT_CONFIG_PATH = "./src/hedgehog/configs/config.yml"
-SAMPLED_MOLS_FILENAME = "sampledMols.csv"
+SAMPLED_MOLS_FILENAME = "sampled_molecules.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
 
 
@@ -407,7 +407,9 @@ def run(
     )
     if save_mols:
         folder_to_save.mkdir(parents=True, exist_ok=True)
-        output_path = folder_to_save / SAMPLED_MOLS_FILENAME
+        input_dir = folder_to_save / 'input'
+        input_dir.mkdir(parents=True, exist_ok=True)
+        output_path = input_dir / SAMPLED_MOLS_FILENAME
         data.to_csv(output_path, index=False)
         logger.info(
             "[#B29EEE]✓[/#B29EEE] Sampled total of %d molecules saved to %s",

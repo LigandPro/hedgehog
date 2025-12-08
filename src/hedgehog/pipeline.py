@@ -38,7 +38,7 @@ DIR_RUN_CONFIGS = DIR_CONFIGS
 FILE_SAMPLED_MOLECULES = 'sampled_molecules.csv'
 FILE_FINAL_MOLECULES = 'final_molecules.csv'
 FILE_FILTERED_MOLECULES = 'filtered_molecules.csv'
-FILE_PASS_SMILES_TEMPLATE = 'filtered_molecules.csv'  # Standardized name
+FILE_PASS_SMILES_TEMPLATE = 'filtered_molecules.csv' 
 FILE_MASTER_CONFIG = 'master_config_resolved.yml'
 FILE_GNINA_OUTPUT = 'gnina_out.sdf'
 
@@ -109,7 +109,7 @@ class DataChecker:
             return self.base_path / DIR_STRUCT_FILTERS_PRE / FILE_FILTERED_MOLECULES
         elif stage_name == DIR_SYNTHESIS:
             return self.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
-        # Legacy paths for backwards compatibility
+
         elif stage_name == 'Descriptors':
             return self.base_path / 'Descriptors' / 'passDescriptorsSMILES.csv'
         elif stage_name == 'StructFilters':
@@ -191,9 +191,11 @@ class PipelineStageRunner:
             latest_data_source = self.find_latest_data_source()
             if not latest_data_source:
                 if self.config.get(OVERRIDE_SINGLE_STAGE) == STAGE_SYNTHESIS:
-                    sampled_path = self.data_checker.base_path / 'sampledMols.csv'
+                    sampled_path = self.data_checker.base_path / 'input' / FILE_SAMPLED_MOLECULES
+                    if not sampled_path.exists():
+                        sampled_path = self.data_checker.base_path / FILE_SAMPLED_MOLECULES
                     if sampled_path.exists():
-                        logger.info('Using sampledMols.csv')
+                        logger.info(f'Using {FILE_SAMPLED_MOLECULES}')
                     else:
                         logger.warning('No data available for synthesis, check `config.yml` file')
                         return False
@@ -263,7 +265,8 @@ class PipelineStageRunner:
     
     def _get_gnina_output_dir(self, cfg, base_folder):
         """Get the GNINA output directory from config."""
-        cfg_out_dir = cfg.get('gnina_output_dir')
+        gnina_config = cfg.get('gnina_config', {})
+        cfg_out_dir = gnina_config.get('output_dir') or cfg.get('gnina_output_dir')
         if cfg_out_dir:
             out_dir = Path(cfg_out_dir)
             return out_dir if out_dir.is_absolute() else base_folder / out_dir
@@ -378,7 +381,6 @@ class MolecularAnalysisPipeline:
                     filename = FILE_PASS_SMILES_TEMPLATE.format(stage=latest_source) if '{stage}' in FILE_PASS_SMILES_TEMPLATE else FILE_FILTERED_MOLECULES
                     path = self.data_checker.base_path / latest_source / filename
                 data = pd.read_csv(path)
-                logger.info(f'Loaded latest data from {latest_source}: {len(data)} molecules')
                 
                 if len(data) == 0:
                     logger.warning(f'No molecules in {latest_source}, trying previous step...')
@@ -454,7 +456,6 @@ class MolecularAnalysisPipeline:
                     final_output_path.parent.mkdir(parents=True, exist_ok=True)
                     final_data.to_csv(final_output_path, index=False)
                     logger.info(f'Saved {final_count} final molecules to {final_output_path}')
-                # Generate structure documentation
                 _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
                 return success_count == total_enabled_stages
         
@@ -489,7 +490,6 @@ class MolecularAnalysisPipeline:
                                 final_output_path.parent.mkdir(parents=True, exist_ok=True)
                                 final_data.to_csv(final_output_path, index=False)
                                 logger.info(f'Saved {final_count} final molecules to {final_output_path}')
-                            # Generate structure documentation
                             _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
                             return success_count == total_enabled_stages
                         else:
@@ -545,8 +545,6 @@ class MolecularAnalysisPipeline:
             final_output_path.parent.mkdir(parents=True, exist_ok=True)
             final_data.to_csv(final_output_path, index=False)
             logger.info(f'Saved {final_count} final molecules to {final_output_path}')
-
-        # Generate structure documentation
         _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
 
         return success_count == total_enabled_stages
@@ -610,8 +608,6 @@ def _generate_structure_readme(base_path, stages, initial_count, final_count):
         from datetime import datetime
 
         readme_path = base_path / 'README.md'
-
-        # Determine which stages were enabled
         enabled_stages = [s for s in stages if s.enabled]
         completed_stages = [s for s in stages if s.completed]
 
@@ -636,8 +632,6 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 │
 ├── stages/                             Pipeline stages (numbered by execution order)
 """
-
-        # Add stage-specific documentation based on what was enabled
         if any(s.name == STAGE_STRUCT_INI_FILTERS for s in enabled_stages):
             content += """│   ├── 02_structural_filters_pre/      Pre-descriptors structural filters
 │   │   ├── {filter_name}/             Per-filter results
