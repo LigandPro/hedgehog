@@ -20,11 +20,12 @@ Comprehensive benchmark pipeline for evaluating generative models in molecular d
 git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
 
-# Install package with uv
-uv sync
 
 # Install AiZynthFinder (for synthesis stage):**
 ./modules/install_aizynthfinder.sh
+
+# Install package with uv
+uv sync
 ```
 
 You are ready to use **🦔 HEDGEHOG** for your purpose!
