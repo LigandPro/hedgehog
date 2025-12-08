@@ -1,11 +1,9 @@
 import json
 import os
-import shlex
 import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
 
 import pandas as pd
 import datamol as dm
@@ -26,7 +24,7 @@ def _find_latest_input_source(base_folder):
         base_folder / 'Synthesis' / 'passSynthesisSMILES.csv',
         base_folder / 'StructFilters' / 'passStructFiltersSMILES.csv',
         base_folder / 'Descriptors' / 'passDescriptorsSMILES.csv',
-        base_folder / 'sampledMols.csv',
+        base_folder / 'sampled_molecules.csv',
     ]
     for path in candidates:
         if path.exists():
@@ -283,7 +281,12 @@ def _create_smina_script(ligands_dir, smina_bin, config_file, protein_prep_cmd, 
         
         if preparation_cmd and prepared_output_relative:
             f.write(f'mkdir -p "$(dirname "{prepared_output_relative}")"\n')
+            f.write(f'echo "Running ligand preparation..."\n')
             f.write(f'{preparation_cmd}\n')
+            f.write('PREP_EXIT_CODE=$?\n')
+            f.write('if [ $PREP_EXIT_CODE -ne 0 ]; then\n')
+            f.write('  echo "WARNING: Ligand preparation command exited with code $PREP_EXIT_CODE"\n')
+            f.write('fi\n')
             _write_file_wait_check(
                 f, prepared_output_relative,
                 f'ERROR: Preparation tool failed - output file {prepared_output_relative} not found after waiting',
@@ -465,22 +468,20 @@ def _get_gnina_output_directory(cfg, base_folder):
 
 def _write_file_wait_check(f, output_file, error_msg, prep_type="preparation"):
     """Write bash code to wait for file and check if it exists."""
-    f.write(f'# Check for {prep_type} output (prep is synchronous, should exist immediately)\n')
+    f.write(f'# Check for {prep_type} output\n')
     f.write(f'echo "Checking for {prep_type} output: {output_file}"\n')
-    f.write(f'if [ -f "{output_file}" ]; then\n')
-    f.write(f'  echo "{prep_type} output file found: {output_file}"\n')
-    f.write('else\n')
-    f.write(f'  echo "Waiting for {prep_type} output file (max 10 seconds)..."\n')
-    f.write('  max_wait=10  # 10 seconds max wait (prep should be synchronous)\n')
-    f.write('  wait_interval=1  # Check every 1 second\n')
-    f.write('  waited=0\n')
-    f.write(f'  while [ ! -f "{output_file}" ] && [ $waited -lt $max_wait ]; do\n')
-    f.write('    sleep $wait_interval\n')
-    f.write('    waited=$((waited + wait_interval))\n')
+    f.write(f'# Wait for file to appear (preparation may take time)\n')
+    f.write('max_wait=300  # 5 minutes max wait\n')
+    f.write('wait_interval=2  # Check every 2 seconds\n')
+    f.write('waited=0\n')
+    f.write(f'while [ ! -f "{output_file}" ] && [ $waited -lt $max_wait ]; do\n')
+    f.write('  sleep $wait_interval\n')
+    f.write('  waited=$((waited + wait_interval))\n')
+    f.write('  if [ $((waited % 10)) -eq 0 ]; then\n')
     f.write('    echo -n "."\n')
-    f.write('  done\n')
-    f.write('  echo ""\n')
-    f.write('fi\n')
+    f.write('  fi\n')
+    f.write('done\n')
+    f.write('echo ""\n')
     f.write(f'if [ ! -f "{output_file}" ]; then\n')
     f.write(f'  echo "{error_msg}"\n')
     f.write(f'  echo "Current directory: $(pwd)"\n')
@@ -559,7 +560,12 @@ def _create_gnina_script(ligands_dir, gnina_bin, config_file, activate_cmd, ld_l
         
         if preparation_cmd and prepared_output_relative:
             f.write(f'mkdir -p "$(dirname "{prepared_output_relative}")"\n')
+            f.write(f'echo "Running ligand preparation..."\n')
             f.write(f'{preparation_cmd}\n')
+            f.write('PREP_EXIT_CODE=$?\n')
+            f.write('if [ $PREP_EXIT_CODE -ne 0 ]; then\n')
+            f.write('  echo "WARNING: Ligand preparation command exited with code $PREP_EXIT_CODE"\n')
+            f.write('fi\n')
             _write_file_wait_check(
                 f, prepared_output_relative,
                 f'ERROR: Preparation tool failed - output file {prepared_output_relative} not found after waiting',
@@ -884,7 +890,7 @@ def run_docking(config):
     base_folder = Path(config['folder_to_save']).resolve()
     source = _find_latest_input_source(base_folder)
     if source is None:
-        logger.warning('No pass*SMILES.csv or sampledMols.csv found for docking input')
+        logger.warning('No pass*SMILES.csv or sampled_molecules.csv found for docking input')
         return False
     
     try:
