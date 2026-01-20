@@ -1,4 +1,3 @@
-import logging
 import re
 import subprocess
 import warnings
@@ -26,6 +25,9 @@ DEFAULT_CONFIG_PATH = "./src/hedgehog/configs/config.yml"
 SAMPLED_MOLS_FILENAME = "sampled_molecules.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
 
+# Supported SMI-like file extensions for ligand preparation tool
+SMI_EXTENSIONS = {"smi", "ismi", "cmi", "txt"}
+
 
 def _validate_input_path(input_path):
     """Validate input path and return Path object if valid, None otherwise."""
@@ -35,7 +37,12 @@ def _validate_input_path(input_path):
     return input_path_obj if input_path_obj.exists() else None
 
 
-def _get_unique_results_folder(base_folder):
+def _folder_is_empty(folder: Path) -> bool:
+    """Check if a folder doesn't exist or has no contents."""
+    return not folder.exists() or not any(folder.iterdir())
+
+
+def _get_unique_results_folder(base_folder) -> Path:
     """
     Generate a unique folder name by appending a number if the folder already exists.
 
@@ -54,32 +61,33 @@ def _get_unique_results_folder(base_folder):
     """
     base_folder = Path(base_folder)
 
-    if not base_folder.exists():
+    if _folder_is_empty(base_folder):
         return base_folder
 
-    if base_folder.exists() and any(base_folder.iterdir()):
-        base_name = base_folder.name
-        parent = base_folder.parent
+    parent = base_folder.parent
+    base_name = base_folder.name
 
-        match = re.match(r"^(.+?)(\d+)$", base_name)
-        if match:
-            name_without_counter = match.group(1)
-            start_counter = int(match.group(2)) + 1
-        else:
-            name_without_counter = base_name
-            start_counter = 1
+    match = re.match(r"^(.+?)(\d+)$", base_name)
+    name_prefix = match.group(1) if match else base_name
+    counter = int(match.group(2)) + 1 if match else 1
 
-        counter = start_counter
-        while True:
-            new_folder = parent / f"{name_without_counter}{counter}"
-            if not new_folder.exists() or not any(new_folder.iterdir()):
-                return new_folder
-            counter += 1
-
-    return base_folder
+    while True:
+        new_folder = parent / f"{name_prefix}{counter}"
+        if _folder_is_empty(new_folder):
+            return new_folder
+        counter += 1
 
 
-def preprocess_input_with_rdkit(input_path, folder_to_save, logger):
+def _canonicalize_smiles(smi: str) -> str | None:
+    """Canonicalize a SMILES string using RDKit. Returns None if invalid."""
+    mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        return None
+    SanitizeMol(mol)
+    return Chem.MolToSmiles(mol)
+
+
+def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
     """
     Preprocess input CSV file using RDKit.
 
@@ -92,7 +100,7 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, logger):
         Path to the input CSV file
     folder_to_save : Path
         Output folder for prepared file
-    logger
+    log
         Logger instance
 
     Returns
@@ -106,60 +114,62 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, logger):
 
     try:
         folder_to_save.mkdir(parents=True, exist_ok=True)
-        prepared_output = (
-            folder_to_save / f"prepared_{input_path_obj.stem}.csv"
-        )
+        prepared_output = folder_to_save / f"prepared_{input_path_obj.stem}.csv"
 
         df = pd.read_csv(input_path_obj)
         cleaned_data = []
 
         for _, row in df.iterrows():
-            smi = str(row["smiles"])
-            try:
-                mol = Chem.MolFromSmiles(smi)
-                if mol is None:
-                    continue
-                SanitizeMol(mol)
-                canonical_smi = Chem.MolToSmiles(mol)
-                row_data = {"smiles": canonical_smi}
-                if "model_name" in row:
-                    row_data["model_name"] = row["model_name"]
-                cleaned_data.append(row_data)
-            except Exception:
+            canonical_smi = _canonicalize_smiles(str(row["smiles"]))
+            if canonical_smi is None:
                 continue
+            row_data = {"smiles": canonical_smi}
+            if "model_name" in row:
+                row_data["model_name"] = row["model_name"]
+            cleaned_data.append(row_data)
 
         if not cleaned_data:
             return None
 
         output_df = pd.DataFrame(cleaned_data)
-
         initial_count = len(output_df)
-        output_df = (
-            output_df.drop_duplicates(
-                subset=["smiles", "model_name"], keep="first"
-            )
-            .reset_index(drop=True)
-        )
+
+        output_df = output_df.drop_duplicates(
+            subset=["smiles", "model_name"], keep="first"
+        ).reset_index(drop=True)
+
         duplicates_removed = initial_count - len(output_df)
         if duplicates_removed > 0:
-            logger.info(
+            log.info(
                 "Removed %d duplicate molecules within models",
                 duplicates_removed,
             )
 
         output_df.to_csv(prepared_output, index=False)
-        logger.info(
+        log.info(
             "RDKit preprocessing: %d molecules saved to %s",
             len(output_df),
             prepared_output,
         )
         return str(prepared_output)
     except Exception as e:
-        logger.debug("RDKit preprocessing failed: %s", e)
+        log.debug("RDKit preprocessing failed: %s", e)
         return None
 
 
-def preprocess_input_with_tool(input_path, ligand_preparation_tool, folder_to_save, logger):
+def _get_input_format_flag(extension: str) -> str | None:
+    """Get the input format flag for ligand preparation tool based on file extension."""
+    ext = extension.lower().lstrip(".")
+    if ext == "csv":
+        return "-icsv"
+    if ext in SMI_EXTENSIONS:
+        return "-ismi"
+    return None
+
+
+def preprocess_input_with_tool(
+    input_path, ligand_preparation_tool, folder_to_save, log
+) -> str | None:
     """
     Preprocess input file using external ligand preparation tool.
 
@@ -171,7 +181,7 @@ def preprocess_input_with_tool(input_path, ligand_preparation_tool, folder_to_sa
         Path to the ligand preparation tool
     folder_to_save : Path
         Output folder for prepared file
-    logger
+    log
         Logger instance
 
     Returns
@@ -183,18 +193,13 @@ def preprocess_input_with_tool(input_path, ligand_preparation_tool, folder_to_sa
     if not input_path_obj:
         return None
 
-    input_ext = input_path_obj.suffix.lower().lstrip(".")
-    if input_ext == "csv":
-        input_format = "-icsv"
-    elif input_ext in ("smi", "ismi", "cmi", "txt"):
-        input_format = "-ismi"
-    else:
+    input_format = _get_input_format_flag(input_path_obj.suffix)
+    if not input_format:
         return None
 
     folder_to_save.mkdir(parents=True, exist_ok=True)
-    prepared_output = (
-        folder_to_save / f"prepared_{input_path_obj.stem}.csv"
-    )
+    prepared_output = folder_to_save / f"prepared_{input_path_obj.stem}.csv"
+
     cmd = [
         ligand_preparation_tool,
         input_format,
@@ -208,6 +213,148 @@ def preprocess_input_with_tool(input_path, ligand_preparation_tool, folder_to_sa
         return str(prepared_output) if prepared_output.exists() else None
     except Exception:
         return None
+
+
+def _display_banner() -> None:
+    """Display the HEDGEHOG banner."""
+    banner_content = (
+        "[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE]\n"
+        "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]\n"
+        "[dim italic]Developed by Ligand Pro[/dim italic]"
+    )
+    banner = Panel(
+        banner_content,
+        border_style="#B29EEE",
+        padding=(0, 1),
+        expand=False
+    )
+    console.print("")
+    console.print(banner)
+    console.print("")
+
+
+def _apply_cli_overrides(
+    config_dict: dict,
+    generated_mols_path: str | None,
+    stage: "Stage | None",
+) -> None:
+    """Apply CLI argument overrides to config dictionary."""
+    if generated_mols_path:
+        config_dict["generated_mols_path"] = generated_mols_path
+        logger.info(
+            "[#B29EEE]Override:[/#B29EEE] Using molecules from: %s",
+            generated_mols_path,
+        )
+    elif stage:
+        logger.info(
+            "Using molecules from config: %s",
+            config_dict["generated_mols_path"],
+        )
+
+    if stage:
+        config_dict[STAGE_OVERRIDE_KEY] = stage.value
+        logger.info(
+            "[#B29EEE]Override:[/#B29EEE] Running only stage: [bold]%s[/bold]",
+            stage.value,
+        )
+
+
+def _resolve_output_folder(
+    config_dict: dict,
+    reuse_folder: bool,
+    force_new_folder: bool,
+    stage: "Stage | None",
+    generated_mols_path: str | None,
+) -> Path:
+    """Determine and log the appropriate output folder based on CLI flags."""
+    original_folder = Path(config_dict["folder_to_save"])
+
+    if reuse_folder:
+        logger.info(
+            "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' (--reuse flag)",
+            original_folder,
+        )
+        return original_folder
+
+    if force_new_folder:
+        folder = _get_unique_results_folder(original_folder)
+        if folder != original_folder:
+            logger.info(
+                "[#B29EEE]Folder mode:[/#B29EEE] Creating new folder '%s' "
+                "(--force-new flag)",
+                folder,
+            )
+        return folder
+
+    # Auto-mode: reuse for stage reruns, create new otherwise
+    if stage and not generated_mols_path:
+        logger.info(
+            "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' "
+            "for stage execution",
+            original_folder,
+        )
+        return original_folder
+
+    folder = _get_unique_results_folder(original_folder)
+    if folder != original_folder:
+        logger.info(
+            "[#B29EEE]Folder mode:[/#B29EEE] Folder '%s' "
+            "contains results. Using '%s' instead.",
+            original_folder,
+            folder,
+        )
+    return folder
+
+
+def _preprocess_input(
+    config_dict: dict,
+    folder_to_save: Path,
+) -> None:
+    """Preprocess input molecules using ligand preparation tool or RDKit."""
+    ligand_preparation_tool = config_dict.get("ligand_preparation_tool")
+    original_input_path = config_dict.get("generated_mols_path")
+
+    if not original_input_path:
+        return
+
+    if ligand_preparation_tool:
+        prepared_path = preprocess_input_with_tool(
+            original_input_path,
+            ligand_preparation_tool,
+            folder_to_save,
+            logger,
+        )
+    else:
+        prepared_path = preprocess_input_with_rdkit(
+            original_input_path, folder_to_save, logger
+        )
+
+    if prepared_path:
+        config_dict["generated_mols_path"] = prepared_path
+        logger.info("Using preprocessed input: %s", prepared_path)
+
+
+def _save_sampled_molecules(
+    data: pd.DataFrame,
+    folder_to_save: Path,
+    should_save: bool,
+) -> None:
+    """Save sampled molecules to input directory if requested."""
+    if not should_save:
+        return
+
+    folder_to_save.mkdir(parents=True, exist_ok=True)
+    input_dir = folder_to_save / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_path = input_dir / SAMPLED_MOLS_FILENAME
+
+    data.to_csv(output_path, index=False)
+    logger.info(
+        "[#B29EEE]✓[/#B29EEE] Sampled total of %d molecules saved to %s",
+        len(data),
+        output_path,
+    )
+
 
 # Initialize Typer app and Rich console
 app = typer.Typer(
@@ -229,6 +376,20 @@ class Stage(str, Enum):
     struct_filters = "struct_filters"
     synthesis = "synthesis"
     docking = "docking"
+
+    @property
+    def description(self) -> str:
+        """Return human-readable description for this stage."""
+        descriptions = {
+            Stage.descriptors: "Compute 22 physicochemical descriptors per molecule",
+            Stage.struct_filters: "Apply structural filters (Lilly, NIBR, PAINS, etc.)",
+            Stage.synthesis: (
+                "Evaluate synthetic accessibility using retrosynthesis "
+                "(AiZynthFinder) and other metrics"
+            ),
+            Stage.docking: "Calculate docking scores with Smina/Gnina",
+        }
+        return descriptions[self]
 
 
 @app.command()
@@ -290,43 +451,7 @@ def run(
     # Force create new folder even for stage rerun
     uv run hedgehog run --stage docking --force-new
     """
-    # Display banner
-    banner_content = (
-        "[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE]\n"
-        "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]\n"
-        "[dim italic]Developed by Ligand Pro[/dim italic]"
-    )
-    banner = Panel(
-        banner_content,
-        border_style="#B29EEE",
-        padding=(0, 1),
-        expand=False
-    )
-    console.print("")
-    console.print(banner)
-    console.print("")
-
-    config_dict = load_config(DEFAULT_CONFIG_PATH)
-
-    if generated_mols_path:
-        config_dict["generated_mols_path"] = generated_mols_path
-        logger.info(
-            "[#B29EEE]Override:[/#B29EEE] Using molecules from: %s",
-            generated_mols_path,
-        )
-    elif stage:
-        logger.info(
-            "Using molecules from config: %s",
-            config_dict["generated_mols_path"],
-        )
-
-    if stage:
-        config_dict[STAGE_OVERRIDE_KEY] = stage.value
-        logger.info(
-            "[#B29EEE]Override:[/#B29EEE] Running only stage: "
-            "[bold]%s[/bold]",
-            stage.value,
-        )
+    _display_banner()
 
     if reuse_folder and force_new_folder:
         logger.error(
@@ -334,90 +459,25 @@ def run(
             "Please choose one."
         )
         raise typer.Exit(code=1)
-    original_folder = Path(config_dict["folder_to_save"])
 
-    if reuse_folder:
-        folder_to_save = original_folder
-        logger.info(
-            "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' (--reuse flag)",
-            folder_to_save,
-        )
-    elif force_new_folder:
-        folder_to_save = _get_unique_results_folder(original_folder)
-        if folder_to_save != original_folder:
-            logger.info(
-                "[#B29EEE]Folder mode:[/#B29EEE] Creating new folder '%s' "
-                "(--force-new flag)",
-                folder_to_save,
-            )
-    else:
-        if stage and not generated_mols_path:
-            folder_to_save = original_folder
-            logger.info(
-                "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' "
-                "for stage execution",
-                folder_to_save,
-            )
-        else:
-            folder_to_save = _get_unique_results_folder(original_folder)
-            if folder_to_save != original_folder:
-                logger.info(
-                    "[#B29EEE]Folder mode:[/#B29EEE] Folder '%s' "
-                    "contains results. Using '%s' instead.",
-                    original_folder,
-                    folder_to_save,
-                )
+    config_dict = load_config(DEFAULT_CONFIG_PATH)
+    _apply_cli_overrides(config_dict, generated_mols_path, stage)
 
+    folder_to_save = _resolve_output_folder(
+        config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
+    )
     config_dict["folder_to_save"] = str(folder_to_save)
 
-    ligand_preparation_tool = config_dict.get("ligand_preparation_tool")
-    original_input_path = (
-        config_dict.get("generated_mols_path") or generated_mols_path
-    )
-    if original_input_path:
-        if ligand_preparation_tool:
-            prepared_path = preprocess_input_with_tool(
-                original_input_path,
-                ligand_preparation_tool,
-                folder_to_save,
-                logger,
-            )
-        else:
-            prepared_path = preprocess_input_with_rdkit(
-                original_input_path, folder_to_save, logger
-            )
-
-        if prepared_path:
-            config_dict["generated_mols_path"] = prepared_path
-            logger.info("Using preprocessed input: %s", prepared_path)
+    _preprocess_input(config_dict, folder_to_save)
 
     data = prepare_input_data(config_dict, logger)
 
     if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
-        try:
-            data = assign_mol_idx(
-                data, run_base=folder_to_save, logger=logger
-            )
-        except Exception as e:
-            logger.error("Failed to assign mol_idx: %s", e)
-            raise
+        data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
 
-    save_mols = (
-        config_dict.get("save_sampled_mols", False) or stage is not None
-    )
-    if save_mols:
-        folder_to_save.mkdir(parents=True, exist_ok=True)
-        input_dir = folder_to_save / 'input'
-        input_dir.mkdir(parents=True, exist_ok=True)
-        output_path = input_dir / SAMPLED_MOLS_FILENAME
-        data.to_csv(output_path, index=False)
-        logger.info(
-            "[#B29EEE]✓[/#B29EEE] Sampled total of %d molecules saved to %s",
-            len(data),
-            output_path,
-        )
+    should_save = config_dict.get("save_sampled_mols", False) or stage is not None
+    _save_sampled_molecules(data, folder_to_save, should_save)
 
-    # Run metrics calculation pipeline
     logger.info("[bold #B29EEE]Starting pipeline...[/bold #B29EEE]")
     calculate_metrics(data, config_dict)
     logger.info(
@@ -437,27 +497,14 @@ def info() -> None:
     table.add_column("Stage", style="#B29EEE", no_wrap=True)
     table.add_column("Description", style="white")
 
-    stages_info = {
-        "descriptors": "Compute 22 physicochemical descriptors per molecule",
-        "struct_filters": (
-            "Apply structural filters (Lilly, NIBR, PAINS, etc.)"
-        ),
-        "synthesis": (
-            "Evaluate synthetic accessibility using retrosynthesis "
-            "(AiZynthFinder) and other metrics"
-        ),
-        "docking": "Calculate docking scores with Smina/Gnina",
-    }
-
-    for stage_name, description in stages_info.items():
-        table.add_row(stage_name, description)
+    for stage in Stage:
+        table.add_row(stage.value, stage.description)
 
     console.print(table)
     console.print(
         "\n[dim]Example (1): uv run hedgehog run --stage descriptors[/dim]"
     )
     console.print("[dim]Example (2): uv run hedge run --help [/dim]")
-
 
 
 @app.command()

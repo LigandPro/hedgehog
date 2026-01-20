@@ -20,18 +20,18 @@ RUN_MODELS_MAPPING_FILE = "run_models_mapping.csv"
 MODEL_INDEX_MAP_FILE = "model_index_map.json"
 
 
-def _find_smiles_column(df: pd.DataFrame) -> str | None:
-    """Find the SMILES column in a dataframe (case-insensitive)."""
-    result = next(
-        (col for col in df.columns if col.lower() == SMILES_COLUMN), None
-    )
-    return cast("str | None", result)
+def _find_column_case_insensitive(
+    df: pd.DataFrame, column_name: str
+) -> str | None:
+    """Find a column by name (case-insensitive)."""
+    lower_cols = {c.lower(): c for c in df.columns}
+    return lower_cols.get(column_name.lower())
 
 
 def _normalize_smiles_column(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize SMILES column in dataframe."""
-    smiles_col = _find_smiles_column(df)
-    if smiles_col:
+    smiles_col = _find_column_case_insensitive(df, SMILES_COLUMN)
+    if smiles_col and smiles_col != SMILES_COLUMN:
         return df.rename(columns={smiles_col: SMILES_COLUMN})
     return df
 
@@ -39,18 +39,13 @@ def _normalize_smiles_column(df: pd.DataFrame) -> pd.DataFrame:
 def _normalize_model_name_column(
     df: pd.DataFrame, path: str
 ) -> pd.DataFrame:
-    """
-    Normalize model_name column.
-
-    Check for model_name/name, extract from path if missing.
-    """
-    lower_cols = {c.lower(): c for c in df.columns}
-    model_col = (
-        lower_cols.get(MODEL_NAME_COLUMN) or lower_cols.get(NAME_COLUMN)
-    )
+    """Normalize model_name column. Extract from path if missing."""
+    model_col = _find_column_case_insensitive(
+        df, MODEL_NAME_COLUMN
+    ) or _find_column_case_insensitive(df, NAME_COLUMN)
 
     if model_col:
-        if model_col.lower() != MODEL_NAME_COLUMN:
+        if model_col != MODEL_NAME_COLUMN:
             df = df.rename(columns={model_col: MODEL_NAME_COLUMN})
     else:
         df[MODEL_NAME_COLUMN] = _extract_model_name_from_path(path)
@@ -58,44 +53,107 @@ def _normalize_model_name_column(
     return df
 
 
+def _normalize_columns(df: pd.DataFrame, path: str) -> pd.DataFrame:
+    """Apply all column normalizations."""
+    df = _normalize_smiles_column(df)
+    df = _normalize_model_name_column(df, path)
+    return df
+
+
 def _apply_sampling(
     df: pd.DataFrame,
     sample_size: int | None,
-    logger: logging.Logger,
     model_name: str | None = None,
 ) -> tuple[pd.DataFrame, dict | None]:
-    """Apply sampling to dataframe if sample_size is specified.
-
-    Returns:
-        tuple: (sampled_dataframe, warning_info_dict or None)
-    """
+    """Apply sampling to dataframe if sample_size is specified."""
     if sample_size is None:
         return df, None
 
     if len(df) < sample_size:
-        warning_info = {
-            'model_name': model_name or 'unknown',
-            'requested': sample_size,
-            'available': len(df)
+        return df, {
+            "model_name": model_name or "unknown",
+            "requested": sample_size,
+            "available": len(df),
         }
-        return df, warning_info
 
     return df.sample(sample_size, random_state=42), None
+
+
+def _log_sampling_warnings(
+    warnings: list[dict], logger: logging.Logger
+) -> None:
+    """Log sampling warnings in a formatted manner."""
+    if not warnings:
+        return
+
+    if len(warnings) == 1:
+        warn = warnings[0]
+        logger.warning(
+            "Sample size %d exceeds data size %d",
+            warn["requested"],
+            warn["available"],
+        )
+        return
+
+    logger.warning("")
+    logger.warning(
+        "[yellow]Sample size exceeded for %d model(s):[/yellow]",
+        len(warnings),
+    )
+    for warn in warnings:
+        logger.warning(
+            "  [dim]•[/dim] [bold]%s[/bold]: %d requested, %d available",
+            warn["model_name"],
+            warn["requested"],
+            warn["available"],
+        )
+
+
+def _remove_duplicates(
+    df: pd.DataFrame, logger: logging.Logger
+) -> pd.DataFrame:
+    """Remove duplicate molecules, logging if any were removed."""
+    initial_count = len(df)
+
+    if MODEL_NAME_COLUMN in df.columns:
+        df = df.drop_duplicates(
+            subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]
+        ).reset_index(drop=True)
+        msg = "Removed %s duplicate molecules within models"
+    else:
+        df = df.drop_duplicates(subset=SMILES_COLUMN).reset_index(drop=True)
+        msg = "Removed %s duplicate molecules"
+
+    duplicates_removed = initial_count - len(df)
+    if duplicates_removed > 0:
+        logger.info(msg, duplicates_removed)
+
+    return df
+
+
+def _read_csv_with_fallback(path: str) -> pd.DataFrame:
+    """Read CSV, falling back to headerless format if parsing fails."""
+    try:
+        return pd.read_csv(path)
+    except (pd.errors.ParserError, ValueError):
+        df = pd.read_csv(path, header=None)
+        df.columns = [SMILES_COLUMN] + [
+            f"col_{i}" for i in range(1, len(df.columns))
+        ]
+        return df
 
 
 def _detect_mode_and_paths(
     generated_mols_path: str,
 ) -> tuple[str, list[str]]:
-    """
-    Detect if input is single or multi-model comparison.
-
-    Based on file pattern.
-    """
+    """Detect if input is single or multi-model comparison based on file pattern."""
     path_obj = Path(generated_mols_path)
-    if "*" in generated_mols_path:
-        matched = [str(p) for p in path_obj.parent.glob(path_obj.name)]
-    else:
-        matched = []
+
+    matched = (
+        [str(p) for p in path_obj.parent.glob(path_obj.name)]
+        if "*" in generated_mols_path
+        else []
+    )
 
     if not matched:
         if path_obj.exists() and path_obj.is_file():
@@ -110,33 +168,33 @@ def _detect_mode_and_paths(
     single_path = matched[0]
     ext = Path(single_path).suffix.lower().lstrip(".")
 
-    if ext in SUPPORTED_EXTENSIONS:
-        try:
-            df = pd.read_csv(single_path)
-            lower_cols = {c.lower(): c for c in df.columns}
+    if ext not in SUPPORTED_EXTENSIONS:
+        return MODE_SINGLE, [single_path]
 
-            candidate_col = (
-                lower_cols.get(MODEL_NAME_COLUMN)
-                or lower_cols.get(NAME_COLUMN)
-            )
-
-            if candidate_col:
-                n_distinct = df[candidate_col].nunique(dropna=True)
-                if n_distinct and n_distinct > 1:
-                    return MODE_MULTI, [single_path]
-        except (pd.errors.ParserError, ValueError, KeyError):
-            # If file parsing fails, treat as single mode
-            pass
+    if _file_has_multiple_models(single_path):
+        return MODE_MULTI, [single_path]
 
     return MODE_SINGLE, [single_path]
 
 
-def _extract_model_name_from_path(path: str) -> str:
-    """
-    Extract model name from file path.
+def _file_has_multiple_models(path: str) -> bool:
+    """Check if a file contains multiple distinct models."""
+    try:
+        df = pd.read_csv(path)
+        candidate_col = _find_column_case_insensitive(
+            df, MODEL_NAME_COLUMN
+        ) or _find_column_case_insensitive(df, NAME_COLUMN)
 
-    Using exact format: path.split('/')[-1].split('.')[0].
-    """
+        if candidate_col:
+            n_distinct = df[candidate_col].nunique(dropna=True)
+            return n_distinct > 1
+    except (pd.errors.ParserError, ValueError, KeyError):
+        pass
+    return False
+
+
+def _extract_model_name_from_path(path: str) -> str:
+    """Extract model name from file path."""
     return path.split("/")[-1].split(".")[0]
 
 
@@ -148,34 +206,20 @@ def _load_multi_comparison_data(
     sampling_warnings = []
 
     for path in paths:
-        try:
-            df = pd.read_csv(path)
-        except (pd.errors.ParserError, ValueError):
-            df = pd.read_csv(path, header=None)
-            df.columns = [SMILES_COLUMN] + [
-                f"col_{i}" for i in range(1, len(df.columns))
-            ]
+        df = _read_csv_with_fallback(path)
+        df = _normalize_columns(df, path)
 
-        df = _normalize_smiles_column(df)
-        df = _normalize_model_name_column(df, path)
         model_name = (
             df[MODEL_NAME_COLUMN].iloc[0]
             if MODEL_NAME_COLUMN in df.columns
             else "unknown"
         )
-        df, warning_info = _apply_sampling(df, sample_size, logger, model_name)
+        df, warning_info = _apply_sampling(df, sample_size, model_name)
         if warning_info:
             sampling_warnings.append(warning_info)
         dataframes.append(df)
 
-    # Output all sampling warnings together in a nice format
-    if sampling_warnings:
-        logger.warning("")
-        logger.warning("[yellow]Sample size exceeded for %d model(s):[/yellow]", len(sampling_warnings))
-        for warn in sampling_warnings:
-            logger.warning("  [dim]•[/dim] [bold]%s[/bold]: %d requested, %d available",
-                          warn['model_name'], warn['requested'], warn['available'])
-
+    _log_sampling_warnings(sampling_warnings, logger)
     return pd.concat(dataframes, axis=0, ignore_index=True)
 
 
@@ -183,64 +227,27 @@ def _load_single_comparison_data(
     single_path: str, sample_size: int | None, logger: logging.Logger
 ) -> pd.DataFrame:
     """Load data from a single file (single model comparison)."""
-    try:
-        data = pd.read_csv(single_path)
-    except (pd.errors.ParserError, ValueError):
-        data = pd.read_csv(single_path, header=None)
-        data.columns = [SMILES_COLUMN] + [
-            f"col_{i}" for i in range(1, len(data.columns))
-        ]
+    data = _read_csv_with_fallback(single_path)
+    data = _normalize_columns(data, single_path)
+    data = _remove_duplicates(data, logger)
 
-    data = _normalize_smiles_column(data)
-    data = _normalize_model_name_column(data, single_path)
-
-    if MODEL_NAME_COLUMN in data.columns:
-        initial_count = len(data)
-        data = data.drop_duplicates(
-            subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]
-        ).reset_index(drop=True)
-        duplicates_removed = initial_count - len(data)
-        if duplicates_removed > 0:
-            logger.info(
-                "Removed %s duplicate molecules within models",
-                duplicates_removed,
-            )
-    else:
-        initial_count = len(data)
-        data = data.drop_duplicates(subset=SMILES_COLUMN).reset_index(
-            drop=True
-        )
-        duplicates_removed = initial_count - len(data)
-        if duplicates_removed > 0:
-            logger.info(
-                "Removed %s duplicate molecules", duplicates_removed
-            )
-
-    data, warning_info = _apply_sampling(data, sample_size, logger)
+    data, warning_info = _apply_sampling(data, sample_size)
     if warning_info:
-        logger.warning(
-            "Sample size %s exceeds data size %s",
-            warning_info['requested'],
-            warning_info['available']
-        )
+        _log_sampling_warnings([warning_info], logger)
+
     return data
 
 
 def _load_multi_file_with_model_column(
     single_path: str, sample_size: int | None, logger: logging.Logger
 ) -> pd.DataFrame:
-    """
-    Load a single file containing multiple models.
-
-    The file must have a model_name column.
-    """
+    """Load a single file containing multiple models (must have model_name column)."""
     df = pd.read_csv(single_path)
     df = _normalize_smiles_column(df)
 
-    lower_cols = {c.lower(): c for c in df.columns}
-    if (
-        MODEL_NAME_COLUMN.lower() not in lower_cols
-        and NAME_COLUMN.lower() not in lower_cols
+    if not (
+        _find_column_case_insensitive(df, MODEL_NAME_COLUMN)
+        or _find_column_case_insensitive(df, NAME_COLUMN)
     ):
         msg = (
             f"Expected a '{MODEL_NAME_COLUMN}' or '{NAME_COLUMN}' "
@@ -249,41 +256,27 @@ def _load_multi_file_with_model_column(
         raise ValueError(msg)
 
     df = _normalize_model_name_column(df, single_path)
+
     cols_to_keep = [SMILES_COLUMN, MODEL_NAME_COLUMN]
     if MOL_IDX_COLUMN in df.columns:
         cols_to_keep.append(MOL_IDX_COLUMN)
 
     df = df[cols_to_keep].dropna(subset=[SMILES_COLUMN])
-    initial_count = len(df)
-    df = df.drop_duplicates(
-        subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]
-    ).reset_index(drop=True)
-    duplicates_removed = initial_count - len(df)
-    if duplicates_removed > 0:
-        logger.info(
-            "Removed %s duplicate molecules within models",
-            duplicates_removed,
-        )
+    df = _remove_duplicates(df, logger)
 
-    if sample_size is not None:
-        sampled = []
-        sampling_warnings = []
-        for model, grp in df.groupby(MODEL_NAME_COLUMN):
-            sampled_grp, warning_info = _apply_sampling(grp, sample_size, logger, model)
-            sampled.append(sampled_grp)
-            if warning_info:
-                sampling_warnings.append(warning_info)
-        df = pd.concat(sampled, axis=0, ignore_index=True)
+    if sample_size is None:
+        return df
 
-        # Output all sampling warnings together in a nice format
-        if sampling_warnings:
-            logger.warning("")
-            logger.warning("[yellow]Sample size exceeded for %d model(s):[/yellow]", len(sampling_warnings))
-            for warn in sampling_warnings:
-                logger.warning("  [dim]•[/dim] [bold]%s[/bold]: %d requested, %d available",
-                              warn['model_name'], warn['requested'], warn['available'])
+    sampled = []
+    sampling_warnings = []
+    for model, grp in df.groupby(MODEL_NAME_COLUMN):
+        sampled_grp, warning_info = _apply_sampling(grp, sample_size, model)
+        sampled.append(sampled_grp)
+        if warning_info:
+            sampling_warnings.append(warning_info)
 
-    return df
+    _log_sampling_warnings(sampling_warnings, logger)
+    return pd.concat(sampled, axis=0, ignore_index=True)
 
 
 def _save_run_model_mapping(
