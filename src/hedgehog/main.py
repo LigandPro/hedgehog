@@ -507,3 +507,76 @@ def version() -> None:
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def tui() -> None:
+    """
+    Launch the interactive TUI (Text User Interface).
+
+    Requires Node.js to be installed. The TUI provides a visual interface
+    for configuring and running the pipeline.
+
+    Examples
+    --------
+    \b
+    uv run hedgehog tui
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    # Find the TUI directory
+    tui_dir = Path(__file__).parent.parent.parent.parent / "tui"
+
+    if not tui_dir.exists():
+        console.print(
+            "[red]Error:[/red] TUI directory not found. "
+            "Please ensure the TUI is installed."
+        )
+        raise typer.Exit(code=1)
+
+    # Check for Node.js
+    node_path = shutil.which("node")
+    if not node_path:
+        console.print(
+            "[red]Error:[/red] Node.js not found. "
+            "Please install Node.js to use the TUI."
+        )
+        raise typer.Exit(code=1)
+
+    # Check if TUI is built
+    dist_dir = tui_dir / "dist"
+    if not dist_dir.exists():
+        console.print(
+            "[yellow]TUI not built. Building...[/yellow]"
+        )
+        try:
+            subprocess.run(
+                ["npm", "install"],
+                cwd=tui_dir,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["npm", "run", "build"],
+                cwd=tui_dir,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]Error building TUI:[/red] {e}")
+            raise typer.Exit(code=1)
+
+    # Launch the TUI
+    try:
+        subprocess.run(
+            ["node", str(dist_dir / "index.js")],
+            cwd=tui_dir,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]TUI exited with error:[/red] {e.returncode}")
+        raise typer.Exit(code=e.returncode)
+    except KeyboardInterrupt:
+        pass
