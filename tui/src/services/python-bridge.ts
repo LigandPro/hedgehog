@@ -1,6 +1,16 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { RpcClient, type NotificationHandler } from './rpc-client.js';
 import { logger } from '../utils/logger.js';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+// Find project root (where pyproject.toml is)
+function findProjectRoot(): string {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  // From tui/dist/services/ go up to project root
+  return resolve(__dirname, '..', '..', '..');
+}
 
 export class PythonBridge {
   private process: ChildProcess | null = null;
@@ -9,21 +19,27 @@ export class PythonBridge {
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
 
-  constructor(private pythonPath: string = 'python') {}
+  constructor(
+    private command: string = 'uv',
+    private args: string[] = ['run', 'python', '-m', 'hedgehog.tui_backend'],
+    private cwd: string = findProjectRoot()
+  ) {}
 
   async start(): Promise<void> {
     if (this.process) {
       return;
     }
 
-    logger.info('Starting Python backend...');
+    logger.info(`Starting Python backend in ${this.cwd}...`);
+    logger.info(`Command: ${this.command} ${this.args.join(' ')}`);
 
     this.readyPromise = new Promise((resolve) => {
       this.readyResolve = resolve;
     });
 
-    this.process = spawn(this.pythonPath, ['-m', 'hedgehog.tui_backend'], {
+    this.process = spawn(this.command, this.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: this.cwd,
       env: {
         ...process.env,
         PYTHONUNBUFFERED: '1',
@@ -140,10 +156,12 @@ let bridgeInstance: PythonBridge | null = null;
 
 export function getBridge(): PythonBridge {
   if (!bridgeInstance) {
-    // Use uv run python by default
-    const pythonPath = process.env.HEDGEHOG_PYTHON || 'uv';
-    const args = pythonPath === 'uv' ? ['run', 'python'] : [];
-    bridgeInstance = new PythonBridge(pythonPath);
+    const useUv = process.env.HEDGEHOG_PYTHON !== 'python';
+    if (useUv) {
+      bridgeInstance = new PythonBridge('uv', ['run', 'python', '-m', 'hedgehog.tui_backend']);
+    } else {
+      bridgeInstance = new PythonBridge('python', ['-m', 'hedgehog.tui_backend']);
+    }
   }
   return bridgeInstance;
 }
