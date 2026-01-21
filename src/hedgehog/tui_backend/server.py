@@ -8,6 +8,7 @@ from typing import Any
 from .handlers.config import ConfigHandler
 from .handlers.files import FilesHandler
 from .handlers.pipeline import PipelineHandler
+from .handlers.validation import ValidationHandler
 
 
 class JsonRpcServer:
@@ -18,12 +19,13 @@ class JsonRpcServer:
         self.request_id = 0
         self._running = False
         self._lock = threading.Lock()
-        
+
         # Register handlers
         self.config_handler = ConfigHandler(self)
         self.files_handler = FilesHandler(self)
         self.pipeline_handler = PipelineHandler(self)
-        
+        self.validation_handler = ValidationHandler(self)
+
         self._register_methods()
 
     def _register_methods(self):
@@ -32,15 +34,21 @@ class JsonRpcServer:
         self.handlers['load_config'] = self.config_handler.load_config
         self.handlers['save_config'] = self.config_handler.save_config
         self.handlers['validate_config'] = self.config_handler.validate_config
-        
+
         # File methods
         self.handlers['list_files'] = self.files_handler.list_files
         self.handlers['list_directory'] = self.files_handler.list_directory
-        
+
         # Pipeline methods
         self.handlers['start_pipeline'] = self.pipeline_handler.start_pipeline
         self.handlers['get_progress'] = self.pipeline_handler.get_progress
         self.handlers['cancel_pipeline'] = self.pipeline_handler.cancel_pipeline
+
+        # Validation methods
+        self.handlers['validate_input_file'] = self.validation_handler.validate_input_file
+        self.handlers['validate_receptor_pdb'] = self.validation_handler.validate_receptor_pdb
+        self.handlers['validate_output_directory'] = self.validation_handler.validate_output_directory
+        self.handlers['validate_config_data'] = self.validation_handler.validate_config
 
     def send_response(self, request_id: int, result: Any = None, error: dict | None = None):
         """Send JSON-RPC response."""
@@ -52,7 +60,7 @@ class JsonRpcServer:
             response['error'] = error
         else:
             response['result'] = result
-        
+
         self._send_message(response)
 
     def send_notification(self, method: str, params: dict):
@@ -67,7 +75,8 @@ class JsonRpcServer:
     def _send_message(self, message: dict):
         """Send a message to stdout."""
         with self._lock:
-            line = json.dumps(message) + '\n'
+            line = json.dumps(message) + '
+'
             sys.stdout.write(line)
             sys.stdout.flush()
 
@@ -97,15 +106,16 @@ class JsonRpcServer:
     def run(self):
         """Run the server, reading from stdin."""
         self._running = True
-        
+
         # Signal ready
-        sys.stderr.write('HEDGEHOG_TUI_READY\n')
+        sys.stderr.write('HEDGEHOG_TUI_READY
+')
         sys.stderr.flush()
 
         for line in sys.stdin:
             if not self._running:
                 break
-                
+
             line = line.strip()
             if not line:
                 continue
@@ -139,7 +149,8 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     except Exception as e:
-        sys.stderr.write(f'Server error: {e}\n')
+        sys.stderr.write(f'Server error: {e}
+')
         return 1
 
 

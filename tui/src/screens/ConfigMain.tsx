@@ -4,6 +4,7 @@ import TextInput from 'ink-text-input';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
 import { Spinner } from '../components/Spinner.js';
+import { FileBrowser } from '../components/FileBrowser.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import type { MainConfig } from '../types/index.js';
@@ -37,6 +38,7 @@ export function ConfigMain(): React.ReactElement {
   const [values, setValues] = useState<Partial<MainConfig>>(config || {});
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [browsingField, setBrowsingField] = useState<keyof MainConfig | null>(null);
 
   useEffect(() => {
     if (!config && isBackendReady) {
@@ -73,7 +75,7 @@ export function ConfigMain(): React.ReactElement {
   };
 
   useInput((input, key) => {
-    if (loading) return;
+    if (loading || browsingField) return;
     
     if (editMode) {
       if (key.escape) {
@@ -100,9 +102,16 @@ export function ConfigMain(): React.ReactElement {
       const field = fields[selectedIndex];
       if (field.type === 'boolean') {
         setValues({ ...values, [field.key]: !values[field.key] });
+      } else if (field.type === 'path') {
+        setBrowsingField(field.key);
       } else {
         setEditValue(String(values[field.key] || ''));
         setEditMode(true);
+      }
+    } else if (input === 'b') {
+      const field = fields[selectedIndex];
+      if (field.type === 'path') {
+        setBrowsingField(field.key);
       }
     } else if (input === 's') {
       saveConfig();
@@ -110,6 +119,17 @@ export function ConfigMain(): React.ReactElement {
       setScreen('welcome');
     }
   });
+
+  const handlePathSelect = (path: string) => {
+    if (browsingField) {
+      setValues({ ...values, [browsingField]: path });
+    }
+    setBrowsingField(null);
+  };
+
+  const handleBrowseCancel = () => {
+    setBrowsingField(null);
+  };
 
   const shortcuts = [
     { key: '↑↓', label: 'Navigate' },
@@ -123,6 +143,20 @@ export function ConfigMain(): React.ReactElement {
       <Box flexDirection="column" padding={1}>
         <Header title="Main Config" />
         <Spinner label="Loading configuration..." />
+      </Box>
+    );
+  }
+
+  if (browsingField) {
+    const currentValue = String(values[browsingField] || process.cwd());
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Header title="Select Path" subtitle={browsingField} />
+        <FileBrowser
+          initialPath={currentValue}
+          onSelect={handlePathSelect}
+          onCancel={handleBrowseCancel}
+        />
       </Box>
     );
   }
@@ -164,7 +198,7 @@ export function ConfigMain(): React.ReactElement {
                   />
                 </Box>
               ) : (
-                <Text color={field.type === 'boolean' ? (value ? 'green' : 'red') : 'yellow'}>
+                <Text color={field.type === 'boolean' ? (value ? 'green' : 'red') : field.type === 'path' ? 'blue' : 'yellow'}>
                   {field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value || '')}
                 </Text>
               )}

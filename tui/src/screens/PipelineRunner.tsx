@@ -94,7 +94,7 @@ export function PipelineRunner(): React.ReactElement {
       addLog({
         timestamp: new Date(),
         level: 'info',
-        message: \,
+        message: 'Pipeline started',
       });
     } catch (err) {
       setError(String(err));

@@ -4,6 +4,7 @@ import TextInput from 'ink-text-input';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
 import { Spinner } from '../components/Spinner.js';
+import { FileBrowser } from '../components/FileBrowser.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import type { DockingConfig } from '../types/index.js';
@@ -11,7 +12,8 @@ import type { DockingConfig } from '../types/index.js';
 interface FormField {
   key: string;
   label: string;
-  type: 'text' | 'number' | 'boolean' | 'select';
+  type: 'text' | 'number' | 'boolean' | 'select' | 'path';
+  extensions?: string[];
   options?: string[];
   path?: string[];  // nested path in config
 }
@@ -19,7 +21,7 @@ interface FormField {
 const fields: FormField[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean' },
   { key: 'tools', label: 'Tools', type: 'select', options: ['both', 'smina', 'gnina'] },
-  { key: 'receptor_pdb', label: 'Receptor PDB', type: 'text' },
+  { key: 'receptor_pdb', label: 'Receptor PDB', type: 'path', extensions: ['.pdb'] },
   { key: 'auto_run', label: 'Auto Run', type: 'boolean' },
   { key: 'run_in_background', label: 'Run in Background', type: 'boolean' },
   { key: 'smina_autobox_ligand', label: 'Smina Autobox Ligand', type: 'text', path: ['smina_config', 'autobox_ligand'] },
@@ -44,6 +46,7 @@ export function ConfigDocking(): React.ReactElement {
   const [values, setValues] = useState<Record<string, any>>({});
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [browsingField, setBrowsingField] = useState<FormField | null>(null);
 
   const getValue = (field: FormField): any => {
     if (field.path) {
@@ -107,7 +110,7 @@ export function ConfigDocking(): React.ReactElement {
   };
 
   useInput((input, key) => {
-    if (loading) return;
+    if (loading || browsingField) return;
     
     if (editMode) {
       if (key.escape) {
@@ -151,6 +154,17 @@ export function ConfigDocking(): React.ReactElement {
     }
   });
 
+  const handlePathSelect = (path: string) => {
+    if (browsingField) {
+      setValue(browsingField, path);
+    }
+    setBrowsingField(null);
+  };
+
+  const handleBrowseCancel = () => {
+    setBrowsingField(null);
+  };
+
   const shortcuts = [
     { key: '↑↓', label: 'Navigate' },
     { key: 'e/Enter', label: 'Edit' },
@@ -163,6 +177,21 @@ export function ConfigDocking(): React.ReactElement {
       <Box flexDirection="column" padding={1}>
         <Header title="Docking Config" />
         <Spinner label="Loading configuration..." />
+      </Box>
+    );
+  }
+
+  if (browsingField) {
+    const currentValue = String(getValue(browsingField) || process.cwd());
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Header title="Select File" subtitle={browsingField.label} />
+        <FileBrowser
+          initialPath={currentValue}
+          extensions={browsingField.extensions}
+          onSelect={handlePathSelect}
+          onCancel={handleBrowseCancel}
+        />
       </Box>
     );
   }

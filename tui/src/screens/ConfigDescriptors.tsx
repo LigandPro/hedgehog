@@ -8,6 +8,33 @@ import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import type { DescriptorsConfig } from '../types/index.js';
 
+
+// Descriptor presets
+const PRESETS: Record<string, Record<string, [number, number]>> = {
+  'Drug-like': {
+    molWt: [200, 500],
+    logP: [-0.4, 5.6],
+    hbd: [0, 5],
+    hba: [0, 10],
+    tpsa: [0, 140],
+    n_rot_bonds: [0, 10],
+  },
+  'Lead-like': {
+    molWt: [200, 350],
+    logP: [-1, 3],
+    hbd: [0, 3],
+    hba: [0, 6],
+    n_rot_bonds: [0, 7],
+  },
+  'Fragment-like': {
+    molWt: [0, 300],
+    logP: [-3, 3],
+    hbd: [0, 3],
+    hba: [0, 3],
+    n_heavy_atoms: [0, 17],
+  },
+};
+
 // List of descriptors with display names
 const DESCRIPTOR_NAMES: Record<string, string> = {
   'n_atoms': 'Number of Atoms',
@@ -43,6 +70,7 @@ export function ConfigDescriptors(): React.ReactElement {
   const [rawConfig, setRawConfig] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [presetApplied, setPresetApplied] = useState<string | null>(null);
 
   useEffect(() => {
     if (!config && isBackendReady) {
@@ -87,6 +115,23 @@ export function ConfigDescriptors(): React.ReactElement {
     }
   };
 
+  const applyPreset = (presetName: string) => {
+    const preset = PRESETS[presetName];
+    if (!preset) return;
+
+    const newDescriptors = descriptors.map(desc => {
+      const presetValues = preset[desc.name];
+      if (presetValues) {
+        return { ...desc, min: presetValues[0], max: presetValues[1] };
+      }
+      return desc;
+    });
+
+    setDescriptors(newDescriptors);
+    setPresetApplied(presetName);
+    setTimeout(() => setPresetApplied(null), 2000);
+  };
+
   const saveConfig = async () => {
     if (!rawConfig) return;
     
@@ -121,12 +166,19 @@ export function ConfigDescriptors(): React.ReactElement {
   useInput((input) => {
     if (input === 's') {
       saveConfig();
+    } else if (input === '1') {
+      applyPreset('Drug-like');
+    } else if (input === '2') {
+      applyPreset('Lead-like');
+    } else if (input === '3') {
+      applyPreset('Fragment-like');
     }
   });
 
   const shortcuts = [
     { key: '↑↓', label: 'Navigate' },
     { key: 'm/x', label: 'Edit min/max' },
+    { key: '1/2/3', label: 'Presets' },
     { key: 's', label: 'Save' },
     { key: 'Esc', label: 'Back' },
   ];
