@@ -746,7 +746,9 @@ def _get_receptor_and_prep_cmd(cfg, ligands_dir, protein_preparation_tool, tool_
     )
     if prepared_receptor != receptor:
         cfg["receptor_pdb"] = prepared_receptor
-        logger.info("%s: Using prepared protein: %s", tool_name.upper(), prepared_receptor)
+        logger.info(
+            "%s: Using prepared protein: %s", tool_name.upper(), prepared_receptor
+        )
     return prepared_receptor, protein_prep_cmd
 
 
