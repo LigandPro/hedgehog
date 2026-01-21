@@ -24,7 +24,7 @@ build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
 lint = ["ruff", "mypy", "pyright"]
-test = ["pytest"]
+test = ["pytest", "pytest-cov"]
 
 [project.scripts]
 hedgehog = "hedgehog.main:app"
@@ -59,7 +59,9 @@ lint.ignore = [
     "PT001",
     "PT023",
     "PLR0913", # allow >5 params
-    "E501", # allow line too long
+    "E501",    # allow line too long
+    "B008",    # typer.Option in defaults - standard pattern
+    "B905",    # zip() without strict= - ok for compatibility
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -67,12 +69,41 @@ lint.ignore = [
     "F401",
     "F403",
 ]
+"**/stages/structFilters/main.py" = ["F403", "F405"]
+"**/stages/structFilters/utils.py" = ["E402"]
+"**/stages/synthesis/main.py" = ["F403", "F405"]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+python_classes = ["Test*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::FutureWarning",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["src/hedgehog"]
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
 
 [tool.uv.sources]
 syba = { path = "modules/syba", editable = true }

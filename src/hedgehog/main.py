@@ -222,12 +222,7 @@ def _display_banner() -> None:
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]\n"
         "[dim italic]Developed by Ligand Pro[/dim italic]"
     )
-    banner = Panel(
-        banner_content,
-        border_style="#B29EEE",
-        padding=(0, 1),
-        expand=False
-    )
+    banner = Panel(banner_content, border_style="#B29EEE", padding=(0, 1), expand=False)
     console.print("")
     console.print(banner)
     console.print("")
@@ -289,8 +284,7 @@ def _resolve_output_folder(
     # Auto-mode: reuse for stage reruns, create new otherwise
     if stage and not generated_mols_path:
         logger.info(
-            "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' "
-            "for stage execution",
+            "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' for stage execution",
             original_folder,
         )
         return original_folder
@@ -501,22 +495,18 @@ def info() -> None:
         table.add_row(stage.value, stage.description)
 
     console.print(table)
-    console.print(
-        "\n[dim]Example (1): uv run hedgehog run --stage descriptors[/dim]"
-    )
+    console.print("\n[dim]Example (1): uv run hedgehog run --stage descriptors[/dim]")
     console.print("[dim]Example (2): uv run hedge run --help [/dim]")
 
 
 @app.command()
 def version() -> None:
     """Display version information."""
+    console.print("[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE] version [bold]1.0.0[/bold]")
     console.print(
-        "[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE] version [bold]1.0.0[/bold]"
+        "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )
-    console.print("[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]")
-    console.print(
-        "[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]"
-    )
+    console.print("[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]")
 
 
 if __name__ == "__main__":

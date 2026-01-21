@@ -1,30 +1,30 @@
+import shutil
 from datetime import datetime
 from pathlib import Path
-import shutil
 
 import pandas as pd
 import yaml
 
-from hedgehog.configs.logger import logger, load_config
+from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.descriptors.main import main as descriptors_main
 from hedgehog.stages.docking.utils import run_docking as docking_main
 from hedgehog.stages.structFilters.main import main as structural_filters_main
 from hedgehog.stages.synthesis.main import main as synthesis_main
 
 # Directory names
-DIR_INPUT = 'input'
-DIR_STAGES = 'stages'
-DIR_OUTPUT = 'output'
-DIR_CONFIGS = 'configs'
-DIR_LOGS = 'logs'
+DIR_INPUT = "input"
+DIR_STAGES = "stages"
+DIR_OUTPUT = "output"
+DIR_CONFIGS = "configs"
+DIR_LOGS = "logs"
 
 # Stage subdirectories
-DIR_DESCRIPTORS_INITIAL = 'stages/01_descriptors_initial'
-DIR_STRUCT_FILTERS_PRE = 'stages/02_structural_filters_pre'
-DIR_STRUCT_FILTERS_POST = 'stages/03_structural_filters_post'
-DIR_SYNTHESIS = 'stages/04_synthesis'
-DIR_DOCKING = 'stages/05_docking'
-DIR_DESCRIPTORS_FINAL = 'stages/06_descriptors_final'
+DIR_DESCRIPTORS_INITIAL = "stages/01_descriptors_initial"
+DIR_STRUCT_FILTERS_PRE = "stages/02_structural_filters_pre"
+DIR_STRUCT_FILTERS_POST = "stages/03_structural_filters_post"
+DIR_SYNTHESIS = "stages/04_synthesis"
+DIR_DOCKING = "stages/05_docking"
+DIR_DESCRIPTORS_FINAL = "stages/06_descriptors_final"
 
 # Legacy names for backwards compatibility
 DIR_DESCRIPTORS = DIR_DESCRIPTORS_INITIAL
@@ -34,42 +34,42 @@ DIR_FINAL_DESCRIPTORS = DIR_DESCRIPTORS_FINAL
 DIR_RUN_CONFIGS = DIR_CONFIGS
 
 # File names
-FILE_SAMPLED_MOLECULES = 'sampled_molecules.csv'
-FILE_FINAL_MOLECULES = 'final_molecules.csv'
-FILE_FILTERED_MOLECULES = 'filtered_molecules.csv'
-FILE_PASS_SMILES_TEMPLATE = 'filtered_molecules.csv'
-FILE_MASTER_CONFIG = 'master_config_resolved.yml'
-FILE_GNINA_OUTPUT = 'gnina_out.sdf'
+FILE_SAMPLED_MOLECULES = "sampled_molecules.csv"
+FILE_FINAL_MOLECULES = "final_molecules.csv"
+FILE_FILTERED_MOLECULES = "filtered_molecules.csv"
+FILE_PASS_SMILES_TEMPLATE = "filtered_molecules.csv"
+FILE_MASTER_CONFIG = "master_config_resolved.yml"
+FILE_GNINA_OUTPUT = "gnina_out.sdf"
 
 # Stage names
-STAGE_STRUCT_INI_FILTERS = 'struct_ini_filters'
-STAGE_DESCRIPTORS = 'descriptors'
-STAGE_STRUCT_FILTERS = 'struct_filters'
-STAGE_SYNTHESIS = 'synthesis'
-STAGE_DOCKING = 'docking'
-STAGE_FINAL_DESCRIPTORS = 'final_descriptors'
+STAGE_STRUCT_INI_FILTERS = "struct_ini_filters"
+STAGE_DESCRIPTORS = "descriptors"
+STAGE_STRUCT_FILTERS = "struct_filters"
+STAGE_SYNTHESIS = "synthesis"
+STAGE_DOCKING = "docking"
+STAGE_FINAL_DESCRIPTORS = "final_descriptors"
 
 # Config keys
-CONFIG_DESCRIPTORS = 'config_descriptors'
-CONFIG_STRUCT_FILTERS = 'config_structFilters'
-CONFIG_SYNTHESIS = 'config_synthesis'
-CONFIG_DOCKING = 'config_docking'
-CONFIG_RUN_KEY = 'run'
-CONFIG_RUN_BEFORE_DESCRIPTORS = 'run_before_descriptors'
-CONFIG_TOOLS = 'tools'
-CONFIG_FOLDER_TO_SAVE = 'folder_to_save'
+CONFIG_DESCRIPTORS = "config_descriptors"
+CONFIG_STRUCT_FILTERS = "config_structFilters"
+CONFIG_SYNTHESIS = "config_synthesis"
+CONFIG_DOCKING = "config_docking"
+CONFIG_RUN_KEY = "run"
+CONFIG_RUN_BEFORE_DESCRIPTORS = "run_before_descriptors"
+CONFIG_TOOLS = "tools"
+CONFIG_FOLDER_TO_SAVE = "folder_to_save"
 
 # Command-line override keys
-OVERRIDE_STRUCT_FILTERS_BEFORE = '_run_struct_filters_before_descriptors_override'
-OVERRIDE_SINGLE_STAGE = '_run_single_stage_override'
+OVERRIDE_STRUCT_FILTERS_BEFORE = "_run_struct_filters_before_descriptors_override"
+OVERRIDE_SINGLE_STAGE = "_run_single_stage_override"
 
 # Docking tools
-DOCKING_TOOL_SMINA = 'smina'
-DOCKING_TOOL_GNINA = 'gnina'
-DOCKING_TOOL_BOTH = 'both'
+DOCKING_TOOL_SMINA = "smina"
+DOCKING_TOOL_GNINA = "gnina"
+DOCKING_TOOL_BOTH = "both"
 DOCKING_RESULTS_DIR_TEMPLATE = {
-    DOCKING_TOOL_SMINA: f'{DIR_DOCKING}/smina',
-    DOCKING_TOOL_GNINA: f'{DIR_DOCKING}/gnina'
+    DOCKING_TOOL_SMINA: f"{DIR_DOCKING}/smina",
+    DOCKING_TOOL_GNINA: f"{DIR_DOCKING}/gnina",
 }
 
 
@@ -114,15 +114,19 @@ class DataChecker:
 
     # Mapping of stage names to their output file paths (relative to base_path)
     _STAGE_OUTPUT_PATHS = {
-        DIR_DESCRIPTORS_INITIAL: Path(DIR_DESCRIPTORS_INITIAL) / 'filtered' / FILE_FILTERED_MOLECULES,
-        DIR_STRUCT_FILTERS_POST: Path(DIR_STRUCT_FILTERS_POST) / FILE_FILTERED_MOLECULES,
+        DIR_DESCRIPTORS_INITIAL: Path(DIR_DESCRIPTORS_INITIAL)
+        / "filtered"
+        / FILE_FILTERED_MOLECULES,
+        DIR_STRUCT_FILTERS_POST: Path(DIR_STRUCT_FILTERS_POST)
+        / FILE_FILTERED_MOLECULES,
         DIR_STRUCT_FILTERS_PRE: Path(DIR_STRUCT_FILTERS_PRE) / FILE_FILTERED_MOLECULES,
         DIR_SYNTHESIS: Path(DIR_SYNTHESIS) / FILE_FILTERED_MOLECULES,
         # Legacy paths
-        'Descriptors': Path('Descriptors') / 'passDescriptorsSMILES.csv',
-        'StructFilters': Path('StructFilters') / 'passStructFiltersSMILES.csv',
-        'beforeDescriptors': Path('beforeDescriptors_StructFilters') / 'passStructFiltersSMILES.csv',
-        'Synthesis': Path('Synthesis') / 'passSynthesisSMILES.csv',
+        "Descriptors": Path("Descriptors") / "passDescriptorsSMILES.csv",
+        "StructFilters": Path("StructFilters") / "passStructFiltersSMILES.csv",
+        "beforeDescriptors": Path("beforeDescriptors_StructFilters")
+        / "passStructFiltersSMILES.csv",
+        "Synthesis": Path("Synthesis") / "passSynthesisSMILES.csv",
     }
 
     def __init__(self, config: dict):
@@ -147,7 +151,7 @@ class PipelineStageRunner:
         DIR_SYNTHESIS,
         DIR_STRUCT_FILTERS_POST,
         DIR_DESCRIPTORS_INITIAL,
-        DIR_STRUCT_FILTERS_PRE
+        DIR_STRUCT_FILTERS_PRE,
     ]
 
     def __init__(self, config: dict, data_checker: DataChecker):
@@ -168,36 +172,42 @@ class PipelineStageRunner:
         try:
             config_descriptors = load_config(self.config[CONFIG_DESCRIPTORS])
             if not config_descriptors.get(CONFIG_RUN_KEY, False):
-                logger.info('Descriptors calculation disabled in config')
+                logger.info("Descriptors calculation disabled in config")
                 return False
             descriptors_main(data, self.config, subfolder=subfolder)
             return True
         except Exception as e:
-            logger.error(f'Error running descriptors: {e}')
+            logger.error(f"Error running descriptors: {e}")
             return False
 
     def run_structural_filters(self, stage_dir: str) -> bool:
         """Run structural filters on molecules."""
         try:
             is_post_descriptors = stage_dir != DIR_STRUCT_FILTERS_PRE
-            has_descriptor_data = self.data_checker.check_stage_data(DIR_DESCRIPTORS_INITIAL)
+            has_descriptor_data = self.data_checker.check_stage_data(
+                DIR_DESCRIPTORS_INITIAL
+            )
 
             if is_post_descriptors and not has_descriptor_data:
                 if self.config.get(OVERRIDE_SINGLE_STAGE) == STAGE_STRUCT_FILTERS:
-                    logger.info('No previous stage data found, will use molecules from config')
+                    logger.info(
+                        "No previous stage data found, will use molecules from config"
+                    )
                 else:
-                    logger.warning(f'No data available for structural filters in {stage_dir}')
+                    logger.warning(
+                        f"No data available for structural filters in {stage_dir}"
+                    )
                     return False
 
             config_struct_filters = load_config(self.config[CONFIG_STRUCT_FILTERS])
             if not config_struct_filters.get(CONFIG_RUN_KEY, False):
-                logger.info('Structural filters disabled in config')
+                logger.info("Structural filters disabled in config")
                 return False
 
             structural_filters_main(self.config, stage_dir)
             return True
         except Exception as e:
-            logger.error(f'Error running structural filters: {e}')
+            logger.error(f"Error running structural filters: {e}")
             return False
 
     def run_synthesis(self) -> bool:
@@ -208,18 +218,20 @@ class PipelineStageRunner:
 
             config_synthesis = load_config(self.config[CONFIG_SYNTHESIS])
             if not config_synthesis.get(CONFIG_RUN_KEY, False):
-                logger.info('Synthesis disabled in config')
+                logger.info("Synthesis disabled in config")
                 return False
 
             synthesis_main(self.config)
 
-            output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
+            output_path = (
+                self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
+            )
             if not output_path.exists():
-                logger.error('Synthesis finished but no output file detected')
+                logger.error("Synthesis finished but no output file detected")
                 return False
             return True
         except Exception as e:
-            logger.error(f'Error running synthesis: {e}')
+            logger.error(f"Error running synthesis: {e}")
             return False
 
     def _validate_synthesis_input(self) -> bool:
@@ -228,25 +240,25 @@ class PipelineStageRunner:
             return True
 
         if self.config.get(OVERRIDE_SINGLE_STAGE) != STAGE_SYNTHESIS:
-            logger.warning('No data available for synthesis, check provided path')
+            logger.warning("No data available for synthesis, check provided path")
             return False
 
         base = self.data_checker.base_path
-        sampled_path = base / 'input' / FILE_SAMPLED_MOLECULES
+        sampled_path = base / "input" / FILE_SAMPLED_MOLECULES
         if not sampled_path.exists():
             sampled_path = base / FILE_SAMPLED_MOLECULES
 
         if sampled_path.exists():
-            logger.info(f'Using {FILE_SAMPLED_MOLECULES}')
+            logger.info(f"Using {FILE_SAMPLED_MOLECULES}")
             return True
 
-        logger.warning('No data available for synthesis, check `config.yml` file')
+        logger.warning("No data available for synthesis, check `config.yml` file")
         return False
 
     def _parse_docking_tools(self, tools_cfg) -> list[str]:
         """Parse the tools configuration to get a list of docking tools."""
         if isinstance(tools_cfg, str):
-            tools_list = [t.strip().lower() for t in tools_cfg.split(',')]
+            tools_list = [t.strip().lower() for t in tools_cfg.split(",")]
         elif isinstance(tools_cfg, (list, tuple)):
             tools_list = [str(t).strip().lower() for t in tools_cfg]
         else:
@@ -268,21 +280,25 @@ class PipelineStageRunner:
 
         for tool in tools_list:
             if tool == DOCKING_TOOL_GNINA:
-                gnina_sdf = self._get_gnina_output_dir(cfg, base_folder) / FILE_GNINA_OUTPUT
+                gnina_sdf = (
+                    self._get_gnina_output_dir(cfg, base_folder) / FILE_GNINA_OUTPUT
+                )
                 if _file_exists_and_not_empty(gnina_sdf):
                     return True
-                logger.debug(f'GNINA results not found at {gnina_sdf}')
+                logger.debug(f"GNINA results not found at {gnina_sdf}")
             elif tool == DOCKING_TOOL_SMINA:
-                smina_dir = base_folder / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_SMINA]
+                smina_dir = (
+                    base_folder / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_SMINA]
+                )
                 if _directory_has_files(smina_dir):
                     return True
-                logger.debug(f'SMINA results not found in {smina_dir}')
+                logger.debug(f"SMINA results not found in {smina_dir}")
         return False
 
     def _get_gnina_output_dir(self, cfg: dict, base_folder: Path) -> Path:
         """Get the GNINA output directory from config."""
-        gnina_config = cfg.get('gnina_config', {})
-        cfg_out_dir = gnina_config.get('output_dir') or cfg.get('gnina_output_dir')
+        gnina_config = cfg.get("gnina_config", {})
+        cfg_out_dir = gnina_config.get("output_dir") or cfg.get("gnina_output_dir")
         if cfg_out_dir:
             out_dir = Path(cfg_out_dir)
             return out_dir if out_dir.is_absolute() else base_folder / out_dir
@@ -293,18 +309,20 @@ class PipelineStageRunner:
         try:
             config_docking = load_config(self.config[CONFIG_DOCKING])
             if not config_docking.get(CONFIG_RUN_KEY, False):
-                logger.info('Docking disabled in config')
+                logger.info("Docking disabled in config")
                 return False
 
             if not docking_main(self.config):
                 return False
 
             if not self.docking_results_present():
-                logger.error('Docking finished but no results detected in output directories')
+                logger.error(
+                    "Docking finished but no results detected in output directories"
+                )
                 return False
             return True
         except Exception as e:
-            logger.error(f'Error running docking: {e}')
+            logger.error(f"Error running docking: {e}")
             return False
 
 
@@ -351,18 +369,20 @@ class MolecularAnalysisPipeline:
                 if stage.name == STAGE_STRUCT_INI_FILTERS:
                     run_before = self.config.get(
                         OVERRIDE_STRUCT_FILTERS_BEFORE,
-                        stage_config.get(CONFIG_RUN_BEFORE_DESCRIPTORS, False)
+                        stage_config.get(CONFIG_RUN_BEFORE_DESCRIPTORS, False),
                     )
                     stage.enabled = stage.enabled and run_before
 
                 if single_stage_override:
                     stage.enabled = stage.name == single_stage_override
                     if stage.enabled:
-                        logger.info(f'Single stage mode: enabling only {stage.name}')
+                        logger.info(f"Single stage mode: enabling only {stage.name}")
 
-                logger.debug(f"Stage {stage.name}: {'Enabled' if stage.enabled else 'Disabled'}")
+                logger.debug(
+                    f"Stage {stage.name}: {'Enabled' if stage.enabled else 'Disabled'}"
+                )
             except Exception as e:
-                logger.warning(f'Could not load config for {stage.name}: {e}')
+                logger.warning(f"Could not load config for {stage.name}: {e}")
                 stage.enabled = False
 
     def get_latest_data(self, skip_descriptors: bool = False):
@@ -383,7 +403,7 @@ class MolecularAnalysisPipeline:
                 return self._try_fallback_sources(priority, latest_source, data)
             return data
         except Exception as e:
-            logger.warning(f'Could not load data from {latest_source}: {e}')
+            logger.warning(f"Could not load data from {latest_source}: {e}")
             return self.current_data
 
     def _find_data_source(self, priority: list[str]) -> str | None:
@@ -397,29 +417,33 @@ class MolecularAnalysisPipeline:
     def _build_data_path(self, source: str) -> Path:
         """Build the path to stage output data."""
         base = self.data_checker.base_path
-        if source.startswith('stages/'):
-            if 'descriptors' in source:
-                return base / source / 'filtered' / FILE_FILTERED_MOLECULES
+        if source.startswith("stages/"):
+            if "descriptors" in source:
+                return base / source / "filtered" / FILE_FILTERED_MOLECULES
             return base / source / FILE_FILTERED_MOLECULES
         return base / source / FILE_FILTERED_MOLECULES
 
-    def _try_fallback_sources(self, priority: list[str], current_source: str, empty_data):
+    def _try_fallback_sources(
+        self, priority: list[str], current_source: str, empty_data
+    ):
         """Try fallback sources when current source is empty."""
-        logger.warning(f'No molecules in {current_source}, trying previous step...')
+        logger.warning(f"No molecules in {current_source}, trying previous step...")
         current_idx = priority.index(current_source)
 
-        for next_source in priority[current_idx + 1:]:
+        for next_source in priority[current_idx + 1 :]:
             if self.data_checker.check_stage_data(next_source):
                 path = self._build_data_path(next_source)
                 try:
                     data = pd.read_csv(path)
                     if len(data) > 0:
-                        logger.info(f'Loaded data from {next_source}: {len(data)} molecules (previous step)')
+                        logger.info(
+                            f"Loaded data from {next_source}: {len(data)} molecules (previous step)"
+                        )
                         return data
                 except Exception:
                     continue
 
-        logger.warning('All checked data sources are empty')
+        logger.warning("All checked data sources are empty")
         return empty_data
 
     def run_pipeline(self, data) -> bool:
@@ -446,7 +470,9 @@ class MolecularAnalysisPipeline:
             if early_exit:
                 return self._finalize_pipeline(data, success_count, total_enabled)
 
-        logger.info(f'Pipeline completed: {success_count}/{total_enabled} stages successful')
+        logger.info(
+            f"Pipeline completed: {success_count}/{total_enabled} stages successful"
+        )
         return self._finalize_pipeline(data, success_count, total_enabled)
 
     def _run_stage(self, stage_idx: int, runner_func, *args) -> tuple[bool, bool]:
@@ -461,7 +487,9 @@ class MolecularAnalysisPipeline:
 
     def _run_pre_descriptors_filters(self) -> tuple[bool, bool]:
         """Run pre-descriptors structural filters stage."""
-        return self._run_stage(0, self.stage_runner.run_structural_filters, DIR_STRUCT_FILTERS_PRE)
+        return self._run_stage(
+            0, self.stage_runner.run_structural_filters, DIR_STRUCT_FILTERS_PRE
+        )
 
     def _run_descriptors(self, data) -> tuple[bool, bool]:
         """Run descriptors calculation stage."""
@@ -477,7 +505,7 @@ class MolecularAnalysisPipeline:
         if self.stage_runner.run_structural_filters(DIR_STRUCT_FILTERS_POST):
             return True, False
 
-        logger.info('No molecules left after descriptors; ending pipeline early.')
+        logger.info("No molecules left after descriptors; ending pipeline early.")
         return False, True
 
     def _run_synthesis(self) -> tuple[bool, bool]:
@@ -494,20 +522,26 @@ class MolecularAnalysisPipeline:
 
     def _handle_synthesis_failure(self) -> tuple[bool, bool]:
         """Handle synthesis stage failure. Returns (completed, early_exit)."""
-        output_path = self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
+        output_path = (
+            self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
+        )
         if not output_path.exists():
-            logger.error('Synthesis stage failed (no output file created). Check logs above for error details.')
-            logger.info('Continuing pipeline without synthesis results...')
+            logger.error(
+                "Synthesis stage failed (no output file created). Check logs above for error details."
+            )
+            logger.info("Continuing pipeline without synthesis results...")
             return False, False
 
         try:
             df_check = pd.read_csv(output_path)
             if len(df_check) == 0:
-                logger.info('No molecules left after synthesis; ending pipeline early.')
+                logger.info("No molecules left after synthesis; ending pipeline early.")
                 return False, True
-            logger.warning('Synthesis stage failed but output file exists. Continuing with available molecules.')
+            logger.warning(
+                "Synthesis stage failed but output file exists. Continuing with available molecules."
+            )
         except Exception:
-            logger.warning('Synthesis stage failed. Check logs for details.')
+            logger.warning("Synthesis stage failed. Check logs for details.")
 
         return False, False
 
@@ -525,12 +559,18 @@ class MolecularAnalysisPipeline:
         final_data = self.get_latest_data(skip_descriptors=True)
 
         if final_data is None or len(final_data) == 0:
-            logger.info('No molecules available for final descriptors calculation (skipping descriptors stage as source)')
+            logger.info(
+                "No molecules available for final descriptors calculation (skipping descriptors stage as source)"
+            )
             if final_data is not None and len(final_data) == 0:
-                logger.info('Ending pipeline: no molecules from previous steps (excluding descriptors)')
+                logger.info(
+                    "Ending pipeline: no molecules from previous steps (excluding descriptors)"
+                )
             return False, False
 
-        completed = self.stage_runner.run_descriptors(final_data, subfolder=DIR_FINAL_DESCRIPTORS)
+        completed = self.stage_runner.run_descriptors(
+            final_data, subfolder=DIR_FINAL_DESCRIPTORS
+        )
         return completed, False
 
     def _finalize_pipeline(self, data, success_count: int, total_enabled: int) -> bool:
@@ -543,28 +583,32 @@ class MolecularAnalysisPipeline:
 
         self._log_molecule_summary(initial_count, final_count)
         self._save_final_output(final_data, final_count)
-        _generate_structure_readme(self.data_checker.base_path, self.stages, initial_count, final_count)
+        _generate_structure_readme(
+            self.data_checker.base_path, self.stages, initial_count, final_count
+        )
 
         return success_count == total_enabled
 
     def _log_molecule_summary(self, initial_count: int, final_count: int) -> None:
         """Log molecule count summary."""
-        logger.info('---------> Molecule Count Summary')
-        logger.info(f'Molecules before filtration: {initial_count}')
-        logger.info(f'Molecules remaining after all stages: {final_count}')
+        logger.info("---------> Molecule Count Summary")
+        logger.info(f"Molecules before filtration: {initial_count}")
+        logger.info(f"Molecules remaining after all stages: {final_count}")
         if initial_count > 0:
             retention = 100 * final_count / initial_count
-            logger.info(f'Retention rate: {retention:.2f}%')
+            logger.info(f"Retention rate: {retention:.2f}%")
 
     def _save_final_output(self, final_data, final_count: int) -> None:
         """Save final molecules to output directory."""
         if final_data is None or len(final_data) == 0:
             return
 
-        final_output_path = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
+        final_output_path = (
+            self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
+        )
         final_output_path.parent.mkdir(parents=True, exist_ok=True)
         final_data.to_csv(final_output_path, index=False)
-        logger.info(f'Saved {final_count} final molecules to {final_output_path}')
+        logger.info(f"Saved {final_count} final molecules to {final_output_path}")
 
     def _log_pipeline_summary(self) -> None:
         """Log a summary of pipeline execution status."""
@@ -572,14 +616,14 @@ class MolecularAnalysisPipeline:
 
         for stage in self.stages:
             status = self._get_stage_status(stage)
-            logger.info(f'{stage.name}: {status}')
+            logger.info(f"{stage.name}: {status}")
 
     def _get_stage_status(self, stage: PipelineStage) -> str:
         """Get display status for a stage."""
         if not stage.enabled:
-            return 'DISABLED'
+            return "DISABLED"
         if stage.completed:
-            return '[#B29EEE]\u2713 COMPLETED[/#B29EEE]'
+            return "[#B29EEE]\u2713 COMPLETED[/#B29EEE]"
 
         # Check for skipped conditions
         skip_conditions = {
@@ -590,9 +634,9 @@ class MolecularAnalysisPipeline:
 
         required_data = skip_conditions.get(stage.name)
         if required_data and not self.data_checker.check_stage_data(required_data):
-            return '[yellow]\u27c2 SKIPPED (no molecules)[/yellow]'
+            return "[yellow]\u27c2 SKIPPED (no molecules)[/yellow]"
 
-        return '[red]\u2717 FAILED[/red]'
+        return "[red]\u2717 FAILED[/red]"
 
 
 def _save_config_snapshot(config: dict) -> None:
@@ -603,11 +647,11 @@ def _save_config_snapshot(config: dict) -> None:
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         master_config_path = dest_dir / FILE_MASTER_CONFIG
-        with open(master_config_path, 'w') as f:
+        with open(master_config_path, "w") as f:
             yaml.safe_dump(config, f, sort_keys=False)
 
         for key in config:
-            if not key.startswith('config_'):
+            if not key.startswith("config_"):
                 continue
             path_str = config.get(key)
             if not path_str:
@@ -617,11 +661,11 @@ def _save_config_snapshot(config: dict) -> None:
                 if src_path.exists():
                     shutil.copyfile(src_path, dest_dir / src_path.name)
             except OSError as copy_err:
-                logger.warning(f'Could not copy config file for {key}: {copy_err}')
+                logger.warning(f"Could not copy config file for {key}: {copy_err}")
 
-        logger.info(f'Saved run config snapshot to: {dest_dir}')
+        logger.info(f"Saved run config snapshot to: {dest_dir}")
     except Exception as snapshot_err:
-        logger.warning(f'Config snapshot failed: {snapshot_err}')
+        logger.warning(f"Config snapshot failed: {snapshot_err}")
 
 
 # Stage directory structure templates for README generation
@@ -696,19 +740,18 @@ _README_STAGE_SECTIONS = {
 
 
 def _generate_structure_readme(
-    base_path: Path,
-    stages: list[PipelineStage],
-    initial_count: int,
-    final_count: int
+    base_path: Path, stages: list[PipelineStage], initial_count: int, final_count: int
 ) -> None:
     """Generate README.md documenting the output structure for this run."""
     try:
-        readme_path = base_path / 'README.md'
+        readme_path = base_path / "README.md"
         enabled_stages = {s.name for s in stages if s.enabled}
         enabled_count = len(enabled_stages)
         completed_count = sum(1 for s in stages if s.completed)
 
-        retention = f"{100 * final_count / initial_count:.2f}%" if initial_count > 0 else "N/A"
+        retention = (
+            f"{100 * final_count / initial_count:.2f}%" if initial_count > 0 else "N/A"
+        )
 
         # Build stage sections
         stage_sections = []
@@ -716,19 +759,23 @@ def _generate_structure_readme(
             if stage_name in enabled_stages:
                 stage_sections.append(section)
 
-        stages_content = ''.join(stage_sections)
+        stages_content = "".join(stage_sections)
 
         # Build stage execution summary
         stage_summary_lines = []
         for stage in stages:
-            status = "COMPLETED" if stage.completed else ("FAILED" if stage.enabled else "DISABLED")
+            status = (
+                "COMPLETED"
+                if stage.completed
+                else ("FAILED" if stage.enabled else "DISABLED")
+            )
             stage_summary_lines.append(f"- {stage.name}: {status}")
-        stage_summary = '\n'.join(stage_summary_lines)
+        stage_summary = "\n".join(stage_summary_lines)
 
         content = f"""\
 # HEDGEHOG Pipeline Output
 
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 ## Summary
 
@@ -795,12 +842,12 @@ See project repository for full documentation on:
 - Pipeline API reference
 """
 
-        with open(readme_path, 'w') as f:
+        with open(readme_path, "w") as f:
             f.write(content)
 
-        logger.info(f'Generated structure documentation: {readme_path}')
+        logger.info(f"Generated structure documentation: {readme_path}")
     except Exception as e:
-        logger.warning(f'Failed to generate structure README: {e}')
+        logger.warning(f"Failed to generate structure README: {e}")
 
 
 def calculate_metrics(data, config: dict) -> bool:
@@ -818,5 +865,5 @@ def calculate_metrics(data, config: dict) -> bool:
         pipeline = MolecularAnalysisPipeline(config)
         return pipeline.run_pipeline(data)
     except Exception as e:
-        logger.error(f'Pipeline execution failed: {e}')
+        logger.error(f"Pipeline execution failed: {e}")
         return False
