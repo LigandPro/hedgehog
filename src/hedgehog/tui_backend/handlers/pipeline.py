@@ -1,6 +1,5 @@
 """Pipeline execution handler for TUI backend."""
 import threading
-import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,16 +41,21 @@ class PipelineJob:
             # Load config
             config_path = Path('src/hedgehog/configs/config.yml')
             config_dict = load_config(str(config_path))
-            
-            # Set up progress callback
-            def progress_callback(stage: str, current: int, total: int, message: str = ''):
+
+            # Set up progress callback for real pipeline
+            def progress_callback(stage: str, current: int, total: int):
                 if self.cancelled:
                     raise InterruptedError('Pipeline cancelled')
+                self.current_stage = stage
                 self.server.send_notification('progress', {
                     'stage': stage,
                     'current': current,
                     'total': total,
-                    'message': message,
+                    'message': f'Running stage {current}/{total}: {stage}',
+                })
+                self.server.send_notification('log', {
+                    'level': 'info',
+                    'message': f'Stage: {stage} ({current}/{total})',
                 })
 
             # Prepare data
@@ -59,9 +63,9 @@ class PipelineJob:
                 'level': 'info',
                 'message': 'Preparing input data...',
             })
-            
+
             data = prepare_input_data(config_dict, None)
-            
+
             if 'mol_idx' not in data.columns or data['mol_idx'].isna().all():
                 folder_to_save = Path(config_dict.get('folder_to_save', 'results'))
                 data = assign_mol_idx(data, run_base=folder_to_save, logger=None)
@@ -71,39 +75,23 @@ class PipelineJob:
                 'message': f'Loaded {len(data)} molecules',
             })
 
-            # Run pipeline
-            for stage in self.stages:
-                if self.cancelled:
-                    break
-                    
-                self.current_stage = stage
-                self.server.send_notification('stage_start', {'stage': stage})
-                self.server.send_notification('log', {
-                    'level': 'info',
-                    'message': f'Starting stage: {stage}',
-                })
-                
-                # Simulate progress for now
-                # In production, this would call the actual stage
-                for i in range(10):
-                    if self.cancelled:
-                        break
-                    time.sleep(0.5)
-                    progress_callback(stage, i + 1, 10, f'Processing batch {i + 1}/10')
-                
-                if not self.cancelled:
-                    self.server.send_notification('stage_complete', {'stage': stage})
-                    self.progress[stage] = 100
+            # Run actual pipeline with progress callback
+            self.server.send_notification('log', {
+                'level': 'info',
+                'message': 'Starting pipeline execution...',
+            })
+
+            success = calculate_metrics(data, config_dict, progress_callback)
 
             if not self.cancelled:
                 self.server.send_notification('complete', {
                     'job_id': self.job_id,
+                    'success': success,
                     'results': {
-                        'stages_completed': self.stages,
                         'molecules_processed': len(data),
                     },
                 })
-            
+
         except InterruptedError:
             self.server.send_notification('log', {
                 'level': 'warn',
@@ -138,7 +126,7 @@ class PipelineHandler:
         """Get progress of a running pipeline."""
         if job_id not in self.jobs:
             raise ValueError(f'Job not found: {job_id}')
-        
+
         job = self.jobs[job_id]
         return {
             'job_id': job_id,
@@ -152,6 +140,6 @@ class PipelineHandler:
         """Cancel a running pipeline."""
         if job_id not in self.jobs:
             raise ValueError(f'Job not found: {job_id}')
-        
+
         self.jobs[job_id].cancel()
         return True

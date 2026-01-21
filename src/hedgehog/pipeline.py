@@ -130,8 +130,9 @@ class DataChecker:
         "Synthesis": Path("Synthesis") / "passSynthesisSMILES.csv",
     }
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, progress_callback=None):
         self.config = config
+        self.progress_callback = progress_callback
         self.base_path = Path(config[CONFIG_FOLDER_TO_SAVE])
 
     def check_stage_data(self, stage_name: str) -> bool:
@@ -157,6 +158,7 @@ class PipelineStageRunner:
 
     def __init__(self, config: dict, data_checker: DataChecker):
         self.config = config
+        self.progress_callback = progress_callback
         self.data_checker = data_checker
 
     def find_latest_data_source(self) -> str | None:
@@ -350,8 +352,9 @@ class MolecularAnalysisPipeline:
         STAGE_FINAL_DESCRIPTORS: "Stage 5': Final Descriptors Calculation",
     }
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, progress_callback=None):
         self.config = config
+        self.progress_callback = progress_callback
         self.data_checker = DataChecker(config)
         self.stage_runner = PipelineStageRunner(config, self.data_checker)
         self.current_data = None
@@ -486,6 +489,12 @@ class MolecularAnalysisPipeline:
         if not stage.enabled:
             return False, False
 
+        # Call progress callback if provided
+        if self.progress_callback:
+            enabled_stages = [s.name for s in self.stages if s.enabled]
+            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
+
         _log_stage_header(self._STAGE_LABELS[stage.name])
         completed = runner_func(*args)
         return completed, False
@@ -506,6 +515,12 @@ class MolecularAnalysisPipeline:
         if not stage.enabled:
             return False, False
 
+        # Call progress callback if provided
+        if self.progress_callback:
+            enabled_stages = [s.name for s in self.stages if s.enabled]
+            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
+
         _log_stage_header(self._STAGE_LABELS[stage.name])
         if self.stage_runner.run_structural_filters(DIR_STRUCT_FILTERS_POST):
             return True, False
@@ -518,6 +533,12 @@ class MolecularAnalysisPipeline:
         stage = self.stages[3]
         if not stage.enabled:
             return False, False
+
+        # Call progress callback if provided
+        if self.progress_callback:
+            enabled_stages = [s.name for s in self.stages if s.enabled]
+            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
         if self.stage_runner.run_synthesis():
@@ -559,6 +580,12 @@ class MolecularAnalysisPipeline:
         stage = self.stages[5]
         if not stage.enabled:
             return False, False
+
+        # Call progress callback if provided
+        if self.progress_callback:
+            enabled_stages = [s.name for s in self.stages if s.enabled]
+            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
         final_data = self.get_latest_data(skip_descriptors=True)
@@ -855,7 +882,7 @@ See project repository for full documentation on:
         logger.warning("Failed to generate structure README: %s", e)
 
 
-def calculate_metrics(data, config: dict) -> bool:
+def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
     """Calculate metrics for molecular data using the configured pipeline.
 
     Args:
@@ -867,7 +894,7 @@ def calculate_metrics(data, config: dict) -> bool:
     """
     try:
         _save_config_snapshot(config)
-        pipeline = MolecularAnalysisPipeline(config)
+        pipeline = MolecularAnalysisPipeline(config, progress_callback)
         return pipeline.run_pipeline(data)
     except Exception as e:
         logger.error("Pipeline execution failed: %s", e)
