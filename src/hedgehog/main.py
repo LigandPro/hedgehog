@@ -8,7 +8,6 @@ import matplotlib as mpl
 import pandas as pd
 import typer
 from rdkit import Chem
-from rdkit.Chem import SanitizeMol
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -83,7 +82,6 @@ def _canonicalize_smiles(smi: str) -> str | None:
     mol = Chem.MolFromSmiles(smi)
     if mol is None:
         return None
-    SanitizeMol(mol)
     return Chem.MolToSmiles(mol)
 
 
@@ -162,9 +160,7 @@ def _get_input_format_flag(extension: str) -> str | None:
     ext = extension.lower().lstrip(".")
     if ext == "csv":
         return "-icsv"
-    if ext in SMI_EXTENSIONS:
-        return "-ismi"
-    return None
+    return "-ismi" if ext in SMI_EXTENSIONS else None
 
 
 def preprocess_input_with_tool(

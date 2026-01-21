@@ -292,20 +292,22 @@ def add_model_name_col(final_result, smiles_with_model):
 
     if actual_len != expected_len:
         logger.error(
-            f"Length mismatch in add_model_name_col: final_result has {actual_len} rows, "
-            f"but smiles_with_model has {expected_len} items."
+            "Length mismatch in add_model_name_col: final_result has %d rows, "
+            "but smiles_with_model has %d items.",
+            actual_len,
+            expected_len,
         )
 
         if actual_len < expected_len:
             logger.warning(
-                f"Padding final_result from {actual_len} to {expected_len} rows."
+                "Padding final_result from %d to %d rows.", actual_len, expected_len
             )
             if len(final_result) > 0:
                 template_row = final_result.iloc[-1].to_dict()
                 final_result = _pad_dataframe_to_length(
                     final_result, expected_len, template_row
                 )
-                logger.info(f"Padded to {len(final_result)} rows.")
+                logger.info("Padded to %d rows.", len(final_result))
             else:
                 logger.error("final_result is empty. Creating all rows from scratch.")
                 smiles_list = [
@@ -315,15 +317,16 @@ def add_model_name_col(final_result, smiles_with_model):
                 final_result = _create_failed_dataframe(expected_len, smiles_list)
         else:
             logger.warning(
-                f"Trimming final_result from {actual_len} to {expected_len} rows."
+                "Trimming final_result from %d to %d rows.", actual_len, expected_len
             )
             final_result = final_result.iloc[:expected_len].reset_index(drop=True)
 
     if len(final_result) != expected_len:
-        raise ValueError(
+        msg = (
             f"CRITICAL: After padding/trimming, final_result length ({len(final_result)}) "
             f"still doesn't match expected ({expected_len})."
         )
+        raise ValueError(msg)
 
     smiles_vals = [item[0] for item in smiles_with_model]
     model_vals = [
@@ -409,11 +412,11 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
         row["pass_any"] = any_pass_val
         return row
 
-    logger.info(f"Processing {len(mols)} filtered molecules")
+    logger.info("Processing %d filtered molecules", len(mols))
 
     n_jobs = config["n_jobs"]
     pandarallel.initialize(progress_bar=False, nb_workers=n_jobs, verbose=0)
-    logger.info(f"Pandarallel initialized with {n_jobs} workers")
+    logger.info("Pandarallel initialized with %d workers", n_jobs)
 
     mols_df = pd.DataFrame({"mol": mols})
     results = mols_df.parallel_apply(_apply_alerts, axis=1)
@@ -501,7 +504,9 @@ def _process_lilly_batch(dfilter, batch, n_jobs, scheduler):
         batch_result = dfilter(mols=batch, n_jobs=n_jobs, scheduler=scheduler)
         if len(batch_result) != len(batch):
             logger.warning(
-                f"Lilly returned {len(batch_result)} results for {len(batch)} molecules."
+                "Lilly returned %d results for %d molecules.",
+                len(batch_result),
+                len(batch),
             )
             template = (
                 batch_result.iloc[-1].to_dict() if len(batch_result) > 0 else None
@@ -898,7 +903,7 @@ def plot_calculated_stats(config, stage_dir):
                 filter_results[filter_name] = {m: 0 for m in default_models}
 
         except (IndexError, FileNotFoundError) as e:
-            logger.warning(f"Could not process {path}: {e}")
+            logger.warning("Could not process %s: %s", path, e)
             filter_results[filter_name] = {}
 
     all_models = model_name_set
@@ -1061,7 +1066,7 @@ def plot_restriction_ratios(config, stage_dir):
     check_paths(config_structFilters, paths)
 
     if not paths:
-        logger.error(f"No data files found in {folder_to_save}")
+        logger.error("No data files found in %s", folder_to_save)
         return
 
     filter_data = {}
@@ -1360,7 +1365,7 @@ def filter_data(config, stage_dir):
                     folder_to_save + "failed_molecules.csv", index=False
                 )
         except Exception as e:
-            logger.warning(f"Could not create failStructFiltersSMILES.csv: {e}")
+            logger.warning("Could not create failStructFiltersSMILES.csv: %s", e)
 
     return filtered_data
 
@@ -1434,7 +1439,7 @@ def _calculate_grid_layout(num_items):
 
 def analyze_filter_failures(file_path):
     """Analyze filter failures from extended CSV file and generate visualizations."""
-    logger.debug(f"Analyzing filter failures from: {file_path}")
+    logger.debug("Analyzing filter failures from: %s", file_path)
     df = pd.read_csv(file_path, low_memory=False)
 
     filter_columns = [
@@ -1787,7 +1792,7 @@ def _create_summary_table(filter_failures, filter_reasons, file_path):
         _get_breakdown_folder(file_path), "filter_summary_table.csv"
     )
     summary_df.to_csv(output_path, index=False)
-    logger.debug(f"Summary table saved to: {output_path}")
+    logger.debug("Summary table saved to: %s", output_path)
     return summary_df
 
 
@@ -1809,4 +1814,4 @@ def plot_filter_failures_analysis(config, stage_dir):
         try:
             analyze_filter_failures(file_path)
         except Exception as e:
-            logger.debug(f"Error analyzing filter failures for {file_path}: {e}")
+            logger.debug("Error analyzing filter failures for %s: %s", file_path, e)

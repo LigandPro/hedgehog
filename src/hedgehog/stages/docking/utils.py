@@ -35,7 +35,7 @@ def _find_latest_input_source(base_folder):
     ]
     for path in candidates:
         if path.exists():
-            logger.debug(f"Using docking input: {path}")
+            logger.debug("Using docking input: %s", path)
             return path
     return None
 
@@ -80,8 +80,10 @@ def _prepare_ligands_dataframe(df, output_csv):
             for smi in skipped_smiles:
                 f.write(f"{smi}\n")
         logger.warning(
-            f"Some SMILES could not be parsed for docking: {len(skipped_smiles)}/{len(df)}. "
-            f"See {skip_path}"
+            "Some SMILES could not be parsed for docking: %d/%d. See %s",
+            len(skipped_smiles),
+            len(df),
+            skip_path,
         )
     return {
         "csv_path": str(output_csv),
@@ -176,7 +178,9 @@ def _create_docking_config_file(
             tool_config["autobox_ligand"] = str(autobox_path)
         else:
             logger.warning(
-                f"Could not resolve autobox_ligand path: {autobox_ligand}. Using as-is (may fail if relative path is incorrect)."
+                "Could not resolve autobox_ligand path: %s. "
+                "Using as-is (may fail if relative path is incorrect).",
+                autobox_ligand,
             )
 
     skip_keys = {"bin", "center", "size"}
@@ -196,7 +200,7 @@ def _create_docking_config_file(
     with open(config_path, "w") as f:
         f.write("\n".join(lines) + "\n")
 
-    logger.debug(f"Created {tool_name.upper()} config file: {config_path}")
+    logger.debug("Created %s config file: %s", tool_name.upper(), config_path)
     return config_path
 
 
@@ -419,7 +423,9 @@ def _prepare_protein_for_docking(receptor_pdb, ligands_dir, protein_preparation_
     receptor_path = Path(receptor_pdb)
     if not receptor_path.exists():
         logger.warning(
-            f"Original receptor file not found: {receptor_pdb} (resolved to: {receptor_path}), skipping protein preprocessing"
+            "Original receptor file not found: %s (resolved to: %s), skipping protein preprocessing",
+            receptor_pdb,
+            receptor_path,
         )
         return receptor_pdb, None
 
@@ -429,7 +435,7 @@ def _prepare_protein_for_docking(receptor_pdb, ligands_dir, protein_preparation_
     output_absolute = str(prepared_output_path.resolve())
     cmd_line = f"cd {ligands_dir} && {protein_preparation_tool} {receptor_absolute} {output_absolute}"
 
-    logger.info(f"Protein preprocessing will be performed: {cmd_line}")
+    logger.info("Protein preprocessing will be performed: %s", cmd_line)
     return str(prepared_output_path.resolve()), cmd_line
 
 
@@ -525,7 +531,7 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     if written_count == 0:
         raise RuntimeError("RDKit conversion produced 0 molecules for GNINA SDF")
 
-    logger.info(f"Converted {written_count} molecules to SDF using RDKit")
+    logger.info("Converted %d molecules to SDF using RDKit", written_count)
     return str(sdf_path.resolve()), None
 
 
@@ -716,13 +722,13 @@ def _get_receptor_and_prep_cmd(cfg, ligands_dir, protein_preparation_tool, tool_
     """
     original_receptor = cfg.get("receptor_pdb")
     if not original_receptor:
-        logger.error(f"{tool_name.upper()}: receptor_pdb is missing in config")
+        logger.error("%s: receptor_pdb is missing in config", tool_name.upper())
         return None, None
 
     receptor_path = _resolve_receptor_path(original_receptor)
     if not receptor_path:
         logger.error(
-            f"{tool_name.upper()}: Receptor file not found: {original_receptor}"
+            "%s: Receptor file not found: %s", tool_name.upper(), original_receptor
         )
         return None, None
 
@@ -730,9 +736,9 @@ def _get_receptor_and_prep_cmd(cfg, ligands_dir, protein_preparation_tool, tool_
 
     if protein_preparation_tool is None:
         if "protein_prepared.pdb" in receptor:
-            logger.info(f"{tool_name.upper()}: Using prepared receptor: {receptor}")
+            logger.info("%s: Using prepared receptor: %s", tool_name.upper(), receptor)
         else:
-            logger.info(f"{tool_name.upper()}: Using receptor: {receptor}")
+            logger.info("%s: Using receptor: %s", tool_name.upper(), receptor)
         return receptor, None
 
     prepared_receptor, protein_prep_cmd = _prepare_protein_for_docking(
@@ -740,7 +746,7 @@ def _get_receptor_and_prep_cmd(cfg, ligands_dir, protein_preparation_tool, tool_
     )
     if prepared_receptor != receptor:
         cfg["receptor_pdb"] = prepared_receptor
-        logger.info(f"{tool_name.upper()}: Using prepared protein: {prepared_receptor}")
+        logger.info("%s: Using prepared protein: %s", tool_name.upper(), prepared_receptor)
     return prepared_receptor, protein_prep_cmd
 
 
@@ -798,7 +804,7 @@ def _save_job_ids(ligands_dir, overall_job_id, job_ids):
             f.write(f"smina: {job_ids.get('smina', '')}\n")
             f.write(f"gnina: {job_ids.get('gnina', '')}\n")
     except Exception as e:
-        logger.warning(f"Failed to write job_ids.txt: {e}")
+        logger.warning("Failed to write job_ids.txt: %s", e)
 
 
 def _update_metadata_with_run_status(ligands_dir, run_status):
@@ -819,7 +825,7 @@ def _update_metadata_with_run_status(ligands_dir, run_status):
 def _run_docking_script(script_path: Path, working_dir, log_path, background):
     """Run a docking script and return execution status."""
     if not script_path.exists():
-        logger.error(f"Script not found: {script_path}")
+        logger.error("Script not found: %s", script_path)
         return {"status": "error", "log_path": str(log_path)}
 
     if background:
@@ -830,7 +836,7 @@ def _run_docking_script(script_path: Path, working_dir, log_path, background):
                 stderr=logf,
                 cwd=str(working_dir),
             )
-        logger.info(f"Started {script_path.name} in background. Log: {log_path}")
+        logger.info("Started %s in background. Log: %s", script_path.name, log_path)
         return {"status": "started_background", "log_path": str(log_path)}
     else:
         with open(log_path, "wb") as logf:
@@ -841,7 +847,7 @@ def _run_docking_script(script_path: Path, working_dir, log_path, background):
                 stderr=logf,
                 cwd=str(working_dir),
             )
-        logger.info(f"{script_path.name} completed successfully. Log: {log_path}")
+        logger.info("%s completed successfully. Log: %s", script_path.name, log_path)
         return {"status": "completed", "log_path": str(log_path)}
 
 
@@ -907,7 +913,9 @@ def _prepare_receptor_if_needed(
 
     if not receptor_path.exists():
         logger.warning(
-            f"Receptor file not found: {original_receptor} (resolved to: {receptor_path})"
+            "Receptor file not found: %s (resolved to: %s)",
+            original_receptor,
+            receptor_path,
         )
         return
 
@@ -957,7 +965,7 @@ def _setup_smina(
         logger.info("SMINA configuration prepared")
         return script_path
     except Exception as e:
-        logger.error(f"Failed to setup SMINA: {e}")
+        logger.error("Failed to setup SMINA: %s", e)
         import traceback
 
         logger.debug(traceback.format_exc())
@@ -981,7 +989,8 @@ def _setup_gnina(
 
         if "protein_prepared.pdb" in original_receptor:
             logger.warning(
-                f"GNINA: Config has prepared path: {original_receptor}, this should have been restored"
+                "GNINA: Config has prepared path: %s, this should have been restored",
+                original_receptor,
             )
             project_root = Path(__file__).parent.parent.parent.parent.parent
             possible_originals = [
@@ -1035,7 +1044,7 @@ def _setup_gnina(
         logger.info("GNINA configuration prepared")
         return script_path
     except Exception as e:
-        logger.error(f"Failed to setup GNINA: {e}")
+        logger.error("Failed to setup GNINA: %s", e)
         return None
 
 
@@ -1057,7 +1066,7 @@ def run_docking(config):
     try:
         df = pd.read_csv(source)
     except Exception as e:
-        logger.error(f"Failed to read docking input {source}: {e}")
+        logger.error("Failed to read docking input %s: %s", source, e)
         return False
 
     ligands_dir = base_folder / "stages" / "05_docking"
@@ -1066,13 +1075,13 @@ def run_docking(config):
     try:
         ligands_stats = _prepare_ligands_dataframe(df, ligands_csv)
     except ValueError as e:
-        logger.error(f"Ligand preparation failed: {e}")
+        logger.error("Ligand preparation failed: %s", e)
         return False
 
     ligand_preparation_tool = config.get("ligand_preparation_tool")
     protein_preparation_tool = config.get("protein_preparation_tool")
     tools_list = _parse_tools_config(cfg)
-    logger.info(f"Docking tools configured: {tools_list}")
+    logger.info("Docking tools configured: %s", tools_list)
 
     prepared_receptor_path = None
     if protein_preparation_tool:
@@ -1099,7 +1108,7 @@ def run_docking(config):
                         )
                         if result.returncode != 0:
                             logger.error(
-                                f"Protein preparation command failed: {result.stderr}"
+                                "Protein preparation command failed: %s", result.stderr
                             )
                             return False
 
@@ -1113,32 +1122,36 @@ def run_docking(config):
                                 and prepared_path.stat().st_size > 0
                             ):
                                 logger.info(
-                                    f"Protein prepared successfully: {prepared_receptor_path}"
+                                    "Protein prepared successfully: %s",
+                                    prepared_receptor_path,
                                 )
                                 break
                             time.sleep(wait_interval)
                             waited += wait_interval
                             if waited % 60 == 0:
                                 logger.info(
-                                    f"Waiting for protein preparation... ({waited}s)"
+                                    "Waiting for protein preparation... (%ds)", waited
                                 )
 
                         if not prepared_path.exists():
                             logger.error(
-                                f"Protein preparation failed - output file not found after {max_wait}s: {prepared_receptor_path}"
+                                "Protein preparation failed - output file not found after %ds: %s",
+                                max_wait,
+                                prepared_receptor_path,
                             )
-                            logger.error(f"Command output: {result.stdout}")
-                            logger.error(f"Command error: {result.stderr}")
+                            logger.error("Command output: %s", result.stdout)
+                            logger.error("Command error: %s", result.stderr)
                             return False
                         elif prepared_path.stat().st_size == 0:
                             logger.error(
-                                f"Protein preparation failed - output file is empty: {prepared_receptor_path}"
+                                "Protein preparation failed - output file is empty: %s",
+                                prepared_receptor_path,
                             )
                             return False
 
                         cfg["receptor_pdb"] = prepared_receptor_path
                     except Exception as e:
-                        logger.error(f"Failed to prepare protein: {e}")
+                        logger.error("Failed to prepare protein: %s", e)
                         import traceback
 
                         logger.debug(traceback.format_exc())
@@ -1168,7 +1181,7 @@ def run_docking(config):
                 scripts_prepared.append(str(script))
                 job_ids["gnina"] = _generate_job_id("gnina")
         except Exception as e:
-            logger.warning(f"GNINA setup failed, continuing without GNINA: {e}")
+            logger.warning("GNINA setup failed, continuing without GNINA: %s", e)
             tools_list = [t for t in tools_list if t != "gnina"]
 
     if not scripts_prepared:
@@ -1189,9 +1202,9 @@ def run_docking(config):
             overall_job_id,
         )
         _save_job_ids(ligands_dir, overall_job_id, job_ids)
-        logger.info(f"Docking job ID: {overall_job_id}")
+        logger.info("Docking job ID: %s", overall_job_id)
     except Exception as e:
-        logger.warning(f"Failed to save metadata: {e}")
+        logger.warning("Failed to save metadata: %s", e)
 
     auto_run = cfg.get("auto_run", True)
     if auto_run:
@@ -1211,13 +1224,13 @@ def run_docking(config):
                     ligands_dir, output_sdf, background, job_ids["gnina"]
                 )
             except Exception as e:
-                logger.error(f"GNINA execution failed: {e}")
+                logger.error("GNINA execution failed: %s", e)
                 run_status["gnina"] = {"status": "failed", "error": str(e)}
 
         try:
             _update_metadata_with_run_status(ligands_dir, run_status)
         except Exception as e:
-            logger.warning(f"Failed to update metadata with run status: {e}")
+            logger.warning("Failed to update metadata with run status: %s", e)
 
         if not background:
             selected_tools = [t for t in tools_list if t in ["smina", "gnina"]]

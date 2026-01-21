@@ -75,10 +75,11 @@ DOCKING_RESULTS_DIR_TEMPLATE = {
 
 def _log_stage_header(stage_label: str) -> None:
     """Log a formatted stage header."""
+    separator = "[#B29EEE]" + "\u2500" * 59 + "[/#B29EEE]"
     logger.info("")
-    logger.info("[#B29EEE]" + "\u2500" * 59 + "[/#B29EEE]")
-    logger.info(f"[#B29EEE]  {stage_label}[/#B29EEE]")
-    logger.info("[#B29EEE]" + "\u2500" * 59 + "[/#B29EEE]")
+    logger.info(separator)
+    logger.info("[#B29EEE]  %s[/#B29EEE]", stage_label)
+    logger.info(separator)
     logger.info("")
 
 
@@ -162,7 +163,7 @@ class PipelineStageRunner:
         """Find the most recent stage with available output data."""
         for source in self.DATA_SOURCE_PRIORITY:
             if self.data_checker.check_stage_data(source):
-                logger.debug(f"Found data from stage: {source}")
+                logger.debug("Found data from stage: %s", source)
                 return source
         logger.debug("No processed data found from any stage")
         return None
@@ -177,7 +178,7 @@ class PipelineStageRunner:
             descriptors_main(data, self.config, subfolder=subfolder)
             return True
         except Exception as e:
-            logger.error(f"Error running descriptors: {e}")
+            logger.error("Error running descriptors: %s", e)
             return False
 
     def run_structural_filters(self, stage_dir: str) -> bool:
@@ -195,7 +196,7 @@ class PipelineStageRunner:
                     )
                 else:
                     logger.warning(
-                        f"No data available for structural filters in {stage_dir}"
+                        "No data available for structural filters in %s", stage_dir
                     )
                     return False
 
@@ -207,7 +208,7 @@ class PipelineStageRunner:
             structural_filters_main(self.config, stage_dir)
             return True
         except Exception as e:
-            logger.error(f"Error running structural filters: {e}")
+            logger.error("Error running structural filters: %s", e)
             return False
 
     def run_synthesis(self) -> bool:
@@ -231,7 +232,7 @@ class PipelineStageRunner:
                 return False
             return True
         except Exception as e:
-            logger.error(f"Error running synthesis: {e}")
+            logger.error("Error running synthesis: %s", e)
             return False
 
     def _validate_synthesis_input(self) -> bool:
@@ -249,7 +250,7 @@ class PipelineStageRunner:
             sampled_path = base / FILE_SAMPLED_MOLECULES
 
         if sampled_path.exists():
-            logger.info(f"Using {FILE_SAMPLED_MOLECULES}")
+            logger.info("Using %s", FILE_SAMPLED_MOLECULES)
             return True
 
         logger.warning("No data available for synthesis, check `config.yml` file")
@@ -285,14 +286,14 @@ class PipelineStageRunner:
                 )
                 if _file_exists_and_not_empty(gnina_sdf):
                     return True
-                logger.debug(f"GNINA results not found at {gnina_sdf}")
+                logger.debug("GNINA results not found at %s", gnina_sdf)
             elif tool == DOCKING_TOOL_SMINA:
                 smina_dir = (
                     base_folder / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_SMINA]
                 )
                 if _directory_has_files(smina_dir):
                     return True
-                logger.debug(f"SMINA results not found in {smina_dir}")
+                logger.debug("SMINA results not found in %s", smina_dir)
         return False
 
     def _get_gnina_output_dir(self, cfg: dict, base_folder: Path) -> Path:
@@ -322,7 +323,7 @@ class PipelineStageRunner:
                 return False
             return True
         except Exception as e:
-            logger.error(f"Error running docking: {e}")
+            logger.error("Error running docking: %s", e)
             return False
 
 
@@ -376,13 +377,15 @@ class MolecularAnalysisPipeline:
                 if single_stage_override:
                     stage.enabled = stage.name == single_stage_override
                     if stage.enabled:
-                        logger.info(f"Single stage mode: enabling only {stage.name}")
+                        logger.info("Single stage mode: enabling only %s", stage.name)
 
                 logger.debug(
-                    f"Stage {stage.name}: {'Enabled' if stage.enabled else 'Disabled'}"
+                    "Stage %s: %s",
+                    stage.name,
+                    "Enabled" if stage.enabled else "Disabled",
                 )
             except Exception as e:
-                logger.warning(f"Could not load config for {stage.name}: {e}")
+                logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
 
     def get_latest_data(self, skip_descriptors: bool = False):
@@ -403,14 +406,14 @@ class MolecularAnalysisPipeline:
                 return self._try_fallback_sources(priority, latest_source, data)
             return data
         except Exception as e:
-            logger.warning(f"Could not load data from {latest_source}: {e}")
+            logger.warning("Could not load data from %s: %s", latest_source, e)
             return self.current_data
 
     def _find_data_source(self, priority: list[str]) -> str | None:
         """Find first available data source from priority list."""
         for source in priority:
             if self.data_checker.check_stage_data(source):
-                logger.debug(f"Found data from stage: {source}")
+                logger.debug("Found data from stage: %s", source)
                 return source
         return None
 
@@ -427,7 +430,7 @@ class MolecularAnalysisPipeline:
         self, priority: list[str], current_source: str, empty_data
     ):
         """Try fallback sources when current source is empty."""
-        logger.warning(f"No molecules in {current_source}, trying previous step...")
+        logger.warning("No molecules in %s, trying previous step...", current_source)
         current_idx = priority.index(current_source)
 
         for next_source in priority[current_idx + 1 :]:
@@ -437,7 +440,9 @@ class MolecularAnalysisPipeline:
                     data = pd.read_csv(path)
                     if len(data) > 0:
                         logger.info(
-                            f"Loaded data from {next_source}: {len(data)} molecules (previous step)"
+                            "Loaded data from %s: %d molecules (previous step)",
+                            next_source,
+                            len(data),
                         )
                         return data
                 except Exception:
@@ -471,7 +476,7 @@ class MolecularAnalysisPipeline:
                 return self._finalize_pipeline(data, success_count, total_enabled)
 
         logger.info(
-            f"Pipeline completed: {success_count}/{total_enabled} stages successful"
+            "Pipeline completed: %d/%d stages successful", success_count, total_enabled
         )
         return self._finalize_pipeline(data, success_count, total_enabled)
 
@@ -592,11 +597,11 @@ class MolecularAnalysisPipeline:
     def _log_molecule_summary(self, initial_count: int, final_count: int) -> None:
         """Log molecule count summary."""
         logger.info("---------> Molecule Count Summary")
-        logger.info(f"Molecules before filtration: {initial_count}")
-        logger.info(f"Molecules remaining after all stages: {final_count}")
+        logger.info("Molecules before filtration: %d", initial_count)
+        logger.info("Molecules remaining after all stages: %d", final_count)
         if initial_count > 0:
             retention = 100 * final_count / initial_count
-            logger.info(f"Retention rate: {retention:.2f}%")
+            logger.info("Retention rate: %.2f%%", retention)
 
     def _save_final_output(self, final_data, final_count: int) -> None:
         """Save final molecules to output directory."""
@@ -608,7 +613,7 @@ class MolecularAnalysisPipeline:
         )
         final_output_path.parent.mkdir(parents=True, exist_ok=True)
         final_data.to_csv(final_output_path, index=False)
-        logger.info(f"Saved {final_count} final molecules to {final_output_path}")
+        logger.info("Saved %d final molecules to %s", final_count, final_output_path)
 
     def _log_pipeline_summary(self) -> None:
         """Log a summary of pipeline execution status."""
@@ -616,7 +621,7 @@ class MolecularAnalysisPipeline:
 
         for stage in self.stages:
             status = self._get_stage_status(stage)
-            logger.info(f"{stage.name}: {status}")
+            logger.info("%s: %s", stage.name, status)
 
     def _get_stage_status(self, stage: PipelineStage) -> str:
         """Get display status for a stage."""
@@ -661,11 +666,11 @@ def _save_config_snapshot(config: dict) -> None:
                 if src_path.exists():
                     shutil.copyfile(src_path, dest_dir / src_path.name)
             except OSError as copy_err:
-                logger.warning(f"Could not copy config file for {key}: {copy_err}")
+                logger.warning("Could not copy config file for %s: %s", key, copy_err)
 
-        logger.info(f"Saved run config snapshot to: {dest_dir}")
+        logger.info("Saved run config snapshot to: %s", dest_dir)
     except Exception as snapshot_err:
-        logger.warning(f"Config snapshot failed: {snapshot_err}")
+        logger.warning("Config snapshot failed: %s", snapshot_err)
 
 
 # Stage directory structure templates for README generation
@@ -845,9 +850,9 @@ See project repository for full documentation on:
         with open(readme_path, "w") as f:
             f.write(content)
 
-        logger.info(f"Generated structure documentation: {readme_path}")
+        logger.info("Generated structure documentation: %s", readme_path)
     except Exception as e:
-        logger.warning(f"Failed to generate structure README: {e}")
+        logger.warning("Failed to generate structure README: %s", e)
 
 
 def calculate_metrics(data, config: dict) -> bool:
@@ -865,5 +870,5 @@ def calculate_metrics(data, config: dict) -> bool:
         pipeline = MolecularAnalysisPipeline(config)
         return pipeline.run_pipeline(data)
     except Exception as e:
-        logger.error(f"Pipeline execution failed: {e}")
+        logger.error("Pipeline execution failed: %s", e)
         return False

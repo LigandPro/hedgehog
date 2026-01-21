@@ -39,9 +39,9 @@ def _get_aizynthfinder_config() -> Path:
 def _log_aizynthfinder_setup_instructions(config_path: Path) -> None:
     """Log instructions for setting up AiZynthFinder."""
     module_dir = config_path.parent.parent
-    logger.error(f"AiZynthFinder config file not found: {config_path}")
+    logger.error("AiZynthFinder config file not found: %s", config_path)
     logger.error("To set up retrosynthesis, run:")
-    logger.error(f"  cd {module_dir}")
+    logger.error("  cd %s", module_dir)
     logger.error("  mkdir -p public")
     logger.error("  uv run python -m aizynthfinder.tools.download_public_data ./public")
     logger.error(
@@ -63,11 +63,11 @@ def main(config: dict) -> None:
 
     input_path = get_input_path(config, folder_to_save)
     if not Path(input_path).exists():
-        logger.error(f"Input file not found: {input_path}")
+        logger.error("Input file not found: %s", input_path)
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
     input_df = pd.read_csv(input_path)
-    logger.info(f"Processing {len(input_df)} filtered molecules")
+    logger.info("Processing %d filtered molecules", len(input_df))
 
     if len(input_df) == 0:
         logger.warning("No molecules to process for synthesis analysis")
@@ -80,7 +80,7 @@ def main(config: dict) -> None:
     if len(score_filtered_df) == 0:
         logger.warning("No molecules passed synthesis score filters")
         _save_ordered_csv(score_filtered_df, filtered_output)
-        logger.info(f"Saved 0 molecules to {filtered_output}")
+        logger.info("Saved 0 molecules to %s", filtered_output)
         return
 
     aizynth_config = _get_aizynthfinder_config()
@@ -116,4 +116,4 @@ def main(config: dict) -> None:
 
     if "search_time" in merged_df.columns:
         avg_time = merged_df["search_time"].mean()
-        logger.info(f"Average retrosynthesis search time: {avg_time:.2f} s")
+        logger.info("Average retrosynthesis search time: %.2f s", avg_time)

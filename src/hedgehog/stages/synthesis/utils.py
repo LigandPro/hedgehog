@@ -77,7 +77,7 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
 
     try:
         logger.info("Running retrosynthesis analysis...")
-        logger.debug(f"Command: {cmd}")
+        logger.debug("Command: %s", cmd)
 
         subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
 
@@ -85,12 +85,12 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
         return True
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else e.stdout
-        logger.error(f"Retrosynthesis analysis failed with exit code {e.returncode}")
+        logger.error("Retrosynthesis analysis failed with exit code %d", e.returncode)
         if error_msg:
-            logger.error(f"Error output: {error_msg[:1000]}")
+            logger.error("Error output: %s", error_msg[:1000])
         return False
     except Exception as e:
-        logger.error(f"Unexpected error running retrosynthesis analysis: {e}")
+        logger.error("Unexpected error running retrosynthesis analysis: %s", e)
         return False
 
 
@@ -108,7 +108,7 @@ def parse_retrosynthesis_results(json_file):
             data = json.load(f)
 
         if "data" not in data:
-            logger.warning(f"No 'data' key found in JSON file {json_file}")
+            logger.warning("No 'data' key found in JSON file %s", json_file)
             return pd.DataFrame(columns=["index", "SMILES", "solved", "search_time"])
 
         results = []
@@ -124,7 +124,7 @@ def parse_retrosynthesis_results(json_file):
 
         return pd.DataFrame(results)
     except Exception as e:
-        logger.error(f"Error parsing retrosynthesis results: {e}")
+        logger.error("Error parsing retrosynthesis results: %s", e)
         return pd.DataFrame(columns=["index", "SMILES", "solved", "search_time"])
 
 
@@ -179,7 +179,7 @@ def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
 
     for candidate in _get_input_path_candidates(base_folder):
         if os.path.exists(candidate):
-            logger.debug(f"Using input file: {candidate}")
+            logger.debug("Using input file: %s", candidate)
             return candidate
 
     logger.warning("No processed data found, using molecules from config")
@@ -198,7 +198,7 @@ def _load_sascorer_impl():
 
         return sascorer
     except Exception as e:
-        logger.warning(f"Failed to load SA Score module: {e}")
+        logger.warning("Failed to load SA Score module: %s", e)
         return False
 
 
@@ -213,7 +213,7 @@ def _load_syba_model_impl():
         logger.debug("SYBA model loaded successfully")
         return model
     except Exception as e:
-        logger.error(f"Failed to load SYBA model: {e}")
+        logger.error("Failed to load SYBA model: %s", e)
         logger.warning("SYBA scores will be set to np.nan")
         return False
 
@@ -225,7 +225,7 @@ def _load_rascore_impl():
         logger.debug("RAScore model available for calculation")
         return True
     logger.warning(
-        f"RAScore model not found at {model_path}. RA scores will be set to np.nan"
+        "RAScore model not found at %s. RA scores will be set to np.nan", model_path
     )
     return False
 
@@ -267,7 +267,7 @@ def _calculate_sa_score(smiles):
             return np.nan
         return sascorer.calculateScore(mol)
     except Exception as e:
-        logger.debug(f"Failed to calculate SA score for {smiles}: {e}")
+        logger.debug("Failed to calculate SA score for %s: %s", smiles, e)
         return np.nan
 
 
@@ -293,7 +293,7 @@ def _calculate_syba_score(smiles):
             return np.nan
         return syba_model.predict(mol=mol)
     except Exception as e:
-        logger.debug(f"Failed to calculate SYBA score for {smiles}: {e}")
+        logger.debug("Failed to calculate SYBA score for %s: %s", smiles, e)
         return np.nan
 
 
@@ -392,7 +392,7 @@ def _parse_rascore_output(stdout: str, expected_count: int) -> list:
             scores.append(np.nan)
 
     if len(scores) != expected_count:
-        logger.warning(f"Expected {expected_count} scores but got {len(scores)}")
+        logger.warning("Expected %d scores but got %d", expected_count, len(scores))
         return [np.nan] * expected_count
     return scores
 
@@ -421,12 +421,12 @@ def _calculate_ra_scores_batch(
 
     model_path = _get_rascore_model_path()
     if not model_path.exists():
-        logger.warning(f"RAScore model not found at {model_path}")
+        logger.warning("RAScore model not found at %s", model_path)
         return nan_list
 
     python_exec = Path(conda_prefix) / "bin" / "python"
     if not python_exec.exists():
-        logger.warning(f"Python not found in rascore-env: {python_exec}")
+        logger.warning("Python not found in rascore-env: %s", python_exec)
         return nan_list
 
     smiles_file = None
@@ -449,13 +449,13 @@ def _calculate_ra_scores_batch(
         )
 
         if result.returncode != 0:
-            logger.debug(f"RA score batch calculation failed: {result.stderr}")
+            logger.debug("RA score batch calculation failed: %s", result.stderr)
             return nan_list
 
         return _parse_rascore_output(result.stdout, len(smiles_list))
 
     except Exception as e:
-        logger.debug(f"Failed to calculate RA scores in batch: {e}")
+        logger.debug("Failed to calculate RA scores in batch: %s", e)
         return nan_list
     finally:
         for path in [temp_script, smiles_file]:
@@ -494,8 +494,12 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
         valid_scores = result_df[score_name].dropna()
         if len(valid_scores) > 0:
             logger.info(
-                f"  {score_name}: calculated for {len(valid_scores)}/{len(df)} molecules "
-                f"(mean={valid_scores.mean():.2f}, std={valid_scores.std():.2f})"
+                "  %s: calculated for %d/%d molecules (mean=%.2f, std=%.2f)",
+                score_name,
+                len(valid_scores),
+                len(df),
+                valid_scores.mean(),
+                valid_scores.std(),
             )
         else:
             logger.debug(
@@ -526,7 +530,7 @@ def _build_score_filter_mask(
 
     valid_scores = df[column].dropna()
     if len(valid_scores) == 0:
-        logger.info(f"{column} filter: skipped (no valid scores calculated)")
+        logger.info("%s filter: skipped (no valid scores calculated)", column)
         return None
 
     is_na = df[column].isna()

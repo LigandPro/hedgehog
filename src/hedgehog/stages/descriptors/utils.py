@@ -66,10 +66,10 @@ def _parse_chars_in_mol_column(series):
     parsed = []
     for val in series.dropna():
         try:
-            chars = val if isinstance(val, list) else eval(val)
+            chars = val if isinstance(val, list) else eval(val)  # noqa: S307
             parsed.extend(chars)
         except Exception as e:
-            logger.error(f"Error parsing chars: {val}, {e}")
+            logger.error("Error parsing chars: %s, %s", val, e)
     return parsed
 
 
@@ -81,7 +81,7 @@ def _parse_ring_size_column(series):
             sizes = val if isinstance(val, list) else eval(val)  # noqa: S307
             parsed.extend([float(size) for size in sizes])
         except Exception as e:
-            logger.error(f"Error parsing ring sizes: {val}, {e}")
+            logger.error("Error parsing ring sizes: %s, %s", val, e)
     return parsed
 
 
@@ -186,7 +186,7 @@ def compute_metrics(df, save_path, config=None):
     save_path = process_path(save_path)
     if skipped_molecules:
         logger.warning(
-            f"Skipped {len(skipped_molecules)} molecules that failed to parse"
+            "Skipped %d molecules that failed to parse", len(skipped_molecules)
         )
         skipped_df = pd.DataFrame(
             {
@@ -359,7 +359,7 @@ def filter_molecules(df, borders, folder_to_save):
 
     logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
     for line in json.dumps(borders, indent=2, ensure_ascii=False).split("\n"):
-        logger.info(f"  {line}")
+        logger.info("  %s", line)
 
     # Build filtered data with pass flags
     filtered_data = {}

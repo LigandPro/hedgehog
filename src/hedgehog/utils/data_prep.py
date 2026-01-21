@@ -304,7 +304,7 @@ def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     folder_to_save = Path(config["folder_to_save"])
     save_sampled_mols = config.get("save_sampled_mols", False)
     sample_size: int | None = (
-        cast("int | None", config.get("sample_size")) if save_sampled_mols else None
+        cast(int | None, config.get("sample_size")) if save_sampled_mols else None
     )
 
     detected_mode, matched_paths = _detect_mode_and_paths(generated_mols_path)
