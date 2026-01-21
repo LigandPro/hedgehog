@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
@@ -28,9 +28,10 @@ export function PipelineRunner(): React.ReactElement {
   const addLog = useStore((state) => state.addLog);
   const isBackendReady = useStore((state) => state.isBackendReady);
   const config = useStore((state) => state.configs.main);
-  
+
   const [error, setError] = useState<string | null>(null);
   const [selectedStages, setSelectedStages] = useState<string[]>(STAGES);
+  const [focusedIndex, setFocusedIndex] = useState(0);
 
   // Setup notification handler
   useEffect(() => {
@@ -39,8 +40,8 @@ export function PipelineRunner(): React.ReactElement {
       if (method === 'progress') {
         const { stage, current, total, message } = params as any;
         const progress = total > 0 ? Math.round((current / total) * 100) : 0;
-        updateStage(stage, { 
-          progress, 
+        updateStage(stage, {
+          progress,
           status: progress === 100 ? 'completed' : 'running',
           message,
         });
@@ -68,11 +69,23 @@ export function PipelineRunner(): React.ReactElement {
         setRunning(false);
       }
     });
-    
+
     return unsubscribe;
   }, []);
 
+  const toggleStage = (stage: string) => {
+    setSelectedStages(prev => 
+      prev.includes(stage) 
+        ? prev.filter(s => s !== stage)
+        : [...prev, stage]
+    );
+  };
+
   const startPipeline = async () => {
+    if (selectedStages.length === 0) {
+      setError('Please select at least one stage');
+      return;
+    }
     try {
       setError(null);
       const bridge = getBridge();
@@ -81,7 +94,7 @@ export function PipelineRunner(): React.ReactElement {
       addLog({
         timestamp: new Date(),
         level: 'info',
-        message: `Pipeline started with stages: ${selectedStages.join(', ')}`,
+        message: \,
       });
     } catch (err) {
       setError(String(err));
@@ -112,20 +125,27 @@ export function PipelineRunner(): React.ReactElement {
       return;
     }
 
-    if (key.return) {
+    if (key.upArrow) {
+      setFocusedIndex(prev => Math.max(0, prev - 1));
+    } else if (key.downArrow) {
+      setFocusedIndex(prev => Math.min(STAGES.length - 1, prev + 1));
+    } else if (input === ' ') {
+      toggleStage(STAGES[focusedIndex]);
+    } else if (key.return) {
       startPipeline();
     } else if (key.escape || input === 'q') {
       setScreen('welcome');
     }
   });
 
-  const visibleLogs = logs.slice(-8);
+  const visibleLogs = logs.slice(-6);
 
   const runningShortcuts = [
     { key: 'Esc', label: 'Cancel' },
   ];
 
   const idleShortcuts = [
+    { key: 'Space', label: 'Toggle' },
     { key: 'Enter', label: 'Start' },
     { key: 'Esc', label: 'Back' },
   ];
@@ -133,19 +153,19 @@ export function PipelineRunner(): React.ReactElement {
   return (
     <Box flexDirection="column" padding={1}>
       <Header title="Pipeline Runner" />
-      
+
       {error && (
         <Box marginY={1}>
           <Text color="red">Error: {error}</Text>
         </Box>
       )}
-      
+
       {!isBackendReady && (
         <Box marginY={1}>
-          <Text color="yellow">⚠ Backend not connected</Text>
+          <Text color="yellow">Warning: Backend not connected</Text>
         </Box>
       )}
-      
+
       {/* Input info */}
       {config && (
         <Box marginY={1}>
@@ -153,12 +173,32 @@ export function PipelineRunner(): React.ReactElement {
           <Text color="cyan">{config.generated_mols_path}</Text>
         </Box>
       )}
-      
+
+      {/* Stage selection */}
+      {!isRunning && (
+        <Box flexDirection="column" marginY={1}>
+          <Text color="cyan" bold>Select Stages:</Text>
+          <Box flexDirection="column" marginTop={1}>
+            {STAGES.map((stage, index) => {
+              const isSelected = selectedStages.includes(stage);
+              const isFocused = focusedIndex === index;
+              return (
+                <Box key={stage}>
+                  <Text color={isFocused ? 'cyan' : 'white'}>
+                    {isFocused ? '>' : ' '} [{isSelected ? 'x' : ' '}] {STAGE_NAMES[stage]}
+                  </Text>
+                </Box>
+              );
+            })}
+          </Box>
+        </Box>
+      )}
+
       {/* Stage progress */}
       <Box flexDirection="column" marginY={1}>
-        <Text color="cyan" bold>Stages:</Text>
+        <Text color="cyan" bold>Progress:</Text>
         <Box flexDirection="column" marginTop={1}>
-          {STAGES.map((stage) => {
+          {STAGES.filter(s => selectedStages.includes(s)).map((stage) => {
             const stageInfo = stages[stage];
             return (
               <ProgressBar
@@ -172,11 +212,11 @@ export function PipelineRunner(): React.ReactElement {
           })}
         </Box>
       </Box>
-      
+
       {/* Logs */}
       <Box flexDirection="column" marginY={1}>
         <Text color="gray">{'─'.repeat(60)}</Text>
-        <Box flexDirection="column" height={8}>
+        <Box flexDirection="column" height={6}>
           {visibleLogs.map((log, index) => (
             <Box key={index}>
               <Text dimColor>[{formatTimestamp(log.timestamp)}]</Text>
@@ -186,18 +226,18 @@ export function PipelineRunner(): React.ReactElement {
             </Box>
           ))}
           {visibleLogs.length === 0 && (
-            <Text dimColor>No logs yet. Press Enter to start the pipeline.</Text>
+            <Text dimColor>Press Space to toggle stages, Enter to start.</Text>
           )}
         </Box>
       </Box>
-      
+
       {/* Status */}
       {isRunning && (
         <Box marginY={1}>
           <Spinner label="Pipeline running..." />
         </Box>
       )}
-      
+
       <Footer shortcuts={isRunning ? runningShortcuts : idleShortcuts} />
     </Box>
   );
