@@ -1,32 +1,39 @@
-import io
 import os
-import sys 
 import json
-import logging
 import subprocess
+import tempfile
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Dict, Any, Optional
 
 import pandas as pd
 import numpy as np
 from rdkit import Chem
 
 from hedgehog.configs.logger import logger
+from hedgehog.stages.structFilters.utils import process_path
 
-_sascorer = None
-_syba_model = None
-_rascore_available = None
 
-def process_path(folder_to_save, key_word=None):
-    """Ensure path ends with '/' and create directory if needed."""
-    if not folder_to_save.endswith('/'):
-        folder_to_save += '/'
-    
-    if key_word:
-        folder_to_save += f'{key_word}/'
-    
-    os.makedirs(folder_to_save, exist_ok=True)
-    return folder_to_save
+# Lazy-loaded module cache
+_lazy_cache: Dict[str, Any] = {
+    'sascorer': None,
+    'syba_model': None,
+    'rascore_available': None,
+}
+
+
+def _get_cached(key: str, loader: callable) -> Any:
+    """Generic lazy loading with caching.
+
+    Args:
+        key: Cache key name
+        loader: Function that returns the loaded value or False on failure
+
+    Returns:
+        Cached value, or False if loading failed
+    """
+    if _lazy_cache[key] is None:
+        _lazy_cache[key] = loader()
+    return _lazy_cache[key]
 
 
 def prepare_input_smiles(input_df, output_file):
@@ -148,6 +155,21 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
     return merged
 
 
+def _get_input_path_candidates(base_folder: str) -> list:
+    """Get ordered list of candidate input paths to check."""
+    new_structure = [
+        ('stages', '03_structural_filters_post', 'filtered_molecules.csv'),
+        ('stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv'),
+        ('input', 'sampled_molecules.csv'),
+    ]
+    legacy_structure = [
+        ('StructFilters', 'passStructFiltersSMILES.csv'),
+        ('Descriptors', 'passDescriptorsSMILES.csv'),
+        ('sampledMols.csv',),
+    ]
+    return [os.path.join(base_folder, *parts) for parts in new_structure + legacy_structure]
+
+
 def get_input_path(config: Dict[str, Any], folder_to_save: str) -> str:
     """Determine input path for synthesis stage.
 
@@ -156,18 +178,7 @@ def get_input_path(config: Dict[str, Any], folder_to_save: str) -> str:
     """
     base_folder = process_path(folder_to_save)
 
-    # New structure paths
-    candidates = [
-        os.path.join(base_folder, 'stages', '03_structural_filters_post', 'filtered_molecules.csv'),
-        os.path.join(base_folder, 'stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv'),
-        os.path.join(base_folder, 'input', 'sampled_molecules.csv'),
-        # Legacy structure paths
-        base_folder + 'StructFilters/passStructFiltersSMILES.csv',
-        base_folder + 'Descriptors/passDescriptorsSMILES.csv',
-        base_folder + 'sampledMols.csv',
-    ]
-
-    for candidate in candidates:
+    for candidate in _get_input_path_candidates(base_folder):
         if os.path.exists(candidate):
             logger.debug(f"Using input file: {candidate}")
             return candidate
@@ -176,52 +187,57 @@ def get_input_path(config: Dict[str, Any], folder_to_save: str) -> str:
     return config.get('generated_mols_path', '')
 
 
+def _load_sascorer_impl():
+    """Load SA Score module implementation."""
+    try:
+        import sys
+        from rdkit.Chem import RDConfig
+        sys.path.append(os.path.join(RDConfig.RDContribDir, 'SA_Score'))
+        import sascorer
+        return sascorer
+    except Exception as e:
+        logger.warning(f"Failed to load SA Score module: {e}")
+        return False
+
+
+def _load_syba_model_impl():
+    """Load SYBA model implementation."""
+    logger.debug("Loading SYBA model...")
+    try:
+        from syba import syba
+        model = syba.SybaClassifier()
+        model.fitDefaultScore()
+        logger.debug("SYBA model loaded successfully")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load SYBA model: {e}")
+        logger.warning("SYBA scores will be set to np.nan")
+        return False
+
+
+def _load_rascore_impl():
+    """Check if RAScore model is available."""
+    model_path = _get_rascore_model_path()
+    if model_path.exists():
+        logger.debug("RAScore model available for calculation")
+        return True
+    logger.warning(f"RAScore model not found at {model_path}. RA scores will be set to np.nan")
+    return False
+
+
 def _load_sascorer():
-    global _sascorer
-    if _sascorer is None:
-        try:
-            from rdkit.Chem import RDConfig
-            import sys
-            sys.path.append(os.path.join(RDConfig.RDContribDir, 'SA_Score'))
-            import sascorer
-            _sascorer = sascorer
-        except Exception as e:
-            logger.warning(f"Failed to load SA Score module: {e}")
-            _sascorer = False
-    return _sascorer
+    """Load SA Score module with caching."""
+    return _get_cached('sascorer', _load_sascorer_impl)
 
 
 def _load_syba_model():
-    """Load SYBA model"""
-    global _syba_model
-    if _syba_model is None:
-        logger.debug("Loading SYBA model...")
-        try:
-            from syba import syba
-            _syba_model = syba.SybaClassifier()
-            _syba_model.fitDefaultScore()
-            logger.debug("SYBA model loaded successfully")
-        except Exception as e:
-            _syba_model = False
-            logger.error(f"Failed to load SYBA model: {e}")
-            logger.warning("SYBA scores will be set to np.nan")
-    return _syba_model
+    """Load SYBA model with caching."""
+    return _get_cached('syba_model', _load_syba_model_impl)
 
 
 def _load_rascore():
-    """Check if RAScore model and rascore-env are available."""
-    global _rascore_available
-    if _rascore_available is None:
-        molscore_path = Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
-        model_path = molscore_path / "molscore" / "data" / "models" / "RAScore" / "XGB_chembl_ecfp_counts" / "model.pkl"
-        
-        if model_path.exists():
-            _rascore_available = True
-            logger.debug("RAScore model available for calculation")
-        else:
-            _rascore_available = False
-            logger.warning(f"RAScore model not found at {model_path}. RA scores will be set to np.nan")
-    return _rascore_available
+    """Check if RAScore is available with caching."""
+    return _get_cached('rascore_available', _load_rascore_impl)
 
 
 def _calculate_sa_score(smiles):
@@ -276,55 +292,39 @@ def _calculate_syba_score(smiles):
         return np.nan
 
 
-def _calculate_ra_scores_batch(smiles_list, config=None):
-    """Calculate RA scores for multiple molecules in a single batch.
+def _get_rascore_model_path() -> Path:
+    """Get path to RAScore model file."""
+    molscore_path = Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
+    return molscore_path / "molscore" / "data" / "models" / "RAScore" / "XGB_chembl_ecfp_counts" / "model.pkl"
+
+
+def _find_rascore_conda_env(config: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Find rascore conda environment path.
+
     Args:
-        smiles_list: List of SMILES strings
-        config: Configuration dict (can contain 'rascore_conda_prefix' for manual override)
-        
+        config: Configuration dict that may contain 'rascore_conda_prefix'
+
     Returns:
-        List of RA scores (0-1, higher is better), with np.nan for failed calculations
+        Path to conda environment or None if not found
     """
-    if not _load_rascore():
-        return [np.nan] * len(smiles_list)
-    
-    try:
-        conda_prefix = None
-        if config and isinstance(config, dict):
-            conda_prefix = config.get('rascore_conda_prefix')
-        
-        if not conda_prefix:
-            common_locations = [
-                Path.home() / 'miniconda3' / 'envs' / 'rascore-env',
-                Path.home() / 'anaconda3' / 'envs' / 'rascore-env',
-                Path.home() / 'conda' / 'envs' / 'rascore-env',
-                Path('/opt/conda/envs/rascore-env'),
-            ]
-            for location in common_locations:
-                if location.exists():
-                    conda_prefix = str(location)
-                    break
-        
-        if not conda_prefix or not Path(conda_prefix).exists():
-            logger.warning('Could not find rascore-env. RA scores will be set to np.nan')
-            return [np.nan] * len(smiles_list)
-        
-        molscore_path = Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
-        model_path = molscore_path / "molscore" / "data" / "models" / "RAScore" / "XGB_chembl_ecfp_counts" / "model.pkl"
-        
-        if not model_path.exists():
-            logger.warning(f"RAScore model not found at {model_path}")
-            return [np.nan] * len(smiles_list)
-        
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.smi', delete=False) as f:
-            smiles_file = f.name
-            for smi in smiles_list:
-                f.write(f"{smi}\n")
-        
-        script_content = f"""
-import sys
-import pickle as pkl
+    if config and isinstance(config, dict):
+        prefix = config.get('rascore_conda_prefix')
+        if prefix and Path(prefix).exists():
+            return prefix
+
+    common_locations = [
+        Path.home() / 'miniconda3' / 'envs' / 'rascore-env',
+        Path.home() / 'anaconda3' / 'envs' / 'rascore-env',
+        Path.home() / 'conda' / 'envs' / 'rascore-env',
+        Path('/opt/conda/envs/rascore-env'),
+    ]
+    for location in common_locations:
+        if location.exists():
+            return str(location)
+    return None
+
+
+_RASCORE_SCRIPT_TEMPLATE = '''import pickle as pkl
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -355,51 +355,99 @@ for smiles in smiles_list:
             print(prob)
         except Exception:
             print('nan')
-"""
-        
+'''
+
+
+def _parse_rascore_output(stdout: str, expected_count: int) -> list:
+    """Parse RAScore subprocess output into list of scores.
+
+    Args:
+        stdout: Standard output from RAScore script
+        expected_count: Expected number of scores
+
+    Returns:
+        List of scores (floats or np.nan)
+    """
+    scores = []
+    for line in stdout.strip().split('\n'):
+        try:
+            score = float(line.strip())
+            scores.append(score if not np.isnan(score) else np.nan)
+        except ValueError:
+            scores.append(np.nan)
+
+    if len(scores) != expected_count:
+        logger.warning(f"Expected {expected_count} scores but got {len(scores)}")
+        return [np.nan] * expected_count
+    return scores
+
+
+def _calculate_ra_scores_batch(smiles_list: list, config: Optional[Dict[str, Any]] = None) -> list:
+    """Calculate RA scores for multiple molecules in a single batch.
+
+    Args:
+        smiles_list: List of SMILES strings
+        config: Configuration dict (can contain 'rascore_conda_prefix' for manual override)
+
+    Returns:
+        List of RA scores (0-1, higher is better), with np.nan for failed calculations
+    """
+    nan_list = [np.nan] * len(smiles_list)
+
+    if not _load_rascore():
+        return nan_list
+
+    conda_prefix = _find_rascore_conda_env(config)
+    if not conda_prefix:
+        logger.warning('Could not find rascore-env. RA scores will be set to np.nan')
+        return nan_list
+
+    model_path = _get_rascore_model_path()
+    if not model_path.exists():
+        logger.warning(f"RAScore model not found at {model_path}")
+        return nan_list
+
+    python_exec = Path(conda_prefix) / 'bin' / 'python'
+    if not python_exec.exists():
+        logger.warning(f"Python not found in rascore-env: {python_exec}")
+        return nan_list
+
+    smiles_file = None
+    temp_script = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.smi', delete=False) as f:
+            smiles_file = f.name
+            for smi in smiles_list:
+                f.write(f"{smi}\n")
+
+        script_content = _RASCORE_SCRIPT_TEMPLATE.format(model_path=model_path, smiles_file=smiles_file)
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             temp_script = f.name
             f.write(script_content)
-        
-        try:
-            python_exec = Path(conda_prefix) / 'bin' / 'python'
-            if not python_exec.exists():
-                logger.warning(f"Python not found in rascore-env: {python_exec}")
-                return [np.nan] * len(smiles_list)
-            
-            result = subprocess.run(
-                [str(python_exec), temp_script],
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            
-            if result.returncode == 0:
-                scores = []
-                for line in result.stdout.strip().split('\n'):
-                    try:
-                        score = float(line.strip())
-                        scores.append(score if not np.isnan(score) else np.nan)
-                    except ValueError:
-                        scores.append(np.nan)
-                
-                if len(scores) != len(smiles_list):
-                    logger.warning(f"Expected {len(smiles_list)} scores but got {len(scores)}")
-                    return [np.nan] * len(smiles_list)
-                return scores
-            else:
-                logger.debug(f"RA score batch calculation failed: {result.stderr}")
-                return [np.nan] * len(smiles_list)
-        finally:
-            try:
-                os.unlink(temp_script)
-                os.unlink(smiles_file)
-            except:
-                pass
-                
+
+        result = subprocess.run(
+            [str(python_exec), temp_script],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+
+        if result.returncode != 0:
+            logger.debug(f"RA score batch calculation failed: {result.stderr}")
+            return nan_list
+
+        return _parse_rascore_output(result.stdout, len(smiles_list))
+
     except Exception as e:
         logger.debug(f"Failed to calculate RA scores in batch: {e}")
-        return [np.nan] * len(smiles_list)
+        return nan_list
+    finally:
+        for path in [temp_script, smiles_file]:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 
 def calculate_synthesis_scores(df, folder_to_save=None, config=None):
@@ -437,67 +485,66 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
     return result_df
 
 
-def apply_synthesis_score_filters(df, config):
+def _build_score_filter_mask(df: pd.DataFrame, column: str, min_val: float, max_val) -> Optional[pd.Series]:
+    """Build a boolean mask for filtering by score thresholds.
+
+    Molecules with NaN scores pass the filter (not filtered by that criterion).
+
+    Args:
+        df: DataFrame containing the score column
+        column: Name of the score column
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value (can be 'inf' for no upper bound)
+
+    Returns:
+        Boolean Series mask, or None if column missing or no valid scores
+    """
+    if column not in df.columns:
+        return None
+
+    valid_scores = df[column].dropna()
+    if len(valid_scores) == 0:
+        logger.info(f"{column} filter: skipped (no valid scores calculated)")
+        return None
+
+    is_na = df[column].isna()
+    above_min = df[column] >= min_val
+
+    if max_val == 'inf':
+        return is_na | above_min
+
+    below_max = df[column] <= max_val
+    return is_na | (above_min & below_max)
+
+
+def apply_synthesis_score_filters(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
     """Apply filters based on synthesis score thresholds.
-    
+
     Each molecule is checked independently against each criterion (SA, RA, SYBA).
     A molecule must pass ALL filters for which it has valid scores.
     Molecules with NaN scores for a criterion are not filtered by that criterion.
     Only molecules that pass all applicable score filters are returned.
-    
+
     Args:
         df: DataFrame with synthesis scores
         config: Configuration with threshold settings
-        
+
     Returns:
         Filtered DataFrame with molecules that pass all applicable filters
     """
-    filtered_df = df.copy()
-    initial_count = len(filtered_df)
-    pass_mask = pd.Series([True] * len(filtered_df), index=filtered_df.index)
-    
-    sa_min = config.get('sa_score_min', 0)
-    sa_max = config.get('sa_score_max', 'inf')
-    if 'sa_score' in filtered_df.columns:
-        valid_scores = filtered_df['sa_score'].dropna()
-        if len(valid_scores) > 0:
-            if sa_max != 'inf':
-                sa_mask = (filtered_df['sa_score'].isna()) | \
-                         ((filtered_df['sa_score'] >= sa_min) & (filtered_df['sa_score'] <= sa_max))
-            else:
-                sa_mask = (filtered_df['sa_score'].isna()) | (filtered_df['sa_score'] >= sa_min)
-            pass_mask = pass_mask & sa_mask
-        else:
-            logger.info(f"SA score filter: skipped (no valid scores calculated)")
-    
-    ra_min = config.get('ra_score_min', 0)
-    ra_max = config.get('ra_score_max', 'inf')
-    if 'ra_score' in filtered_df.columns:
-        valid_scores = filtered_df['ra_score'].dropna()
-        if len(valid_scores) > 0:
-            if ra_max != 'inf':
-                ra_mask = (filtered_df['ra_score'].isna()) | \
-                         ((filtered_df['ra_score'] >= ra_min) & (filtered_df['ra_score'] <= ra_max))
-            else:
-                ra_mask = (filtered_df['ra_score'].isna()) | (filtered_df['ra_score'] >= ra_min)
-            pass_mask = pass_mask & ra_mask
-        else:
-            logger.info(f"RA score filter: skipped (no valid scores calculated)")
-    
-    syba_min = config.get('syba_score_min', 0)
-    syba_max = config.get('syba_score_max', 'inf')
-    if 'syba_score' in filtered_df.columns:
-        valid_scores = filtered_df['syba_score'].dropna()
-        if len(valid_scores) > 0:
-            if syba_max != 'inf':
-                syba_mask = (filtered_df['syba_score'].isna()) | \
-                           ((filtered_df['syba_score'] >= syba_min) & (filtered_df['syba_score'] <= syba_max))
-            else:
-                syba_mask = (filtered_df['syba_score'].isna()) | (filtered_df['syba_score'] >= syba_min)
-            pass_mask = pass_mask & syba_mask
-        else:
-            logger.info(f"SYBA score filter: skipped (no valid scores calculated)")
-    
-    filtered_df = filtered_df[pass_mask]
-    
-    return filtered_df
+    score_filters = [
+        ('sa_score', 'sa_score_min', 'sa_score_max'),
+        ('ra_score', 'ra_score_min', 'ra_score_max'),
+        ('syba_score', 'syba_score_min', 'syba_score_max'),
+    ]
+
+    pass_mask = pd.Series(True, index=df.index)
+
+    for column, min_key, max_key in score_filters:
+        min_val = config.get(min_key, 0)
+        max_val = config.get(max_key, 'inf')
+        mask = _build_score_filter_mask(df, column, min_val, max_val)
+        if mask is not None:
+            pass_mask = pass_mask & mask
+
+    return df[pass_mask].copy()

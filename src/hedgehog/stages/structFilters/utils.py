@@ -1,9 +1,10 @@
-import os 
-import glob 
+import os
+import glob
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -18,7 +19,6 @@ import medchem as mc
 _LILLY_BIN_PATH = os.path.join(os.path.dirname(__file__), '../../../../modules/lilly_medchem_rules/bin')
 _LILLY_BIN_PATH = os.path.abspath(_LILLY_BIN_PATH)
 if os.path.exists(_LILLY_BIN_PATH):
-    # Add to PATH if not already there
     current_path = os.environ.get('PATH', '')
     if _LILLY_BIN_PATH not in current_path:
         os.environ['PATH'] = f"{_LILLY_BIN_PATH}:{current_path}"
@@ -32,7 +32,65 @@ except ImportError:
 
 from hedgehog.configs.logger import logger, load_config
 
+
+# Default columns for Lilly filter results
+_LILLY_DEFAULT_COLUMNS = ["smiles", "status", "pass_filter", "demerit_score", "reasons"]
+
+
+def _create_failed_row(smiles=None, reason="unsupported_or_missing"):
+    """Create a failed molecule row for Lilly filter results."""
+    return {
+        "smiles": smiles,
+        "status": "exclude",
+        "pass_filter": False,
+        "demerit_score": None,
+        "reasons": reason,
+    }
+
+
+def _create_failed_dataframe(count, smiles_list=None, reason="unsupported_or_missing"):
+    """Create a DataFrame of failed molecule rows."""
+    if smiles_list is None:
+        smiles_list = [None] * count
+    return pd.DataFrame([_create_failed_row(smi, reason) for smi in smiles_list])
+
+
+def _pad_dataframe_to_length(df, target_length, template_row=None):
+    """Pad a DataFrame to reach target length using failed rows."""
+    current_length = len(df)
+    if current_length >= target_length:
+        return df
+
+    missing_count = target_length - current_length
+    if template_row is not None:
+        missing_rows = []
+        for _ in range(missing_count):
+            row = template_row.copy()
+            row['smiles'] = None
+            row['status'] = 'exclude'
+            row['pass_filter'] = False
+            row['demerit_score'] = None
+            if 'reasons' in row:
+                row['reasons'] = 'unsupported_or_missing'
+            missing_rows.append(row)
+        missing_df = pd.DataFrame(missing_rows)
+    else:
+        missing_df = _create_failed_dataframe(missing_count)
+
+    return pd.concat([df, missing_df], ignore_index=True)
+
+
+def _ensure_dataframe_length(df, expected_length, template_row=None):
+    """Ensure DataFrame has exactly the expected length by padding or trimming."""
+    if len(df) < expected_length:
+        return _pad_dataframe_to_length(df, expected_length, template_row)
+    if len(df) > expected_length:
+        return df.iloc[:expected_length].reset_index(drop=True)
+    return df
+
+
 def camelcase(any_str):
+    """Convert underscore-separated string to CamelCase."""
     return ''.join(word.capitalize() for word in any_str.split('_'))
 
 
@@ -223,81 +281,38 @@ def add_model_name_col(final_result, smiles_with_model):
     """Add smiles, model_name, and mol_idx columns from input data."""
     expected_len = len(smiles_with_model)
     actual_len = len(final_result)
-    
+
     if actual_len != expected_len:
-        logger.error(f"Length mismatch in add_model_name_col: final_result has {actual_len} rows, but smiles_with_model has {expected_len} items.")
-        logger.error(f"final_result shape: {final_result.shape}")
-        logger.error(f"final_result columns: {list(final_result.columns)}")
-        
+        logger.error(f"Length mismatch in add_model_name_col: final_result has {actual_len} rows, "
+                     f"but smiles_with_model has {expected_len} items.")
+
         if actual_len < expected_len:
             logger.warning(f"Padding final_result from {actual_len} to {expected_len} rows.")
-            missing_count = expected_len - actual_len
-            
             if len(final_result) > 0:
-                all_columns = list(final_result.columns)
                 template_row = final_result.iloc[-1].to_dict()
-                
-                missing_rows = []
-                for i in range(missing_count):
-                    missing_row = {col: None for col in all_columns}
-                    for col, val in template_row.items():
-                        missing_row[col] = val
-                    missing_row['smiles'] = None
-                    missing_row['status'] = 'exclude'
-                    missing_row['pass_filter'] = False
-                    missing_row['demerit_score'] = None
-                    if 'reasons' in missing_row:
-                        missing_row['reasons'] = 'unsupported_or_missing'
-                    missing_rows.append(missing_row)
-                
-                missing_df = pd.DataFrame(missing_rows)
-                final_result = pd.concat([final_result, missing_df], ignore_index=True)
-                logger.info(f"Padded {missing_count} rows. New length: {len(final_result)}")
+                final_result = _pad_dataframe_to_length(final_result, expected_len, template_row)
+                logger.info(f"Padded to {len(final_result)} rows.")
             else:
-                logger.error("final_result is empty but smiles_with_model is not. Creating all rows from scratch.")
-                all_rows = []
-                base_columns = ["smiles", "status", "pass_filter", "demerit_score", "reasons"]
-                for item in smiles_with_model:
-                    smi = item[0] if isinstance(item, tuple) and len(item) > 0 else None
-                    all_rows.append({
-                        "smiles": smi,
-                        "status": "exclude",
-                        "pass_filter": False,
-                        "demerit_score": None,
-                        "reasons": "unsupported_or_missing",
-                    })
-                final_result = pd.DataFrame(all_rows)
+                logger.error("final_result is empty. Creating all rows from scratch.")
+                smiles_list = [item[0] if isinstance(item, tuple) and len(item) > 0 else None
+                               for item in smiles_with_model]
+                final_result = _create_failed_dataframe(expected_len, smiles_list)
         else:
             logger.warning(f"Trimming final_result from {actual_len} to {expected_len} rows.")
             final_result = final_result.iloc[:expected_len].reset_index(drop=True)
-    
+
     if len(final_result) != expected_len:
-        logger.error(f"CRITICAL: After padding/trimming, final_result length ({len(final_result)}) still doesn't match expected ({expected_len}).")
-        logger.error(f"final_result shape: {final_result.shape}")
-        raise ValueError(f"CRITICAL: After padding/trimming, final_result length ({len(final_result)}) still doesn't match expected ({expected_len}). Cannot assign columns.")
-    
-    try:
-        smiles_vals = [item[0] for item in smiles_with_model]
-        model_vals = [item[1] if item[1] is not None else 'single' for item in smiles_with_model]
-        mol_idx_vals = [item[3] if len(item) >= 4 else None for item in smiles_with_model]
-        
-        if len(smiles_vals) != len(final_result):
-            raise ValueError(f"Cannot assign: smiles_vals has {len(smiles_vals)} items but final_result has {len(final_result)} rows")
-        if len(model_vals) != len(final_result):
-            raise ValueError(f"Cannot assign: model_vals has {len(model_vals)} items but final_result has {len(final_result)} rows")
-        if len(mol_idx_vals) != len(final_result):
-            raise ValueError(f"Cannot assign: mol_idx_vals has {len(mol_idx_vals)} items but final_result has {len(final_result)} rows")
-        
-        final_result['smiles'] = smiles_vals
-        final_result['model_name'] = model_vals
-        final_result['mol_idx'] = mol_idx_vals
-        
-    except ValueError as e:
-        logger.error(f"Assignment failed: {e}")
-        logger.error(f"final_result length: {len(final_result)}, expected: {expected_len}")
-        logger.error(f"smiles_vals length: {len(smiles_vals)}, model_vals length: {len(model_vals)}, mol_idx_vals length: {len(mol_idx_vals)}")
-        raise
-    
+        raise ValueError(f"CRITICAL: After padding/trimming, final_result length ({len(final_result)}) "
+                         f"still doesn't match expected ({expected_len}).")
+
+    smiles_vals = [item[0] for item in smiles_with_model]
+    model_vals = [item[1] if item[1] is not None else 'single' for item in smiles_with_model]
+    mol_idx_vals = [item[3] if len(item) >= 4 else None for item in smiles_with_model]
+
+    final_result['smiles'] = smiles_vals
+    final_result['model_name'] = model_vals
+    final_result['mol_idx'] = mol_idx_vals
+
     return final_result
 
 
@@ -315,7 +330,7 @@ def filter_function_applier(filter_name):
 
 
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
-    logger.info(f"Calculating Common Alerts...")
+    logger.info("Calculating Common Alerts...")
     def _apply_alerts(row):
         mol = row["mol"]
         row["smiles"] = dm.to_smiles(mol) if mol is not None else None
@@ -372,7 +387,7 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
 
 
 def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
-    logger.info(f"Calculating Molecular Graph statistics...")
+    logger.info("Calculating Molecular Graph statistics...")
     severities = list(range(1, 12))
 
     results = {'mol' : mols}
@@ -392,7 +407,7 @@ def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
 
 
 def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
-    logger.info(f"Calculating Complexity filters...")
+    logger.info("Calculating Complexity filters...")
     final_result = pd.DataFrame({'mol' : mols,
                                  'pass' : True,
                                  'pass_any' : False
@@ -410,7 +425,7 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
 
 
 def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
-    logger.info(f"Calculating Bredt filter...")
+    logger.info("Calculating Bredt filter...")
     out = mc.functional.bredt_filter(mols=mols,
                                      n_jobs=-1,
                                      progress=False,
@@ -425,7 +440,7 @@ def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
 
 
 def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
-    logger.info(f"Calculating NIBR filter...")
+    logger.info("Calculating NIBR filter...")
     n_jobs = config['n_jobs']
 
     config_structFilters = load_config(config['config_structFilters'])
@@ -442,7 +457,74 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
     return results
 
 
+def _process_lilly_batch(dfilter, batch, n_jobs, scheduler):
+    """Process a single batch of molecules through Lilly filter."""
+    try:
+        batch_result = dfilter(mols=batch, n_jobs=n_jobs, scheduler=scheduler)
+        if len(batch_result) != len(batch):
+            logger.warning(f"Lilly returned {len(batch_result)} results for {len(batch)} molecules.")
+            template = batch_result.iloc[-1].to_dict() if len(batch_result) > 0 else None
+            batch_result = _ensure_dataframe_length(batch_result, len(batch), template)
+        return batch_result
+    except Exception as batch_error:
+        if "Length of values" in str(batch_error) or "does not match length of index" in str(batch_error):
+            return _process_lilly_one_by_one(dfilter, batch, scheduler)
+        smiles_list = [dm.to_smiles(m) if m else None for m in batch]
+        return _create_failed_dataframe(len(batch), smiles_list, "batch_processing_failed")
+
+
+def _process_lilly_one_by_one(dfilter, batch, scheduler):
+    """Process molecules one by one as fallback."""
+    one_by_one_results = []
+    for mol in batch:
+        try:
+            single_result = dfilter(mols=[mol], n_jobs=1, scheduler=scheduler)
+            if len(single_result) > 0:
+                one_by_one_results.append(single_result.iloc[0].to_dict())
+            else:
+                smi = dm.to_smiles(mol) if mol else None
+                one_by_one_results.append(_create_failed_row(smi, "unsupported_or_missing"))
+        except Exception:
+            smi = dm.to_smiles(mol) if mol else None
+            one_by_one_results.append(_create_failed_row(smi, "processing_failed"))
+    return pd.DataFrame(one_by_one_results)
+
+
+def _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler, batch_size=500):
+    """Run Lilly filter in batches with fallback to one-by-one processing."""
+    batch_results = []
+    for i in range(0, len(valid_mols), batch_size):
+        batch = valid_mols[i:i + batch_size]
+        batch_result = _process_lilly_batch(dfilter, batch, n_jobs, scheduler)
+        batch_results.append(batch_result)
+
+    if not batch_results:
+        return None
+    return pd.concat(batch_results, ignore_index=True)
+
+
+def _reconstruct_full_results(results, valid_indices, expected_len, input_smiles):
+    """Reconstruct full results DataFrame including invalid molecules."""
+    complete_results = []
+    valid_idx = 0
+    valid_indices_set = set(valid_indices)
+
+    for orig_idx in range(expected_len):
+        smi = input_smiles[orig_idx] if orig_idx < len(input_smiles) else None
+        if orig_idx in valid_indices_set:
+            if valid_idx < len(results):
+                complete_results.append(results.iloc[valid_idx].to_dict())
+            else:
+                complete_results.append(_create_failed_row(smi, "unsupported_or_missing"))
+            valid_idx += 1
+        else:
+            complete_results.append(_create_failed_row(smi, "invalid_molecule"))
+
+    return pd.DataFrame(complete_results)
+
+
 def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
+    """Apply Lilly demerits filter to molecules."""
     if not LILLY_AVAILABLE:
         raise ImportError(
             "Lilly demerits filter is not available. "
@@ -450,20 +532,21 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             "Install with: conda install lilly-medchem-rules\n"
             "Or disable this filter by setting 'calculate_lilly: False' in config_structFilters.yml"
         )
-    
-    logger.info(f"Calculating Lilly filter...")
-    n_jobs = config['n_jobs']
 
-    config_strcuFilters = load_config(config['config_structFilters'])
-    scheduler = config_strcuFilters['lilly_scheduler']
+    logger.info("Calculating Lilly filter...")
+    n_jobs = config['n_jobs']
+    config_structFilters = load_config(config['config_structFilters'])
+    scheduler = config_structFilters['lilly_scheduler']
 
     if smiles_modelName_mols is not None:
         expected_len = len(smiles_modelName_mols)
-        input_smiles = [item[0] if isinstance(item, tuple) and len(item) > 0 else None for item in smiles_modelName_mols]
+        input_smiles = [item[0] if isinstance(item, tuple) and len(item) > 0 else None
+                        for item in smiles_modelName_mols]
     else:
         expected_len = len(mols)
         input_smiles = [dm.to_smiles(mol) if mol is not None else None for mol in mols]
 
+    # Collect valid molecules
     valid_mols = []
     valid_indices = []
     for idx, mol in enumerate(mols):
@@ -473,234 +556,91 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                 if smi:
                     valid_mols.append(mol)
                     valid_indices.append(idx)
-            except:
+            except Exception:
                 pass
-    
+
+    if not valid_mols:
+        results = _create_failed_dataframe(expected_len, input_smiles, "invalid_molecule")
+        if smiles_modelName_mols is not None:
+            results = add_model_name_col(results, smiles_modelName_mols)
+        return results
+
+    # Run the filter
     dfilter = LillyDemeritsFilters()
     try:
-        if len(valid_mols) > 0:
-            results = dfilter(mols=valid_mols,
-                              n_jobs=n_jobs,
-                              scheduler=scheduler,
-                              )
-        else:
-            results = pd.DataFrame(columns=["smiles", "status", "pass_filter", "demerit_score", "reasons"])
+        results = dfilter(mols=valid_mols, n_jobs=n_jobs, scheduler=scheduler)
     except ValueError as e:
         if "Length of values" in str(e) or "does not match length of index" in str(e):
-        
-            batch_size = 500
-            batch_results = []
-            for i in range(0, len(valid_mols), batch_size):
-                batch = valid_mols[i:i+batch_size]
-                batch_num = i // batch_size
-                try:
-                    batch_result = dfilter(mols=batch,
-                                          n_jobs=n_jobs,
-                                          scheduler=scheduler,
-                                          )
-                    if len(batch_result) != len(batch):
-                        logger.warning(f"Batch {batch_num}: Lilly returned {len(batch_result)} results for {len(batch)} molecules. Padding missing molecules.")
-                        missing = len(batch) - len(batch_result)
-                        if len(batch_result) > 0:
-                            template = batch_result.iloc[-1].to_dict()
-                            missing_rows = []
-                            for j in range(missing):
-                                row = template.copy()
-                                row['smiles'] = None
-                                row['status'] = 'exclude'
-                                row['pass_filter'] = False
-                                row['demerit_score'] = None
-                                if 'reasons' in row:
-                                    row['reasons'] = 'unsupported_or_missing'
-                                missing_rows.append(row)
-                            missing_df = pd.DataFrame(missing_rows)
-                            batch_result = pd.concat([batch_result, missing_df], ignore_index=True)
-                        else:
-                            batch_result = pd.DataFrame({
-                                "smiles": [None] * len(batch),
-                                "status": ["exclude"] * len(batch),
-                                "pass_filter": [False] * len(batch),
-                                "demerit_score": [None] * len(batch),
-                                "reasons": ["unsupported_or_missing"] * len(batch),
-                            })
-                    batch_results.append(batch_result)
-                except Exception as batch_error:
-                    if "Length of values" in str(batch_error) or "does not match length of index" in str(batch_error):
-                        one_by_one_results = []
-                        for mol in batch:
-                            try:
-                                single_result = dfilter(mols=[mol], n_jobs=1, scheduler=scheduler)
-                                if len(single_result) > 0:
-                                    one_by_one_results.append(single_result.iloc[0].to_dict())
-                                else:
-                                    one_by_one_results.append({
-                                        "smiles": dm.to_smiles(mol) if mol else None,
-                                        "status": "exclude",
-                                        "pass_filter": False,
-                                        "demerit_score": None,
-                                        "reasons": "unsupported_or_missing",
-                                    })
-                            except:
-                                one_by_one_results.append({
-                                    "smiles": dm.to_smiles(mol) if mol else None,
-                                    "status": "exclude",
-                                    "pass_filter": False,
-                                    "demerit_score": None,
-                                    "reasons": "processing_failed",
-                                })
-                        batch_result = pd.DataFrame(one_by_one_results)
-                        batch_results.append(batch_result)
-                    else:
-                        batch_failed = pd.DataFrame({
-                            "smiles": [dm.to_smiles(m) if m else None for m in batch],
-                            "status": ["exclude"] * len(batch),
-                            "pass_filter": [False] * len(batch),
-                            "demerit_score": [None] * len(batch),
-                            "reasons": ["batch_processing_failed"] * len(batch),
-                        })
-                        batch_results.append(batch_failed)
-            
-            if batch_results:
-                results = pd.concat(batch_results, ignore_index=True)
-            else:
+            results = _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler)
+            if results is None:
                 raise ValueError(f"All batches failed. Cannot process lilly filter. Original error: {e}")
         else:
             raise
-    
-    if len(results) != len(valid_mols):
-        logger.warning(f"Results length {len(results)} doesn't match valid_mols length {len(valid_mols)}. Padding/trimming.")
-        if len(results) < len(valid_mols):
-            missing = len(valid_mols) - len(results)
-            if len(results) > 0:
-                template = results.iloc[-1].to_dict()
-                missing_rows = []
-                for i in range(missing):
-                    row = template.copy()
-                    row['smiles'] = None
-                    row['status'] = 'exclude'
-                    row['pass_filter'] = False
-                    row['demerit_score'] = None
-                    if 'reasons' in row:
-                        row['reasons'] = 'unsupported_or_missing'
-                    missing_rows.append(row)
-                missing_df = pd.DataFrame(missing_rows)
-                results = pd.concat([results, missing_df], ignore_index=True)
-            else:
-                results = pd.DataFrame({
-                    "smiles": [None] * len(valid_mols),
-                    "status": ["exclude"] * len(valid_mols),
-                    "pass_filter": [False] * len(valid_mols),
-                    "demerit_score": [None] * len(valid_mols),
-                    "reasons": ["unsupported_or_missing"] * len(valid_mols),
-                })
-        else:
-            results = results.iloc[:len(valid_mols)].reset_index(drop=True)
-    
-    results = results.reset_index(drop=True)
-    
-    if len(results) < len(valid_mols):
-        if len(results) > 0:
-            missing_count = len(valid_mols) - len(results)
-            template = results.iloc[-1].to_dict()
-            missing_rows = []
-            for i in range(missing_count):
-                row = template.copy()
-                row['smiles'] = None
-                row['status'] = 'exclude'
-                row['pass_filter'] = False
-                row['demerit_score'] = None
-                if 'reasons' in row:
-                    row['reasons'] = 'unsupported_or_missing'
-                missing_rows.append(row)
-            if missing_rows:
-                missing_df = pd.DataFrame(missing_rows)
-                results = pd.concat([results, missing_df], ignore_index=True)
-        else:
-            results = pd.DataFrame({
-                "smiles": [None] * len(valid_mols),
-                "status": ["exclude"] * len(valid_mols),
-                "pass_filter": [False] * len(valid_mols),
-                "demerit_score": [None] * len(valid_mols),
-                "reasons": ["unsupported_or_missing"] * len(valid_mols),
-            })
-    
-    complete_results = []
-    valid_idx = 0
-    for orig_idx in range(expected_len):
-        if orig_idx in valid_indices:
-            if valid_idx < len(results):
-                complete_results.append(results.iloc[valid_idx].to_dict())
-            else:
-                complete_results.append({
-                    "smiles": input_smiles[orig_idx] if orig_idx < len(input_smiles) else None,
-                    "status": "exclude",
-                    "pass_filter": False,
-                    "demerit_score": None,
-                    "reasons": "unsupported_or_missing",
-                })
-            valid_idx += 1
-        else:
-            complete_results.append({
-                "smiles": input_smiles[orig_idx] if orig_idx < len(input_smiles) else None,
-                "status": "exclude",
-                "pass_filter": False,
-                "demerit_score": None,
-                "reasons": "invalid_molecule",
-            })
-    
-    results = pd.DataFrame(complete_results)
-    
-    if len(results) < expected_len:
-        if smiles_modelName_mols is not None:
-            input_smiles = [item[0] if isinstance(item, tuple) and len(item) > 0 else None for item in smiles_modelName_mols]
-        else:
-            input_smiles = [dm.to_smiles(mol) if mol is not None else None for mol in mols]
-        
-        result_columns = list(results.columns) if len(results) > 0 else ["smiles", "status", "pass_filter", "demerit_score", "reasons"]
-        
-        results_by_smiles = {}
-        if 'smiles' in results.columns and len(results) > 0:
-            for _, row in results.iterrows():
-                smi = str(row['smiles']).strip() if pd.notna(row['smiles']) else None
-                if smi:
-                    results_by_smiles[smi] = row.to_dict()
-        
-        complete_results = []
-        matched_count = 0
-        
-        for smi in input_smiles:
-            smi_normalized = str(smi).strip() if smi else None
-            if smi_normalized and smi_normalized in results_by_smiles:
-                row_dict = results_by_smiles[smi_normalized].copy()
-                for col in result_columns:
-                    if col not in row_dict:
-                        row_dict[col] = None
-                complete_results.append(row_dict)
-                matched_count += 1
-            else:
-                failed_row = {col: None for col in result_columns}
-                failed_row["smiles"] = smi
-                failed_row["status"] = "exclude"
-                failed_row["pass_filter"] = False
-                failed_row["demerit_score"] = None
-                if "reasons" in failed_row:
-                    failed_row["reasons"] = "unsupported_or_missing"
-                complete_results.append(failed_row)
-        
-        results = pd.DataFrame(complete_results)
-    
-    if len(results) > expected_len:
-        results = results.iloc[:expected_len].reset_index(drop=True)
-    
+
+    # Ensure results match valid_mols length
+    template = results.iloc[-1].to_dict() if len(results) > 0 else None
+    results = _ensure_dataframe_length(results, len(valid_mols), template)
+
+    # Reconstruct full results including invalid molecules
+    results = _reconstruct_full_results(results, valid_indices, expected_len, input_smiles)
+
+    # Final length check
+    results = _ensure_dataframe_length(results, expected_len)
     if len(results) != expected_len:
         raise ValueError(f"CRITICAL: Results length ({len(results)}) doesn't match expected ({expected_len})")
-    
+
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
-    return results 
+    return results
+
+
+def _get_pass_column(df, fallback_column=None, fallback_condition=None):
+    """Determine the pass column name, creating it if necessary.
+
+    Args:
+        df: DataFrame to check
+        fallback_column: Column name to use for creating pass column if not found
+        fallback_condition: Lambda function to apply to fallback_column
+
+    Returns:
+        Name of the pass column
+    """
+    if 'pass' in df.columns:
+        return 'pass'
+    if 'pass_filter' in df.columns:
+        return 'pass_filter'
+    if fallback_column and fallback_column in df.columns and fallback_condition:
+        df['pass'] = fallback_condition(df[fallback_column])
+        return 'pass'
+    return None
+
+
+def _ensure_pass_column_in_extended(filter_extended, pass_col, filter_results, fallback_column=None):
+    """Ensure the 'pass' column exists in filter_extended DataFrame."""
+    if 'pass' in filter_extended.columns:
+        return filter_extended
+
+    if pass_col and pass_col in filter_extended.columns and pass_col != 'pass':
+        filter_extended.rename(columns={pass_col: 'pass'}, inplace=True)
+    elif 'pass_filter' in filter_extended.columns:
+        filter_extended.rename(columns={'pass_filter': 'pass'}, inplace=True)
+    elif fallback_column and fallback_column in filter_extended.columns:
+        filter_extended['pass'] = (filter_extended[fallback_column] == 0)
+    elif 'pass' in filter_results.columns and len(filter_extended) == len(filter_results):
+        filter_extended['pass'] = filter_results['pass'].values
+
+    return filter_extended
+
+
+def _create_base_stats_df(model_name, num_mol, **extra_columns):
+    """Create base statistics DataFrame with model_name and num_mol."""
+    data = {"model_name": [model_name], "num_mol": [num_mol]}
+    data.update({k: [v] for k, v in extra_columns.items()})
+    return pd.DataFrame(data)
 
 
 def get_basic_stats(config, filter_results, model_name, filter_name, stat=None, extend=None):
+    """Calculate basic statistics for filter results."""
     is_multi = filter_results['model_name'].nunique(dropna=True) > 1
     if is_multi:
         all_res = []
@@ -709,143 +649,72 @@ def get_basic_stats(config, filter_results, model_name, filter_name, stat=None, 
             res_df, filter_extended = get_basic_stats(config, group.copy(), model, filter_name, stat, extend)
             all_res.append(res_df)
             all_extended.append(filter_extended)
-
-        res_df = pd.concat(all_res, ignore_index=True)
-        filter_extended = pd.concat(all_extended, ignore_index=True)
-        return res_df, filter_extended
+        return pd.concat(all_res, ignore_index=True), pd.concat(all_extended, ignore_index=True)
 
     num_mol = len(filter_results)
     filter_results.dropna(subset='mol', inplace=True)
-    filter_results['model_name'] = model_name 
+    filter_results['model_name'] = model_name
 
     if filter_name == 'common_alerts':
-        any_banned_percent = (~filter_results['pass']).mean()
-        all_banned_percent = (~filter_results['pass_any']).mean()
-
-        res_df = pd.DataFrame({"model_name" : [model_name],
-                               "num_mol" : [num_mol],
-                               "all_banned_ratio" : [all_banned_percent],
-                               "any_banned_ratio" : [any_banned_percent]
-                             })
-
+        res_df = _create_base_stats_df(
+            model_name, num_mol,
+            all_banned_ratio=(~filter_results['pass']).mean(),
+            any_banned_ratio=(~filter_results['pass_any']).mean()
+        )
         for name in config["include_rulesets"]:
             res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
+        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
 
-        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
-        return res_df, filter_extended
-
-    elif filter_name == 'molgraph_stats':
-        res_df = pd.DataFrame({"model_name" : [model_name],
-                               "num_mol" : [num_mol],
-                              })
+    if filter_name == 'molgraph_stats':
+        res_df = _create_base_stats_df(model_name, num_mol)
         for i in range(1, 12):
             res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_{i}"].mean()
-
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
         pass_cols = [col for col in filter_extended.columns if col.startswith('pass_') and col != 'pass_any']
         filter_extended['pass'] = filter_extended[pass_cols].all(axis=1)
         return res_df, filter_extended
 
-
-    elif filter_name == 'molcomplexity':
-        any_banned_percent = 1 - filter_results['pass'].mean()
-        all_banned_percent = 1 - filter_results['pass_any'].mean()
-
-        res_df = pd.DataFrame({"model_name" : [model_name],
-                                "num_mol" : [num_mol],
-                                "all_banned_ratio" : [all_banned_percent],
-                                "any_banned_ratio" : [any_banned_percent]
-                             })
-        alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
-        for name in alert_names:
+    if filter_name == 'molcomplexity':
+        res_df = _create_base_stats_df(
+            model_name, num_mol,
+            all_banned_ratio=1 - filter_results['pass'].mean(),
+            any_banned_ratio=1 - filter_results['pass_any'].mean()
+        )
+        for name in mc.complexity.ComplexityFilter.list_default_available_filters():
             res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
-        
+        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+    if filter_name == 'bredt':
+        res_df = _create_base_stats_df(model_name, num_mol)
+        res_df["banned_ratio"] = 1 - filter_results["pass"].mean()
+        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+    if filter_name == 'NIBR':
+        res_df = _create_base_stats_df(
+            model_name, num_mol,
+            mean_severity=filter_results.severity.mean(),
+            max_severity=filter_results.severity.max(),
+            mean_n_covalent_motif=filter_results.n_covalent_motif.mean(),
+            mean_nonzero_special_mol=(filter_results.special_mol > 0).mean()
+        )
+        pass_col = _get_pass_column(filter_results, 'severity', lambda x: x == 0)
+        res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
+        filter_extended = _ensure_pass_column_in_extended(filter_extended, pass_col, filter_results, 'severity')
         return res_df, filter_extended
 
-    
-    elif filter_name == 'bredt':
-        res_df = pd.DataFrame({"model_name" : [model_name],
-                               "num_mol" : [num_mol],
-                              })
-        res_df[f"banned_ratio"] = 1 - filter_results[f"pass"].mean()
-
+    if filter_name == 'lilly':
+        res_df = _create_base_stats_df(
+            model_name, num_mol,
+            mean_noNA_demerit_score=filter_results.demerit_score.dropna().mean()
+        )
+        pass_col = _get_pass_column(filter_results, 'demerit_score', lambda x: x == 0)
+        res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
         res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
-        return res_df, filter_extended
-    
-
-    elif filter_name == 'NIBR':
-        mean_severity = filter_results.severity.mean()
-        max_severity = filter_results.severity.max()
-
-        mean_n_covalent_motif = filter_results.n_covalent_motif.mean()
-        mean_nonzero_special_mol = (filter_results.special_mol > 0).mean()
-
-        res_df = pd.DataFrame({"model_name" : [model_name],
-                               "num_mol" : [num_mol],
-                               "mean_severity" : [mean_severity],
-                               "max_severity" : [max_severity],
-                               "mean_n_covalent_motif" : [mean_n_covalent_motif],
-                               "mean_nonzero_special_mol" : [mean_nonzero_special_mol]
-                             })
-        
-        pass_col = None
-        if 'pass' in filter_results.columns:
-            pass_col = 'pass'
-        elif 'pass_filter' in filter_results.columns:
-            pass_col = 'pass_filter'
-        else:
-            filter_results['pass'] = (filter_results['severity'] == 0)
-            pass_col = 'pass'
-        
-        res_df[f"banned_ratio"] = 1 - filter_results[pass_col].mean()
-        
-        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
-        if 'pass' not in filter_extended.columns:
-            if 'pass_filter' in filter_extended.columns:
-                filter_extended.rename(columns={'pass_filter' : 'pass'}, inplace=True)
-            elif pass_col in filter_extended.columns and pass_col != 'pass':
-                filter_extended.rename(columns={pass_col : 'pass'}, inplace=True)
-            elif 'severity' in filter_extended.columns:
-                filter_extended['pass'] = (filter_extended['severity'] == 0)
+        filter_extended = _ensure_pass_column_in_extended(filter_extended, pass_col, filter_results, 'demerit_score')
         return res_df, filter_extended
 
-
-    elif filter_name == 'lilly':
-        mean_noNA_demerit_score = filter_results.demerit_score.dropna().mean()
-        
-        res_df = pd.DataFrame({'model_name': [model_name], 
-                               'num_mol': [num_mol],
-                               'mean_noNA_demerit_score': mean_noNA_demerit_score
-                             })
-        
-        pass_col = None
-        if 'pass' in filter_results.columns:
-            pass_col = 'pass'
-        elif 'pass_filter' in filter_results.columns:
-            pass_col = 'pass_filter'
-        else:
-            filter_results['pass'] = (filter_results['demerit_score'] == 0)
-            pass_col = 'pass'
-        
-        res_df[f"banned_ratio"] = 1 - filter_results[pass_col].mean()
-        
-        res_df, filter_extended = common_postprocessing_statistics(filter_results, res_df, stat, extend)
-        if 'pass' not in filter_extended.columns:
-            if pass_col in filter_extended.columns:
-                if pass_col != 'pass':
-                    filter_extended.rename(columns={pass_col : 'pass'}, inplace=True)
-            elif 'pass_filter' in filter_extended.columns:
-                filter_extended.rename(columns={'pass_filter' : 'pass'}, inplace=True)
-            elif 'demerit_score' in filter_extended.columns:
-                filter_extended['pass'] = (filter_extended['demerit_score'] == 0)
-            else:
-                if 'pass' in filter_results.columns and len(filter_extended) == len(filter_results):
-                    filter_extended['pass'] = filter_results['pass'].values
-        return res_df, filter_extended
-        
-    else:
-        raise ValueError(f"Filter {filter_name} not found")
+    raise ValueError(f"Filter {filter_name} not found")
     
 
 def check_paths(config, paths):
@@ -953,7 +822,7 @@ def plot_calculated_stats(config, stage_dir):
     n_cols = 2
     n_rows = (n_plots + n_cols - 1) // n_cols  
     
-    fig = plt.figure(figsize=(40, 5*n_rows)) 
+    plt.figure(figsize=(40, 5*n_rows)) 
     for idx, (data, filter_name) in enumerate(zip(datas, filter_names)):
         ax = plt.subplot(n_rows, n_cols, idx + 1)
         models = data.index
@@ -1112,19 +981,18 @@ def plot_restriction_ratios(config, stage_dir):
                 data[col] = number_of_mols * (1 - np.array(data[col].tolist()))
         if not data.empty and data.notna().any().any():
             if 'all' in data.columns:
-                data.drop(columns=['all'], inplace=True) 
+                data.drop(columns=['all'], inplace=True)
             if 'any' in data.columns:
                 data.drop(columns=['any'], inplace=True)
 
-            from matplotlib.colors import LinearSegmentedColormap
             custom_cmap = LinearSegmentedColormap.from_list('custom', ['white', '#B29EEE'])
-            if idx == 1:
-
-                sns.heatmap(data.T, cmap=custom_cmap, cbar_kws={'label': 'Passed Molecules', 'format': '%d', }, ax=ax, vmin=0, vmax=max(data.max()),
-                            fmt='.0f', annot=True, annot_kws={'size': 12, 'rotation': 0, 'color': 'black'}, cbar=True)
-            else:
-                sns.heatmap(data.T, cmap=custom_cmap, cbar_kws={'label': 'Passed Molecules', 'format': '%d', }, ax=ax, vmin=0, vmax=max(data.max()),
-                            fmt='.0f', annot=True, annot_kws={'size': 12, 'rotation': 0, 'color': 'black'}, cbar=False)
+            show_cbar = (idx == 1)
+            sns.heatmap(data.T, cmap=custom_cmap, ax=ax,
+                        cbar_kws={'label': 'Passed Molecules', 'format': '%d'},
+                        vmin=0, vmax=max(data.max()),
+                        fmt='.0f', annot=True,
+                        annot_kws={'size': 12, 'rotation': 0, 'color': 'black'},
+                        cbar=show_cbar)
             
             ax.set_title(f'{clean_name(filter_name)} Filter', fontsize=12, fontweight='bold')
             plt.setp(ax.get_yticklabels(), rotation=0, ha='right', fontsize=12)
@@ -1151,8 +1019,6 @@ def filter_data(config, stage_dir):
         config: Configuration dictionary
         stage_dir: Stage directory path
     """
-    config_structFilters = load_config(config['config_structFilters'])
-
     base_folder = process_path(config['folder_to_save'])
     folder_to_save = os.path.join(base_folder, stage_dir) + '/'
 
@@ -1289,333 +1155,296 @@ def inject_identity_columns_to_all_csvs(config, stage_dir):
             continue
 
 
+def _get_breakdown_folder(file_path):
+    """Get the CommonAlertsBreakdown folder path, creating it if necessary."""
+    path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
+    os.makedirs(path_to_save, exist_ok=True)
+    return path_to_save
+
+
+def _save_plot(file_path, filename, dpi=600):
+    """Save plot to CommonAlertsBreakdown folder and close it."""
+    output_path = os.path.join(_get_breakdown_folder(file_path), filename)
+    plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+    plt.close()
+
+
+def _aggregate_reasons(filter_reasons):
+    """Aggregate all reasons across filters into a single dictionary."""
+    all_reasons = {}
+    for reasons in filter_reasons.values():
+        for reason, count in reasons:
+            all_reasons[reason] = all_reasons.get(reason, 0) + count
+    return all_reasons
+
+
+def _truncate_string(s, max_length, suffix="..."):
+    """Truncate string if longer than max_length."""
+    if len(s) > max_length:
+        return s[:max_length - len(suffix)] + suffix
+    return s
+
+
+def _calculate_grid_layout(num_items):
+    """Calculate rows and columns for grid layout."""
+    if num_items <= 3:
+        return 1, num_items
+    if num_items <= 6:
+        return 2, 3
+    if num_items <= 9:
+        return 3, 3
+    if num_items <= 12:
+        return 3, 4
+    cols = 4
+    rows = (num_items + cols - 1) // cols
+    return rows, cols
+
+
 def analyze_filter_failures(file_path):
     """Analyze filter failures from extended CSV file and generate visualizations."""
     logger.debug(f"Analyzing filter failures from: {file_path}")
     df = pd.read_csv(file_path, low_memory=False)
-    
-    filter_columns = [col for col in df.columns if col.startswith('pass_') and col != 'pass' and col != 'pass_any']
-    
+
+    filter_columns = [col for col in df.columns
+                      if col.startswith('pass_') and col not in ('pass', 'pass_any')]
+
     if not filter_columns:
         return None, None, None
-    
+
     filter_failures = {}
     filter_reasons = {}
     all_detailed_reasons = {}
-    
+
     for col in filter_columns:
         filter_name = col.replace('pass_', '')
-        
-        failures = (df[col] == False).sum()
+        failures = (~df[col]).sum()
         total = len(df)
-        failure_percentage = (failures / total) * 100
-        
-        filter_failures[filter_name] = {'failures': failures,
-                                        'total': total,
-                                        'percentage': failure_percentage
-                                       }
-        
+
+        filter_failures[filter_name] = {
+            'failures': failures,
+            'total': total,
+            'percentage': (failures / total) * 100
+        }
+
         reasons_col = f'reasons_{filter_name}'
         if reasons_col in df.columns:
-            failed_molecules = df[df[col] == False]
+            failed_molecules = df[~df[col]]
             reasons_data = failed_molecules[reasons_col].dropna()
-            
+
             reason_counts = {}
             for reasons_str in reasons_data:
                 if pd.notna(reasons_str) and str(reasons_str).strip():
-                    individual_reasons = [r.strip() for r in str(reasons_str).split(';') if r.strip()]
-                    for reason in individual_reasons:
-                        reason_counts[reason] = reason_counts.get(reason, 0) + 1
-            
-            sorted_reasons = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)
-            filter_reasons[filter_name] = sorted_reasons
+                    for reason in str(reasons_str).split(';'):
+                        reason = reason.strip()
+                        if reason:
+                            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+            filter_reasons[filter_name] = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)
             all_detailed_reasons[filter_name] = reason_counts
-    
+
     _create_main_filter_plot(filter_failures, file_path)
     _create_individual_filter_plots(filter_failures, filter_reasons, file_path)
     _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path)
-    
-    all_reasons = {}
-    for filter_name, reasons in filter_reasons.items():
-        for reason, count in reasons:
-            if reason in all_reasons:
-                all_reasons[reason] += count
-            else:
-                all_reasons[reason] = count
-    
+
+    all_reasons = _aggregate_reasons(filter_reasons)
     top_reasons = sorted(all_reasons.items(), key=lambda x: x[1], reverse=True)[:5]
-    
+
     if top_reasons:
-        logger.info(f"Top 5 most common filter failure reasons (molecules may have multiple reasons):")
+        logger.info("Top 5 most common filter failure reasons (molecules may have multiple reasons):")
         for i, (reason, count) in enumerate(top_reasons, 1):
             logger.info(f"  {i}. {reason}: {count} failures")
-    
+
     _create_complete_reasons_breakdown(all_detailed_reasons, filter_failures, file_path)
-    _create_comprehensive_overview(filter_reasons, filter_failures, file_path)
+    _create_comprehensive_overview(filter_reasons, file_path)
     _create_summary_table(filter_failures, filter_reasons, file_path)
-    
+
     return filter_failures, filter_reasons, all_detailed_reasons
 
 
 def _create_main_filter_plot(filter_failures, file_path):
     """Create main filter failures bar chart."""
-    plot_data = []
-    for filter_name, stats in filter_failures.items():
-        plot_data.append({'filter': filter_name,
-                          'failures': stats['failures'],
-                          'percentage': stats['percentage']
-                        })
-    
-    plot_df = pd.DataFrame(plot_data)
-    plot_df = plot_df.sort_values('failures', ascending=False)
+    plot_data = [{'filter': name, 'failures': stats['failures'], 'percentage': stats['percentage']}
+                 for name, stats in filter_failures.items()]
+    plot_df = pd.DataFrame(plot_data).sort_values('failures', ascending=False)
 
     plt.figure(figsize=(max(16, len(plot_df) * 0.6), 16))
-    bars = plt.bar(range(len(plot_df)), plot_df['failures'], color='steelblue', alpha=0.8, width=0.3)
-    
+    plt.bar(range(len(plot_df)), plot_df['failures'], color='steelblue', alpha=0.8, width=0.3)
+
     plt.xlabel('Filters', fontsize=20)
     plt.ylabel('Number of Molecules Failed', fontsize=20)
     plt.title('Number of Molecules Failed by Each Filter', fontsize=26, fontweight='bold')
     plt.xticks(range(len(plot_df)), plot_df['filter'], rotation=45, ha='right', fontsize=16)
-    
+
+    max_failures = max(plot_df['failures'])
     for i, (_, row) in enumerate(plot_df.iterrows()):
-        plt.text(i, row['failures'] + max(plot_df['failures']) * 0.01, f"{row['failures']}\n({row['percentage']:.1f}%)", ha='center', va='bottom', fontsize=14)
-    
+        plt.text(i, row['failures'] + max_failures * 0.01,
+                 f"{row['failures']}\n({row['percentage']:.1f}%)",
+                 ha='center', va='bottom', fontsize=14)
+
     plt.grid(axis='y', alpha=0.3)
     plt.tight_layout()
-    
-    path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, 'filter_failures_plot.png')
-    plt.savefig(output_path, dpi=600, bbox_inches='tight')
-    plt.close()
+    _save_plot(file_path, 'filter_failures_plot.png')
 
 
 def _create_individual_filter_plots(filter_failures, filter_reasons, file_path):
     """Create individual plots for each filter showing failure reasons."""
-    
     for filter_name, stats in filter_failures.items():
-        if stats['failures'] > 0:
-            reasons_data = filter_reasons.get(filter_name, [])
-            
-            if not reasons_data:
-                continue
-                
-            plot_data = []
-            for reason, count in reasons_data:
-                plot_data.append({'Reason': reason,
-                                  'Count': count,
-                                  'Percentage_of_Filter_Failures': (count / stats['failures']) * 100 if stats['failures'] > 0 else 0
-                                })
-            
-            if not plot_data:
-                continue
-            
-            plot_df = pd.DataFrame(plot_data)
-            plot_df = plot_df.sort_values('Count', ascending=False)
-            
-            plt.figure(figsize=(max(16, len(plot_df) * 0.6), 20))
-            bars = plt.bar(range(len(plot_df)), plot_df['Count'], color='steelblue', alpha=0.8, width=0.3)
-            
-            plt.xlabel('Failure Reasons', fontsize=20)
-            plt.ylabel('Number of Molecules Failed', fontsize=20)
-            plt.title(f'{filter_name.upper()} - Failure Reasons ({len(plot_df)} reasons, {stats["failures"]} total failures)', fontsize=26, fontweight='bold')
-            plt.xticks(range(len(plot_df)), plot_df['Reason'], rotation=45, ha='right', fontsize=max(10, min(16, 300 // len(plot_df))))
-            
-            for i, (bar, count) in enumerate(zip(bars, plot_df['Count'])):
-                plt.text(i, count + max(plot_df['Count']) * 0.01, f"{count}\n({plot_df.iloc[i]['Percentage_of_Filter_Failures']:.1f}%)", ha='center', va='bottom', fontsize=12)
-            
-            plt.grid(axis='y', alpha=0.3)
-            plt.tight_layout()
+        if stats['failures'] == 0:
+            continue
 
-            path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
-            os.makedirs(path_to_save, exist_ok=True)
-            output_path = os.path.join(path_to_save, f'{filter_name}_reasons_plot.png')
-            plt.savefig(output_path, dpi=600, bbox_inches='tight')
-            plt.close()
+        reasons_data = filter_reasons.get(filter_name, [])
+        if not reasons_data:
+            continue
+
+        plot_data = [{'Reason': reason, 'Count': count,
+                      'Percentage': (count / stats['failures']) * 100}
+                     for reason, count in reasons_data]
+        plot_df = pd.DataFrame(plot_data).sort_values('Count', ascending=False)
+
+        plt.figure(figsize=(max(16, len(plot_df) * 0.6), 20))
+        plt.bar(range(len(plot_df)), plot_df['Count'], color='steelblue', alpha=0.8, width=0.3)
+
+        plt.xlabel('Failure Reasons', fontsize=20)
+        plt.ylabel('Number of Molecules Failed', fontsize=20)
+        plt.title(f'{filter_name.upper()} - Failure Reasons ({len(plot_df)} reasons, {stats["failures"]} total failures)',
+                  fontsize=26, fontweight='bold')
+        plt.xticks(range(len(plot_df)), plot_df['Reason'], rotation=45, ha='right',
+                   fontsize=max(10, min(16, 300 // len(plot_df))))
+
+        max_count = max(plot_df['Count'])
+        for i, (_, row) in enumerate(plot_df.iterrows()):
+            plt.text(i, row['Count'] + max_count * 0.01,
+                     f"{row['Count']}\n({row['Percentage']:.1f}%)",
+                     ha='center', va='bottom', fontsize=12)
+
+        plt.grid(axis='y', alpha=0.3)
+        plt.tight_layout()
+        _save_plot(file_path, f'{filter_name}_reasons_plot.png')
 
 
 def _create_multi_panel_filter_plot(filter_failures, filter_reasons, file_path):
     """Create multi-panel plot showing all filters with reasons."""
-    sorted_filters = sorted(filter_failures.items(), key=lambda x: x[1]['failures'], reverse=True)
-    sorted_filters = [(name, stats) for name, stats in sorted_filters if stats['failures'] > 0]
-    
-    num_filters = len(sorted_filters)
-    if num_filters == 0:
+    sorted_filters = [(name, stats) for name, stats in
+                      sorted(filter_failures.items(), key=lambda x: x[1]['failures'], reverse=True)
+                      if stats['failures'] > 0]
+
+    if not sorted_filters:
         return
-    
-    if num_filters <= 3:
-        rows = 1
-        cols = num_filters
-    elif num_filters <= 6:
-        rows = 2
-        cols = 3
-    elif num_filters <= 9:
-        rows = 3
-        cols = 3
-    elif num_filters <= 12:
-        rows = 3
-        cols = 4
-    else:
-        cols = 4
-        rows = (num_filters + cols - 1) // cols
-    
+
+    rows, cols = _calculate_grid_layout(len(sorted_filters))
     plt.figure(figsize=(cols * 6, rows * 6))
-    
+
     for i, (filter_name, stats) in enumerate(sorted_filters):
         all_reasons_data = filter_reasons.get(filter_name, [])
-        
-        plt.subplot(rows, cols, i + 1)
         reason_names = [r[0] for r in all_reasons_data]
         reason_counts = [r[1] for r in all_reasons_data]
-        
+
         if len(reason_names) > 10:
+            title_suffix = f"(Top 10 of {len(all_reasons_data)} reasons)"
             reason_names = reason_names[:10]
             reason_counts = reason_counts[:10]
-            title_suffix = f"(Top 10 of {len(all_reasons_data)} reasons)"
         else:
             title_suffix = f"({len(all_reasons_data)} reasons)"
-        
+
+        plt.subplot(rows, cols, i + 1)
         plt.bar(range(len(reason_names)), reason_counts, color='steelblue', alpha=0.8, width=0.3)
-        
+
         plt.xlabel('Reasons', fontsize=14)
         plt.ylabel('Molecules Failed', fontsize=14)
         plt.title(f'{filter_name.upper()}\n{title_suffix}', fontsize=16, fontweight='bold')
-        
-        truncated_names = []
-        for name in reason_names:
-            if len(name) > 15:
-                truncated_names.append(name[:12] + "...")
-            else:
-                truncated_names.append(name)
-        
+
+        truncated_names = [_truncate_string(name, 15, "...") for name in reason_names]
         plt.xticks(range(len(truncated_names)), truncated_names, rotation=45, ha='right', fontsize=12)
-        
+
+        max_count = max(reason_counts) if reason_counts else 0
         for j, count in enumerate(reason_counts):
-            percentage = (count / stats['failures']) * 100 if stats['failures'] > 0 else 0
-            plt.text(j, count + max(reason_counts) * 0.01 if reason_counts else 0, f"{count}", ha='center', va='bottom', fontsize=11)
-        
+            plt.text(j, count + max_count * 0.01, f"{count}", ha='center', va='bottom', fontsize=11)
+
         plt.grid(axis='y', alpha=0.3)
-    
+
     plt.tight_layout(h_pad=1.5, w_pad=1.0)
-    
-    path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, 'all_filters_reasons_plot.png')
-    plt.savefig(output_path, dpi=600, bbox_inches='tight')
-    plt.close()
+    _save_plot(file_path, 'all_filters_reasons_plot.png')
 
 
 def _create_complete_reasons_breakdown(all_detailed_reasons, filter_failures, file_path):
     """Create complete CSV breakdown of all reasons."""
     breakdown_data = []
-    
     for filter_name, reasons_dict in all_detailed_reasons.items():
         total_failures = filter_failures[filter_name]['failures']
-        
         for reason, count in sorted(reasons_dict.items(), key=lambda x: x[1], reverse=True):
-            percentage = (count / total_failures) * 100 if total_failures > 0 else 0
-            breakdown_data.append({'Ruleset': filter_name,
-                                   'Reason': reason,
-                                   'Count': count,
-                                   'Percentage_of_Filter_Failures': percentage,
-                                   'Total_Filter_Failures': total_failures
-                                  })
-    
+            breakdown_data.append({
+                'Ruleset': filter_name,
+                'Reason': reason,
+                'Count': count,
+                'Percentage_of_Filter_Failures': (count / total_failures) * 100 if total_failures > 0 else 0,
+                'Total_Filter_Failures': total_failures
+            })
+
     breakdown_df = pd.DataFrame(breakdown_data)
-    
-    path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, 'complete_reasons_breakdown.csv')
+    output_path = os.path.join(_get_breakdown_folder(file_path), 'complete_reasons_breakdown.csv')
     breakdown_df.to_csv(output_path, index=False)
-    
     return breakdown_df
 
 
-def _create_comprehensive_overview(filter_reasons, filter_failures, file_path):
+def _create_comprehensive_overview(filter_reasons, file_path):
     """Create comprehensive overview plot of most common failure reasons."""
-    all_reasons = {}
-    
-    for filter_name, reasons in filter_reasons.items():
-        for reason, count in reasons:
-            if reason in all_reasons:
-                all_reasons[reason] += count
-            else:
-                all_reasons[reason] = count
+    all_reasons = _aggregate_reasons(filter_reasons)
     top_reasons = sorted(all_reasons.items(), key=lambda x: x[1], reverse=True)
-    
+
     if not top_reasons:
         return
-    
+
     display_count = min(30, len(top_reasons))
+    reason_names = [_truncate_string(r[0], 30, "...") for r in top_reasons[:display_count]]
+    reason_counts = [r[1] for r in top_reasons[:display_count]]
+
     plt.figure(figsize=(max(16, display_count * 0.6), 16))
-    
-    reason_names = []
-    reason_counts = []
-    
-    for reason, count in top_reasons[:display_count]:
-        if len(reason) > 30:
-            reason_short = reason[:27] + "..."
-        else:
-            reason_short = reason
-        reason_names.append(reason_short)
-        reason_counts.append(count)
-    
-    bars = plt.bar(range(len(reason_names)), reason_counts, color='darkgreen', alpha=0.7, width=0.3)
-    
+    plt.bar(range(len(reason_names)), reason_counts, color='darkgreen', alpha=0.7, width=0.3)
+
     plt.xlabel('Failure Reasons', fontsize=20)
     plt.ylabel('Total Number of Molecules Failed', fontsize=20)
-    plt.title(f'Most Common Molecular Filter Failure Reasons (Top {display_count} of {len(top_reasons)})', fontsize=26, fontweight='bold')
+    plt.title(f'Most Common Molecular Filter Failure Reasons (Top {display_count} of {len(top_reasons)})',
+              fontsize=26, fontweight='bold')
     plt.xticks(range(len(reason_names)), reason_names, rotation=45, ha='right', fontsize=16)
-    
-    for i, (bar, count) in enumerate(zip(bars, reason_counts)):
-        plt.text(i, count + max(reason_counts) * 0.01, f"{count}", ha='center', va='bottom', fontsize=14)
-    
+
+    max_count = max(reason_counts)
+    for i, count in enumerate(reason_counts):
+        plt.text(i, count + max_count * 0.01, f"{count}", ha='center', va='bottom', fontsize=14)
+
     plt.grid(axis='y', alpha=0.3)
     plt.tight_layout()
-    
-    path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, 'comprehensive_reasons_overview.png')
-    plt.savefig(output_path, dpi=600, bbox_inches='tight')
-    
-    plt.close()
-    
+    _save_plot(file_path, 'comprehensive_reasons_overview.png')
+
+    # Save CSV summary
     all_reasons_df = pd.DataFrame(top_reasons, columns=['Reason', 'Total_Count'])
-    path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, 'all_reasons_summary.csv')
+    output_path = os.path.join(_get_breakdown_folder(file_path), 'all_reasons_summary.csv')
     all_reasons_df.to_csv(output_path, index=False)
 
 
 def _create_summary_table(filter_failures, filter_reasons, file_path):
     """Create summary table CSV with filter statistics."""
     summary_data = []
-    
     for filter_name, stats in filter_failures.items():
-        row = {'Ruleset': filter_name,
-               'Total_Failures': stats['failures'],
-               'Failure_Percentage': stats['percentage'],
-               'Total_Molecules': stats['total'],
-               'Unique_Reasons_Count': len(filter_reasons.get(filter_name, []))
-              }
-        
-        if filter_name in filter_reasons and filter_reasons[filter_name]:
-            for i, (reason, count) in enumerate(filter_reasons[filter_name][:5], 1):
-                row[f'Top_Reason_{i}'] = reason
-                row[f'Top_Reason_{i}_Count'] = count
-                row[f'Top_Reason_{i}_Percentage'] = (count / stats['failures']) * 100 if stats['failures'] > 0 else 0
-        
+        row = {
+            'Ruleset': filter_name,
+            'Total_Failures': stats['failures'],
+            'Failure_Percentage': stats['percentage'],
+            'Total_Molecules': stats['total'],
+            'Unique_Reasons_Count': len(filter_reasons.get(filter_name, []))
+        }
+
+        reasons = filter_reasons.get(filter_name, [])
+        for i, (reason, count) in enumerate(reasons[:5], 1):
+            row[f'Top_Reason_{i}'] = reason
+            row[f'Top_Reason_{i}_Count'] = count
+            row[f'Top_Reason_{i}_Percentage'] = (count / stats['failures']) * 100 if stats['failures'] > 0 else 0
+
         summary_data.append(row)
-    
-    summary_df = pd.DataFrame(summary_data)
-    summary_df = summary_df.sort_values('Total_Failures', ascending=False)
-    
-    path_to_save = os.path.join(os.path.dirname(file_path), 'CommonAlertsBreakdown')
-    os.makedirs(path_to_save, exist_ok=True)
-    output_path = os.path.join(path_to_save, 'filter_summary_table.csv')
+
+    summary_df = pd.DataFrame(summary_data).sort_values('Total_Failures', ascending=False)
+    output_path = os.path.join(_get_breakdown_folder(file_path), 'filter_summary_table.csv')
     summary_df.to_csv(output_path, index=False)
     logger.debug(f"Summary table saved to: {output_path}")
-    
     return summary_df
 
 
