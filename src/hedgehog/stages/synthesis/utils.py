@@ -1,5 +1,4 @@
 import json
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -154,6 +153,7 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
 
 def _get_input_path_candidates(base_folder: str) -> list:
     """Get ordered list of candidate input paths to check."""
+    base = Path(base_folder)
     new_structure = [
         ("stages", "03_structural_filters_post", "filtered_molecules.csv"),
         ("stages", "01_descriptors_initial", "filtered", "filtered_molecules.csv"),
@@ -164,9 +164,7 @@ def _get_input_path_candidates(base_folder: str) -> list:
         ("Descriptors", "passDescriptorsSMILES.csv"),
         ("sampledMols.csv",),
     ]
-    return [
-        os.path.join(base_folder, *parts) for parts in new_structure + legacy_structure
-    ]
+    return [str(base.joinpath(*parts)) for parts in new_structure + legacy_structure]
 
 
 def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
@@ -178,7 +176,7 @@ def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
     base_folder = process_path(folder_to_save)
 
     for candidate in _get_input_path_candidates(base_folder):
-        if os.path.exists(candidate):
+        if Path(candidate).exists():
             logger.debug("Using input file: %s", candidate)
             return candidate
 
@@ -193,7 +191,7 @@ def _load_sascorer_impl():
 
         from rdkit.Chem import RDConfig
 
-        sys.path.append(os.path.join(RDConfig.RDContribDir, "SA_Score"))
+        sys.path.append(str(Path(RDConfig.RDContribDir) / "SA_Score"))
         import sascorer
 
         return sascorer
@@ -461,7 +459,7 @@ def _calculate_ra_scores_batch(
         for path in [temp_script, smiles_file]:
             if path:
                 try:
-                    os.unlink(path)
+                    Path(path).unlink()
                 except OSError:
                     pass
 
@@ -503,7 +501,7 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
             )
         else:
             logger.debug(
-                f"  {score_name}: could not be calculated (module not available)"
+                "  %s: could not be calculated (module not available)", score_name
             )
 
     return result_df

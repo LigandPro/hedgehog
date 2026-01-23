@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.descriptors.utils import (
@@ -24,16 +24,16 @@ def main(data, config, subfolder):
         logger.warning("No molecules provided for descriptor calculation. Skipping.")
         return None
 
-    folder_to_save = process_path(config["folder_to_save"])
-    subfolder = subfolder or os.path.join("stages", "01_descriptors_initial")
-    descriptors_folder = os.path.join(folder_to_save, subfolder)
+    folder_to_save = Path(process_path(config["folder_to_save"]))
+    subfolder = subfolder or str(Path("stages") / "01_descriptors_initial")
+    descriptors_folder = folder_to_save / subfolder
 
-    metrics_folder = os.path.join(descriptors_folder, "metrics")
-    filtered_folder = os.path.join(descriptors_folder, "filtered")
-    plots_folder = os.path.join(descriptors_folder, "plots")
+    metrics_folder = descriptors_folder / "metrics"
+    filtered_folder = descriptors_folder / "filtered"
+    plots_folder = descriptors_folder / "plots"
 
     for folder in [descriptors_folder, metrics_folder, filtered_folder, plots_folder]:
-        os.makedirs(folder, exist_ok=True)
+        Path(folder).mkdir(parents=True, exist_ok=True)
 
     config_descriptors = load_config(config["config_descriptors"])
     metrics_df = compute_metrics(data, metrics_folder, config=config)
