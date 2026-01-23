@@ -17,7 +17,14 @@ from rdkit import Chem
 
 # Add local Lilly binaries to PATH before importing LillyDemeritsFilters
 _LILLY_BIN_PATH = (
-    Path(__file__).parent / ".." / ".." / ".." / ".." / "modules" / "lilly_medchem_rules" / "bin"
+    Path(__file__).parent
+    / ".."
+    / ".."
+    / ".."
+    / ".."
+    / "modules"
+    / "lilly_medchem_rules"
+    / "bin"
 ).resolve()
 if _LILLY_BIN_PATH.exists():
     current_path = os.environ.get("PATH", "")
@@ -1710,7 +1717,9 @@ def _create_complete_reasons_breakdown(
             )
 
     breakdown_df = pd.DataFrame(breakdown_data)
-    output_path = Path(_get_breakdown_folder(file_path)) / "complete_reasons_breakdown.csv"
+    output_path = (
+        Path(_get_breakdown_folder(file_path)) / "complete_reasons_breakdown.csv"
+    )
     breakdown_df.to_csv(output_path, index=False)
     return breakdown_df
 
