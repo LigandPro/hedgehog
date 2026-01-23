@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 import datamol as dm
 import medchem as mc
-from pandarallel import pandarallel
+from joblib import Parallel, delayed
 from rdkit import Chem
 
 # Add local Lilly binaries to PATH before importing LillyDemeritsFilters
@@ -415,12 +415,15 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     logger.info("Processing %d filtered molecules", len(mols))
 
     n_jobs = config["n_jobs"]
-    pandarallel.initialize(progress_bar=False, nb_workers=n_jobs, verbose=0)
-    logger.info("Pandarallel initialized with %d workers", n_jobs)
+    logger.info("Processing with %d parallel workers", n_jobs)
 
     mols_df = pd.DataFrame({"mol": mols})
-    results = mols_df.parallel_apply(_apply_alerts, axis=1)
-    results = results.parallel_apply(_get_full_any_pass, axis=1)
+    # Apply _apply_alerts in parallel using joblib
+    rows = [row for _, row in mols_df.iterrows()]
+    processed = Parallel(n_jobs=n_jobs)(delayed(_apply_alerts)(row) for row in rows)
+    results = pd.DataFrame(processed)
+    # _get_full_any_pass is fast, apply sequentially
+    results = results.apply(_get_full_any_pass, axis=1)
 
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
