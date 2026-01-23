@@ -20,9 +20,7 @@ RUN_MODELS_MAPPING_FILE = "run_models_mapping.csv"
 MODEL_INDEX_MAP_FILE = "model_index_map.json"
 
 
-def _find_column_case_insensitive(
-    df: pd.DataFrame, column_name: str
-) -> str | None:
+def _find_column_case_insensitive(df: pd.DataFrame, column_name: str) -> str | None:
     """Find a column by name (case-insensitive)."""
     lower_cols = {c.lower(): c for c in df.columns}
     return lower_cols.get(column_name.lower())
@@ -36,9 +34,7 @@ def _normalize_smiles_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _normalize_model_name_column(
-    df: pd.DataFrame, path: str
-) -> pd.DataFrame:
+def _normalize_model_name_column(df: pd.DataFrame, path: str) -> pd.DataFrame:
     """Normalize model_name column. Extract from path if missing."""
     model_col = _find_column_case_insensitive(
         df, MODEL_NAME_COLUMN
@@ -79,9 +75,7 @@ def _apply_sampling(
     return df.sample(sample_size, random_state=42), None
 
 
-def _log_sampling_warnings(
-    warnings: list[dict], logger: logging.Logger
-) -> None:
+def _log_sampling_warnings(warnings: list[dict], logger: logging.Logger) -> None:
     """Log sampling warnings in a formatted manner."""
     if not warnings:
         return
@@ -109,16 +103,14 @@ def _log_sampling_warnings(
         )
 
 
-def _remove_duplicates(
-    df: pd.DataFrame, logger: logging.Logger
-) -> pd.DataFrame:
+def _remove_duplicates(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
     """Remove duplicate molecules, logging if any were removed."""
     initial_count = len(df)
 
     if MODEL_NAME_COLUMN in df.columns:
-        df = df.drop_duplicates(
-            subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]
-        ).reset_index(drop=True)
+        df = df.drop_duplicates(subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]).reset_index(
+            drop=True
+        )
         msg = "Removed %s duplicate molecules within models"
     else:
         df = df.drop_duplicates(subset=SMILES_COLUMN).reset_index(drop=True)
@@ -137,9 +129,7 @@ def _read_csv_with_fallback(path: str) -> pd.DataFrame:
         return pd.read_csv(path)
     except (pd.errors.ParserError, ValueError):
         df = pd.read_csv(path, header=None)
-        df.columns = [SMILES_COLUMN] + [
-            f"col_{i}" for i in range(1, len(df.columns))
-        ]
+        df.columns = [SMILES_COLUMN] + [f"col_{i}" for i in range(1, len(df.columns))]
         return df
 
 
@@ -279,44 +269,31 @@ def _load_multi_file_with_model_column(
     return pd.concat(sampled, axis=0, ignore_index=True)
 
 
-def _save_run_model_mapping(
-    data: pd.DataFrame, folder_to_save: Path
-) -> None:
+def _save_run_model_mapping(data: pd.DataFrame, folder_to_save: Path) -> None:
     """Save per-run model mapping for provenance."""
     try:
         run_configs_dir = folder_to_save / RUN_CONFIGS_DIR
         run_configs_dir.mkdir(parents=True, exist_ok=True)
 
-        if (
-            MOL_IDX_COLUMN in data.columns
-            and MODEL_NAME_COLUMN in data.columns
-        ):
+        if MOL_IDX_COLUMN in data.columns and MODEL_NAME_COLUMN in data.columns:
             tmp = data[[MODEL_NAME_COLUMN, MOL_IDX_COLUMN]].dropna().copy()
             tmp["model_index"] = (
-                tmp[MOL_IDX_COLUMN]
-                .astype(str)
-                .str.split("-")
-                .str[1]
-                .astype(int)
+                tmp[MOL_IDX_COLUMN].astype(str).str.split("-").str[1].astype(int)
             )
             run_map = tmp.groupby(MODEL_NAME_COLUMN, as_index=False)[
                 "model_index"
             ].first()
-            run_map = run_map[
-                ["model_index", MODEL_NAME_COLUMN]
-            ].sort_values("model_index")
-            run_map.to_csv(
-                run_configs_dir / RUN_MODELS_MAPPING_FILE, index=False
+            run_map = run_map[["model_index", MODEL_NAME_COLUMN]].sort_values(
+                "model_index"
             )
+            run_map.to_csv(run_configs_dir / RUN_MODELS_MAPPING_FILE, index=False)
     except (ValueError, KeyError, IndexError) as e:
         # Silently fail if mapping cannot be saved
         # This is not critical for the main workflow
         del e  # Avoid unused variable warning
 
 
-def prepare_input_data(
-    config: dict, logger: logging.Logger
-) -> pd.DataFrame:
+def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     """
     Prepare input molecular data from config-specified sources.
 
@@ -327,32 +304,22 @@ def prepare_input_data(
     folder_to_save = Path(config["folder_to_save"])
     save_sampled_mols = config.get("save_sampled_mols", False)
     sample_size: int | None = (
-        cast("int | None", config.get("sample_size"))
-        if save_sampled_mols
-        else None
+        cast(int | None, config.get("sample_size")) if save_sampled_mols else None
     )
 
-    detected_mode, matched_paths = _detect_mode_and_paths(
-        generated_mols_path
-    )
+    detected_mode, matched_paths = _detect_mode_and_paths(generated_mols_path)
 
-    logger.info(
-        "Loading generated molecules from %s...", generated_mols_path
-    )
+    logger.info("Loading generated molecules from %s...", generated_mols_path)
 
     if detected_mode == MODE_SINGLE:
-        data = _load_single_comparison_data(
-            matched_paths[0], sample_size, logger
-        )
+        data = _load_single_comparison_data(matched_paths[0], sample_size, logger)
     elif detected_mode == MODE_MULTI:
         if len(matched_paths) > 1:
             logger.info(
                 "Loading multi-model comparison from %s file(s)...",
                 len(matched_paths),
             )
-            data = _load_multi_comparison_data(
-                matched_paths, sample_size, logger
-            )
+            data = _load_multi_comparison_data(matched_paths, sample_size, logger)
         else:
             data = _load_multi_file_with_model_column(
                 matched_paths[0], sample_size, logger

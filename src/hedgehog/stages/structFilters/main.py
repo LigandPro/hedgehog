@@ -1,22 +1,24 @@
 import os
+
 import pandas as pd
 
-from hedgehog.configs.logger import logger, load_config
+from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.structFilters.utils import *
 
-
-IDENTITY_COLUMNS = ['smiles', 'model_name', 'mol_idx']
+IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
 
 
 def _is_post_descriptors_stage(stage_dir):
     """Check if stage directory indicates post-descriptors processing."""
-    return '03_structural_filters_post' in stage_dir or stage_dir == 'StructFilters'
+    return "03_structural_filters_post" in stage_dir or stage_dir == "StructFilters"
 
 
 def _order_identity_columns(df):
     """Order dataframe columns with identity columns first."""
     existing_id_cols = [c for c in IDENTITY_COLUMNS if c in df.columns]
-    ordered_cols = existing_id_cols + [c for c in df.columns if c not in IDENTITY_COLUMNS]
+    ordered_cols = existing_id_cols + [
+        c for c in df.columns if c not in IDENTITY_COLUMNS
+    ]
     return df[ordered_cols]
 
 
@@ -31,8 +33,8 @@ def _find_existing_file(paths):
 def _get_sampled_molecules_path(folder_to_save):
     """Get path to sampled molecules file, checking both new and legacy locations."""
     candidates = [
-        os.path.join(folder_to_save, 'input', 'sampled_molecules.csv'),
-        os.path.join(folder_to_save, 'sampled_molecules.csv'),
+        os.path.join(folder_to_save, "input", "sampled_molecules.csv"),
+        os.path.join(folder_to_save, "sampled_molecules.csv"),
     ]
     return _find_existing_file(candidates)
 
@@ -49,30 +51,47 @@ def _get_input_path(config, stage_dir, folder_to_save):
         Path to input file
     """
     descriptors_enabled = False
-    if 'config_descriptors' in config:
+    if "config_descriptors" in config:
         try:
-            desc_config = load_config(config['config_descriptors'])
-            descriptors_enabled = desc_config.get('run', False)
+            desc_config = load_config(config["config_descriptors"])
+            descriptors_enabled = desc_config.get("run", False)
         except Exception:
             pass
 
-    is_pre_descriptors = '02_structural_filters_pre' in stage_dir or 'pre' in stage_dir.lower()
+    is_pre_descriptors = (
+        "02_structural_filters_pre" in stage_dir or "pre" in stage_dir.lower()
+    )
     is_post_descriptors = _is_post_descriptors_stage(stage_dir)
 
     if is_post_descriptors:
         descriptors_candidates = [
-            os.path.join(folder_to_save, 'stages', '01_descriptors_initial', 'filtered', 'filtered_molecules.csv'),
-            folder_to_save + 'Descriptors/passDescriptorsSMILES.csv',
+            os.path.join(
+                folder_to_save,
+                "stages",
+                "01_descriptors_initial",
+                "filtered",
+                "filtered_molecules.csv",
+            ),
+            folder_to_save + "Descriptors/passDescriptorsSMILES.csv",
         ]
         descriptors_path = _find_existing_file(descriptors_candidates)
         if descriptors_path:
             return descriptors_path
 
         if descriptors_enabled:
-            logger.error("Descriptors are enabled but output not found. Cannot proceed with post-descriptors filters.")
-            raise FileNotFoundError(f"Descriptors output not found at {descriptors_candidates}")
+            logger.error(
+                "Descriptors are enabled but output not found. Cannot proceed with post-descriptors filters."
+            )
+            raise FileNotFoundError(
+                f"Descriptors output not found at {descriptors_candidates}"
+            )
 
-        pre_filters_path = os.path.join(folder_to_save, 'stages', '02_structural_filters_pre', 'filtered_molecules.csv')
+        pre_filters_path = os.path.join(
+            folder_to_save,
+            "stages",
+            "02_structural_filters_pre",
+            "filtered_molecules.csv",
+        )
         if os.path.exists(pre_filters_path) and os.path.getsize(pre_filters_path) > 0:
             return pre_filters_path
 
@@ -85,7 +104,7 @@ def _get_input_path(config, stage_dir, folder_to_save):
         if sampled_path:
             return sampled_path
 
-    return config['generated_mols_path']
+    return config["generated_mols_path"]
 
 
 def _load_input_data(input_path):
@@ -102,15 +121,15 @@ def _load_input_data(input_path):
     """
     input_df = pd.read_csv(input_path)
 
-    if 'model_name' not in input_df.columns:
+    if "model_name" not in input_df.columns:
         inferred_model = os.path.splitext(os.path.basename(input_path))[0]
-        input_df['model_name'] = inferred_model
+        input_df["model_name"] = inferred_model
         logger.info("model_name column missing; using '%s'", inferred_model)
 
-    if 'mol_idx' not in input_df.columns:
-        input_df['mol_idx'] = range(len(input_df))
+    if "mol_idx" not in input_df.columns:
+        input_df["mol_idx"] = range(len(input_df))
 
-    model_names = sorted(input_df['model_name'].dropna().unique().tolist())
+    model_names = sorted(input_df["model_name"].dropna().unique().tolist())
     model_name = model_names[0] if len(model_names) == 1 else model_names
 
     return input_df, model_name
@@ -118,14 +137,17 @@ def _load_input_data(input_path):
 
 def _ensure_pass_column(df, filter_name):
     """Ensure DataFrame has a 'pass' column, creating from alternatives if needed."""
-    if 'pass' in df.columns:
+    if "pass" in df.columns:
         return df
 
-    if 'pass_filter' in df.columns:
-        df['pass'] = df['pass_filter']
+    if "pass_filter" in df.columns:
+        df["pass"] = df["pass_filter"]
     else:
-        logger.warning("'pass' column not found in %s extended results. Assuming all molecules pass.", filter_name)
-        df['pass'] = True
+        logger.warning(
+            "'pass' column not found in %s extended results. Assuming all molecules pass.",
+            filter_name,
+        )
+        df["pass"] = True
 
     return df
 
@@ -143,23 +165,25 @@ def _save_filter_results(output_dir, filter_name, metrics_df, extended_df):
     os.makedirs(filter_subdir, exist_ok=True)
 
     metrics_df = _order_identity_columns(metrics_df)
-    metrics_df.to_csv(os.path.join(filter_subdir, 'metrics.csv'), index=False)
+    metrics_df.to_csv(os.path.join(filter_subdir, "metrics.csv"), index=False)
 
     extended_df = _order_identity_columns(extended_df)
-    extended_df.to_csv(os.path.join(filter_subdir, 'extended.csv'), index=False)
+    extended_df.to_csv(os.path.join(filter_subdir, "extended.csv"), index=False)
 
     extended_df = _ensure_pass_column(extended_df, filter_name)
-    filtered_mols = extended_df[extended_df['pass']].copy()
+    filtered_mols = extended_df[extended_df["pass"]].copy()
     filtered_mols = _order_identity_columns(filtered_mols)
-    filtered_mols.to_csv(os.path.join(filter_subdir, 'filtered_molecules.csv'), index=False)
+    filtered_mols.to_csv(
+        os.path.join(filter_subdir, "filtered_molecules.csv"), index=False
+    )
 
 
 def _get_enabled_filters(config_structFilters):
     """Extract enabled filters from configuration."""
     return {
-        k.replace('calculate_', ''): v
+        k.replace("calculate_", ""): v
         for k, v in config_structFilters.items()
-        if 'calculate_' in k and v
+        if "calculate_" in k and v
     }
 
 
@@ -170,8 +194,8 @@ def main(config, stage_dir):
         config: Configuration dictionary
         stage_dir: Stage directory path (e.g., 'stages/02_structural_filters_pre' or 'stages/03_structural_filters_post')
     """
-    sample_size = config['sample_size']
-    folder_to_save = process_path(config['folder_to_save'])
+    sample_size = config["sample_size"]
+    folder_to_save = process_path(config["folder_to_save"])
     output_dir = os.path.join(folder_to_save, stage_dir)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -183,7 +207,7 @@ def main(config, stage_dir):
         logger.error("Could not load input data from %s: %s", input_path, e)
         raise
 
-    config_structFilters = load_config(config['config_structFilters'])
+    config_structFilters = load_config(config["config_structFilters"])
     filters_to_calculate = _get_enabled_filters(config_structFilters)
 
     for filter_name in filters_to_calculate:
@@ -205,8 +229,8 @@ def main(config, stage_dir):
     if _is_post_descriptors_stage(stage_dir):
         plot_filter_failures_analysis(config, stage_dir)
 
-    is_single_stage = config.get('_run_single_stage_override') == 'struct_filters'
-    if config_structFilters.get('filter_data', False) or is_single_stage:
+    is_single_stage = config.get("_run_single_stage_override") == "struct_filters"
+    if config_structFilters.get("filter_data", False) or is_single_stage:
         filter_data(config, stage_dir)
 
     inject_identity_columns_to_all_csvs(config, stage_dir)

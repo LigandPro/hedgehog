@@ -1,27 +1,25 @@
-import os
 import json
+import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import matplotlib.pyplot as plt
-
-from rdkit import Chem, RDLogger, rdBase
-from rdkit.Chem import Lipinski, rdMolDescriptors, QED, Descriptors, Crippen
-
 from medchem.rules._utils import n_fused_aromatic_rings
+from rdkit import Chem, RDLogger, rdBase
+from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
-from hedgehog.configs.logger import logger, load_config
+from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.structFilters.utils import process_path
 
 # Disable RDKit warnings
-RDLogger.DisableLog('rdApp.*')
-rdBase.DisableLog('rdApp.*')
+RDLogger.DisableLog("rdApp.*")
+rdBase.DisableLog("rdApp.*")
 
 
 def order_identity_columns(df):
     """Reorder dataframe columns with identity columns first."""
-    id_cols = ['smiles', 'model_name', 'mol_idx']
+    id_cols = ["smiles", "model_name", "mol_idx"]
     ordered = id_cols + [c for c in df.columns if c not in id_cols]
     return df[ordered]
 
@@ -29,32 +27,36 @@ def order_identity_columns(df):
 def drop_false_rows(df, borders):
     """
     Filter rows that passed all descriptor filters.
-    
+
     Args:
         df: DataFrame with '_pass' columns
         borders: Configuration dict with filter settings
-        
+
     Returns:
         pd.DataFrame: Filtered dataframe with only passed molecules
     """
     passed_cols = []
-    filter_charged_mol = borders.get('filter_charged_mol', False)
+    filter_charged_mol = borders.get("filter_charged_mol", False)
     charged_mol_col = None
 
     for col in df.columns:
-        if col.endswith('_pass') or col == 'pass':
-            if 'charged_mol' in col:
+        if col.endswith("_pass") or col == "pass":
+            if "charged_mol" in col:
                 if filter_charged_mol:
                     passed_cols.append(col)
                 else:
                     charged_mol_col = col
             else:
                 passed_cols.append(col)
-    
+
     mask = df[passed_cols].all(axis=1)
     df_masked = df[mask].copy()
 
-    if not filter_charged_mol and charged_mol_col is not None and charged_mol_col not in df_masked.columns:
+    if (
+        not filter_charged_mol
+        and charged_mol_col is not None
+        and charged_mol_col not in df_masked.columns
+    ):
         df_masked[charged_mol_col] = df.loc[mask, charged_mol_col]
     return df_masked
 
@@ -64,10 +66,10 @@ def _parse_chars_in_mol_column(series):
     parsed = []
     for val in series.dropna():
         try:
-            chars = val if isinstance(val, list) else eval(val)
+            chars = val if isinstance(val, list) else eval(val)  # noqa: S307
             parsed.extend(chars)
         except Exception as e:
-            logger.error(f"Error parsing chars: {val}, {e}")
+            logger.error("Error parsing chars: %s, %s", val, e)
     return parsed
 
 
@@ -79,7 +81,7 @@ def _parse_ring_size_column(series):
             sizes = val if isinstance(val, list) else eval(val)  # noqa: S307
             parsed.extend([float(size) for size in sizes])
         except Exception as e:
-            logger.error(f"Error parsing ring sizes: {val}, {e}")
+            logger.error("Error parsing ring sizes: %s, %s", val, e)
     return parsed
 
 
@@ -105,36 +107,44 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     n_rot_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol_n)
     n_rigid_bonds = mol_n.GetNumBonds() - n_rot_bonds
     n_heavy_atoms = rdMolDescriptors.CalcNumHeavyAtoms(mol_n)
-    n_aromatic_atoms = sum(1 for a in mol_n.GetAtoms() if a.GetIsAromatic() and a.GetAtomicNum() > 1)
+    n_aromatic_atoms = sum(
+        1 for a in mol_n.GetAtoms() if a.GetIsAromatic() and a.GetAtomicNum() > 1
+    )
     molWt = Descriptors.ExactMolWt(mol_n)
     clogp = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
 
     return {
-        'model_name': model_name,
-        'mol_idx': mol_idx,
-        'chars': symbols,
-        'n_atoms': mol.GetNumAtoms(),
-        'n_heavy_atoms': n_heavy_atoms,
-        'n_het_atoms': sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() not in (1, 6)),
-        'n_N_atoms': n_N_atoms,
-        'fN_atoms': n_N_atoms / n_heavy_atoms if n_heavy_atoms > 0 else 0,
-        'charged_mol': charged_mol,
-        'molWt': molWt,
-        'logP': Descriptors.MolLogP(mol_n),
-        'clogP': clogp,
-        'sw': 0.16 - 0.63 * clogp - 0.0062 * molWt + 0.066 * n_rot_bonds - 0.74 * n_aromatic_atoms,
-        'ring_size': rings,
-        'n_rings': mol_n.GetRingInfo().NumRings(),
-        'n_aroma_rings': rdMolDescriptors.CalcNumAromaticRings(mol_n),
-        'n_fused_aromatic_rings': n_fused_aromatic_rings(mol_n),
-        'n_rigid_bonds': n_rigid_bonds,
-        'n_rot_bonds': n_rot_bonds,
-        'hbd': Lipinski.NumHDonors(mol_n),
-        'hba': Lipinski.NumHAcceptors(mol_n),
-        'fsp3': rdMolDescriptors.CalcFractionCSP3(mol_n),
-        'tpsa': rdMolDescriptors.CalcTPSA(mol_n),
-        'qed': QED.qed(mol_n),
+        "model_name": model_name,
+        "mol_idx": mol_idx,
+        "chars": symbols,
+        "n_atoms": mol.GetNumAtoms(),
+        "n_heavy_atoms": n_heavy_atoms,
+        "n_het_atoms": sum(
+            1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() not in (1, 6)
+        ),
+        "n_N_atoms": n_N_atoms,
+        "fN_atoms": n_N_atoms / n_heavy_atoms if n_heavy_atoms > 0 else 0,
+        "charged_mol": charged_mol,
+        "molWt": molWt,
+        "logP": Descriptors.MolLogP(mol_n),
+        "clogP": clogp,
+        "sw": 0.16
+        - 0.63 * clogp
+        - 0.0062 * molWt
+        + 0.066 * n_rot_bonds
+        - 0.74 * n_aromatic_atoms,
+        "ring_size": rings,
+        "n_rings": mol_n.GetRingInfo().NumRings(),
+        "n_aroma_rings": rdMolDescriptors.CalcNumAromaticRings(mol_n),
+        "n_fused_aromatic_rings": n_fused_aromatic_rings(mol_n),
+        "n_rigid_bonds": n_rigid_bonds,
+        "n_rot_bonds": n_rot_bonds,
+        "hbd": Lipinski.NumHDonors(mol_n),
+        "hba": Lipinski.NumHAcceptors(mol_n),
+        "fsp3": rdMolDescriptors.CalcFractionCSP3(mol_n),
+        "tpsa": rdMolDescriptors.CalcTPSA(mol_n),
+        "qed": QED.qed(mol_n),
     }
 
 
@@ -152,37 +162,49 @@ def compute_metrics(df, save_path, config=None):
         pd.DataFrame: Dataframe with computed descriptors per molecule
     """
     if df is None or len(df) == 0:
-        logger.warning('Empty DataFrame provided to compute_metrics. Returning empty DataFrame.')
+        logger.warning(
+            "Empty DataFrame provided to compute_metrics. Returning empty DataFrame."
+        )
         return pd.DataFrame()
 
     metrics = {}
     skipped_molecules = []
 
     for _, row in df.iterrows():
-        smiles = row['smiles']
-        model_name = row['model_name']
-        mol_idx = row['mol_idx']
+        smiles = row["smiles"]
+        model_name = row["model_name"]
+        mol_idx = row["mol_idx"]
 
         mol_n = Chem.MolFromSmiles(smiles)
         if mol_n:
-            metrics[smiles] = _compute_single_molecule_descriptors(mol_n, model_name, mol_idx)
+            metrics[smiles] = _compute_single_molecule_descriptors(
+                mol_n, model_name, mol_idx
+            )
         else:
             skipped_molecules.append((smiles, model_name, mol_idx))
 
     save_path = process_path(save_path)
     if skipped_molecules:
-        logger.warning(f'Skipped {len(skipped_molecules)} molecules that failed to parse')
-        skipped_df = pd.DataFrame({
-            'smiles': [s for s, _, _ in skipped_molecules],
-            'model_name': [m for _, m, _ in skipped_molecules],
-        })
+        logger.warning(
+            "Skipped %d molecules that failed to parse", len(skipped_molecules)
+        )
+        skipped_df = pd.DataFrame(
+            {
+                "smiles": [s for s, _, _ in skipped_molecules],
+                "model_name": [m for _, m, _ in skipped_molecules],
+            }
+        )
         if any(idx is not None for _, _, idx in skipped_molecules):
-            skipped_df['mol_idx'] = [idx for _, _, idx in skipped_molecules]
-        skipped_df.to_csv(save_path + 'skipped_molecules.csv', index=False)
+            skipped_df["mol_idx"] = [idx for _, _, idx in skipped_molecules]
+        skipped_df.to_csv(save_path + "skipped_molecules.csv", index=False)
 
-    metrics_df = pd.DataFrame.from_dict(metrics, orient='index').reset_index().rename(columns={'index': 'smiles'})
+    metrics_df = (
+        pd.DataFrame.from_dict(metrics, orient="index")
+        .reset_index()
+        .rename(columns={"index": "smiles"})
+    )
     metrics_df = order_identity_columns(metrics_df)
-    metrics_df.to_csv(save_path + 'descriptors_all.csv', index=False)
+    metrics_df.to_csv(save_path + "descriptors_all.csv", index=False)
     return metrics_df
 
 
@@ -197,8 +219,8 @@ def _get_border_values(col, borders):
         tuple: (min_border, max_border)
     """
     relevant_keys = [k for k in borders.keys() if col.lower() in k.lower()]
-    min_border = next((borders[k] for k in relevant_keys if 'min' in k), None)
-    max_border = next((borders[k] for k in relevant_keys if 'max' in k), None)
+    min_border = next((borders[k] for k in relevant_keys if "min" in k), None)
+    max_border = next((borders[k] for k in relevant_keys if "max" in k), None)
     return min_border, max_border
 
 
@@ -215,8 +237,8 @@ def _apply_column_filter(df, col, borders):
     """
     min_border, max_border = _get_border_values(col, borders)
 
-    if col == 'chars':
-        allowed_chars = borders['allowed_chars']
+    if col == "chars":
+        allowed_chars = borders["allowed_chars"]
         return df[col].apply(
             lambda x: all(
                 str(char).strip() in allowed_chars
@@ -224,7 +246,7 @@ def _apply_column_filter(df, col, borders):
             )
         )
 
-    if col == 'ring_size':
+    if col == "ring_size":
         return df[col].apply(
             lambda x: all(
                 min_border <= float(ring_size) <= max_border
@@ -232,7 +254,7 @@ def _apply_column_filter(df, col, borders):
             )
         )
 
-    if col == 'syba_score' and max_border == 'inf':
+    if col == "syba_score" and max_border == "inf":
         return df[col] >= min_border
 
     return (df[col] >= min_border) & (df[col] <= max_border)
@@ -247,15 +269,17 @@ def _order_descriptor_columns(df):
     Returns:
         list: Ordered column names
     """
-    id_cols = ['smiles', 'model_name', 'mol_idx']
-    descriptor_cols = [col for col in df.columns if col not in id_cols and not col.endswith('_pass')]
-    pass_cols = [col for col in df.columns if col.endswith('_pass')]
+    id_cols = ["smiles", "model_name", "mol_idx"]
+    descriptor_cols = [
+        col for col in df.columns if col not in id_cols and not col.endswith("_pass")
+    ]
+    pass_cols = [col for col in df.columns if col.endswith("_pass")]
 
     ordered_cols = id_cols.copy()
     for desc_col in sorted(descriptor_cols):
         if desc_col in df.columns:
             ordered_cols.append(desc_col)
-            pass_col = f'{desc_col}_pass'
+            pass_col = f"{desc_col}_pass"
             if pass_col in pass_cols:
                 ordered_cols.append(pass_col)
 
@@ -280,17 +304,24 @@ def _merge_pass_flags(df, flags_path):
         return df
 
     flags_df = pd.read_csv(flags_path)
-    merge_cols = ['smiles', 'model_name']
-    pass_cols = [col for col in flags_df.columns if col.endswith('_pass') or col == 'pass']
+    merge_cols = ["smiles", "model_name"]
+    pass_cols = [
+        col for col in flags_df.columns if col.endswith("_pass") or col == "pass"
+    ]
 
     if not pass_cols:
         return df
 
-    df = df.merge(flags_df[merge_cols + pass_cols], on=merge_cols, how='left', suffixes=('', '_flags'))
+    df = df.merge(
+        flags_df[merge_cols + pass_cols],
+        on=merge_cols,
+        how="left",
+        suffixes=("", "_flags"),
+    )
     for col in pass_cols:
-        if f'{col}_flags' in df.columns:
-            df[col] = df[f'{col}_flags'].fillna(df.get(col, False))
-            df = df.drop(columns=[f'{col}_flags'])
+        if f"{col}_flags" in df.columns:
+            df[col] = df[f"{col}_flags"].fillna(df.get(col, False))
+            df = df.drop(columns=[f"{col}_flags"])
 
     return df
 
@@ -307,10 +338,12 @@ def _save_failed_molecules(fail_filters, folder_to_save, flags_path):
     fail_filters = order_identity_columns(fail_filters)
 
     ordered_cols = _order_descriptor_columns(fail_filters)
-    fail_filters[ordered_cols].to_csv(folder_to_save + 'descriptors_failed.csv', index=False)
+    fail_filters[ordered_cols].to_csv(
+        folder_to_save + "descriptors_failed.csv", index=False
+    )
 
-    id_cols = ['smiles', 'model_name', 'mol_idx']
-    fail_filters[id_cols].to_csv(folder_to_save + 'failed_molecules.csv', index=False)
+    id_cols = ["smiles", "model_name", "mol_idx"]
+    fail_filters[id_cols].to_csv(folder_to_save + "failed_molecules.csv", index=False)
 
 
 def filter_molecules(df, borders, folder_to_save):
@@ -322,11 +355,11 @@ def filter_molecules(df, borders, folder_to_save):
         folder_to_save: Output folder path (should already include 'Descriptors' subfolder)
     """
     folder_to_save = process_path(folder_to_save)
-    id_cols = ['smiles', 'model_name', 'mol_idx']
+    id_cols = ["smiles", "model_name", "mol_idx"]
 
     logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
-    for line in json.dumps(borders, indent=2, ensure_ascii=False).split('\n'):
-        logger.info(f"  {line}")
+    for line in json.dumps(borders, indent=2, ensure_ascii=False).split("\n"):
+        logger.info("  %s", line)
 
     # Build filtered data with pass flags
     filtered_data = {}
@@ -338,35 +371,53 @@ def filter_molecules(df, borders, folder_to_save):
         col_in_borders = any(col.lower() in k.lower() for k in borders.keys())
         if col_in_borders:
             filtered_data[col] = df[col]
-            filtered_data[f'{col}_pass'] = _apply_column_filter(df, col, borders)
+            filtered_data[f"{col}_pass"] = _apply_column_filter(df, col, borders)
 
     filtered_data_df = pd.DataFrame(filtered_data)
     filtered_data_df = order_identity_columns(filtered_data_df)
-    filtered_data_df.to_csv(folder_to_save + 'pass_flags.csv', index_label='SMILES', index=False)
+    filtered_data_df.to_csv(
+        folder_to_save + "pass_flags.csv", index_label="SMILES", index=False
+    )
 
     pass_filters = drop_false_rows(filtered_data_df, borders)
 
     # Save passed molecules
     if len(pass_filters) > 0:
         pass_filters = order_identity_columns(pass_filters)
-        descriptor_cols = [col for col in pass_filters.columns if col not in id_cols and not col.endswith('_pass')]
-        ordered_cols = [col for col in id_cols + sorted(descriptor_cols) if col in pass_filters.columns]
-        pass_filters[ordered_cols].to_csv(folder_to_save + 'descriptors_passed.csv', index=False)
-        pass_filters[id_cols].to_csv(folder_to_save + 'filtered_molecules.csv', index=False)
+        descriptor_cols = [
+            col
+            for col in pass_filters.columns
+            if col not in id_cols and not col.endswith("_pass")
+        ]
+        ordered_cols = [
+            col
+            for col in id_cols + sorted(descriptor_cols)
+            if col in pass_filters.columns
+        ]
+        pass_filters[ordered_cols].to_csv(
+            folder_to_save + "descriptors_passed.csv", index=False
+        )
+        pass_filters[id_cols].to_csv(
+            folder_to_save + "filtered_molecules.csv", index=False
+        )
     else:
-        logger.warning('No molecules pass Descriptors Filters')
+        logger.warning("No molecules pass Descriptors Filters")
 
     # Save failed molecules
-    all_computed_path = folder_to_save + 'descriptors_all.csv'
-    flags_path = folder_to_save + 'pass_flags.csv'
+    all_computed_path = folder_to_save + "descriptors_all.csv"
+    flags_path = folder_to_save + "pass_flags.csv"
 
     if os.path.exists(all_computed_path):
         all_computed = pd.read_csv(all_computed_path)
 
         if len(pass_filters) > 0:
-            merge_cols = ['smiles', 'model_name']
-            merged = all_computed.merge(pass_filters[merge_cols], on=merge_cols, how='left', indicator=True)
-            fail_filters = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge']).copy()
+            merge_cols = ["smiles", "model_name"]
+            merged = all_computed.merge(
+                pass_filters[merge_cols], on=merge_cols, how="left", indicator=True
+            )
+            fail_filters = (
+                merged[merged["_merge"] == "left_only"].drop(columns=["_merge"]).copy()
+            )
         else:
             fail_filters = all_computed.copy()
 
@@ -374,7 +425,7 @@ def filter_molecules(df, borders, folder_to_save):
             _save_failed_molecules(fail_filters, folder_to_save, flags_path)
 
     # Re-order existing CSV files
-    if os.path.exists(folder_to_save + 'filtered_molecules.csv'):
+    if os.path.exists(folder_to_save + "filtered_molecules.csv"):
         if os.path.exists(all_computed_path):
             per = pd.read_csv(all_computed_path)
             order_identity_columns(per).to_csv(all_computed_path, index=False)
@@ -394,14 +445,24 @@ def _get_model_colors(model_names):
         dict: Mapping of model names to colors
     """
     distinct_colors = [
-        'brown', 'green', 'blue', 'cyan', 'yellow', 'pink', 'orange',
-        '#dd37fa', '#ad5691', '#f46fa1', '#89cff0', '#93c83e'
+        "brown",
+        "green",
+        "blue",
+        "cyan",
+        "yellow",
+        "pink",
+        "orange",
+        "#dd37fa",
+        "#ad5691",
+        "#f46fa1",
+        "#89cff0",
+        "#93c83e",
     ]
     if len(model_names) <= 12:
         colors = distinct_colors
     else:
         colors = plt.cm.YlOrRd(np.linspace(1, 0, len(model_names) + 1))
-    return dict(zip(sorted(model_names), colors))
+    return dict(zip(sorted(model_names), colors, strict=False))
 
 
 def _get_column_values(model_df, col):
@@ -414,9 +475,9 @@ def _get_column_values(model_df, col):
     Returns:
         list: Extracted values
     """
-    if col == 'chars':
+    if col == "chars":
         return _parse_chars_in_mol_column(model_df[col].dropna())
-    if col == 'ring_size':
+    if col == "ring_size":
         return _parse_ring_size_column(model_df[col].dropna())
     return model_df[col].dropna().tolist()
 
@@ -435,23 +496,35 @@ def _filter_values_by_bounds(values, min_val, max_val):
     result = values.copy()
     if min_val is not None:
         result = [v for v in result if v >= min_val]
-    if max_val is not None and max_val != 'inf':
+    if max_val is not None and max_val != "inf":
         result = [v for v in result if v <= max_val]
     return result
 
 
-def _plot_discrete_chars(ax, values, offset, bar_width, color, label, borders, model_index):
+def _plot_discrete_chars(
+    ax, values, offset, bar_width, color, label, borders, model_index
+):
     """Plot discrete character counts as bar chart."""
     value_counts = pd.Series(values).value_counts()
-    desired_order = ['C', 'N', 'S', 'O', 'F', 'Cl', 'Br', 'H']
-    all_chars = borders.get('allowed_chars', desired_order)
-    sorted_chars = [c for c in desired_order if c in all_chars] + [c for c in all_chars if c not in desired_order]
+    desired_order = ["C", "N", "S", "O", "F", "Cl", "Br", "H"]
+    all_chars = borders.get("allowed_chars", desired_order)
+    sorted_chars = [c for c in desired_order if c in all_chars] + [
+        c for c in all_chars if c not in desired_order
+    ]
 
     complete_counts = pd.Series(0, index=sorted_chars)
     complete_counts.update(value_counts)
     x_positions = [i + offset for i in range(len(complete_counts.index))]
-    ax.bar(x_positions, complete_counts.values, width=bar_width, alpha=0.4,
-           color=color, edgecolor='black', linewidth=0.3, label=label)
+    ax.bar(
+        x_positions,
+        complete_counts.values,
+        width=bar_width,
+        alpha=0.4,
+        color=color,
+        edgecolor="black",
+        linewidth=0.3,
+        label=label,
+    )
 
     if model_index == 0:
         ax.set_xticks(list(range(len(complete_counts.index))))
@@ -459,11 +532,13 @@ def _plot_discrete_chars(ax, values, offset, bar_width, color, label, borders, m
         ax.set_xticklabels(complete_counts.index)
 
 
-def _plot_discrete_numeric(ax, values, col, offset, bar_width, color, label, max_val, model_index):
+def _plot_discrete_numeric(
+    ax, values, col, offset, bar_width, color, label, max_val, model_index
+):
     """Plot discrete numeric values as bar chart."""
     value_counts = pd.Series(values).value_counts().sort_index()
 
-    if max_val is not None and max_val != 'inf':
+    if max_val is not None and max_val != "inf":
         extended_max = int(max_val) + 5
         full_range = list(range(0, extended_max + 1))
         complete_counts = pd.Series(0, index=full_range)
@@ -474,16 +549,26 @@ def _plot_discrete_numeric(ax, values, col, offset, bar_width, color, label, max
         complete_counts = value_counts
 
     x_positions = [i + offset for i in range(len(complete_counts.index))]
-    ax.bar(x_positions, complete_counts.values, width=bar_width, alpha=0.4,
-           color=color, edgecolor='black', linewidth=0.3, label=label)
+    ax.bar(
+        x_positions,
+        complete_counts.values,
+        width=bar_width,
+        alpha=0.4,
+        color=color,
+        edgecolor="black",
+        linewidth=0.3,
+        label=label,
+    )
 
     if model_index == 0:
-        if col == 'n_rigid_bonds':
+        if col == "n_rigid_bonds":
             all_values = list(complete_counts.index)
             tick_values = [x for x in all_values if x % 5 == 0]
             if max(all_values) not in tick_values:
                 tick_values.append(max(all_values))
-            tick_positions = [all_values.index(val) for val in tick_values if val in all_values]
+            tick_positions = [
+                all_values.index(val) for val in tick_values if val in all_values
+            ]
             ax.set_xticks(tick_positions)
             ax.set_xticklabels([str(int(val)) for val in tick_values])
         else:
@@ -494,8 +579,10 @@ def _plot_discrete_numeric(ax, values, col, offset, bar_width, color, label, max
 
 def _plot_continuous(ax, values, col, color, label):
     """Plot continuous distribution using KDE."""
-    clip = (0, 1.0) if col in ['fsp3', 'qed'] else (0, None)
-    sns.kdeplot(values, label=label, fill=True, alpha=0.4, ax=ax, color=color, clip=clip)
+    clip = (0, 1.0) if col in ["fsp3", "qed"] else (0, None)
+    sns.kdeplot(
+        values, label=label, fill=True, alpha=0.4, ax=ax, color=color, clip=clip
+    )
 
 
 def _get_boundary_position(ax, val, col, discrete_feats, fallback_offset=0):
@@ -514,7 +601,7 @@ def _get_boundary_position(ax, val, col, discrete_feats, fallback_offset=0):
     if col not in discrete_feats:
         return val
 
-    if not hasattr(ax, '_discrete_tick_values'):
+    if not hasattr(ax, "_discrete_tick_values"):
         return val
 
     try:
@@ -530,27 +617,75 @@ def _draw_boundary_lines(ax, col, min_val, max_val, discrete_feats):
         pos = _get_boundary_position(ax, min_val, col, discrete_feats)
         if pos is not None:
             if col in discrete_feats:
-                ax.axvline(pos - 0.5, color='red', linestyle='--', linewidth=1.5, label=f'min: {min_val}')
+                ax.axvline(
+                    pos - 0.5,
+                    color="red",
+                    linestyle="--",
+                    linewidth=1.5,
+                    label=f"min: {min_val}",
+                )
             else:
-                ax.axvline(min_val, color='red', linestyle='--', linewidth=1.5, label=f'min: {min_val}')
+                ax.axvline(
+                    min_val,
+                    color="red",
+                    linestyle="--",
+                    linewidth=1.5,
+                    label=f"min: {min_val}",
+                )
         else:
-            ax.axvline(0, color='red', linestyle='--', linewidth=1.5, label=f'min: {min_val}')
+            ax.axvline(
+                0, color="red", linestyle="--", linewidth=1.5, label=f"min: {min_val}"
+            )
 
     # Draw max boundary line
-    if max_val is not None and max_val != 'inf':
+    if max_val is not None and max_val != "inf":
         pos = _get_boundary_position(ax, max_val, col, discrete_feats)
         if pos is not None:
             if col in discrete_feats:
-                ax.axvline(pos + 0.5, color='blue', linestyle='--', linewidth=1.5, label=f'max: {max_val}')
-            elif col == 'fsp3':
-                ax.axvline(max_val + 0.01, color='blue', linestyle='--', linewidth=1.5, label=f'max: {max_val}')
-            elif col == 'n_rigid_bonds':
-                ax.axvline(max_val + 0.0000001, color='blue', linestyle='--', linewidth=1.5, label=f'max: {max_val}')
+                ax.axvline(
+                    pos + 0.5,
+                    color="blue",
+                    linestyle="--",
+                    linewidth=1.5,
+                    label=f"max: {max_val}",
+                )
+            elif col == "fsp3":
+                ax.axvline(
+                    max_val + 0.01,
+                    color="blue",
+                    linestyle="--",
+                    linewidth=1.5,
+                    label=f"max: {max_val}",
+                )
+            elif col == "n_rigid_bonds":
+                ax.axvline(
+                    max_val + 0.0000001,
+                    color="blue",
+                    linestyle="--",
+                    linewidth=1.5,
+                    label=f"max: {max_val}",
+                )
             else:
-                ax.axvline(max_val, color='blue', linestyle='--', linewidth=1.5, label=f'max: {max_val}')
+                ax.axvline(
+                    max_val,
+                    color="blue",
+                    linestyle="--",
+                    linewidth=1.5,
+                    label=f"max: {max_val}",
+                )
         else:
-            tick_len = len(ax._discrete_tick_values) - 1 if hasattr(ax, '_discrete_tick_values') else max_val
-            ax.axvline(tick_len, color='blue', linestyle='--', linewidth=1.5, label=f'max: {max_val}')
+            tick_len = (
+                len(ax._discrete_tick_values) - 1
+                if hasattr(ax, "_discrete_tick_values")
+                else max_val
+            )
+            ax.axvline(
+                tick_len,
+                color="blue",
+                linestyle="--",
+                linewidth=1.5,
+                label=f"max: {max_val}",
+            )
 
 
 def _draw_boundary_spans(ax, col, min_val, max_val, discrete_feats):
@@ -562,41 +697,56 @@ def _draw_boundary_spans(ax, col, min_val, max_val, discrete_feats):
         pos = _get_boundary_position(ax, min_val, col, discrete_feats)
         if col in discrete_feats:
             if pos is not None:
-                ax.axvspan(x_min, pos - 0.5, color='grey', alpha=0.2, zorder=0)
+                ax.axvspan(x_min, pos - 0.5, color="grey", alpha=0.2, zorder=0)
             else:
-                ax.axvspan(x_min, 0, color='grey', alpha=0.2, zorder=0)
+                ax.axvspan(x_min, 0, color="grey", alpha=0.2, zorder=0)
         else:
-            ax.axvspan(x_min, min_val, color='grey', alpha=0.2, zorder=0)
+            ax.axvspan(x_min, min_val, color="grey", alpha=0.2, zorder=0)
 
     # Draw max boundary span (shade area above max)
-    if max_val is not None and max_val != 'inf':
+    if max_val is not None and max_val != "inf":
         pos = _get_boundary_position(ax, max_val, col, discrete_feats)
         if col in discrete_feats:
             if pos is not None:
-                ax.axvspan(pos + 0.5, x_max, color='grey', alpha=0.2, zorder=0)
+                ax.axvspan(pos + 0.5, x_max, color="grey", alpha=0.2, zorder=0)
             else:
-                tick_len = len(ax._discrete_tick_values) - 0.5 if hasattr(ax, '_discrete_tick_values') else x_max
-                ax.axvspan(tick_len, x_max, color='grey', alpha=0.2, zorder=0)
+                tick_len = (
+                    len(ax._discrete_tick_values) - 0.5
+                    if hasattr(ax, "_discrete_tick_values")
+                    else x_max
+                )
+                ax.axvspan(tick_len, x_max, color="grey", alpha=0.2, zorder=0)
         else:
-            ax.axvspan(max_val, x_max, color='grey', alpha=0.2, zorder=0)
+            ax.axvspan(max_val, x_max, color="grey", alpha=0.2, zorder=0)
 
 
 def _style_axis(ax):
     """Apply consistent styling to axis."""
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_linewidth(0.5)
-    ax.spines['left'].set_linewidth(0.5)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_linewidth(0.5)
+    ax.spines["left"].set_linewidth(0.5)
     ax.tick_params(
-        axis='both', which='both',
-        bottom=True, top=False, left=True, right=False,
-        labelbottom=True, labeltop=False,
-        labelleft=True, labelright=False,
-        length=4, width=0.5, colors='black', labelsize=10
+        axis="both",
+        which="both",
+        bottom=True,
+        top=False,
+        left=True,
+        right=False,
+        labelbottom=True,
+        labeltop=False,
+        labelleft=True,
+        labelright=False,
+        length=4,
+        width=0.5,
+        colors="black",
+        labelsize=10,
     )
 
 
-def _plot_single_column(ax, df, col, model_names, colors, borders, discrete_feats, renamer, is_multi):
+def _plot_single_column(
+    ax, df, col, model_names, colors, borders, discrete_feats, renamer, is_multi
+):
     """Plot distribution for a single column across all models.
 
     Args:
@@ -613,11 +763,13 @@ def _plot_single_column(ax, df, col, model_names, colors, borders, discrete_feat
     min_val, max_val = _get_border_values(col, borders)
     minmax_str = f"min: {min_val}, max: {max_val}"
     bar_width = 0.1
-    name_map = {str(m): str(m).upper() for m in sorted(df['model_name'].dropna().unique())}
+    name_map = {
+        str(m): str(m).upper() for m in sorted(df["model_name"].dropna().unique())
+    }
     name_map_lc = {str(k).lower(): v for k, v in name_map.items()}
 
     for model_index, model in enumerate(model_names):
-        model_df = df[df['model_name'].str.lower() == model] if is_multi else df
+        model_df = df[df["model_name"].str.lower() == model] if is_multi else df
         values_before = _get_column_values(model_df, col)
 
         if not values_before:
@@ -628,31 +780,56 @@ def _plot_single_column(ax, df, col, model_names, colors, borders, discrete_feat
         mols_passed = len(values_after) / total * 100 if total > 0 else 0
 
         label_name = name_map_lc.get(str(model).lower(), str(model).upper())
-        label = f'{label_name}, pass: {mols_passed:.1f}%'
+        label = f"{label_name}, pass: {mols_passed:.1f}%"
         color = colors[model]
         offset = model_index * bar_width
 
         if len(values_before) <= 1:
-            ax.scatter(values_before, [0.01] * len(values_before), label=label, alpha=0.4, color=color)
+            ax.scatter(
+                values_before,
+                [0.01] * len(values_before),
+                label=label,
+                alpha=0.4,
+                color=color,
+            )
         elif col in discrete_feats:
-            if col == 'chars':
-                _plot_discrete_chars(ax, values_before, offset, bar_width, color, label, borders, model_index)
+            if col == "chars":
+                _plot_discrete_chars(
+                    ax,
+                    values_before,
+                    offset,
+                    bar_width,
+                    color,
+                    label,
+                    borders,
+                    model_index,
+                )
             else:
-                _plot_discrete_numeric(ax, values_before, col, offset, bar_width, color, label, max_val, model_index)
+                _plot_discrete_numeric(
+                    ax,
+                    values_before,
+                    col,
+                    offset,
+                    bar_width,
+                    color,
+                    label,
+                    max_val,
+                    model_index,
+                )
         else:
             _plot_continuous(ax, values_before, col, color, label)
 
     # Set title and labels
     display_name = renamer.get(col, col)
-    title = display_name if col == 'chars' else f"{display_name} ({minmax_str})"
+    title = display_name if col == "chars" else f"{display_name} ({minmax_str})"
     ax.set_title(title, fontsize=12)
     ax.set_xlabel(display_name, fontsize=10)
 
     # Set tick locators
     if col not in discrete_feats:
-        if col == 'fsp3':
+        if col == "fsp3":
             ax.set_xticks([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
-        elif col != 'qed':
+        elif col != "qed":
             ax.xaxis.set_major_locator(plt.MaxNLocator(integer=False))
     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
 
@@ -663,9 +840,9 @@ def _plot_single_column(ax, df, col, model_names, colors, borders, discrete_feat
     # Add sorted legend
     handles, labels = ax.get_legend_handles_labels()
     if handles:
-        sorted_pairs = sorted(zip(labels, handles), key=lambda t: t[0])
-        sorted_labels, sorted_handles = zip(*sorted_pairs)
-        ax.legend(sorted_handles, sorted_labels, fontsize=8, loc='upper right')
+        sorted_pairs = sorted(zip(labels, handles, strict=False), key=lambda t: t[0])
+        sorted_labels, sorted_handles = zip(*sorted_pairs, strict=False)
+        ax.legend(sorted_handles, sorted_labels, fontsize=8, loc="upper right")
 
     _style_axis(ax)
 
@@ -680,25 +857,29 @@ def draw_filtered_mols(df, folder_to_save, config):
     """
     folder_to_save = process_path(folder_to_save)
 
-    descriptors_config = load_config(config['config_descriptors'])
-    borders = descriptors_config['borders']
-    if 'charged_mol_allowed' in borders:
-        borders['charged_mol_allowed'] = int(borders['charged_mol_allowed'])
+    descriptors_config = load_config(config["config_descriptors"])
+    borders = descriptors_config["borders"]
+    if "charged_mol_allowed" in borders:
+        borders["charged_mol_allowed"] = int(borders["charged_mol_allowed"])
     else:
-        borders['charged_mol_allowed'] = False
+        borders["charged_mol_allowed"] = False
 
-    cols_to_plot = descriptors_config['filtered_cols_to_plot']
-    discrete_feats = descriptors_config['discrete_features_to_plot']
-    renamer = descriptors_config['renamer']
+    cols_to_plot = descriptors_config["filtered_cols_to_plot"]
+    discrete_feats = descriptors_config["discrete_features_to_plot"]
+    renamer = descriptors_config["renamer"]
 
-    model_names = sorted([m.lower() for m in df['model_name'].dropna().unique().tolist()])
+    model_names = sorted(
+        [m.lower() for m in df["model_name"].dropna().unique().tolist()]
+    )
     is_multi = len(model_names) > 1
     colors = _get_model_colors(model_names)
 
     # Calculate grid dimensions
     n_cols = min(5, len(cols_to_plot))
     n_rows = (len(cols_to_plot) + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(n_rows * n_cols, n_rows * n_cols))
+    fig, axes = plt.subplots(
+        nrows=n_rows, ncols=n_cols, figsize=(n_rows * n_cols, n_rows * n_cols)
+    )
     axes = axes.flatten()
 
     # Plot each column
@@ -706,7 +887,17 @@ def draw_filtered_mols(df, folder_to_save, config):
         relevant_keys = [k for k in borders.keys() if col.lower() in k.lower()]
         if not relevant_keys:
             continue
-        _plot_single_column(axes[i], df, col, model_names, colors, borders, discrete_feats, renamer, is_multi)
+        _plot_single_column(
+            axes[i],
+            df,
+            col,
+            model_names,
+            colors,
+            borders,
+            discrete_feats,
+            renamer,
+            is_multi,
+        )
 
     # Remove unused axes
     for j in range(len(cols_to_plot), len(axes)):
@@ -714,5 +905,9 @@ def draw_filtered_mols(df, folder_to_save, config):
 
     plt.tight_layout()
     plt.subplots_adjust(top=0.93, bottom=0.05, left=0.05, right=0.98)
-    plt.savefig(f"{folder_to_save}descriptors_distribution.png", dpi=300, bbox_inches='tight', format='png')
-    
+    plt.savefig(
+        f"{folder_to_save}descriptors_distribution.png",
+        dpi=300,
+        bbox_inches="tight",
+        format="png",
+    )

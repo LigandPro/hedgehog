@@ -28,4 +28,3 @@ def ensure_pandas_adjustment() -> None:
         pandas_printing, "_get_adjustment"
     ):
         pandas_format._get_adjustment = pandas_printing._get_adjustment  # type: ignore[attr-defined]
-

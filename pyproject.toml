@@ -4,15 +4,15 @@ version = "1.0.0"
 description = "Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration"
 requires-python = ">=3.10"
 dependencies = [
-    "pandas>=1.3.0,<2.2",
-    "numpy>=1.21.0,<2.0",
+    "pandas>=2.0.0",
+    "numpy>=1.21.0",
     "matplotlib>=3.4.0",
     "seaborn>=0.11.0",
     "pyyaml>=5.4.0",
     "rdkit>=2022.3.0",
     "datamol>=0.8.0",
     "medchem>=0.1.0",
-    "pandarallel>=1.6.0",
+    "joblib>=1.3.0",
     "rich>=13.0.0",
     "typer>=0.9.0",
     "syba",
@@ -24,7 +24,7 @@ build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
 lint = ["ruff", "mypy", "pyright"]
-test = ["pytest"]
+test = ["pytest", "pytest-cov"]
 
 [project.scripts]
 hedgehog = "hedgehog.main:app"
@@ -59,7 +59,9 @@ lint.ignore = [
     "PT001",
     "PT023",
     "PLR0913", # allow >5 params
-    "E501", # allow line too long
+    "E501",    # allow line too long
+    "B008",    # typer.Option in defaults - standard pattern
+    "B905",    # zip() without strict= - ok for compatibility
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -67,12 +69,41 @@ lint.ignore = [
     "F401",
     "F403",
 ]
+"**/stages/structFilters/main.py" = ["F403", "F405"]
+"**/stages/structFilters/utils.py" = ["E402"]
+"**/stages/synthesis/main.py" = ["F403", "F405"]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+python_classes = ["Test*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::FutureWarning",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["src/hedgehog"]
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
 
 [tool.uv.sources]
 syba = { path = "modules/syba", editable = true }
