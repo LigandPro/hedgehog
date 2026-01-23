@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import pandas as pd
 
@@ -25,16 +25,18 @@ def _order_identity_columns(df):
 def _find_existing_file(paths):
     """Return first existing non-empty file path from list, or None."""
     for path in paths:
-        if os.path.exists(path) and os.path.getsize(path) > 0:
+        p = Path(path)
+        if p.exists() and p.stat().st_size > 0:
             return path
     return None
 
 
 def _get_sampled_molecules_path(folder_to_save):
     """Get path to sampled molecules file, checking both new and legacy locations."""
+    base = Path(folder_to_save)
     candidates = [
-        os.path.join(folder_to_save, "input", "sampled_molecules.csv"),
-        os.path.join(folder_to_save, "sampled_molecules.csv"),
+        str(base / "input" / "sampled_molecules.csv"),
+        str(base / "sampled_molecules.csv"),
     ]
     return _find_existing_file(candidates)
 
@@ -64,15 +66,16 @@ def _get_input_path(config, stage_dir, folder_to_save):
     is_post_descriptors = _is_post_descriptors_stage(stage_dir)
 
     if is_post_descriptors:
+        base = Path(folder_to_save)
         descriptors_candidates = [
-            os.path.join(
-                folder_to_save,
-                "stages",
-                "01_descriptors_initial",
-                "filtered",
-                "filtered_molecules.csv",
+            str(
+                base
+                / "stages"
+                / "01_descriptors_initial"
+                / "filtered"
+                / "filtered_molecules.csv"
             ),
-            folder_to_save + "Descriptors/passDescriptorsSMILES.csv",
+            str(base / "Descriptors" / "passDescriptorsSMILES.csv"),
         ]
         descriptors_path = _find_existing_file(descriptors_candidates)
         if descriptors_path:
@@ -86,14 +89,11 @@ def _get_input_path(config, stage_dir, folder_to_save):
                 f"Descriptors output not found at {descriptors_candidates}"
             )
 
-        pre_filters_path = os.path.join(
-            folder_to_save,
-            "stages",
-            "02_structural_filters_pre",
-            "filtered_molecules.csv",
+        pre_filters_path = (
+            base / "stages" / "02_structural_filters_pre" / "filtered_molecules.csv"
         )
-        if os.path.exists(pre_filters_path) and os.path.getsize(pre_filters_path) > 0:
-            return pre_filters_path
+        if pre_filters_path.exists() and pre_filters_path.stat().st_size > 0:
+            return str(pre_filters_path)
 
         sampled_path = _get_sampled_molecules_path(folder_to_save)
         if sampled_path:
@@ -122,7 +122,7 @@ def _load_input_data(input_path):
     input_df = pd.read_csv(input_path)
 
     if "model_name" not in input_df.columns:
-        inferred_model = os.path.splitext(os.path.basename(input_path))[0]
+        inferred_model = Path(input_path).stem
         input_df["model_name"] = inferred_model
         logger.info("model_name column missing; using '%s'", inferred_model)
 
@@ -161,21 +161,19 @@ def _save_filter_results(output_dir, filter_name, metrics_df, extended_df):
         metrics_df: DataFrame with filter metrics
         extended_df: DataFrame with extended results
     """
-    filter_subdir = os.path.join(output_dir, filter_name)
-    os.makedirs(filter_subdir, exist_ok=True)
+    filter_subdir = Path(output_dir) / filter_name
+    filter_subdir.mkdir(parents=True, exist_ok=True)
 
     metrics_df = _order_identity_columns(metrics_df)
-    metrics_df.to_csv(os.path.join(filter_subdir, "metrics.csv"), index=False)
+    metrics_df.to_csv(filter_subdir / "metrics.csv", index=False)
 
     extended_df = _order_identity_columns(extended_df)
-    extended_df.to_csv(os.path.join(filter_subdir, "extended.csv"), index=False)
+    extended_df.to_csv(filter_subdir / "extended.csv", index=False)
 
     extended_df = _ensure_pass_column(extended_df, filter_name)
     filtered_mols = extended_df[extended_df["pass"]].copy()
     filtered_mols = _order_identity_columns(filtered_mols)
-    filtered_mols.to_csv(
-        os.path.join(filter_subdir, "filtered_molecules.csv"), index=False
-    )
+    filtered_mols.to_csv(filter_subdir / "filtered_molecules.csv", index=False)
 
 
 def _get_enabled_filters(config_structFilters):
@@ -195,9 +193,9 @@ def main(config, stage_dir):
         stage_dir: Stage directory path (e.g., 'stages/02_structural_filters_pre' or 'stages/03_structural_filters_post')
     """
     sample_size = config["sample_size"]
-    folder_to_save = process_path(config["folder_to_save"])
-    output_dir = os.path.join(folder_to_save, stage_dir)
-    os.makedirs(output_dir, exist_ok=True)
+    folder_to_save = Path(process_path(config["folder_to_save"]))
+    output_dir = folder_to_save / stage_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     input_path = _get_input_path(config, stage_dir, folder_to_save)
 

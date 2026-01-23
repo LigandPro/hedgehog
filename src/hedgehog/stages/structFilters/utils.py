@@ -1,6 +1,6 @@
-import glob
 import os
 import warnings
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,14 +16,14 @@ from joblib import Parallel, delayed
 from rdkit import Chem
 
 # Add local Lilly binaries to PATH before importing LillyDemeritsFilters
-_LILLY_BIN_PATH = os.path.join(
-    os.path.dirname(__file__), "../../../../modules/lilly_medchem_rules/bin"
-)
-_LILLY_BIN_PATH = os.path.abspath(_LILLY_BIN_PATH)
-if os.path.exists(_LILLY_BIN_PATH):
+_LILLY_BIN_PATH = (
+    Path(__file__).parent / ".." / ".." / ".." / ".." / "modules" / "lilly_medchem_rules" / "bin"
+).resolve()
+if _LILLY_BIN_PATH.exists():
     current_path = os.environ.get("PATH", "")
-    if _LILLY_BIN_PATH not in current_path:
-        os.environ["PATH"] = f"{_LILLY_BIN_PATH}:{current_path}"
+    lilly_str = str(_LILLY_BIN_PATH)
+    if lilly_str not in current_path:
+        os.environ["PATH"] = f"{lilly_str}:{current_path}"
 
 try:
     from medchem.structural.lilly_demerits import LillyDemeritsFilters
@@ -98,11 +98,11 @@ def camelcase(any_str):
 
 def build_identity_map_from_descriptors(config):
     """Build a map of (smiles, model_name) -> mol_idx from descriptors output."""
-    base_folder = process_path(config["folder_to_save"])
-    id_path = base_folder + "Descriptors/passDescriptorsSMILES.csv"
+    base_folder = Path(process_path(config["folder_to_save"]))
+    id_path = base_folder / "Descriptors" / "passDescriptorsSMILES.csv"
 
     try:
-        if os.path.exists(id_path):
+        if id_path.exists():
             id_df = pd.read_csv(id_path)
             identity_map = {
                 (row["smiles"], row["model_name"]): row["mol_idx"]
@@ -123,7 +123,7 @@ def process_path(folder_to_save, key_word=None):
     if key_word:
         folder_to_save += f"{key_word}/"
 
-    os.makedirs(folder_to_save, exist_ok=True)
+    Path(folder_to_save).mkdir(parents=True, exist_ok=True)
     return folder_to_save
 
 
@@ -851,13 +851,14 @@ def check_paths(config, paths):
 
 def plot_calculated_stats(config, stage_dir):
     """Plot calculated statistics for structural filters."""
-    folder_to_save = process_path(config["folder_to_save"])
+    folder_to_save = Path(process_path(config["folder_to_save"]))
     config_structFilters = load_config(config["config_structFilters"])
 
-    struct_folder = os.path.join(folder_to_save, stage_dir) + "/"
-    paths = glob.glob(struct_folder + "*/metrics.csv")
+    struct_folder = folder_to_save / stage_dir
+    paths = list(struct_folder.glob("*/metrics.csv"))
     if not paths:
-        paths = glob.glob(struct_folder + "*metrics.csv")
+        paths = list(struct_folder.glob("*metrics.csv"))
+    paths = [str(p) for p in paths]
     check_paths(config_structFilters, paths)
 
     datas = []
@@ -884,9 +885,10 @@ def plot_calculated_stats(config, stage_dir):
     model_name_set = sorted(list(all_model_names))
 
     filter_results = {}
-    filters_to_find = glob.glob(struct_folder + "*/filtered_molecules.csv")
+    filters_to_find = list(struct_folder.glob("*/filtered_molecules.csv"))
     if not filters_to_find:
-        filters_to_find = glob.glob(struct_folder + "*filteredMols.csv")
+        filters_to_find = list(struct_folder.glob("*filteredMols.csv"))
+    filters_to_find = [str(p) for p in filters_to_find]
 
     for path in filters_to_find:
         try:
@@ -1046,7 +1048,7 @@ def plot_calculated_stats(config, stage_dir):
     plt.subplots_adjust(right=0.85, hspace=0.6, wspace=0.5)
 
     plt.savefig(
-        struct_folder + "molecule_counts_comparison.png",
+        struct_folder / "molecule_counts_comparison.png",
         dpi=300,
         bbox_inches="tight",
         facecolor="white",
@@ -1057,19 +1059,20 @@ def plot_calculated_stats(config, stage_dir):
 
 def plot_restriction_ratios(config, stage_dir):
     """Plot restriction ratios for structural filters."""
-    folder_to_save = process_path(config["folder_to_save"])
+    folder_to_save = Path(process_path(config["folder_to_save"]))
     folder_name = config["folder_to_save"].split("/")[-1]
 
     config_structFilters = load_config(config["config_structFilters"])
 
-    struct_folder = os.path.join(folder_to_save, stage_dir) + "/"
-    paths = glob.glob(struct_folder + "*/metrics.csv")
+    struct_folder = folder_to_save / stage_dir
+    paths = list(struct_folder.glob("*/metrics.csv"))
     if not paths:
-        paths = glob.glob(struct_folder + "*metrics.csv")
+        paths = list(struct_folder.glob("*metrics.csv"))
+    paths = [str(p) for p in paths]
     check_paths(config_structFilters, paths)
 
     if not paths:
-        logger.error("No data files found in %s", folder_to_save)
+        logger.error("No data files found in %s", str(folder_to_save))
         return
 
     filter_data = {}
@@ -1198,7 +1201,7 @@ def plot_restriction_ratios(config, stage_dir):
 
     plt.tight_layout()
     plt.savefig(
-        struct_folder + "restriction_ratios_comparison.png",
+        struct_folder / "restriction_ratios_comparison.png",
         dpi=300,
         bbox_inches="tight",
         facecolor="white",
@@ -1214,12 +1217,13 @@ def filter_data(config, stage_dir):
         config: Configuration dictionary
         stage_dir: Stage directory path
     """
-    base_folder = process_path(config["folder_to_save"])
-    folder_to_save = os.path.join(base_folder, stage_dir) + "/"
+    base_folder = Path(process_path(config["folder_to_save"]))
+    folder_to_save = base_folder / stage_dir
 
-    paths = glob.glob(folder_to_save + "*/filtered_molecules.csv")
+    paths = list(folder_to_save.glob("*/filtered_molecules.csv"))
     if not paths:
-        paths = glob.glob(folder_to_save + "*filteredMols.csv")
+        paths = list(folder_to_save.glob("*filteredMols.csv"))
+    paths = [str(p) for p in paths]
 
     columns_to_drop = ["pass", "any_pass", "name", "pass_any"]
     datas = []
@@ -1259,39 +1263,39 @@ def filter_data(config, stage_dir):
 
     cols = ["smiles", "model_name", "mol_idx"]
     out_df = filtered_data[cols].copy()
-    out_df.to_csv(folder_to_save + "filtered_molecules.csv", index=False)
+    out_df.to_csv(folder_to_save / "filtered_molecules.csv", index=False)
 
     is_post_descriptors = (
         "03_structural_filters_post" in stage_dir or stage_dir == "StructFilters"
     )
     if is_post_descriptors:
-        descriptors_path = base_folder + "Descriptors/passDescriptorsSMILES.csv"
-        if os.path.exists(descriptors_path):
-            input_path = descriptors_path
+        descriptors_path = base_folder / "Descriptors" / "passDescriptorsSMILES.csv"
+        if descriptors_path.exists():
+            input_path = str(descriptors_path)
         else:
-            sampled_path = os.path.join(base_folder, "sampled_molecules.csv")
-            if os.path.exists(sampled_path):
-                input_path = sampled_path
+            sampled_path = base_folder / "sampled_molecules.csv"
+            if sampled_path.exists():
+                input_path = str(sampled_path)
             else:
                 try:
                     from hedgehog.stages.structFilters.main import _get_input_path
 
-                    input_path = _get_input_path(config, stage_dir, base_folder)
+                    input_path = _get_input_path(config, stage_dir, str(base_folder))
                 except Exception:
                     input_path = None
     else:
-        sampled_path = os.path.join(base_folder, "sampled_molecules.csv")
-        if os.path.exists(sampled_path):
-            input_path = sampled_path
+        sampled_path = base_folder / "sampled_molecules.csv"
+        if sampled_path.exists():
+            input_path = str(sampled_path)
         else:
             try:
                 from hedgehog.stages.structFilters.main import _get_input_path
 
-                input_path = _get_input_path(config, stage_dir, base_folder)
+                input_path = _get_input_path(config, stage_dir, str(base_folder))
             except Exception:
                 input_path = None
 
-    if input_path and os.path.exists(input_path):
+    if input_path and Path(input_path).exists():
         try:
             all_input = pd.read_csv(input_path)
             if len(out_df) > 0:
@@ -1306,7 +1310,7 @@ def filter_data(config, stage_dir):
                 fail_molecules = all_input.copy()
 
             if len(fail_molecules) > 0:
-                extended_paths = glob.glob(folder_to_save + "*extended.csv")
+                extended_paths = [str(p) for p in folder_to_save.glob("*extended.csv")]
                 all_extended = None
                 for ext_path in extended_paths:
                     try:
@@ -1365,7 +1369,7 @@ def filter_data(config, stage_dir):
                     c for c in id_cols if c in fail_molecules.columns
                 ] + pass_cols_final
                 fail_molecules[fail_cols].to_csv(
-                    folder_to_save + "failed_molecules.csv", index=False
+                    folder_to_save / "failed_molecules.csv", index=False
                 )
         except Exception as e:
             logger.warning("Could not create failStructFiltersSMILES.csv: %s", e)
@@ -1375,10 +1379,10 @@ def filter_data(config, stage_dir):
 
 def inject_identity_columns_to_all_csvs(config, stage_dir):
     """Ensure identity columns are ordered consistently in all CSVs."""
-    base_folder = process_path(config["folder_to_save"])
-    target_folder = os.path.join(base_folder, stage_dir) + "/"
+    base_folder = Path(process_path(config["folder_to_save"]))
+    target_folder = base_folder / stage_dir
 
-    csv_paths = glob.glob(target_folder + "*.csv")
+    csv_paths = [str(p) for p in target_folder.glob("*.csv")]
     for path in csv_paths:
         try:
             df = pd.read_csv(path)
@@ -1397,14 +1401,14 @@ def inject_identity_columns_to_all_csvs(config, stage_dir):
 
 def _get_breakdown_folder(file_path):
     """Get the CommonAlertsBreakdown folder path, creating it if necessary."""
-    path_to_save = os.path.join(os.path.dirname(file_path), "CommonAlertsBreakdown")
-    os.makedirs(path_to_save, exist_ok=True)
-    return path_to_save
+    path_to_save = Path(file_path).parent / "CommonAlertsBreakdown"
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    return str(path_to_save)
 
 
 def _save_plot(file_path, filename, dpi=600):
     """Save plot to CommonAlertsBreakdown folder and close it."""
-    output_path = os.path.join(_get_breakdown_folder(file_path), filename)
+    output_path = Path(_get_breakdown_folder(file_path)) / filename
     plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.close()
 
@@ -1499,7 +1503,7 @@ def analyze_filter_failures(file_path):
             "Top 5 most common filter failure reasons (molecules may have multiple reasons):"
         )
         for i, (reason, count) in enumerate(top_reasons, 1):
-            logger.info(f"  {i}. {reason}: {count} failures")
+            logger.info("  %d. %s: %d failures", i, reason, count)
 
     _create_complete_reasons_breakdown(all_detailed_reasons, filter_failures, file_path)
     _create_comprehensive_overview(filter_reasons, file_path)
@@ -1706,9 +1710,7 @@ def _create_complete_reasons_breakdown(
             )
 
     breakdown_df = pd.DataFrame(breakdown_data)
-    output_path = os.path.join(
-        _get_breakdown_folder(file_path), "complete_reasons_breakdown.csv"
-    )
+    output_path = Path(_get_breakdown_folder(file_path)) / "complete_reasons_breakdown.csv"
     breakdown_df.to_csv(output_path, index=False)
     return breakdown_df
 
@@ -1760,9 +1762,7 @@ def _create_comprehensive_overview(filter_reasons, file_path):
 
     # Save CSV summary
     all_reasons_df = pd.DataFrame(top_reasons, columns=["Reason", "Total_Count"])
-    output_path = os.path.join(
-        _get_breakdown_folder(file_path), "all_reasons_summary.csv"
-    )
+    output_path = Path(_get_breakdown_folder(file_path)) / "all_reasons_summary.csv"
     all_reasons_df.to_csv(output_path, index=False)
 
 
@@ -1791,9 +1791,7 @@ def _create_summary_table(filter_failures, filter_reasons, file_path):
     summary_df = pd.DataFrame(summary_data).sort_values(
         "Total_Failures", ascending=False
     )
-    output_path = os.path.join(
-        _get_breakdown_folder(file_path), "filter_summary_table.csv"
-    )
+    output_path = Path(_get_breakdown_folder(file_path)) / "filter_summary_table.csv"
     summary_df.to_csv(output_path, index=False)
     logger.debug("Summary table saved to: %s", output_path)
     return summary_df
@@ -1801,13 +1799,13 @@ def _create_summary_table(filter_failures, filter_reasons, file_path):
 
 def plot_filter_failures_analysis(config, stage_dir):
     """Analyze and plot filter failures for extended CSV files."""
-    folder_to_save = process_path(config["folder_to_save"])
-    struct_folder = os.path.join(folder_to_save, stage_dir) + "/"
+    folder_to_save = Path(process_path(config["folder_to_save"]))
+    struct_folder = folder_to_save / stage_dir
 
-    if not os.path.exists(struct_folder):
+    if not struct_folder.exists():
         return
 
-    extended_files = glob.glob(os.path.join(struct_folder, "*_extended.csv"))
+    extended_files = [str(p) for p in struct_folder.glob("*_extended.csv")]
 
     if not extended_files:
         logger.debug("No extended CSV files found for failure analysis")
