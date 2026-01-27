@@ -1,4 +1,5 @@
 """Job history handler for TUI backend."""
+
 import json
 from datetime import datetime
 from pathlib import Path
@@ -11,16 +12,16 @@ if TYPE_CHECKING:
 class HistoryHandler:
     """Handler for job history RPC methods."""
 
-    def __init__(self, server: 'JsonRpcServer'):
+    def __init__(self, server: "JsonRpcServer"):
         self.server = server
-        self.history_file = Path.home() / '.hedgehog' / 'job_history.json'
+        self.history_file = Path.home() / ".hedgehog" / "job_history.json"
         self._ensure_history_dir()
 
     def _ensure_history_dir(self):
         """Ensure the history directory exists."""
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
         if not self.history_file.exists():
-            self.history_file.write_text('[]')
+            self.history_file.write_text("[]")
 
     def _load_history(self) -> list[dict]:
         """Load history from file."""
@@ -42,26 +43,26 @@ class HistoryHandler:
         self,
         job_id: str,
         name: str | None = None,
-        input_path: str = '',
-        output_path: str = '',
+        input_path: str = "",
+        output_path: str = "",
         stages: list[str] | None = None,
     ) -> dict:
         """Add a new job to history."""
         history = self._load_history()
 
         job = {
-            'id': job_id,
-            'name': name or f'Job {job_id}',
-            'startTime': datetime.now().isoformat(),
-            'endTime': None,
-            'status': 'running',
-            'config': {
-                'inputPath': input_path,
-                'outputPath': output_path,
-                'stages': stages or [],
+            "id": job_id,
+            "name": name or f"Job {job_id}",
+            "startTime": datetime.now().isoformat(),
+            "endTime": None,
+            "status": "running",
+            "config": {
+                "inputPath": input_path,
+                "outputPath": output_path,
+                "stages": stages or [],
             },
-            'results': None,
-            'error': None,
+            "results": None,
+            "error": None,
         }
 
         history.insert(0, job)
@@ -81,15 +82,15 @@ class HistoryHandler:
         history = self._load_history()
 
         for job in history:
-            if job['id'] == job_id:
+            if job["id"] == job_id:
                 if status:
-                    job['status'] = status
-                    if status in ('completed', 'cancelled', 'error'):
-                        job['endTime'] = datetime.now().isoformat()
+                    job["status"] = status
+                    if status in ("completed", "cancelled", "error"):
+                        job["endTime"] = datetime.now().isoformat()
                 if results:
-                    job['results'] = results
+                    job["results"] = results
                 if error:
-                    job['error'] = error
+                    job["error"] = error
 
                 self._save_history(history)
                 return job
@@ -101,7 +102,7 @@ class HistoryHandler:
         history = self._load_history()
         original_len = len(history)
 
-        history = [j for j in history if j['id'] != job_id]
+        history = [j for j in history if j["id"] != job_id]
 
         if len(history) < original_len:
             self._save_history(history)

@@ -492,7 +492,9 @@ class MolecularAnalysisPipeline:
         # Call progress callback if provided
         if self.progress_callback:
             enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            current_idx = (
+                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            )
             self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
@@ -518,7 +520,9 @@ class MolecularAnalysisPipeline:
         # Call progress callback if provided
         if self.progress_callback:
             enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            current_idx = (
+                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            )
             self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
@@ -537,7 +541,9 @@ class MolecularAnalysisPipeline:
         # Call progress callback if provided
         if self.progress_callback:
             enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            current_idx = (
+                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            )
             self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
@@ -584,7 +590,9 @@ class MolecularAnalysisPipeline:
         # Call progress callback if provided
         if self.progress_callback:
             enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            current_idx = (
+                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+            )
             self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])

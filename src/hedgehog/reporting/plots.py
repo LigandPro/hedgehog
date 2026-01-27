@@ -92,13 +92,15 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
             lost_label = f"Lost ({stages[i + 1]})"
             labels.append(lost_label)
             node_colors.append(lost_color)
-            lost_nodes.append({
-                "from_idx": i,
-                "to_idx": len(labels) - 1,
-                "count": lost_count,
-                "from_stage": stages[i],
-                "at_stage": stages[i + 1],
-            })
+            lost_nodes.append(
+                {
+                    "from_idx": i,
+                    "to_idx": len(labels) - 1,
+                    "count": lost_count,
+                    "from_stage": stages[i],
+                    "at_stage": stages[i + 1],
+                }
+            )
 
     # Build links
     sources = []
@@ -238,11 +240,13 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
             lost_label = f"Lost ({stages[i + 1]})"
             labels.append(lost_label)
             node_colors.append(lost_color)
-            lost_nodes.append({
-                "from_idx": i,
-                "to_idx": len(labels) - 1,
-                "count": lost_count,
-            })
+            lost_nodes.append(
+                {
+                    "from_idx": i,
+                    "to_idx": len(labels) - 1,
+                    "count": lost_count,
+                }
+            )
 
     sources = []
     targets = []
@@ -302,14 +306,14 @@ def plot_sankey_compare_json(
 
     # Purple palette for models (different shades)
     model_colors_solid = [
-        "rgba(139, 92, 246, 0.9)",    # Purple 500
-        "rgba(167, 139, 250, 0.9)",   # Purple 400
-        "rgba(196, 181, 253, 0.9)",   # Purple 300
-        "rgba(109, 40, 217, 0.9)",    # Purple 700
-        "rgba(124, 58, 237, 0.9)",    # Purple 600
-        "rgba(221, 214, 254, 0.9)",   # Purple 200
-        "rgba(91, 33, 182, 0.9)",     # Purple 800
-        "rgba(76, 29, 149, 0.9)",     # Purple 900
+        "rgba(139, 92, 246, 0.9)",  # Purple 500
+        "rgba(167, 139, 250, 0.9)",  # Purple 400
+        "rgba(196, 181, 253, 0.9)",  # Purple 300
+        "rgba(109, 40, 217, 0.9)",  # Purple 700
+        "rgba(124, 58, 237, 0.9)",  # Purple 600
+        "rgba(221, 214, 254, 0.9)",  # Purple 200
+        "rgba(91, 33, 182, 0.9)",  # Purple 800
+        "rgba(76, 29, 149, 0.9)",  # Purple 900
     ]
 
     model_colors_light = [
@@ -325,14 +329,14 @@ def plot_sankey_compare_json(
 
     # Gray shades for lost molecules
     lost_colors = [
-        "rgba(156, 163, 175, 0.3)",   # Gray 400
-        "rgba(107, 114, 128, 0.3)",   # Gray 500
-        "rgba(75, 85, 99, 0.3)",      # Gray 600
-        "rgba(209, 213, 219, 0.4)",   # Gray 300
-        "rgba(55, 65, 81, 0.3)",      # Gray 700
-        "rgba(229, 231, 235, 0.5)",   # Gray 200
-        "rgba(31, 41, 55, 0.3)",      # Gray 800
-        "rgba(17, 24, 39, 0.3)",      # Gray 900
+        "rgba(156, 163, 175, 0.3)",  # Gray 400
+        "rgba(107, 114, 128, 0.3)",  # Gray 500
+        "rgba(75, 85, 99, 0.3)",  # Gray 600
+        "rgba(209, 213, 219, 0.4)",  # Gray 300
+        "rgba(55, 65, 81, 0.3)",  # Gray 700
+        "rgba(229, 231, 235, 0.5)",  # Gray 200
+        "rgba(31, 41, 55, 0.3)",  # Gray 800
+        "rgba(17, 24, 39, 0.3)",  # Gray 900
     ]
 
     first_model_data = funnel_by_model.get(models[0], [])
@@ -478,7 +482,13 @@ def plot_model_comparison(model_stats: list[dict[str, Any]]) -> str:
         barmode="group",
         height=400,
         showlegend=True,
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)
@@ -519,7 +529,13 @@ def plot_model_stacked_losses(model_stats: list[dict[str, Any]]) -> str:
         height=400,
         xaxis_title="Model",
         yaxis_title="Molecules Lost",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)
@@ -876,7 +892,13 @@ def plot_stage_summary(stage_stats: list[dict[str, Any]]) -> str:
         height=350,
         xaxis_title="Stage",
         yaxis_title="Molecules",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)
@@ -911,14 +933,14 @@ def _empty_plot(message: str) -> str:
 
 # Purple color palette for consistent styling
 PURPLE_PALETTE = [
-    "rgba(139, 92, 246, 0.85)",   # Purple 500
+    "rgba(139, 92, 246, 0.85)",  # Purple 500
     "rgba(167, 139, 250, 0.85)",  # Purple 400
     "rgba(196, 181, 253, 0.85)",  # Purple 300
-    "rgba(109, 40, 217, 0.85)",   # Purple 700
-    "rgba(124, 58, 237, 0.85)",   # Purple 600
+    "rgba(109, 40, 217, 0.85)",  # Purple 700
+    "rgba(124, 58, 237, 0.85)",  # Purple 600
     "rgba(221, 214, 254, 0.85)",  # Purple 200
-    "rgba(91, 33, 182, 0.85)",    # Purple 800
-    "rgba(76, 29, 149, 0.85)",    # Purple 900
+    "rgba(91, 33, 182, 0.85)",  # Purple 800
+    "rgba(76, 29, 149, 0.85)",  # Purple 900
 ]
 
 
@@ -971,7 +993,8 @@ def plot_descriptors_violin_by_model(
             values = [
                 row_data.get(desc)
                 for row_data in data
-                if row_data.get("model_name") == model and row_data.get(desc) is not None
+                if row_data.get("model_name") == model
+                and row_data.get(desc) is not None
             ]
             if values:
                 fig.add_trace(
@@ -993,7 +1016,13 @@ def plot_descriptors_violin_by_model(
     fig.update_layout(
         height=350 * n_rows,
         showlegend=True,
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",
@@ -1067,7 +1096,13 @@ def plot_descriptors_hbd_hba_box(data: list[dict[str, Any]]) -> str:
         height=350,
         boxmode="group",
         showlegend=True,
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",
@@ -1101,7 +1136,12 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
     rows = []
     for model in models:
         model_data = summary.get(model, {})
-        cells = [f"<td>{model_data.get(d, '-'):.2f}</td>" if d in model_data else "<td>-</td>" for d in descriptors]
+        cells = [
+            f"<td>{model_data.get(d, '-'):.2f}</td>"
+            if d in model_data
+            else "<td>-</td>"
+            for d in descriptors
+        ]
         rows.append(f"<tr><td><strong>{model}</strong></td>{''.join(cells)}</tr>")
 
     header = "<th>Model</th>" + "".join(f"<th>{d}</th>" for d in descriptors)
@@ -1109,7 +1149,7 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
     return f"""
     <table class="descriptor-table">
         <thead><tr>{header}</tr></thead>
-        <tbody>{''.join(rows)}</tbody>
+        <tbody>{"".join(rows)}</tbody>
     </table>
     """
 
@@ -1160,7 +1200,13 @@ def plot_filter_stacked_bar(filter_data: dict[str, dict[str, int]]) -> str:
         height=400,
         xaxis_title="Model",
         yaxis_title="Molecules Rejected",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",
@@ -1244,7 +1290,9 @@ def plot_filter_top_reasons_bar(reasons_data: dict[str, int], top_n: int = 10) -
         return _empty_plot("No rejection reasons data available")
 
     # Sort and get top N
-    sorted_reasons = sorted(reasons_data.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    sorted_reasons = sorted(reasons_data.items(), key=lambda x: x[1], reverse=True)[
+        :top_n
+    ]
     if not sorted_reasons:
         return _empty_plot("No rejection reasons data available")
 
@@ -1594,7 +1642,9 @@ def plot_docking_top_molecules(
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
-def plot_docking_affinity_box(data: list[dict[str, Any]], score_col: str = "affinity") -> str:
+def plot_docking_affinity_box(
+    data: list[dict[str, Any]], score_col: str = "affinity"
+) -> str:
     """Create box plot of binding affinity by model.
 
     Args:

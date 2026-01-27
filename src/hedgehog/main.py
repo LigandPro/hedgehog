@@ -548,9 +548,7 @@ def tui() -> None:
     # Check if TUI is built
     dist_dir = tui_dir / "dist"
     if not dist_dir.exists():
-        console.print(
-            "[yellow]TUI not built. Building...[/yellow]"
-        )
+        console.print("[yellow]TUI not built. Building...[/yellow]")
         try:
             subprocess.run(
                 ["npm", "install"],

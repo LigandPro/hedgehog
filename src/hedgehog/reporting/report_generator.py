@@ -35,7 +35,14 @@ STAGE_DISPLAY_NAMES = {
 }
 
 # Key descriptors to show in report
-KEY_DESCRIPTORS = ["MolWt", "LogP", "TPSA", "NumHDonors", "NumHAcceptors", "NumRotatableBonds"]
+KEY_DESCRIPTORS = [
+    "MolWt",
+    "LogP",
+    "TPSA",
+    "NumHDonors",
+    "NumHAcceptors",
+    "NumRotatableBonds",
+]
 
 # Mapping for case-insensitive descriptor lookup (lowercase -> display name)
 DESCRIPTOR_ALIASES = {
@@ -162,7 +169,9 @@ class ReportGenerator:
                     "name": s.name,
                     "enabled": s.enabled,
                     "completed": s.completed,
-                    "status": "completed" if s.completed else ("failed" if s.enabled else "disabled"),
+                    "status": "completed"
+                    if s.completed
+                    else ("failed" if s.enabled else "disabled"),
                 }
                 for s in self.stages
             ],
@@ -377,12 +386,14 @@ class ReportGenerator:
                     pass
 
             if passed > 0 or failed > 0:
-                stats.append({
-                    "stage": display_name,
-                    "passed": passed,
-                    "failed": failed,
-                    "total": passed + failed,
-                })
+                stats.append(
+                    {
+                        "stage": display_name,
+                        "passed": passed,
+                        "failed": failed,
+                        "total": passed + failed,
+                    }
+                )
 
         return stats
 
@@ -408,12 +419,14 @@ class ReportGenerator:
             # Try to get initial count from input
             initial_count = self._get_initial_model_count(model)
 
-            model_stats.append({
-                "model_name": model,
-                "initial": initial_count or final_count,
-                "final": final_count,
-                "losses": self._get_model_losses(model),
-            })
+            model_stats.append(
+                {
+                    "model_name": model,
+                    "initial": initial_count or final_count,
+                    "final": final_count,
+                    "losses": self._get_model_losses(model),
+                }
+            )
 
         return model_stats
 
@@ -443,9 +456,16 @@ class ReportGenerator:
         ]
 
         for loss_key, stage_key in stage_pairs:
-            failed_path = self.base_path / STAGE_DIRS.get(stage_key, "") / "failed_molecules.csv"
+            failed_path = (
+                self.base_path / STAGE_DIRS.get(stage_key, "") / "failed_molecules.csv"
+            )
             if not failed_path.exists():
-                failed_path = self.base_path / STAGE_DIRS.get(stage_key, "") / "filtered" / "failed_molecules.csv"
+                failed_path = (
+                    self.base_path
+                    / STAGE_DIRS.get(stage_key, "")
+                    / "filtered"
+                    / "failed_molecules.csv"
+                )
 
             if failed_path.exists():
                 try:
@@ -557,7 +577,11 @@ class ReportGenerator:
 
                             # Get per-model breakdown if available
                             if "model_name" in df.columns:
-                                model_counts = df.groupby("model_name")["failed_count"].sum().to_dict()
+                                model_counts = (
+                                    df.groupby("model_name")["failed_count"]
+                                    .sum()
+                                    .to_dict()
+                                )
                                 filter_stats["by_filter"][subdir.name] = {
                                     str(k): int(v) for k, v in model_counts.items()
                                 }
@@ -594,7 +618,9 @@ class ReportGenerator:
             stats["scatter_data"] = {
                 "sa_scores": df["sa_score"].dropna().tolist(),
                 "syba_scores": df["syba_score"].dropna().tolist(),
-                "model_names": df["model_name"].tolist() if "model_name" in df.columns else [],
+                "model_names": df["model_name"].tolist()
+                if "model_name" in df.columns
+                else [],
             }
 
         return stats
@@ -736,18 +762,29 @@ class ReportGenerator:
                         # Get per-model breakdown
                         if "model_name" in df.columns:
                             if "failed_count" in df.columns:
-                                model_counts = df.groupby("model_name")["failed_count"].sum().to_dict()
+                                model_counts = (
+                                    df.groupby("model_name")["failed_count"]
+                                    .sum()
+                                    .to_dict()
+                                )
                                 result["by_filter"][filter_name] = {
                                     str(k): int(v) for k, v in model_counts.items()
                                 }
 
                             # Calculate banned_ratio per model
                             if "banned_ratio" in df.columns:
-                                ratios = df.groupby("model_name")["banned_ratio"].mean().to_dict()
+                                ratios = (
+                                    df.groupby("model_name")["banned_ratio"]
+                                    .mean()
+                                    .to_dict()
+                                )
                                 result["banned_ratios"][filter_name] = {
                                     str(k): float(v) for k, v in ratios.items()
                                 }
-                            elif "total_count" in df.columns and "failed_count" in df.columns:
+                            elif (
+                                "total_count" in df.columns
+                                and "failed_count" in df.columns
+                            ):
                                 # Calculate from counts
                                 model_ratios = {}
                                 for model in df["model_name"].unique():
@@ -764,7 +801,9 @@ class ReportGenerator:
 
                         # Lilly filter metrics
                         if filter_name == "lilly" and "demerit_score" in df.columns:
-                            filter_metrics["avg_demerit_score"] = float(df["demerit_score"].mean())
+                            filter_metrics["avg_demerit_score"] = float(
+                                df["demerit_score"].mean()
+                            )
 
                         # Molcomplexity metrics
                         if filter_name == "molcomplexity":
@@ -789,7 +828,12 @@ class ReportGenerator:
                         try:
                             alerts_df = pd.read_csv(alerts_path)
                             # Look for alert type columns
-                            alert_cols = ["alert_type", "reason", "alert_name", "filter_reason"]
+                            alert_cols = [
+                                "alert_type",
+                                "reason",
+                                "alert_name",
+                                "filter_reason",
+                            ]
                             for col in alert_cols:
                                 if col in alerts_df.columns:
                                     reasons = alerts_df[col].value_counts().to_dict()
@@ -841,10 +885,14 @@ class ReportGenerator:
         solved_cols = ["solved", "route_found", "synthesis_solved"]
         for col in solved_cols:
             if col in df.columns:
-                solved = df[col].sum() if df[col].dtype == bool else (df[col] == True).sum()  # noqa: E712
+                solved = (
+                    df[col].sum() if df[col].dtype == bool else (df[col] == True).sum()
+                )  # noqa: E712
                 result["solved_count"] = int(solved)
                 result["unsolved_count"] = len(df) - int(solved)
-                result["summary"]["pct_solved"] = 100 * solved / len(df) if len(df) > 0 else 0
+                result["summary"]["pct_solved"] = (
+                    100 * solved / len(df) if len(df) > 0 else 0
+                )
                 break
 
         # Collect time data if available
@@ -859,10 +907,12 @@ class ReportGenerator:
                     if "model_name" in df.columns:
                         for _, row in df.iterrows():
                             if pd.notna(row.get(col)):
-                                result["raw_data"].append({
-                                    "model_name": row.get("model_name", "Unknown"),
-                                    "search_time": row.get(col),
-                                })
+                                result["raw_data"].append(
+                                    {
+                                        "model_name": row.get("model_name", "Unknown"),
+                                        "search_time": row.get(col),
+                                    }
+                                )
                 break
 
         return result
@@ -879,7 +929,8 @@ class ReportGenerator:
         plot_locations = {
             # Descriptors
             "descriptors_initial_distribution": (
-                STAGE_DIRS["descriptors_initial"] + "/plots/descriptors_distribution.png"
+                STAGE_DIRS["descriptors_initial"]
+                + "/plots/descriptors_distribution.png"
             ),
             "descriptors_final_distribution": (
                 STAGE_DIRS["descriptors_final"] + "/plots/descriptors_distribution.png"
@@ -992,11 +1043,15 @@ class ReportGenerator:
             if id_col:
                 top_df = df.nsmallest(10, score_col)
                 for _, row in top_df.iterrows():
-                    result[tool]["top_molecules"].append({
-                        "molecule_id": row.get(id_col, "Unknown"),
-                        "affinity": row.get(score_col),
-                        "model_name": row.get("model_name", "Unknown") if "model_name" in df.columns else "Unknown",
-                    })
+                    result[tool]["top_molecules"].append(
+                        {
+                            "molecule_id": row.get(id_col, "Unknown"),
+                            "affinity": row.get(score_col),
+                            "model_name": row.get("model_name", "Unknown")
+                            if "model_name" in df.columns
+                            else "Unknown",
+                        }
+                    )
 
         return result
 
@@ -1089,8 +1144,10 @@ class ReportGenerator:
                 filters_detailed["by_filter"]
             )
         if filters_detailed.get("banned_ratios"):
-            plot_htmls["filter_banned_heatmap"] = plots.plot_filter_banned_ratio_heatmap(
-                filters_detailed["banned_ratios"]
+            plot_htmls["filter_banned_heatmap"] = (
+                plots.plot_filter_banned_ratio_heatmap(
+                    filters_detailed["banned_ratios"]
+                )
             )
         if filters_detailed.get("common_alerts_reasons"):
             plot_htmls["filter_top_reasons"] = plots.plot_filter_top_reasons_bar(
@@ -1121,7 +1178,10 @@ class ReportGenerator:
             plot_htmls["synthesis_syba_hist"] = plots.plot_synthesis_syba_histogram(
                 synth_detailed["syba_scores"]
             )
-        if synth_detailed.get("solved_count", 0) > 0 or synth_detailed.get("unsolved_count", 0) > 0:
+        if (
+            synth_detailed.get("solved_count", 0) > 0
+            or synth_detailed.get("unsolved_count", 0) > 0
+        ):
             plot_htmls["synthesis_solved_pie"] = plots.plot_synthesis_solved_pie(
                 synth_detailed.get("solved_count", 0),
                 synth_detailed.get("unsolved_count", 0),
@@ -1147,24 +1207,26 @@ class ReportGenerator:
         for tool in ["gnina", "smina"]:
             tool_data = docking_detailed.get(tool, {})
             if tool_data.get("raw_data"):
-                scores = [d.get("affinity") for d in tool_data["raw_data"] if d.get("affinity") is not None]
+                scores = [
+                    d.get("affinity")
+                    for d in tool_data["raw_data"]
+                    if d.get("affinity") is not None
+                ]
                 if scores:
-                    plot_htmls[f"docking_{tool}_affinity_hist"] = plots.plot_docking_affinity_histogram(
-                        scores, tool
+                    plot_htmls[f"docking_{tool}_affinity_hist"] = (
+                        plots.plot_docking_affinity_histogram(scores, tool)
                     )
-                plot_htmls[f"docking_{tool}_affinity_box"] = plots.plot_docking_affinity_box(
-                    tool_data["raw_data"]
+                plot_htmls[f"docking_{tool}_affinity_box"] = (
+                    plots.plot_docking_affinity_box(tool_data["raw_data"])
                 )
             if tool_data.get("top_molecules"):
-                plot_htmls[f"docking_{tool}_top_molecules"] = plots.plot_docking_top_molecules(
-                    tool_data["top_molecules"]
+                plot_htmls[f"docking_{tool}_top_molecules"] = (
+                    plots.plot_docking_top_molecules(tool_data["top_molecules"])
                 )
 
         return plot_htmls
 
-    def _render_template(
-        self, data: dict[str, Any], plot_htmls: dict[str, str]
-    ) -> str:
+    def _render_template(self, data: dict[str, Any], plot_htmls: dict[str, str]) -> str:
         """Render the HTML template with data and plots.
 
         Args:
@@ -1220,11 +1282,15 @@ class ReportGenerator:
         stage_rows = ""
         for status in summary.get("stage_statuses", []):
             icon = "✓" if status["completed"] else ("✗" if status["enabled"] else "−")
-            color = "#2ecc71" if status["completed"] else ("#e74c3c" if status["enabled"] else "#95a5a6")
+            color = (
+                "#2ecc71"
+                if status["completed"]
+                else ("#e74c3c" if status["enabled"] else "#95a5a6")
+            )
             stage_rows += f"""
             <tr>
-                <td>{status['name']}</td>
-                <td style="color: {color}; font-weight: bold;">{icon} {status['status'].upper()}</td>
+                <td>{status["name"]}</td>
+                <td style="color: {color}; font-weight: bold;">{icon} {status["status"].upper()}</td>
             </tr>
             """
 
@@ -1235,22 +1301,24 @@ class ReportGenerator:
             desc_rows += f"""
             <tr>
                 <td>{desc}</td>
-                <td>{stats['mean']:.2f}</td>
-                <td>{stats['std']:.2f}</td>
-                <td>{stats['min']:.2f}</td>
-                <td>{stats['max']:.2f}</td>
+                <td>{stats["mean"]:.2f}</td>
+                <td>{stats["std"]:.2f}</td>
+                <td>{stats["min"]:.2f}</td>
+                <td>{stats["max"]:.2f}</td>
             </tr>
             """
 
         # Build model table
         model_rows = ""
         for model in data.get("models", []):
-            retention = 100 * model["final"] / model["initial"] if model["initial"] > 0 else 0
+            retention = (
+                100 * model["final"] / model["initial"] if model["initial"] > 0 else 0
+            )
             model_rows += f"""
             <tr>
-                <td>{model['model_name']}</td>
-                <td>{model['initial']}</td>
-                <td>{model['final']}</td>
+                <td>{model["model_name"]}</td>
+                <td>{model["initial"]}</td>
+                <td>{model["final"]}</td>
                 <td>{retention:.1f}%</td>
             </tr>
             """
@@ -1411,26 +1479,26 @@ class ReportGenerator:
         <header>
             <h1>HEDGEHOG Pipeline Report</h1>
             <div class="meta">
-                <p>Generated: {metadata.get('generated_at', 'N/A')}</p>
-                <p>Run path: {metadata.get('run_path', 'N/A')}</p>
+                <p>Generated: {metadata.get("generated_at", "N/A")}</p>
+                <p>Run path: {metadata.get("run_path", "N/A")}</p>
             </div>
         </header>
 
         <div class="summary-grid">
             <div class="summary-card">
-                <div class="value">{summary.get('initial_molecules', 0)}</div>
+                <div class="value">{summary.get("initial_molecules", 0)}</div>
                 <div class="label">Initial Molecules</div>
             </div>
             <div class="summary-card">
-                <div class="value">{summary.get('final_molecules', 0)}</div>
+                <div class="value">{summary.get("final_molecules", 0)}</div>
                 <div class="label">Final Molecules</div>
             </div>
             <div class="summary-card">
-                <div class="value">{summary.get('retention_percent', 'N/A')}</div>
+                <div class="value">{summary.get("retention_percent", "N/A")}</div>
                 <div class="label">Retention Rate</div>
             </div>
             <div class="summary-card">
-                <div class="value">{summary.get('stages_completed', 0)}/{summary.get('stages_enabled', 0)}</div>
+                <div class="value">{summary.get("stages_completed", 0)}/{summary.get("stages_enabled", 0)}</div>
                 <div class="label">Stages Completed</div>
             </div>
         </div>
@@ -1441,17 +1509,17 @@ class ReportGenerator:
                 <label for="model-select">Filter by Model:</label>
                 <select id="model-select" onchange="updateSankeyDiagram()">
                     <option value="all">All Models</option>
-                    {self._build_model_options(data.get('available_models', []))}
+                    {self._build_model_options(data.get("available_models", []))}
                 </select>
             </div>
             <div class="view-toggle">
                 <button id="btn-sankey" class="active" onclick="showView('sankey')">Sankey Diagram</button>
                 <button id="btn-funnel" onclick="showView('funnel')">Funnel Chart</button>
             </div>
-            <div id="sankey-container" class="plot-container">{plot_htmls.get('sankey', '')}</div>
-            <div id="funnel-container" class="plot-container" style="display: none;">{plot_htmls.get('funnel', '')}</div>
+            <div id="sankey-container" class="plot-container">{plot_htmls.get("sankey", "")}</div>
+            <div id="funnel-container" class="plot-container" style="display: none;">{plot_htmls.get("funnel", "")}</div>
             <script>
-                var sankeyDataByModel = {plot_htmls.get('sankey_data', '{{}}')};
+                var sankeyDataByModel = {plot_htmls.get("sankey_data", "{{}}")};
 
                 function showView(view) {{
                     document.getElementById('sankey-container').style.display = view === 'sankey' ? 'block' : 'none';
@@ -1515,19 +1583,19 @@ class ReportGenerator:
                         <tbody>{stage_rows}</tbody>
                     </table>
                 </div>
-                <div class="plot-container">{plot_htmls.get('stage_summary', '')}</div>
+                <div class="plot-container">{plot_htmls.get("stage_summary", "")}</div>
             </div>
         </section>
 
-        {"<section><h2>Model Comparison</h2><div class='plot-container'>" + plot_htmls.get('model_comparison', '') + "</div><table><thead><tr><th>Model</th><th>Initial</th><th>Final</th><th>Retention</th></tr></thead><tbody>" + model_rows + "</tbody></table><div class='plot-container'>" + plot_htmls.get('model_losses', '') + "</div></section>" if model_rows else ""}
+        {"<section><h2>Model Comparison</h2><div class='plot-container'>" + plot_htmls.get("model_comparison", "") + "</div><table><thead><tr><th>Model</th><th>Initial</th><th>Final</th><th>Retention</th></tr></thead><tbody>" + model_rows + "</tbody></table><div class='plot-container'>" + plot_htmls.get("model_losses", "") + "</div></section>" if model_rows else ""}
 
-        {"<section><h2>Descriptor Analysis</h2><div class='plot-container'>" + plot_htmls.get('descriptors', '') + "</div><table><thead><tr><th>Descriptor</th><th>Mean</th><th>Std</th><th>Min</th><th>Max</th></tr></thead><tbody>" + desc_rows + "</tbody></table></section>" if desc_rows else ""}
+        {"<section><h2>Descriptor Analysis</h2><div class='plot-container'>" + plot_htmls.get("descriptors", "") + "</div><table><thead><tr><th>Descriptor</th><th>Mean</th><th>Std</th><th>Min</th><th>Max</th></tr></thead><tbody>" + desc_rows + "</tbody></table></section>" if desc_rows else ""}
 
-        {"<section><h2>Filter Analysis</h2><div class='two-col'><div class='plot-container'>" + plot_htmls.get('filter_heatmap', '') + "</div><div class='plot-container'>" + plot_htmls.get('filter_failures', '') + "</div></div></section>" if plot_htmls.get('filter_heatmap') or plot_htmls.get('filter_failures') else ""}
+        {"<section><h2>Filter Analysis</h2><div class='two-col'><div class='plot-container'>" + plot_htmls.get("filter_heatmap", "") + "</div><div class='plot-container'>" + plot_htmls.get("filter_failures", "") + "</div></div></section>" if plot_htmls.get("filter_heatmap") or plot_htmls.get("filter_failures") else ""}
 
-        {"<section><h2>Synthesis Scores</h2><div class='plot-container'>" + plot_htmls.get('synthesis_dist', '') + "</div><div class='plot-container'>" + plot_htmls.get('synthesis_scatter', '') + "</div></section>" if plot_htmls.get('synthesis_dist') else ""}
+        {"<section><h2>Synthesis Scores</h2><div class='plot-container'>" + plot_htmls.get("synthesis_dist", "") + "</div><div class='plot-container'>" + plot_htmls.get("synthesis_scatter", "") + "</div></section>" if plot_htmls.get("synthesis_dist") else ""}
 
-        {"<section><h2>Docking Results</h2><div class='two-col'><div class='plot-container'>" + plot_htmls.get('docking_gnina', '') + "</div><div class='plot-container'>" + plot_htmls.get('docking_smina', '') + "</div></div></section>" if plot_htmls.get('docking_gnina') or plot_htmls.get('docking_smina') else ""}
+        {"<section><h2>Docking Results</h2><div class='two-col'><div class='plot-container'>" + plot_htmls.get("docking_gnina", "") + "</div><div class='plot-container'>" + plot_htmls.get("docking_smina", "") + "</div></div></section>" if plot_htmls.get("docking_gnina") or plot_htmls.get("docking_smina") else ""}
 
         <footer style="text-align: center; padding: 20px; color: #7f8c8d; font-size: 0.9em;">
             <p>HEDGEHOG - Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration</p>

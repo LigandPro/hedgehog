@@ -372,7 +372,11 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     # Get rule set names for column creation
     rule_set_names = alert_data["rule_set_name"].unique().tolist()
 
-    logger.info("Processing %d filtered molecules with %d alert rule sets", len(mols), len(rule_set_names))
+    logger.info(
+        "Processing %d filtered molecules with %d alert rule sets",
+        len(mols),
+        len(rule_set_names),
+    )
 
     n_jobs = config["n_jobs"]
 
@@ -390,7 +394,9 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
             # Apply all SMARTS patterns
             df = alert_data.copy()
             df["matches"] = df.smarts.apply(
-                lambda x: mol.GetSubstructMatches(Chem.MolFromSmarts(x)) if Chem.MolFromSmarts(x) else ()
+                lambda x: mol.GetSubstructMatches(Chem.MolFromSmarts(x))
+                if Chem.MolFromSmarts(x)
+                else ()
             )
 
             grouped = (
@@ -399,7 +405,9 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
                     lambda group: pd.Series(
                         {
                             "matches": [
-                                match for matches in group["matches"] for match in matches
+                                match
+                                for matches in group["matches"]
+                                for match in matches
                             ]
                             if any(matches for matches in group["matches"])
                             else (),
