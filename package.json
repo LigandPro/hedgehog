@@ -1,0 +1,10 @@
+{
+  "name": "hedgehog",
+  "version": "1.0.0",
+  "description": "Hedgehog molecular design pipeline",
+  "scripts": {
+    "tui": "cd tui && npm start",
+    "tui:build": "cd tui && npm run build",
+    "tui:dev": "cd tui && npm run dev"
+  }
+}

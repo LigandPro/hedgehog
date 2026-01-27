@@ -1,18 +1,8 @@
-run: True
-
-# Filter molecules: if True, only keep molecules that were solved (retrosynthesis path found)
-# If False, keep all molecules regardless of retrosynthesis result
-filter_solved_only: True
-
-# Synthetic accessibility score thresholds
-# SA Score (1-10, lower is better - typically want < 4.5 for easy synthesis)
+run: true
+filter_solved_only: true
 sa_score_min: 0
 sa_score_max: 4.5
-
-# SYBA Score (higher is better - synthetic bayesian accessibility)
 syba_score_min: 0
-syba_score_max: 'inf'
-
-# RA Score (0-1 probability, higher is better - probability to find a synthesis path)
+syba_score_max: inf
 ra_score_min: 0.5
 ra_score_max: 1

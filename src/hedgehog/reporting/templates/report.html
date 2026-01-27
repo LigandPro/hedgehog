@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HEDGEHOG Pipeline Report</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        :root {
+            --primary: #8b5cf6;
+            --primary-light: #a78bfa;
+            --primary-pale: #ede9fe;
+            --primary-subtle: #f5f3ff;
+            --success: #7c3aed;
+            --danger: #a855f7;
+            --text: #1f2937;
+            --text-secondary: #6b7280;
+            --border: #e5e7eb;
+            --bg: #fafafa;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+            line-height: 1.5;
+            color: var(--text);
+            background: var(--bg);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 48px 24px;
+        }
+
+        header {
+            text-align: center;
+            padding: 64px 24px;
+            margin-bottom: 48px;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 16px;
+            letter-spacing: -0.02em;
+        }
+
+        header .meta {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        header .meta p {
+            margin: 4px 0;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 48px;
+        }
+
+        .summary-card {
+            background: white;
+            padding: 32px 24px;
+            text-align: center;
+        }
+
+        .summary-card .value {
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 4px;
+            letter-spacing: -0.02em;
+        }
+
+        .summary-card .label {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        section {
+            background: white;
+            padding: 32px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+        }
+
+        section h2 {
+            color: var(--text);
+            margin-bottom: 24px;
+            font-weight: 500;
+            font-size: 1.125rem;
+            letter-spacing: -0.01em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            font-weight: 500;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+        }
+
+        td {
+            font-size: 0.875rem;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .plot-container {
+            margin: 16px 0;
+        }
+
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .status-completed {
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        .status-failed {
+            color: var(--danger);
+            font-weight: 500;
+        }
+
+        .status-disabled {
+            color: var(--text-secondary);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 100px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-success {
+            background: var(--primary-pale);
+            color: var(--primary);
+        }
+
+        .badge-warning {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .badge-danger {
+            background: #fce7f3;
+            color: #be185d;
+        }
+
+        footer {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        @media (max-width: 768px) {
+            .two-col {
+                grid-template-columns: 1fr;
+            }
+            .summary-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .container {
+                padding: 24px 16px;
+            }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px;
+            color: var(--text-secondary);
+        }
+
+        .view-toggle {
+            display: inline-flex;
+            gap: 4px;
+            padding: 4px;
+            background: var(--primary-subtle);
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+
+        .view-toggle button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.15s;
+        }
+
+        .view-toggle button.active {
+            background: white;
+            color: var(--primary);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .view-toggle button:hover:not(.active) {
+            color: var(--primary);
+        }
+
+        .descriptor-table {
+            font-size: 0.95em;
+        }
+
+        .descriptor-table td:not(:first-child) {
+            text-align: right;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+        }
+
+        /* Metrics grid for stage-specific cards */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .metric-card {
+            background: var(--primary-subtle);
+            padding: 20px 16px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid var(--primary-pale);
+        }
+
+        .metric-card .metric-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 4px;
+            letter-spacing: -0.02em;
+        }
+
+        .metric-card .metric-label {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        /* Section headers */
+        section h3 {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--text);
+        }
+
+        section h4 {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>HEDGEHOG Pipeline Report</h1>
+            <div class="meta">
+                <p><strong>Generated:</strong> {{ generated_at }}</p>
+                <p><strong>Run path:</strong> {{ data.metadata.run_path }}</p>
+                <p><strong>Version:</strong> {{ data.metadata.hedgehog_version }}</p>
+            </div>
+        </header>
+
+        <!-- Summary Cards -->
+        <div class="summary-grid">
+            <div class="summary-card">
+                <div class="value">{{ data.summary.initial_molecules }}</div>
+                <div class="label">Initial Molecules</div>
+            </div>
+            <div class="summary-card">
+                <div class="value">{{ data.summary.final_molecules }}</div>
+                <div class="label">Final Molecules</div>
+            </div>
+            <div class="summary-card">
+                <div class="value">{{ data.summary.retention_percent }}</div>
+                <div class="label">Retention Rate</div>
+            </div>
+            <div class="summary-card">
+                <div class="value">{{ data.summary.stages_completed }}/{{ data.summary.stages_enabled }}</div>
+                <div class="label">Stages Completed</div>
+            </div>
+        </div>
+
+        <!-- Pipeline Flow -->
+        <section>
+            <h2>Pipeline Flow</h2>
+
+            {% if data.available_models %}
+            <div class="view-toggle">
+                <button class="{% if not data.available_models %}active{% endif %}" onclick="selectModel('all', this)">All Models</button>
+                <button onclick="selectModel('__compare__', this)">Compare</button>
+                {% for model in data.available_models %}
+                <button onclick="selectModel('{{ model }}', this)">{{ model }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if plots.sankey %}
+            <div id="sankey-container" class="plot-container">{{ plots.sankey | safe }}</div>
+            {% else %}
+            <div id="sankey-container" class="plot-container empty-state"><p>No data available</p></div>
+            {% endif %}
+
+            <script>
+                var sankeyDataByModel = {{ plots.sankey_data | safe if plots.sankey_data else '{}' }};
+                var currentModel = 'all';
+
+                function selectModel(model, btn) {
+                    currentModel = model;
+                    // Update active button
+                    var buttons = btn.parentElement.querySelectorAll('button');
+                    buttons.forEach(function(b) { b.className = ''; });
+                    btn.className = 'active';
+                    updateSankeyDiagram();
+                }
+
+                // Set initial active state
+                document.addEventListener('DOMContentLoaded', function() {
+                    var firstBtn = document.querySelector('.view-toggle button');
+                    if (firstBtn) firstBtn.className = 'active';
+                });
+
+                function updateSankeyDiagram() {
+                    var model = currentModel;
+                    var data = sankeyDataByModel[model];
+                    var container = document.getElementById('sankey-container');
+
+                    if (!data || !data.labels || data.labels.length < 2) {
+                        container.textContent = 'No data available';
+                        container.style.textAlign = 'center';
+                        container.style.color = '#6b7280';
+                        container.style.padding = '48px';
+                        return;
+                    }
+
+                    var trace = {
+                        type: 'sankey',
+                        arrangement: 'snap',
+                        node: {
+                            pad: 20,
+                            thickness: 20,
+                            line: { color: 'rgba(0,0,0,0.1)', width: 0.5 },
+                            label: data.labels,
+                            color: data.node_colors,
+                            x: data.x_positions,
+                            y: data.y_positions
+                        },
+                        link: {
+                            source: data.sources,
+                            target: data.targets,
+                            value: data.values,
+                            color: data.link_colors,
+                            customdata: data.link_labels || [],
+                            hovertemplate: data.is_comparison
+                                ? '%{customdata}: %{value} molecules<extra></extra>'
+                                : '%{value} molecules<extra></extra>'
+                        }
+                    };
+
+                    var layout = {
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        height: 420,
+                        margin: { l: 20, r: 20, t: data.is_comparison ? 50 : 30, b: 20 },
+                        paper_bgcolor: 'white',
+                        annotations: []
+                    };
+
+                    // Add legend for comparison mode
+                    if (data.is_comparison && data.models && data.model_colors) {
+                        for (var i = 0; i < data.models.length; i++) {
+                            layout.annotations.push({
+                                x: i * 0.15,
+                                y: 1.08,
+                                xref: 'paper',
+                                yref: 'paper',
+                                text: '<b>●</b> ' + data.models[i],
+                                showarrow: false,
+                                font: { size: 11, color: data.model_colors[i] },
+                                xanchor: 'left'
+                            });
+                        }
+                    }
+
+                    Plotly.react('sankey-container', [trace], layout, {displayModeBar: false});
+                }
+            </script>
+        </section>
+
+        <!-- Stage Summary -->
+        <section>
+            <h2>Stage Execution Summary</h2>
+            <div class="two-col">
+                <div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Stage</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stage in data.summary.stage_statuses %}
+                            <tr>
+                                <td>{{ stage.name }}</td>
+                                <td class="status-{{ stage.status }}">
+                                    {% if stage.completed %}
+                                    &#10003; COMPLETED
+                                    {% elif stage.enabled %}
+                                    &#10007; FAILED
+                                    {% else %}
+                                    &#8722; DISABLED
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="plot-container">
+                    {% if plots.stage_summary %}
+                    {{ plots.stage_summary | safe }}
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+
+        <!-- Model Comparison -->
+        {% if data.models %}
+        <section>
+            <h2>Model Comparison</h2>
+            {% if plots.model_comparison %}
+            <div class="plot-container">{{ plots.model_comparison | safe }}</div>
+            {% endif %}
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Initial</th>
+                        <th>Final</th>
+                        <th>Retention</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for model in data.models %}
+                    <tr>
+                        <td>{{ model.model_name }}</td>
+                        <td>{{ model.initial }}</td>
+                        <td>{{ model.final }}</td>
+                        <td>
+                            {% set retention = (model.final / model.initial * 100) if model.initial > 0 else 0 %}
+                            <span class="badge {% if retention >= 50 %}badge-success{% elif retention >= 25 %}badge-warning{% else %}badge-danger{% endif %}">
+                                {{ "%.1f"|format(retention) }}%
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if plots.model_losses %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Molecule Losses by Stage</h3>
+            <div class="plot-container">{{ plots.model_losses | safe }}</div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Descriptor Analysis (Stage 01) -->
+        {% if data.descriptors.distributions or data.descriptors_detailed.raw_data %}
+        <section>
+            <h2>Descriptor Analysis</h2>
+
+            <!-- Summary cards for descriptors -->
+            {% if data.descriptors.summary %}
+            <div class="metrics-grid">
+                {% for desc in ['MolWt', 'LogP', 'TPSA', 'QED'] %}
+                {% if desc in data.descriptors.summary %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.descriptors.summary[desc].mean) }}</div>
+                    <div class="metric-label">Avg {{ desc }}</div>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Violin plots by model -->
+            {% if plots.descriptors_violin %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Descriptor Distributions by Model</h3>
+            <div class="plot-container">{{ plots.descriptors_violin | safe }}</div>
+            {% endif %}
+
+            <!-- HBD/HBA box plots -->
+            {% if plots.descriptors_hbd_hba %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Hydrogen Bond Donors/Acceptors</h3>
+            <div class="plot-container">{{ plots.descriptors_hbd_hba | safe }}</div>
+            {% endif %}
+
+            <!-- Summary table by model -->
+            {% if plots.descriptors_table %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Mean Values by Model</h3>
+            {{ plots.descriptors_table | safe }}
+            {% elif data.descriptors.summary %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Descriptor Statistics</h3>
+            <table class="descriptor-table">
+                <thead>
+                    <tr>
+                        <th>Descriptor</th>
+                        <th>Mean</th>
+                        <th>Std</th>
+                        <th>Min</th>
+                        <th>Max</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for desc, stats in data.descriptors.summary.items() %}
+                    <tr>
+                        <td>{{ desc }}</td>
+                        <td>{{ "%.2f"|format(stats.mean) }}</td>
+                        <td>{{ "%.2f"|format(stats.std) }}</td>
+                        <td>{{ "%.2f"|format(stats.min) }}</td>
+                        <td>{{ "%.2f"|format(stats.max) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+
+            <!-- Existing matplotlib plots from pipeline -->
+            {% if data.existing_plots.descriptors_initial_distribution %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Detailed Descriptor Distributions</h3>
+            <div class="plot-container" style="text-align: center;">
+                <img src="{{ data.existing_plots.descriptors_initial_distribution }}"
+                     alt="Descriptor Distributions"
+                     style="max-width: 100%; height: auto; border-radius: 8px;">
+            </div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Structural Filters Analysis (Stage 02) -->
+        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter %}
+        <section>
+            <h2>Structural Filters Analysis</h2>
+
+            <!-- Summary cards for filters -->
+            {% if data.filters.totals %}
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.filters.totals|length }}</div>
+                    <div class="metric-label">Filters Applied</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.filters.totals.values()|sum }}</div>
+                    <div class="metric-label">Total Rejected</div>
+                </div>
+                {% if data.filters_detailed.filter_metrics %}
+                {% for filter_name, metrics in data.filters_detailed.filter_metrics.items() %}
+                {% if metrics.avg_demerit_score %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(metrics.avg_demerit_score) }}</div>
+                    <div class="metric-label">Avg Demerit (Lilly)</div>
+                </div>
+                {% endif %}
+                {% if metrics.avg_sas %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(metrics.avg_sas) }}</div>
+                    <div class="metric-label">Avg SAS</div>
+                </div>
+                {% endif %}
+                {% endfor %}
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Stacked bar: molecules rejected per filter by model -->
+            {% if plots.filter_stacked_bar %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Molecules Rejected by Filter</h3>
+            <div class="plot-container">{{ plots.filter_stacked_bar | safe }}</div>
+            {% endif %}
+
+            <div class="two-col">
+                <!-- Banned ratio heatmap -->
+                <div>
+                    {% if plots.filter_banned_heatmap %}
+                    <h3 style="margin-bottom: 15px;">Rejection Rate by Filter × Model</h3>
+                    <div class="plot-container">{{ plots.filter_banned_heatmap | safe }}</div>
+                    {% elif plots.filter_heatmap %}
+                    <h3 style="margin-bottom: 15px;">Filter Failures by Model</h3>
+                    <div class="plot-container">{{ plots.filter_heatmap | safe }}</div>
+                    {% endif %}
+                </div>
+
+                <!-- Top rejection reasons -->
+                <div>
+                    {% if plots.filter_top_reasons %}
+                    <h3 style="margin-bottom: 15px;">Top Rejection Reasons</h3>
+                    <div class="plot-container">{{ plots.filter_top_reasons | safe }}</div>
+                    {% elif plots.filter_failures %}
+                    <h3 style="margin-bottom: 15px;">Top Filter Failures</h3>
+                    <div class="plot-container">{{ plots.filter_failures | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if data.filters.totals %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Filter Failure Summary</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Filter</th>
+                        <th>Total Failed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for filter_name, count in data.filters.totals.items() %}
+                    <tr>
+                        <td>{{ filter_name }}</td>
+                        <td>{{ count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+
+            <!-- Existing matplotlib plots from pipeline -->
+            {% if data.existing_plots.filters_pre_counts or data.existing_plots.filters_pre_ratios %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Pre-Descriptors Filter Results</h3>
+            <div class="two-col">
+                {% if data.existing_plots.filters_pre_counts %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_pre_counts }}"
+                         alt="Molecule Counts"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
+                </div>
+                {% endif %}
+                {% if data.existing_plots.filters_pre_ratios %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_pre_ratios }}"
+                         alt="Restriction Ratios"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if data.existing_plots.filters_post_counts or data.existing_plots.filters_post_ratios %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Post-Descriptors Filter Results</h3>
+            <div class="two-col">
+                {% if data.existing_plots.filters_post_counts %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_post_counts }}"
+                         alt="Molecule Counts"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
+                </div>
+                {% endif %}
+                {% if data.existing_plots.filters_post_ratios %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_post_ratios }}"
+                         alt="Restriction Ratios"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Synthesis Analysis (Stage 04) -->
+        {% if data.synthesis.distributions or data.synthesis_detailed.sa_scores %}
+        <section>
+            <h2>Synthesis Analysis</h2>
+
+            <!-- Summary cards for synthesis -->
+            <div class="metrics-grid">
+                {% if data.synthesis_detailed.summary.avg_sa_score %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_sa_score) }}</div>
+                    <div class="metric-label">Avg SA Score</div>
+                </div>
+                {% endif %}
+                {% if data.synthesis_detailed.summary.avg_syba_score %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_syba_score) }}</div>
+                    <div class="metric-label">Avg SYBA Score</div>
+                </div>
+                {% endif %}
+                {% if data.synthesis_detailed.summary.pct_solved is defined %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.synthesis_detailed.summary.pct_solved) }}%</div>
+                    <div class="metric-label">Routes Found</div>
+                </div>
+                {% endif %}
+                {% if data.synthesis_detailed.summary.avg_search_time %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.synthesis_detailed.summary.avg_search_time) }}s</div>
+                    <div class="metric-label">Avg Search Time</div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- SA and SYBA histograms -->
+            <div class="two-col" style="margin-top: 30px;">
+                <div>
+                    {% if plots.synthesis_sa_hist %}
+                    <h3 style="margin-bottom: 15px;">SA Score Distribution</h3>
+                    <div class="plot-container">{{ plots.synthesis_sa_hist | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.synthesis_syba_hist %}
+                    <h3 style="margin-bottom: 15px;">SYBA Score Distribution</h3>
+                    <div class="plot-container">{{ plots.synthesis_syba_hist | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Scatter plot and solved pie -->
+            <div class="two-col" style="margin-top: 30px;">
+                <div>
+                    {% if plots.synthesis_scatter %}
+                    <h3 style="margin-bottom: 15px;">SA Score vs SYBA Score</h3>
+                    <div class="plot-container">{{ plots.synthesis_scatter | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.synthesis_solved_pie %}
+                    <h3 style="margin-bottom: 15px;">Synthesis Route Status</h3>
+                    <div class="plot-container">{{ plots.synthesis_solved_pie | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Search time by model -->
+            {% if plots.synthesis_time_box %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Search Time by Model</h3>
+            <div class="plot-container">{{ plots.synthesis_time_box | safe }}</div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Docking Results (Stage 05) -->
+        {% if data.docking.gnina or data.docking.smina or data.docking_detailed.gnina.raw_data or data.docking_detailed.smina.raw_data %}
+        <section>
+            <h2>Docking Results</h2>
+
+            <!-- Summary cards for docking -->
+            <div class="metrics-grid">
+                {% if data.docking_detailed.gnina.summary %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.gnina.summary.avg_affinity) }}</div>
+                    <div class="metric-label">Avg Affinity (GNINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.gnina.summary.best_affinity) }}</div>
+                    <div class="metric-label">Best Affinity (GNINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.docking_detailed.gnina.summary.count }}</div>
+                    <div class="metric-label">Molecules Docked</div>
+                </div>
+                {% elif data.docking_detailed.smina.summary %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.smina.summary.avg_affinity) }}</div>
+                    <div class="metric-label">Avg Affinity (SMINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.smina.summary.best_affinity) }}</div>
+                    <div class="metric-label">Best Affinity (SMINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.docking_detailed.smina.summary.count }}</div>
+                    <div class="metric-label">Molecules Docked</div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- GNINA Results -->
+            {% if data.docking_detailed.gnina.raw_data or plots.docking_gnina %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">GNINA Results</h3>
+
+            <div class="two-col">
+                <div>
+                    {% if plots.docking_gnina_affinity_hist %}
+                    <div class="plot-container">{{ plots.docking_gnina_affinity_hist | safe }}</div>
+                    {% elif plots.docking_gnina %}
+                    <div class="plot-container">{{ plots.docking_gnina | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.docking_gnina_top_molecules %}
+                    <div class="plot-container">{{ plots.docking_gnina_top_molecules | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if plots.docking_gnina_affinity_box %}
+            <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
+            <div class="plot-container">{{ plots.docking_gnina_affinity_box | safe }}</div>
+            {% endif %}
+            {% endif %}
+
+            <!-- SMINA Results -->
+            {% if data.docking_detailed.smina.raw_data or plots.docking_smina %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">SMINA Results</h3>
+
+            <div class="two-col">
+                <div>
+                    {% if plots.docking_smina_affinity_hist %}
+                    <div class="plot-container">{{ plots.docking_smina_affinity_hist | safe }}</div>
+                    {% elif plots.docking_smina %}
+                    <div class="plot-container">{{ plots.docking_smina | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.docking_smina_top_molecules %}
+                    <div class="plot-container">{{ plots.docking_smina_top_molecules | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if plots.docking_smina_affinity_box %}
+            <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
+            <div class="plot-container">{{ plots.docking_smina_affinity_box | safe }}</div>
+            {% endif %}
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Configuration Summary -->
+        <section>
+            <h2>Configuration</h2>
+            <table>
+                <tbody>
+                    <tr>
+                        <td><strong>Output Directory</strong></td>
+                        <td>{{ data.config.folder_to_save }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Enabled Stages</strong></td>
+                        <td>{{ data.config.stages_enabled | join(', ') }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <footer>
+            <p><strong>HEDGEHOG</strong></p>
+            <p>Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration</p>
+            <p style="margin-top: 10px;">Report generated at {{ generated_at }}</p>
+        </footer>
+    </div>
+</body>
+</html>

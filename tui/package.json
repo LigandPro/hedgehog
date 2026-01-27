@@ -1,0 +1,38 @@
+{
+  "name": "hedgehog-tui",
+  "version": "0.1.0",
+  "description": "TUI for Hedgehog molecular design pipeline",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "hedgehog-tui": "./bin/hedgehog-tui.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "tui": "npm run build && node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "ink": "^5.0.1",
+    "ink-select-input": "^6.0.0",
+    "ink-text-input": "^6.0.0",
+    "ink-spinner": "^5.0.0",
+    "react": "^18.3.1",
+    "zustand": "^4.5.5",
+    "chalk": "^5.3.0",
+    "figures": "^6.1.0",
+    "boxen": "^8.0.1",
+    "execa": "^9.4.1",
+    "date-fns": "^3.6.0",
+    "yaml": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.3.12",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

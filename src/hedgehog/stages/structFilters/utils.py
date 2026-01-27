@@ -365,71 +365,95 @@ def filter_function_applier(filter_name):
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Common Alerts...")
 
-    def _apply_alerts(row):
-        mol = row["mol"]
-        row["smiles"] = dm.to_smiles(mol) if mol is not None else None
+    # Load config and filter alerts ONCE outside
+    config_structFilters = load_config(config["config_structFilters"])
+    alert_data = filter_alerts(config_structFilters)
 
-        config_structFilters = load_config(config["config_structFilters"])
-        alert_data = filter_alerts(config_structFilters)
-        df = alert_data.copy()
-        df["matches"] = df.smarts.apply(
-            lambda x, y: y.GetSubstructMatches(Chem.MolFromSmarts(x)), args=(mol,)
-        )
-        grouped = (
-            df.groupby("rule_set_name")
-            .apply(
-                lambda group: pd.Series(
-                    {
-                        "matches": [
-                            match for matches in group["matches"] for match in matches
-                        ]
-                        if any(matches for matches in group["matches"])
-                        else (),
-                        "reasons": ";".join(
-                            group[group["matches"].apply(lambda x: len(x) > 0)][
-                                "description"
-                            ]
-                            .fillna("")
-                            .tolist()
-                        )
-                        if any(matches for matches in group["matches"])
-                        else "",
-                    }
-                )
+    # Get rule set names for column creation
+    rule_set_names = alert_data["rule_set_name"].unique().tolist()
+
+    logger.info(
+        "Processing %d filtered molecules with %d alert rule sets",
+        len(mols),
+        len(rule_set_names),
+    )
+
+    n_jobs = config["n_jobs"]
+
+    # Process molecules sequentially since pandarallel has issues with closures
+    # This is more reliable than parallel_apply with complex nested functions
+    results_list = []
+    for i, mol in enumerate(mols):
+        if i % 100 == 0:
+            logger.debug("Processing molecule %d/%d", i + 1, len(mols))
+
+        row_data = {"mol": mol}
+        row_data["smiles"] = dm.to_smiles(mol) if mol is not None else None
+
+        if mol is not None:
+            # Apply all SMARTS patterns
+            df = alert_data.copy()
+            df["matches"] = df.smarts.apply(
+                lambda x: mol.GetSubstructMatches(Chem.MolFromSmarts(x))
+                if Chem.MolFromSmarts(x)
+                else ()
             )
-            .reset_index()
-        )
-        grouped["pass_filter"] = grouped["matches"].apply(
-            lambda x: True if not x else False
-        )
-        for _, g_row in grouped.iterrows():
-            name = g_row["rule_set_name"]
-            row[f"pass_{name}"] = g_row["pass_filter"]
-            row[f"reasons_{name}"] = g_row["reasons"]
-        return row
 
+            grouped = (
+                df.groupby("rule_set_name")
+                .apply(
+                    lambda group: pd.Series(
+                        {
+                            "matches": [
+                                match
+                                for matches in group["matches"]
+                                for match in matches
+                            ]
+                            if any(matches for matches in group["matches"])
+                            else (),
+                            "reasons": ";".join(
+                                group[group["matches"].apply(lambda x: len(x) > 0)][
+                                    "description"
+                                ]
+                                .fillna("")
+                                .tolist()
+                            )
+                            if any(matches for matches in group["matches"])
+                            else "",
+                        }
+                    )
+                )
+                .reset_index()
+            )
+            grouped["pass_filter"] = grouped["matches"].apply(
+                lambda x: True if not x else False
+            )
+            for _, g_row in grouped.iterrows():
+                name = g_row["rule_set_name"]
+                row_data[f"pass_{name}"] = g_row["pass_filter"]
+                row_data[f"reasons_{name}"] = g_row["reasons"]
+        else:
+            # Molecule is None - mark as failed for all rule sets
+            for name in rule_set_names:
+                row_data[f"pass_{name}"] = False
+                row_data[f"reasons_{name}"] = "invalid_molecule"
+
+        results_list.append(row_data)
+
+    results = pd.DataFrame(results_list)
+
+    # Calculate pass and pass_any columns
     def _get_full_any_pass(row):
         pass_val = True
         any_pass_val = False
         for col in row.index:
-            if col.startswith("pass_") and col != "pass_any":
+            if col.startswith("pass_") and col != "pass_any" and col != "pass":
                 pass_val &= row[col]
                 any_pass_val |= row[col]
         row["pass"] = pass_val
         row["pass_any"] = any_pass_val
         return row
 
-    logger.info("Processing %d filtered molecules", len(mols))
-
-    n_jobs = config["n_jobs"]
-    logger.info("Processing with %d parallel workers", n_jobs)
-
-    mols_df = pd.DataFrame({"mol": mols})
-    # Apply _apply_alerts in parallel using joblib
-    rows = [row for _, row in mols_df.iterrows()]
-    processed = Parallel(n_jobs=n_jobs)(delayed(_apply_alerts)(row) for row in rows)
-    results = pd.DataFrame(processed)
-    # _get_full_any_pass is fast, apply sequentially
     results = results.apply(_get_full_any_pass, axis=1)
 
     if smiles_modelName_mols is not None:
