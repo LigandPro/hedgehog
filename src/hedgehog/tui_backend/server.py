@@ -7,6 +7,7 @@ from typing import Any
 
 from .handlers.config import ConfigHandler
 from .handlers.files import FilesHandler
+from .handlers.history import HistoryHandler
 from .handlers.pipeline import PipelineHandler
 from .handlers.validation import ValidationHandler
 
@@ -23,6 +24,7 @@ class JsonRpcServer:
         # Register handlers
         self.config_handler = ConfigHandler(self)
         self.files_handler = FilesHandler(self)
+        self.history_handler = HistoryHandler(self)
         self.pipeline_handler = PipelineHandler(self)
         self.validation_handler = ValidationHandler(self)
 
@@ -38,6 +40,7 @@ class JsonRpcServer:
         # File methods
         self.handlers['list_files'] = self.files_handler.list_files
         self.handlers['list_directory'] = self.files_handler.list_directory
+        self.handlers['count_molecules'] = self.files_handler.count_molecules
 
         # Pipeline methods
         self.handlers['start_pipeline'] = self.pipeline_handler.start_pipeline
@@ -49,6 +52,12 @@ class JsonRpcServer:
         self.handlers['validate_receptor_pdb'] = self.validation_handler.validate_receptor_pdb
         self.handlers['validate_output_directory'] = self.validation_handler.validate_output_directory
         self.handlers['validate_config_data'] = self.validation_handler.validate_config
+
+        # History methods
+        self.handlers['get_job_history'] = self.history_handler.get_job_history
+        self.handlers['add_job'] = self.history_handler.add_job
+        self.handlers['update_job'] = self.history_handler.update_job
+        self.handlers['delete_job'] = self.history_handler.delete_job
 
     def send_response(self, request_id: int, result: Any = None, error: dict | None = None):
         """Send JSON-RPC response."""
@@ -75,8 +84,7 @@ class JsonRpcServer:
     def _send_message(self, message: dict):
         """Send a message to stdout."""
         with self._lock:
-            line = json.dumps(message) + '
-'
+            line = json.dumps(message) + '\n'
             sys.stdout.write(line)
             sys.stdout.flush()
 
@@ -108,8 +116,7 @@ class JsonRpcServer:
         self._running = True
 
         # Signal ready
-        sys.stderr.write('HEDGEHOG_TUI_READY
-')
+        sys.stderr.write('HEDGEHOG_TUI_READY\n')
         sys.stderr.flush()
 
         for line in sys.stdin:
@@ -149,8 +156,7 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     except Exception as e:
-        sys.stderr.write(f'Server error: {e}
-')
+        sys.stderr.write(f'Server error: {e}\n')
         return 1
 
 

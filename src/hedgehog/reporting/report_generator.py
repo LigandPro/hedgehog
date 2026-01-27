@@ -1,5 +1,6 @@
 """Report generator for HEDGEHOG pipeline results."""
 
+import base64
 import json
 import logging
 from datetime import datetime
@@ -35,6 +36,20 @@ STAGE_DISPLAY_NAMES = {
 
 # Key descriptors to show in report
 KEY_DESCRIPTORS = ["MolWt", "LogP", "TPSA", "NumHDonors", "NumHAcceptors", "NumRotatableBonds"]
+
+# Mapping for case-insensitive descriptor lookup (lowercase -> display name)
+DESCRIPTOR_ALIASES = {
+    "molwt": "MolWt",
+    "logp": "LogP",
+    "tpsa": "TPSA",
+    "numhdonors": "NumHDonors",
+    "numhacceptors": "NumHAcceptors",
+    "numrotatablebonds": "NumRotatableBonds",
+    "hbd": "NumHDonors",
+    "hba": "NumHAcceptors",
+    "qed": "QED",
+    "fsp3": "Fsp3",
+}
 
 
 class ReportGenerator:
@@ -97,16 +112,24 @@ class ReportGenerator:
         Returns:
             Dictionary with all collected data
         """
+        funnel_data = self._get_all_funnel_data()
         return {
             "metadata": self._get_metadata(),
             "summary": self._get_summary(),
-            "funnel": self._get_funnel_data(),
+            "funnel": funnel_data["all"],
+            "funnel_by_model": funnel_data["by_model"],
+            "available_models": funnel_data["models"],
             "stages": self._get_stage_stats(),
             "models": self._get_model_stats(),
             "descriptors": self._get_descriptor_stats(),
+            "descriptors_detailed": self._get_descriptors_detailed(),
             "filters": self._get_filter_stats(),
+            "filters_detailed": self._get_filters_detailed(),
             "synthesis": self._get_synthesis_stats(),
+            "synthesis_detailed": self._get_synthesis_detailed(),
             "docking": self._get_docking_stats(),
+            "docking_detailed": self._get_docking_detailed(),
+            "existing_plots": self._get_existing_plots(),
             "config": self._get_config_summary(),
         }
 
@@ -149,10 +172,10 @@ class ReportGenerator:
         """Get molecule funnel data through pipeline stages."""
         funnel = [{"stage": "Initial", "count": self.initial_count}]
 
+        # Correct pipeline order: Descriptors → Structural Filters → Synthesis → Docking
         stage_order = [
-            ("struct_filters_pre", "Pre-Filters"),
             ("descriptors_initial", "Descriptors"),
-            ("struct_filters_post", "Post-Filters"),
+            ("struct_filters_pre", "Structural Filters"),
             ("synthesis", "Synthesis"),
             ("docking", "Docking"),
         ]
@@ -178,6 +201,7 @@ class ReportGenerator:
         paths_to_try = [
             self.base_path / stage_dir / "filtered_molecules.csv",
             self.base_path / stage_dir / "filtered" / "filtered_molecules.csv",
+            self.base_path / stage_dir / "ligands.csv",  # For docking stage
         ]
 
         for path in paths_to_try:
@@ -188,6 +212,136 @@ class ReportGenerator:
                 except Exception:
                     continue
         return None
+
+    def _get_stage_output_count_by_model(
+        self, stage_key: str, model_name: str | None = None
+    ) -> int | None:
+        """Get molecule count from stage output file, optionally filtered by model.
+
+        Args:
+            stage_key: Stage key from STAGE_DIRS
+            model_name: Optional model name to filter by
+
+        Returns:
+            Count of molecules, or None if data unavailable
+        """
+        stage_dir = STAGE_DIRS.get(stage_key)
+        if not stage_dir:
+            return None
+
+        paths_to_try = [
+            self.base_path / stage_dir / "filtered_molecules.csv",
+            self.base_path / stage_dir / "filtered" / "filtered_molecules.csv",
+            self.base_path / stage_dir / "ligands.csv",
+        ]
+
+        for path in paths_to_try:
+            if path.exists():
+                try:
+                    df = pd.read_csv(path)
+                    if model_name and "model_name" in df.columns:
+                        df = df[df["model_name"] == model_name]
+                    return len(df)
+                except Exception:
+                    continue
+        return None
+
+    def _get_available_models(self) -> list[str]:
+        """Get list of available model names from input or output files.
+
+        Returns:
+            List of unique model names
+        """
+        models = set()
+
+        # Try input file first
+        input_path = self.base_path / "input" / "sampled_molecules.csv"
+        if input_path.exists():
+            try:
+                df = pd.read_csv(input_path)
+                if "model_name" in df.columns:
+                    models.update(df["model_name"].dropna().unique())
+            except Exception:
+                pass
+
+        # Try output file
+        output_path = self.output_dir / "final_molecules.csv"
+        if output_path.exists():
+            try:
+                df = pd.read_csv(output_path)
+                if "model_name" in df.columns:
+                    models.update(df["model_name"].dropna().unique())
+            except Exception:
+                pass
+
+        return sorted(models)
+
+    def _get_initial_count_by_model(self, model_name: str | None = None) -> int:
+        """Get initial molecule count, optionally filtered by model.
+
+        Args:
+            model_name: Optional model name to filter by
+
+        Returns:
+            Count of initial molecules
+        """
+        if not model_name:
+            return self.initial_count
+
+        input_path = self.base_path / "input" / "sampled_molecules.csv"
+        if input_path.exists():
+            try:
+                df = pd.read_csv(input_path)
+                if "model_name" in df.columns:
+                    return len(df[df["model_name"] == model_name])
+            except Exception:
+                pass
+        return 0
+
+    def _get_funnel_data_by_model(
+        self, model_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get molecule funnel data for a specific model or all models.
+
+        Args:
+            model_name: Model name to filter by, or None for all models
+
+        Returns:
+            List of funnel stage data
+        """
+        initial_count = self._get_initial_count_by_model(model_name)
+        funnel = [{"stage": "Initial", "count": initial_count}]
+
+        stage_order = [
+            ("descriptors_initial", "Descriptors"),
+            ("struct_filters_pre", "Structural Filters"),
+            ("synthesis", "Synthesis"),
+            ("docking", "Docking"),
+        ]
+
+        for stage_key, display_name in stage_order:
+            count = self._get_stage_output_count_by_model(stage_key, model_name)
+            if count is not None:
+                funnel.append({"stage": display_name, "count": count})
+
+        return funnel
+
+    def _get_all_funnel_data(self) -> dict[str, Any]:
+        """Get funnel data for all models and per-model breakdown.
+
+        Returns:
+            Dictionary with 'all' funnel and 'by_model' funnel data
+        """
+        result = {
+            "all": self._get_funnel_data(),
+            "by_model": {},
+            "models": self._get_available_models(),
+        }
+
+        for model in result["models"]:
+            result["by_model"][model] = self._get_funnel_data_by_model(model)
+
+        return result
 
     def _get_stage_stats(self) -> list[dict[str, Any]]:
         """Get pass/fail statistics for each stage."""
@@ -331,19 +485,50 @@ class ReportGenerator:
 
         stats = {"distributions": {}, "summary": {}}
 
+        # Build case-insensitive column mapping
+        col_map = self._build_descriptor_column_map(df.columns)
+
         for desc in KEY_DESCRIPTORS:
-            if desc in df.columns:
-                values = df[desc].dropna().tolist()
+            col = col_map.get(desc)
+            if col and col in df.columns:
+                values = df[col].dropna().tolist()
                 if values:
                     stats["distributions"][desc] = values
                     stats["summary"][desc] = {
-                        "mean": float(df[desc].mean()),
-                        "std": float(df[desc].std()),
-                        "min": float(df[desc].min()),
-                        "max": float(df[desc].max()),
+                        "mean": float(df[col].mean()),
+                        "std": float(df[col].std()),
+                        "min": float(df[col].min()),
+                        "max": float(df[col].max()),
                     }
 
         return stats
+
+    def _build_descriptor_column_map(self, columns: list[str]) -> dict[str, str]:
+        """Build mapping from standard descriptor names to actual column names.
+
+        Args:
+            columns: List of column names in the dataframe
+
+        Returns:
+            Dict mapping standard name -> actual column name
+        """
+        col_map = {}
+        col_lower = {c.lower(): c for c in columns}
+
+        for desc in KEY_DESCRIPTORS + ["QED", "Fsp3"]:
+            # Direct match
+            if desc in columns:
+                col_map[desc] = desc
+            # Case-insensitive match
+            elif desc.lower() in col_lower:
+                col_map[desc] = col_lower[desc.lower()]
+
+        # Check aliases
+        for alias, standard in DESCRIPTOR_ALIASES.items():
+            if alias in col_lower and standard not in col_map:
+                col_map[standard] = col_lower[alias]
+
+        return col_map
 
     def _get_filter_stats(self) -> dict[str, Any]:
         """Get filter statistics."""
@@ -450,6 +635,371 @@ class ReportGenerator:
 
         return stats
 
+    # =========================================================================
+    # DETAILED DATA COLLECTION METHODS
+    # =========================================================================
+
+    def _get_descriptors_detailed(self) -> dict[str, Any]:
+        """Get detailed descriptor data for enhanced visualization.
+
+        Returns:
+            Dictionary with raw_data, summary_by_model, and key_descriptors
+        """
+        desc_dir = self.base_path / STAGE_DIRS["descriptors_initial"]
+
+        paths_to_try = [
+            desc_dir / "metrics" / "descriptors_all.csv",
+            desc_dir / "filtered" / "descriptors_passed.csv",
+            desc_dir / "filtered_molecules.csv",
+        ]
+
+        df = None
+        for path in paths_to_try:
+            if path.exists():
+                try:
+                    df = pd.read_csv(path)
+                    break
+                except Exception:
+                    continue
+
+        if df is None:
+            return {}
+
+        result = {
+            "raw_data": [],
+            "summary_by_model": {},
+            "key_descriptors": ["MolWt", "LogP", "TPSA", "QED"],
+        }
+
+        # Build case-insensitive column mapping
+        col_map = self._build_descriptor_column_map(df.columns)
+
+        # Collect raw data records with normalized column names
+        for _, row in df.iterrows():
+            record = {}
+            # Add model_name
+            if "model_name" in df.columns and pd.notna(row.get("model_name")):
+                record["model_name"] = row.get("model_name")
+
+            # Add descriptors with standard names
+            for std_name, actual_col in col_map.items():
+                if actual_col in df.columns and pd.notna(row.get(actual_col)):
+                    record[std_name] = row.get(actual_col)
+
+            if record:
+                result["raw_data"].append(record)
+
+        # Calculate summary by model
+        if "model_name" in df.columns:
+            for model in df["model_name"].dropna().unique():
+                model_df = df[df["model_name"] == model]
+                model_summary = {}
+                for std_name, actual_col in col_map.items():
+                    if actual_col in model_df.columns:
+                        values = model_df[actual_col].dropna()
+                        if len(values) > 0:
+                            model_summary[std_name] = float(values.mean())
+                if model_summary:
+                    result["summary_by_model"][model] = model_summary
+
+        return result
+
+    def _get_filters_detailed(self) -> dict[str, Any]:
+        """Get detailed filter data for enhanced visualization.
+
+        Returns:
+            Dictionary with by_filter, banned_ratios, common_alerts_reasons
+        """
+        result = {
+            "by_filter": {},
+            "banned_ratios": {},
+            "common_alerts_reasons": {},
+            "filter_metrics": {},
+        }
+
+        for stage_key in ["struct_filters_pre", "struct_filters_post"]:
+            stage_dir = self.base_path / STAGE_DIRS.get(stage_key, "")
+            if not stage_dir.exists():
+                continue
+
+            for subdir in stage_dir.iterdir():
+                if not subdir.is_dir() or subdir.name in ["plots", "logs"]:
+                    continue
+
+                filter_name = subdir.name
+                metrics_path = subdir / "metrics.csv"
+
+                if metrics_path.exists():
+                    try:
+                        df = pd.read_csv(metrics_path)
+
+                        # Get per-model breakdown
+                        if "model_name" in df.columns:
+                            if "failed_count" in df.columns:
+                                model_counts = df.groupby("model_name")["failed_count"].sum().to_dict()
+                                result["by_filter"][filter_name] = {
+                                    str(k): int(v) for k, v in model_counts.items()
+                                }
+
+                            # Calculate banned_ratio per model
+                            if "banned_ratio" in df.columns:
+                                ratios = df.groupby("model_name")["banned_ratio"].mean().to_dict()
+                                result["banned_ratios"][filter_name] = {
+                                    str(k): float(v) for k, v in ratios.items()
+                                }
+                            elif "total_count" in df.columns and "failed_count" in df.columns:
+                                # Calculate from counts
+                                model_ratios = {}
+                                for model in df["model_name"].unique():
+                                    model_df = df[df["model_name"] == model]
+                                    total = model_df["total_count"].sum()
+                                    failed = model_df["failed_count"].sum()
+                                    if total > 0:
+                                        model_ratios[str(model)] = failed / total
+                                if model_ratios:
+                                    result["banned_ratios"][filter_name] = model_ratios
+
+                        # Collect filter-specific metrics
+                        filter_metrics = {}
+
+                        # Lilly filter metrics
+                        if filter_name == "lilly" and "demerit_score" in df.columns:
+                            filter_metrics["avg_demerit_score"] = float(df["demerit_score"].mean())
+
+                        # Molcomplexity metrics
+                        if filter_name == "molcomplexity":
+                            if "bertz" in df.columns:
+                                filter_metrics["avg_bertz"] = float(df["bertz"].mean())
+                            if "sas" in df.columns:
+                                filter_metrics["avg_sas"] = float(df["sas"].mean())
+
+                        if filter_metrics:
+                            result["filter_metrics"][filter_name] = filter_metrics
+
+                    except Exception:
+                        continue
+
+                # Check for common_alerts specific data
+                if filter_name == "common_alerts":
+                    alerts_path = subdir / "alerts_summary.csv"
+                    if not alerts_path.exists():
+                        alerts_path = subdir / "failed_molecules.csv"
+
+                    if alerts_path.exists():
+                        try:
+                            alerts_df = pd.read_csv(alerts_path)
+                            # Look for alert type columns
+                            alert_cols = ["alert_type", "reason", "alert_name", "filter_reason"]
+                            for col in alert_cols:
+                                if col in alerts_df.columns:
+                                    reasons = alerts_df[col].value_counts().to_dict()
+                                    result["common_alerts_reasons"] = {
+                                        str(k): int(v) for k, v in reasons.items()
+                                    }
+                                    break
+                        except Exception:
+                            pass
+
+        return result
+
+    def _get_synthesis_detailed(self) -> dict[str, Any]:
+        """Get detailed synthesis data for enhanced visualization.
+
+        Returns:
+            Dictionary with raw_data, solved/unsolved counts, time stats
+        """
+        synth_dir = self.base_path / STAGE_DIRS["synthesis"]
+        scores_path = synth_dir / "synthesis_scores.csv"
+
+        if not scores_path.exists():
+            return {}
+
+        try:
+            df = pd.read_csv(scores_path)
+        except Exception:
+            return {}
+
+        result = {
+            "raw_data": [],
+            "sa_scores": [],
+            "syba_scores": [],
+            "solved_count": 0,
+            "unsolved_count": 0,
+            "summary": {},
+        }
+
+        # Extract SA and SYBA scores
+        if "sa_score" in df.columns:
+            result["sa_scores"] = df["sa_score"].dropna().tolist()
+            result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
+
+        if "syba_score" in df.columns:
+            result["syba_scores"] = df["syba_score"].dropna().tolist()
+            result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
+
+        # Count solved/unsolved (look for solved, route_found, etc.)
+        solved_cols = ["solved", "route_found", "synthesis_solved"]
+        for col in solved_cols:
+            if col in df.columns:
+                solved = df[col].sum() if df[col].dtype == bool else (df[col] == True).sum()  # noqa: E712
+                result["solved_count"] = int(solved)
+                result["unsolved_count"] = len(df) - int(solved)
+                result["summary"]["pct_solved"] = 100 * solved / len(df) if len(df) > 0 else 0
+                break
+
+        # Collect time data if available
+        time_cols = ["search_time", "route_time", "synthesis_time"]
+        for col in time_cols:
+            if col in df.columns:
+                times = df[col].dropna().tolist()
+                if times:
+                    result["summary"]["avg_search_time"] = float(df[col].mean())
+
+                    # Collect raw data with model info for box plot
+                    if "model_name" in df.columns:
+                        for _, row in df.iterrows():
+                            if pd.notna(row.get(col)):
+                                result["raw_data"].append({
+                                    "model_name": row.get("model_name", "Unknown"),
+                                    "search_time": row.get(col),
+                                })
+                break
+
+        return result
+
+    def _get_existing_plots(self) -> dict[str, str]:
+        """Collect existing plot images from stage directories.
+
+        Returns:
+            Dictionary mapping plot name -> base64-encoded image data URI
+        """
+        plots_found = {}
+
+        # Define expected plot locations
+        plot_locations = {
+            # Descriptors
+            "descriptors_initial_distribution": (
+                STAGE_DIRS["descriptors_initial"] + "/plots/descriptors_distribution.png"
+            ),
+            "descriptors_final_distribution": (
+                STAGE_DIRS["descriptors_final"] + "/plots/descriptors_distribution.png"
+            ),
+            # Structural filters
+            "filters_pre_counts": (
+                STAGE_DIRS["struct_filters_pre"] + "/molecule_counts_comparison.png"
+            ),
+            "filters_pre_ratios": (
+                STAGE_DIRS["struct_filters_pre"] + "/restriction_ratios_comparison.png"
+            ),
+            "filters_post_counts": (
+                STAGE_DIRS["struct_filters_post"] + "/molecule_counts_comparison.png"
+            ),
+            "filters_post_ratios": (
+                STAGE_DIRS["struct_filters_post"] + "/restriction_ratios_comparison.png"
+            ),
+        }
+
+        for name, rel_path in plot_locations.items():
+            full_path = self.base_path / rel_path
+            if full_path.exists():
+                try:
+                    with open(full_path, "rb") as f:
+                        img_data = base64.b64encode(f.read()).decode("utf-8")
+                    plots_found[name] = f"data:image/png;base64,{img_data}"
+                    logger.debug("Found plot: %s", name)
+                except Exception as e:
+                    logger.warning("Failed to load plot %s: %s", name, e)
+
+        return plots_found
+
+    def _get_docking_detailed(self) -> dict[str, Any]:
+        """Get detailed docking data for enhanced visualization.
+
+        Returns:
+            Dictionary with raw_data, top_molecules, summary stats
+        """
+        docking_dir = self.base_path / STAGE_DIRS["docking"]
+
+        result = {
+            "gnina": {"raw_data": [], "top_molecules": [], "summary": {}},
+            "smina": {"raw_data": [], "top_molecules": [], "summary": {}},
+        }
+
+        for tool in ["gnina", "smina"]:
+            # Try multiple possible score file locations
+            score_paths = [
+                docking_dir / tool / "scores.csv",
+                docking_dir / tool / "docking_results.csv",
+                docking_dir / f"{tool}_scores.csv",
+            ]
+
+            df = None
+            for path in score_paths:
+                if path.exists():
+                    try:
+                        df = pd.read_csv(path)
+                        break
+                    except Exception:
+                        continue
+
+            if df is None:
+                continue
+
+            # Identify score column
+            score_cols = ["affinity", "score", "minimizedAffinity", "docking_score"]
+            score_col = None
+            for col in score_cols:
+                if col in df.columns:
+                    score_col = col
+                    break
+
+            if score_col is None:
+                continue
+
+            scores = df[score_col].dropna().tolist()
+            if not scores:
+                continue
+
+            # Basic stats
+            result[tool]["summary"] = {
+                "avg_affinity": float(df[score_col].mean()),
+                "best_affinity": float(df[score_col].min()),
+                "count": len(df),
+            }
+
+            # Collect raw data for box plot by model
+            if "model_name" in df.columns:
+                for _, row in df.iterrows():
+                    if pd.notna(row.get(score_col)):
+                        record = {
+                            "model_name": row.get("model_name", "Unknown"),
+                            "affinity": row.get(score_col),
+                        }
+                        # Add molecule identifier if available
+                        for id_col in ["molecule_id", "mol_id", "smiles", "name"]:
+                            if id_col in df.columns and pd.notna(row.get(id_col)):
+                                record["molecule_id"] = row.get(id_col)
+                                break
+                        result[tool]["raw_data"].append(record)
+
+            # Top molecules by affinity
+            id_col = None
+            for col in ["molecule_id", "mol_id", "smiles", "name"]:
+                if col in df.columns:
+                    id_col = col
+                    break
+
+            if id_col:
+                top_df = df.nsmallest(10, score_col)
+                for _, row in top_df.iterrows():
+                    result[tool]["top_molecules"].append({
+                        "molecule_id": row.get(id_col, "Unknown"),
+                        "affinity": row.get(score_col),
+                        "model_name": row.get("model_name", "Unknown") if "model_name" in df.columns else "Unknown",
+                    })
+
+        return result
+
     def _get_config_summary(self) -> dict[str, Any]:
         """Get configuration summary."""
         return {
@@ -468,8 +1018,27 @@ class ReportGenerator:
         """
         plot_htmls = {}
 
-        # Funnel chart
+        # Funnel chart (classic)
         plot_htmls["funnel"] = plots.plot_funnel(data.get("funnel", []))
+
+        # Sankey diagram (improved flow visualization)
+        plot_htmls["sankey"] = plots.plot_sankey(data.get("funnel", []))
+
+        # Sankey data for each model (for JavaScript filtering)
+        funnel_by_model = data.get("funnel_by_model", {})
+        available_models = data.get("available_models", [])
+
+        sankey_by_model = {"all": plots.plot_sankey_json(data.get("funnel", []))}
+        for model, model_funnel in funnel_by_model.items():
+            sankey_by_model[model] = plots.plot_sankey_json(model_funnel)
+
+        # Add comparison data for "Compare All" option
+        if available_models and funnel_by_model:
+            sankey_by_model["__compare__"] = plots.plot_sankey_compare_json(
+                funnel_by_model, available_models
+            )
+
+        plot_htmls["sankey_data"] = json.dumps(sankey_by_model)
 
         # Stage summary
         plot_htmls["stage_summary"] = plots.plot_stage_summary(data.get("stages", []))
@@ -480,14 +1049,29 @@ class ReportGenerator:
             plot_htmls["model_comparison"] = plots.plot_model_comparison(model_stats)
             plot_htmls["model_losses"] = plots.plot_model_stacked_losses(model_stats)
 
-        # Descriptor distributions
+        # Descriptor distributions (original)
         desc_data = data.get("descriptors", {})
         if desc_data.get("distributions"):
             plot_htmls["descriptors"] = plots.plot_descriptor_distributions(
                 desc_data["distributions"]
             )
 
-        # Filter analysis
+        # Descriptors detailed (enhanced)
+        desc_detailed = data.get("descriptors_detailed", {})
+        if desc_detailed.get("raw_data"):
+            plot_htmls["descriptors_violin"] = plots.plot_descriptors_violin_by_model(
+                desc_detailed["raw_data"],
+                desc_detailed.get("key_descriptors", ["MolWt", "LogP", "TPSA", "QED"]),
+            )
+            plot_htmls["descriptors_hbd_hba"] = plots.plot_descriptors_hbd_hba_box(
+                desc_detailed["raw_data"]
+            )
+        if desc_detailed.get("summary_by_model"):
+            plot_htmls["descriptors_table"] = plots.plot_descriptors_summary_table(
+                desc_detailed["summary_by_model"]
+            )
+
+        # Filter analysis (original)
         filter_data = data.get("filters", {})
         if filter_data.get("by_filter"):
             plot_htmls["filter_heatmap"] = plots.plot_filter_heatmap(
@@ -498,7 +1082,22 @@ class ReportGenerator:
                 filter_data["totals"]
             )
 
-        # Synthesis scores
+        # Filters detailed (enhanced)
+        filters_detailed = data.get("filters_detailed", {})
+        if filters_detailed.get("by_filter"):
+            plot_htmls["filter_stacked_bar"] = plots.plot_filter_stacked_bar(
+                filters_detailed["by_filter"]
+            )
+        if filters_detailed.get("banned_ratios"):
+            plot_htmls["filter_banned_heatmap"] = plots.plot_filter_banned_ratio_heatmap(
+                filters_detailed["banned_ratios"]
+            )
+        if filters_detailed.get("common_alerts_reasons"):
+            plot_htmls["filter_top_reasons"] = plots.plot_filter_top_reasons_bar(
+                filters_detailed["common_alerts_reasons"]
+            )
+
+        # Synthesis scores (original)
         synth_data = data.get("synthesis", {})
         if synth_data.get("distributions"):
             plot_htmls["synthesis_dist"] = plots.plot_synthesis_distributions(
@@ -512,7 +1111,27 @@ class ReportGenerator:
                 scatter.get("model_names", []),
             )
 
-        # Docking scores
+        # Synthesis detailed (enhanced)
+        synth_detailed = data.get("synthesis_detailed", {})
+        if synth_detailed.get("sa_scores"):
+            plot_htmls["synthesis_sa_hist"] = plots.plot_synthesis_sa_histogram(
+                synth_detailed["sa_scores"]
+            )
+        if synth_detailed.get("syba_scores"):
+            plot_htmls["synthesis_syba_hist"] = plots.plot_synthesis_syba_histogram(
+                synth_detailed["syba_scores"]
+            )
+        if synth_detailed.get("solved_count", 0) > 0 or synth_detailed.get("unsolved_count", 0) > 0:
+            plot_htmls["synthesis_solved_pie"] = plots.plot_synthesis_solved_pie(
+                synth_detailed.get("solved_count", 0),
+                synth_detailed.get("unsolved_count", 0),
+            )
+        if synth_detailed.get("raw_data"):
+            plot_htmls["synthesis_time_box"] = plots.plot_synthesis_time_box(
+                synth_detailed["raw_data"]
+            )
+
+        # Docking scores (original)
         docking_data = data.get("docking", {})
         if docking_data.get("gnina", {}).get("scores"):
             plot_htmls["docking_gnina"] = plots.plot_docking_distribution(
@@ -522,6 +1141,24 @@ class ReportGenerator:
             plot_htmls["docking_smina"] = plots.plot_docking_distribution(
                 docking_data["smina"]["scores"], "smina"
             )
+
+        # Docking detailed (enhanced)
+        docking_detailed = data.get("docking_detailed", {})
+        for tool in ["gnina", "smina"]:
+            tool_data = docking_detailed.get(tool, {})
+            if tool_data.get("raw_data"):
+                scores = [d.get("affinity") for d in tool_data["raw_data"] if d.get("affinity") is not None]
+                if scores:
+                    plot_htmls[f"docking_{tool}_affinity_hist"] = plots.plot_docking_affinity_histogram(
+                        scores, tool
+                    )
+                plot_htmls[f"docking_{tool}_affinity_box"] = plots.plot_docking_affinity_box(
+                    tool_data["raw_data"]
+                )
+            if tool_data.get("top_molecules"):
+                plot_htmls[f"docking_{tool}_top_molecules"] = plots.plot_docking_top_molecules(
+                    tool_data["top_molecules"]
+                )
 
         return plot_htmls
 
@@ -552,6 +1189,17 @@ class ReportGenerator:
             plots=plot_htmls,
             generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
+
+    def _build_model_options(self, models: list[str]) -> str:
+        """Build HTML option elements for model dropdown.
+
+        Args:
+            models: List of model names
+
+        Returns:
+            HTML string with option elements
+        """
+        return "".join(f'<option value="{m}">{m}</option>' for m in models)
 
     def _render_inline_template(
         self, data: dict[str, Any], plot_htmls: dict[str, str]
@@ -712,6 +1360,50 @@ class ReportGenerator:
         .retention-high {{ background: #d5f4e6; color: #27ae60; }}
         .retention-medium {{ background: #fef9e7; color: #f39c12; }}
         .retention-low {{ background: #fadbd8; color: #e74c3c; }}
+        .model-filter {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }}
+        .model-filter label {{
+            font-weight: 600;
+            color: var(--dark);
+        }}
+        .model-filter select {{
+            padding: 8px 12px;
+            border: 1px solid var(--light);
+            border-radius: 5px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            min-width: 200px;
+        }}
+        .model-filter select:hover {{
+            border-color: var(--primary);
+        }}
+        .view-toggle {{
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }}
+        .view-toggle button {{
+            padding: 8px 16px;
+            border: 1px solid var(--light);
+            border-radius: 5px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }}
+        .view-toggle button.active {{
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }}
+        .view-toggle button:hover:not(.active) {{
+            border-color: var(--primary);
+        }}
     </style>
 </head>
 <body>
@@ -744,8 +1436,72 @@ class ReportGenerator:
         </div>
 
         <section>
-            <h2>Pipeline Funnel</h2>
-            <div class="plot-container">{plot_htmls.get('funnel', '')}</div>
+            <h2>Pipeline Flow</h2>
+            <div class="model-filter">
+                <label for="model-select">Filter by Model:</label>
+                <select id="model-select" onchange="updateSankeyDiagram()">
+                    <option value="all">All Models</option>
+                    {self._build_model_options(data.get('available_models', []))}
+                </select>
+            </div>
+            <div class="view-toggle">
+                <button id="btn-sankey" class="active" onclick="showView('sankey')">Sankey Diagram</button>
+                <button id="btn-funnel" onclick="showView('funnel')">Funnel Chart</button>
+            </div>
+            <div id="sankey-container" class="plot-container">{plot_htmls.get('sankey', '')}</div>
+            <div id="funnel-container" class="plot-container" style="display: none;">{plot_htmls.get('funnel', '')}</div>
+            <script>
+                var sankeyDataByModel = {plot_htmls.get('sankey_data', '{{}}')};
+
+                function showView(view) {{
+                    document.getElementById('sankey-container').style.display = view === 'sankey' ? 'block' : 'none';
+                    document.getElementById('funnel-container').style.display = view === 'funnel' ? 'block' : 'none';
+                    document.getElementById('btn-sankey').className = view === 'sankey' ? 'active' : '';
+                    document.getElementById('btn-funnel').className = view === 'funnel' ? 'active' : '';
+                }}
+
+                function updateSankeyDiagram() {{
+                    var model = document.getElementById('model-select').value;
+                    var data = sankeyDataByModel[model];
+                    var container = document.getElementById('sankey-container');
+                    if (!data || !data.labels || data.labels.length < 2) {{
+                        container.textContent = 'No data available for this model';
+                        container.style.textAlign = 'center';
+                        container.style.color = 'gray';
+                        container.style.padding = '40px';
+                        return;
+                    }}
+
+                    var trace = {{
+                        type: 'sankey',
+                        arrangement: 'snap',
+                        node: {{
+                            pad: 20,
+                            thickness: 20,
+                            line: {{ color: 'black', width: 0.5 }},
+                            label: data.labels,
+                            color: data.node_colors,
+                            x: data.x_positions,
+                            y: data.y_positions
+                        }},
+                        link: {{
+                            source: data.sources,
+                            target: data.targets,
+                            value: data.values,
+                            color: data.link_colors
+                        }}
+                    }};
+
+                    var layout = {{
+                        title: {{ text: 'Pipeline Molecule Flow (Sankey Diagram)', font: {{ size: 16 }} }},
+                        font: {{ size: 12 }},
+                        height: 450,
+                        margin: {{ l: 20, r: 20, t: 60, b: 20 }}
+                    }};
+
+                    Plotly.react('sankey-container', [trace], layout);
+                }}
+            </script>
         </section>
 
         <section>

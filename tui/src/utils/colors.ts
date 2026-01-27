@@ -24,7 +24,15 @@ export const colors = {
 
   // Brand
   brand: chalk.bold.cyan,
-  version: chalk.dim.cyan,
+  version: chalk.dim.gray,
+
+  // Debug mode
+  debug: chalk.yellow,
+
+  // Footer shortcuts
+  shortcutKey: chalk.bold.cyan,
+  shortcutLabel: chalk.white,
+  shortcutDisabled: chalk.dim.gray,
 };
 
 export const icons = {
@@ -32,9 +40,16 @@ export const icons = {
   error: chalk.red('✗'),
   pending: chalk.gray('○'),
   running: chalk.yellow('●'),
+  completed: chalk.green('●'),
+  skipped: chalk.gray('○'),
+  cancelled: chalk.gray('○'),
   arrow: chalk.cyan('→'),
   bullet: chalk.gray('•'),
-  hedgehog: '🦔',
+  hedgehog: '*',
+  check: '✓',
+  cross: '✗',
+  circle: '○',
+  filledCircle: '●',
 };
 
 export default colors;

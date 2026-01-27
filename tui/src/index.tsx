@@ -4,6 +4,9 @@ import { render } from 'ink';
 import { App } from './App.js';
 import { logger } from './utils/logger.js';
 
+// Clear terminal screen to hide npm startup messages
+process.stdout.write('\x1B[2J\x1B[0f');
+
 logger.info('Starting Hedgehog TUI');
 
 const { waitUntilExit } = render(<App />);

@@ -19,7 +19,12 @@ export function formatDuration(seconds: number): string {
 }
 
 export function formatNumber(num: number): string {
-  return num.toLocaleString();
+  return num.toLocaleString('en-US');
+}
+
+export function formatDate(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toLocaleDateString('en-US');
 }
 
 export function truncate(str: string, maxLength: number): string {

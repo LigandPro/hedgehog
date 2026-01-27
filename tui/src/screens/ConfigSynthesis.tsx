@@ -31,14 +31,16 @@ export function ConfigSynthesis(): React.ReactElement {
   const config = useStore((state) => state.configs.synthesis);
   const setConfig = useStore((state) => state.setConfig);
   const isBackendReady = useStore((state) => state.isBackendReady);
-  
+  const showToast = useStore((state) => state.showToast);
+  const showConfirm = useStore((state) => state.showConfirm);
+
   const [loading, setLoading] = useState(!config);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [values, setValues] = useState<Partial<SynthesisConfig>>(config || {});
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
     if (!config && isBackendReady) {
@@ -67,28 +69,45 @@ export function ConfigSynthesis(): React.ReactElement {
       const bridge = getBridge();
       await bridge.saveConfig('synthesis', values as Record<string, unknown>);
       setConfig('synthesis', values as unknown as SynthesisConfig);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      setIsDirty(false);
     } catch (err) {
       setError(String(err));
+      showToast('error', `Failed to save: ${err}`);
+    }
+  };
+
+  const handleExit = () => {
+    if (isDirty) {
+      showConfirm({
+        title: 'Unsaved Changes',
+        message: 'Discard changes to synthesis configuration?',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Cancel',
+        onConfirm: () => {
+          setScreen('welcome');
+        },
+      });
+    } else {
+      setScreen('welcome');
     }
   };
 
   useInput((input, key) => {
     if (loading) return;
-    
+
     if (editMode) {
       if (key.escape) {
         setEditMode(false);
       } else if (key.return) {
         const field = fields[selectedIndex];
         let newValue: number | string = editValue;
-        
+
         if (editValue !== 'inf' && editValue !== '-inf') {
           newValue = parseFloat(editValue) || 0;
         }
-        
+
         setValues({ ...values, [field.key]: newValue });
+        setIsDirty(true);
         setEditMode(false);
       }
       return;
@@ -102,14 +121,15 @@ export function ConfigSynthesis(): React.ReactElement {
       const field = fields[selectedIndex];
       if (field.type === 'boolean') {
         setValues({ ...values, [field.key]: !values[field.key] });
+        setIsDirty(true);
       } else {
         setEditValue(String(values[field.key] || ''));
         setEditMode(true);
       }
     } else if (input === 's') {
       saveConfig();
-    } else if (key.escape || input === 'q') {
-      setScreen('welcome');
+    } else if (key.escape || key.leftArrow || input === 'q') {
+      handleExit();
     }
   });
 
@@ -117,7 +137,7 @@ export function ConfigSynthesis(): React.ReactElement {
     { key: '↑↓', label: 'Navigate' },
     { key: 'e/Enter', label: 'Edit' },
     { key: 's', label: 'Save' },
-    { key: 'Esc', label: 'Back' },
+    { key: '←/Esc', label: 'Back' },
   ];
 
   if (loading) {
@@ -131,20 +151,14 @@ export function ConfigSynthesis(): React.ReactElement {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header title="Synthesis Config" subtitle="config_synthesis.yml" />
-      
+      <Header title="Synthesis Config" subtitle={isDirty ? 'config_synthesis.yml *' : 'config_synthesis.yml'} />
+
       {error && (
         <Box marginY={1}>
           <Text color="red">Error: {error}</Text>
         </Box>
       )}
-      
-      {saved && (
-        <Box marginY={1}>
-          <Text color="green">✓ Configuration saved</Text>
-        </Box>
-      )}
-      
+
       <Box flexDirection="column" marginY={1}>
         {fields.map((field, index) => {
           const isSelected = index === selectedIndex;

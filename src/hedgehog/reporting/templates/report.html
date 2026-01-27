@@ -7,14 +7,16 @@
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         :root {
-            --primary: #3498db;
-            --primary-dark: #2980b9;
-            --success: #2ecc71;
-            --danger: #e74c3c;
-            --warning: #f39c12;
-            --dark: #2c3e50;
-            --light: #ecf0f1;
-            --gray: #95a5a6;
+            --primary: #8b5cf6;
+            --primary-light: #a78bfa;
+            --primary-pale: #ede9fe;
+            --primary-subtle: #f5f3ff;
+            --success: #7c3aed;
+            --danger: #a855f7;
+            --text: #1f2937;
+            --text-secondary: #6b7280;
+            --border: #e5e7eb;
+            --bg: #fafafa;
         }
 
         * {
@@ -24,205 +26,218 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            line-height: 1.6;
-            color: var(--dark);
-            background: #f5f6fa;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+            line-height: 1.5;
+            color: var(--text);
+            background: var(--bg);
+            -webkit-font-smoothing: antialiased;
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 48px 24px;
         }
 
         header {
-            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-            color: white;
-            padding: 40px 30px;
-            margin-bottom: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+            text-align: center;
+            padding: 64px 24px;
+            margin-bottom: 48px;
         }
 
         header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            font-weight: 700;
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 16px;
+            letter-spacing: -0.02em;
         }
 
         header .meta {
-            opacity: 0.9;
-            font-size: 0.95em;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
         }
 
         header .meta p {
-            margin: 5px 0;
+            margin: 4px 0;
         }
 
         .summary-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 48px;
         }
 
         .summary-card {
             background: white;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            padding: 32px 24px;
             text-align: center;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .summary-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
 
         .summary-card .value {
-            font-size: 2.5em;
-            font-weight: 700;
+            font-size: 2rem;
+            font-weight: 600;
             color: var(--primary);
-            margin-bottom: 5px;
+            margin-bottom: 4px;
+            letter-spacing: -0.02em;
         }
 
         .summary-card .label {
-            color: var(--gray);
-            font-size: 0.85em;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.05em;
             font-weight: 500;
         }
 
         section {
             background: white;
-            padding: 30px;
+            padding: 32px;
             border-radius: 12px;
-            margin-bottom: 30px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
         }
 
         section h2 {
-            color: var(--dark);
-            margin-bottom: 25px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid var(--light);
-            font-weight: 600;
-            font-size: 1.5em;
+            color: var(--text);
+            margin-bottom: 24px;
+            font-weight: 500;
+            font-size: 1.125rem;
+            letter-spacing: -0.01em;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 15px;
         }
 
         th, td {
-            padding: 14px 18px;
+            padding: 12px 16px;
             text-align: left;
-            border-bottom: 1px solid var(--light);
+            border-bottom: 1px solid var(--border);
         }
 
         th {
-            background: var(--light);
-            font-weight: 600;
+            font-weight: 500;
+            font-size: 0.75rem;
             text-transform: uppercase;
-            font-size: 0.8em;
-            letter-spacing: 0.5px;
-            color: var(--dark);
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
         }
 
-        tr:hover {
-            background: #f8f9fa;
+        td {
+            font-size: 0.875rem;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
         }
 
         .plot-container {
-            margin: 20px 0;
-            min-height: 200px;
+            margin: 16px 0;
         }
 
         .two-col {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 25px;
+            gap: 24px;
         }
 
         .status-completed {
-            color: var(--success);
-            font-weight: 600;
+            color: var(--primary);
+            font-weight: 500;
         }
 
         .status-failed {
             color: var(--danger);
-            font-weight: 600;
+            font-weight: 500;
         }
 
         .status-disabled {
-            color: var(--gray);
+            color: var(--text-secondary);
         }
 
         .badge {
             display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.85em;
+            padding: 4px 10px;
+            border-radius: 100px;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
         .badge-success {
-            background: #d5f4e6;
-            color: #27ae60;
+            background: var(--primary-pale);
+            color: var(--primary);
         }
 
         .badge-warning {
-            background: #fef9e7;
-            color: #f39c12;
+            background: #fef3c7;
+            color: #d97706;
         }
 
         .badge-danger {
-            background: #fadbd8;
-            color: #e74c3c;
+            background: #fce7f3;
+            color: #be185d;
         }
 
         footer {
             text-align: center;
-            padding: 30px;
-            color: var(--gray);
-            font-size: 0.9em;
-        }
-
-        footer p {
-            margin: 5px 0;
+            padding: 48px 24px;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
         }
 
         @media (max-width: 768px) {
             .two-col {
                 grid-template-columns: 1fr;
             }
-
             .summary-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
-
-            header h1 {
-                font-size: 1.8em;
-            }
-
-            section {
-                padding: 20px;
+            .container {
+                padding: 24px 16px;
             }
         }
 
         .empty-state {
             text-align: center;
-            padding: 40px;
-            color: var(--gray);
+            padding: 48px;
+            color: var(--text-secondary);
         }
 
-        .empty-state p {
-            font-size: 1.1em;
+        .view-toggle {
+            display: inline-flex;
+            gap: 4px;
+            padding: 4px;
+            background: var(--primary-subtle);
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+
+        .view-toggle button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.15s;
+        }
+
+        .view-toggle button.active {
+            background: white;
+            color: var(--primary);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .view-toggle button:hover:not(.active) {
+            color: var(--primary);
         }
 
         .descriptor-table {
@@ -232,6 +247,51 @@
         .descriptor-table td:not(:first-child) {
             text-align: right;
             font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+        }
+
+        /* Metrics grid for stage-specific cards */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .metric-card {
+            background: var(--primary-subtle);
+            padding: 20px 16px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid var(--primary-pale);
+        }
+
+        .metric-card .metric-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 4px;
+            letter-spacing: -0.02em;
+        }
+
+        .metric-card .metric-label {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        /* Section headers */
+        section h3 {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--text);
+        }
+
+        section h4 {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
         }
     </style>
 </head>
@@ -266,14 +326,109 @@
             </div>
         </div>
 
-        <!-- Pipeline Funnel -->
+        <!-- Pipeline Flow -->
         <section>
-            <h2>Pipeline Funnel</h2>
-            {% if plots.funnel %}
-            <div class="plot-container">{{ plots.funnel | safe }}</div>
-            {% else %}
-            <div class="empty-state"><p>No funnel data available</p></div>
+            <h2>Pipeline Flow</h2>
+
+            {% if data.available_models %}
+            <div class="view-toggle">
+                <button class="{% if not data.available_models %}active{% endif %}" onclick="selectModel('all', this)">All Models</button>
+                <button onclick="selectModel('__compare__', this)">Compare</button>
+                {% for model in data.available_models %}
+                <button onclick="selectModel('{{ model }}', this)">{{ model }}</button>
+                {% endfor %}
+            </div>
             {% endif %}
+
+            {% if plots.sankey %}
+            <div id="sankey-container" class="plot-container">{{ plots.sankey | safe }}</div>
+            {% else %}
+            <div id="sankey-container" class="plot-container empty-state"><p>No data available</p></div>
+            {% endif %}
+
+            <script>
+                var sankeyDataByModel = {{ plots.sankey_data | safe if plots.sankey_data else '{}' }};
+                var currentModel = 'all';
+
+                function selectModel(model, btn) {
+                    currentModel = model;
+                    // Update active button
+                    var buttons = btn.parentElement.querySelectorAll('button');
+                    buttons.forEach(function(b) { b.className = ''; });
+                    btn.className = 'active';
+                    updateSankeyDiagram();
+                }
+
+                // Set initial active state
+                document.addEventListener('DOMContentLoaded', function() {
+                    var firstBtn = document.querySelector('.view-toggle button');
+                    if (firstBtn) firstBtn.className = 'active';
+                });
+
+                function updateSankeyDiagram() {
+                    var model = currentModel;
+                    var data = sankeyDataByModel[model];
+                    var container = document.getElementById('sankey-container');
+
+                    if (!data || !data.labels || data.labels.length < 2) {
+                        container.textContent = 'No data available';
+                        container.style.textAlign = 'center';
+                        container.style.color = '#6b7280';
+                        container.style.padding = '48px';
+                        return;
+                    }
+
+                    var trace = {
+                        type: 'sankey',
+                        arrangement: 'snap',
+                        node: {
+                            pad: 20,
+                            thickness: 20,
+                            line: { color: 'rgba(0,0,0,0.1)', width: 0.5 },
+                            label: data.labels,
+                            color: data.node_colors,
+                            x: data.x_positions,
+                            y: data.y_positions
+                        },
+                        link: {
+                            source: data.sources,
+                            target: data.targets,
+                            value: data.values,
+                            color: data.link_colors,
+                            customdata: data.link_labels || [],
+                            hovertemplate: data.is_comparison
+                                ? '%{customdata}: %{value} molecules<extra></extra>'
+                                : '%{value} molecules<extra></extra>'
+                        }
+                    };
+
+                    var layout = {
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        height: 420,
+                        margin: { l: 20, r: 20, t: data.is_comparison ? 50 : 30, b: 20 },
+                        paper_bgcolor: 'white',
+                        annotations: []
+                    };
+
+                    // Add legend for comparison mode
+                    if (data.is_comparison && data.models && data.model_colors) {
+                        for (var i = 0; i < data.models.length; i++) {
+                            layout.annotations.push({
+                                x: i * 0.15,
+                                y: 1.08,
+                                xref: 'paper',
+                                yref: 'paper',
+                                text: '<b>●</b> ' + data.models[i],
+                                showarrow: false,
+                                font: { size: 11, color: data.model_colors[i] },
+                                xanchor: 'left'
+                            });
+                        }
+                    }
+
+                    Plotly.react('sankey-container', [trace], layout, {displayModeBar: false});
+                }
+            </script>
         </section>
 
         <!-- Stage Summary -->
@@ -355,15 +510,42 @@
         </section>
         {% endif %}
 
-        <!-- Descriptor Analysis -->
-        {% if data.descriptors.distributions %}
+        <!-- Descriptor Analysis (Stage 01) -->
+        {% if data.descriptors.distributions or data.descriptors_detailed.raw_data %}
         <section>
             <h2>Descriptor Analysis</h2>
-            {% if plots.descriptors %}
-            <div class="plot-container">{{ plots.descriptors | safe }}</div>
+
+            <!-- Summary cards for descriptors -->
+            {% if data.descriptors.summary %}
+            <div class="metrics-grid">
+                {% for desc in ['MolWt', 'LogP', 'TPSA', 'QED'] %}
+                {% if desc in data.descriptors.summary %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.descriptors.summary[desc].mean) }}</div>
+                    <div class="metric-label">Avg {{ desc }}</div>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
             {% endif %}
 
-            {% if data.descriptors.summary %}
+            <!-- Violin plots by model -->
+            {% if plots.descriptors_violin %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Descriptor Distributions by Model</h3>
+            <div class="plot-container">{{ plots.descriptors_violin | safe }}</div>
+            {% endif %}
+
+            <!-- HBD/HBA box plots -->
+            {% if plots.descriptors_hbd_hba %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Hydrogen Bond Donors/Acceptors</h3>
+            <div class="plot-container">{{ plots.descriptors_hbd_hba | safe }}</div>
+            {% endif %}
+
+            <!-- Summary table by model -->
+            {% if plots.descriptors_table %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Mean Values by Model</h3>
+            {{ plots.descriptors_table | safe }}
+            {% elif data.descriptors.summary %}
             <h3 style="margin-top: 30px; margin-bottom: 15px;">Descriptor Statistics</h3>
             <table class="descriptor-table">
                 <thead>
@@ -388,22 +570,80 @@
                 </tbody>
             </table>
             {% endif %}
+
+            <!-- Existing matplotlib plots from pipeline -->
+            {% if data.existing_plots.descriptors_initial_distribution %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Detailed Descriptor Distributions</h3>
+            <div class="plot-container" style="text-align: center;">
+                <img src="{{ data.existing_plots.descriptors_initial_distribution }}"
+                     alt="Descriptor Distributions"
+                     style="max-width: 100%; height: auto; border-radius: 8px;">
+            </div>
+            {% endif %}
         </section>
         {% endif %}
 
-        <!-- Filter Analysis -->
-        {% if data.filters.by_filter or data.filters.totals %}
+        <!-- Structural Filters Analysis (Stage 02) -->
+        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter %}
         <section>
-            <h2>Filter Analysis</h2>
+            <h2>Structural Filters Analysis</h2>
+
+            <!-- Summary cards for filters -->
+            {% if data.filters.totals %}
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.filters.totals|length }}</div>
+                    <div class="metric-label">Filters Applied</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.filters.totals.values()|sum }}</div>
+                    <div class="metric-label">Total Rejected</div>
+                </div>
+                {% if data.filters_detailed.filter_metrics %}
+                {% for filter_name, metrics in data.filters_detailed.filter_metrics.items() %}
+                {% if metrics.avg_demerit_score %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(metrics.avg_demerit_score) }}</div>
+                    <div class="metric-label">Avg Demerit (Lilly)</div>
+                </div>
+                {% endif %}
+                {% if metrics.avg_sas %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(metrics.avg_sas) }}</div>
+                    <div class="metric-label">Avg SAS</div>
+                </div>
+                {% endif %}
+                {% endfor %}
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Stacked bar: molecules rejected per filter by model -->
+            {% if plots.filter_stacked_bar %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Molecules Rejected by Filter</h3>
+            <div class="plot-container">{{ plots.filter_stacked_bar | safe }}</div>
+            {% endif %}
+
             <div class="two-col">
-                <div class="plot-container">
-                    {% if plots.filter_heatmap %}
-                    {{ plots.filter_heatmap | safe }}
+                <!-- Banned ratio heatmap -->
+                <div>
+                    {% if plots.filter_banned_heatmap %}
+                    <h3 style="margin-bottom: 15px;">Rejection Rate by Filter × Model</h3>
+                    <div class="plot-container">{{ plots.filter_banned_heatmap | safe }}</div>
+                    {% elif plots.filter_heatmap %}
+                    <h3 style="margin-bottom: 15px;">Filter Failures by Model</h3>
+                    <div class="plot-container">{{ plots.filter_heatmap | safe }}</div>
                     {% endif %}
                 </div>
-                <div class="plot-container">
-                    {% if plots.filter_failures %}
-                    {{ plots.filter_failures | safe }}
+
+                <!-- Top rejection reasons -->
+                <div>
+                    {% if plots.filter_top_reasons %}
+                    <h3 style="margin-bottom: 15px;">Top Rejection Reasons</h3>
+                    <div class="plot-container">{{ plots.filter_top_reasons | safe }}</div>
+                    {% elif plots.filter_failures %}
+                    <h3 style="margin-bottom: 15px;">Top Filter Failures</h3>
+                    <div class="plot-container">{{ plots.filter_failures | safe }}</div>
                     {% endif %}
                 </div>
             </div>
@@ -427,53 +667,208 @@
                 </tbody>
             </table>
             {% endif %}
-        </section>
-        {% endif %}
 
-        <!-- Synthesis Scores -->
-        {% if data.synthesis.distributions %}
-        <section>
-            <h2>Synthesis Analysis</h2>
-            {% if plots.synthesis_dist %}
-            <div class="plot-container">{{ plots.synthesis_dist | safe }}</div>
-            {% endif %}
-
-            {% if plots.synthesis_scatter %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">SA Score vs SYBA Score</h3>
-            <div class="plot-container">{{ plots.synthesis_scatter | safe }}</div>
-            {% endif %}
-        </section>
-        {% endif %}
-
-        <!-- Docking Results -->
-        {% if data.docking.gnina or data.docking.smina %}
-        <section>
-            <h2>Docking Results</h2>
+            <!-- Existing matplotlib plots from pipeline -->
+            {% if data.existing_plots.filters_pre_counts or data.existing_plots.filters_pre_ratios %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Pre-Descriptors Filter Results</h3>
             <div class="two-col">
-                {% if plots.docking_gnina %}
-                <div>
-                    <h3>GNINA Results</h3>
-                    <div class="plot-container">{{ plots.docking_gnina | safe }}</div>
-                    {% if data.docking.gnina.count %}
-                    <p style="text-align: center; color: var(--gray);">
-                        {{ data.docking.gnina.count }} molecules docked
-                    </p>
-                    {% endif %}
+                {% if data.existing_plots.filters_pre_counts %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_pre_counts }}"
+                         alt="Molecule Counts"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
                 </div>
                 {% endif %}
-
-                {% if plots.docking_smina %}
-                <div>
-                    <h3>SMINA Results</h3>
-                    <div class="plot-container">{{ plots.docking_smina | safe }}</div>
-                    {% if data.docking.smina.count %}
-                    <p style="text-align: center; color: var(--gray);">
-                        {{ data.docking.smina.count }} molecules docked
-                    </p>
-                    {% endif %}
+                {% if data.existing_plots.filters_pre_ratios %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_pre_ratios }}"
+                         alt="Restriction Ratios"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
                 </div>
                 {% endif %}
             </div>
+            {% endif %}
+
+            {% if data.existing_plots.filters_post_counts or data.existing_plots.filters_post_ratios %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Post-Descriptors Filter Results</h3>
+            <div class="two-col">
+                {% if data.existing_plots.filters_post_counts %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_post_counts }}"
+                         alt="Molecule Counts"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
+                </div>
+                {% endif %}
+                {% if data.existing_plots.filters_post_ratios %}
+                <div class="plot-container" style="text-align: center;">
+                    <img src="{{ data.existing_plots.filters_post_ratios }}"
+                         alt="Restriction Ratios"
+                         style="max-width: 100%; height: auto; border-radius: 8px;">
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Synthesis Analysis (Stage 04) -->
+        {% if data.synthesis.distributions or data.synthesis_detailed.sa_scores %}
+        <section>
+            <h2>Synthesis Analysis</h2>
+
+            <!-- Summary cards for synthesis -->
+            <div class="metrics-grid">
+                {% if data.synthesis_detailed.summary.avg_sa_score %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_sa_score) }}</div>
+                    <div class="metric-label">Avg SA Score</div>
+                </div>
+                {% endif %}
+                {% if data.synthesis_detailed.summary.avg_syba_score %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_syba_score) }}</div>
+                    <div class="metric-label">Avg SYBA Score</div>
+                </div>
+                {% endif %}
+                {% if data.synthesis_detailed.summary.pct_solved is defined %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.synthesis_detailed.summary.pct_solved) }}%</div>
+                    <div class="metric-label">Routes Found</div>
+                </div>
+                {% endif %}
+                {% if data.synthesis_detailed.summary.avg_search_time %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.synthesis_detailed.summary.avg_search_time) }}s</div>
+                    <div class="metric-label">Avg Search Time</div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- SA and SYBA histograms -->
+            <div class="two-col" style="margin-top: 30px;">
+                <div>
+                    {% if plots.synthesis_sa_hist %}
+                    <h3 style="margin-bottom: 15px;">SA Score Distribution</h3>
+                    <div class="plot-container">{{ plots.synthesis_sa_hist | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.synthesis_syba_hist %}
+                    <h3 style="margin-bottom: 15px;">SYBA Score Distribution</h3>
+                    <div class="plot-container">{{ plots.synthesis_syba_hist | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Scatter plot and solved pie -->
+            <div class="two-col" style="margin-top: 30px;">
+                <div>
+                    {% if plots.synthesis_scatter %}
+                    <h3 style="margin-bottom: 15px;">SA Score vs SYBA Score</h3>
+                    <div class="plot-container">{{ plots.synthesis_scatter | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.synthesis_solved_pie %}
+                    <h3 style="margin-bottom: 15px;">Synthesis Route Status</h3>
+                    <div class="plot-container">{{ plots.synthesis_solved_pie | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Search time by model -->
+            {% if plots.synthesis_time_box %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Search Time by Model</h3>
+            <div class="plot-container">{{ plots.synthesis_time_box | safe }}</div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Docking Results (Stage 05) -->
+        {% if data.docking.gnina or data.docking.smina or data.docking_detailed.gnina.raw_data or data.docking_detailed.smina.raw_data %}
+        <section>
+            <h2>Docking Results</h2>
+
+            <!-- Summary cards for docking -->
+            <div class="metrics-grid">
+                {% if data.docking_detailed.gnina.summary %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.gnina.summary.avg_affinity) }}</div>
+                    <div class="metric-label">Avg Affinity (GNINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.gnina.summary.best_affinity) }}</div>
+                    <div class="metric-label">Best Affinity (GNINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.docking_detailed.gnina.summary.count }}</div>
+                    <div class="metric-label">Molecules Docked</div>
+                </div>
+                {% elif data.docking_detailed.smina.summary %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.smina.summary.avg_affinity) }}</div>
+                    <div class="metric-label">Avg Affinity (SMINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.smina.summary.best_affinity) }}</div>
+                    <div class="metric-label">Best Affinity (SMINA)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ data.docking_detailed.smina.summary.count }}</div>
+                    <div class="metric-label">Molecules Docked</div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- GNINA Results -->
+            {% if data.docking_detailed.gnina.raw_data or plots.docking_gnina %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">GNINA Results</h3>
+
+            <div class="two-col">
+                <div>
+                    {% if plots.docking_gnina_affinity_hist %}
+                    <div class="plot-container">{{ plots.docking_gnina_affinity_hist | safe }}</div>
+                    {% elif plots.docking_gnina %}
+                    <div class="plot-container">{{ plots.docking_gnina | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.docking_gnina_top_molecules %}
+                    <div class="plot-container">{{ plots.docking_gnina_top_molecules | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if plots.docking_gnina_affinity_box %}
+            <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
+            <div class="plot-container">{{ plots.docking_gnina_affinity_box | safe }}</div>
+            {% endif %}
+            {% endif %}
+
+            <!-- SMINA Results -->
+            {% if data.docking_detailed.smina.raw_data or plots.docking_smina %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">SMINA Results</h3>
+
+            <div class="two-col">
+                <div>
+                    {% if plots.docking_smina_affinity_hist %}
+                    <div class="plot-container">{{ plots.docking_smina_affinity_hist | safe }}</div>
+                    {% elif plots.docking_smina %}
+                    <div class="plot-container">{{ plots.docking_smina | safe }}</div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if plots.docking_smina_top_molecules %}
+                    <div class="plot-container">{{ plots.docking_smina_top_molecules | safe }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if plots.docking_smina_affinity_box %}
+            <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
+            <div class="plot-container">{{ plots.docking_smina_affinity_box | safe }}</div>
+            {% endif %}
+            {% endif %}
         </section>
         {% endif %}
 

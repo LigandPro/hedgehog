@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
 
 export interface FormField {
   key: string;
@@ -17,6 +18,8 @@ interface ConfigFormProps {
 }
 
 export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React.ReactElement {
+  const { width: terminalWidth } = useTerminalSize();
+
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [values, setValues] = useState<Record<string, string | number | boolean>>(() => {
@@ -97,7 +100,7 @@ export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React
         );
       })}
       <Box marginTop={1}>
-        <Text color="gray">{'─'.repeat(60)}</Text>
+        <Text color="gray">{'─'.repeat(terminalWidth - 2)}</Text>
       </Box>
       <Box gap={2}>
         <Text><Text color="cyan">[s]</Text> Save</Text>

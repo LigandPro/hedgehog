@@ -156,7 +156,7 @@ class PipelineStageRunner:
         DIR_STRUCT_FILTERS_PRE,
     ]
 
-    def __init__(self, config: dict, data_checker: DataChecker):
+    def __init__(self, config: dict, data_checker: DataChecker, progress_callback=None):
         self.config = config
         self.progress_callback = progress_callback
         self.data_checker = data_checker

@@ -1,102 +1,21 @@
-run: True
-tools: both # Tools to prepare: 'both' (default), 'smina', 'gnina', or a comma list
-
+run: true
+tools: both
 receptor_pdb: data/test/7EW9_apo.pdb
-
-## Auto-run behaviour during pipeline
-auto_run: True
-run_in_background: False
-
-## -------------------------------- SMINA configuration --------------------------------
+auto_run: true
+run_in_background: false
 smina_config:
-  bin: /mnt/ligandpro/soft/docking/smina/smina  # Binary path (NOT included in config file)
-  
-  # Input files
-  # receptor: auto-set from receptor_pdb
-  # ligand: auto-set from input ligands
-  
-  # Search space (choose one: autobox_ligand OR center_x/center_y/center_z + size_x/size_y/size_z)
-  autobox_ligand: ../../data/test/05C_from_7EW9.sdf  # Ligand to use for autobox
-  autobox_add: 4  # Amount of buffer space to add to auto-generated box (default +4 on all six sides)
-  # center_x: -1.258  # X coordinate of the center (use with center_y, center_z, size_x, size_y, size_z)
-  # center_y: -12.520  # Y coordinate of the center
-  # center_z: 11.390  # Z coordinate of the center
-  # size_x: 20.0  # size in the X dimension (Angstroms)
-  # size_y: 20.0  # size in the Y dimension (Angstroms)
-  # size_z: 20.0  # size in the Z dimension (Angstroms)
-  # no_lig: false  # no ligand; for sampling/minimizing flexible residues
-  
-  # Flexible receptor options
-  # flex: /path/to/flex.pdbqt  # flexible side chains, if any (PDBQT)
-  # flexres: chain:resid  # flexible side chains specified by comma separated list of chain:resid or chain:resid:icode
-  # flexdist_ligand: /path/to/ligand.sdf  # Ligand to use for flexdist
-  # flexdist: 5.0  # set all side chains within specified distance to flexdist_ligand to flexible
-  
-  # Scoring and minimization options
-  # scoring: default  # specify alternative builtin scoring function (default, vinardo, ad4_scoring)
-  # custom_scoring: /path/to/custom.txt  # custom scoring function file
-  # custom_atoms: /path/to/atoms.txt  # custom atom type parameters file
-  # score_only: false  # score provided ligand pose
-  # local_only: false  # local search only using autobox (you probably want to use --minimize)
-  # minimize: false  # energy minimization
-  # randomize_only: false  # generate random poses, attempting to avoid clashes
-  # minimize_iters: 0  # number iterations of steepest descent; default scales with rotors
-  # accurate_line: false  # use accurate line search
-  # minimize_early_term: false  # Stop minimization before convergence conditions are fully met
-  # approximation: exact  # approximation (linear, spline, or exact) to use
-  # factor: 1.0  # approximation factor: higher results in a finer-grained approximation
-  # force_cap: 100.0  # max allowed force; lower values more gently minimize clashing structures
-  # user_grid: /path/to/grid.map  # Autodock map file for user grid data based calculations
-  # user_grid_lambda: -1  # Scales user_grid and functional scoring
-  
-  # Output options
-  # out: output.sdf  # output file name, format taken from file extension (auto-set in code)
-  # out_flex: flex_out.pdbqt  # output file for flexible receptor residues
-  # log: smina_detailed.log  # optionally, write log file
-  # atom_terms: /path/to/atom_terms.txt  # optionally write per-atom interaction term values
-  # atom_term_data: false  # embedded per-atom interaction terms in output sd data
-  # print_terms: false  # Print all available terms with default parameterizations
-  # print_atom_types: false  # Print all available atom types
-  
-  # Misc options
-  cpu: 32  # the number of CPUs to use (the default is to try to detect the number of CPUs or, failing that, use 1)
-  seed: 42  # explicit random seed
-  exhaustiveness: 8  # exhaustiveness of the global search (roughly proportional to time, default: 8)
-  num_modes: 9  # maximum number of binding modes to generate (default: 9)
-  # energy_range: 3  # maximum energy difference between the best binding mode and the worst one displayed (kcal/mol, default: 3)
-  # min_rmsd_filter: 1  # rmsd value used to filter final poses to remove redundancy (default: 1)
-  # quiet: false  # Suppress output messages
-  # addH: true  # automatically add hydrogens in ligands (on by default)
-
-## -------------------------------- GNINA configuration --------------------------------
-gnina_config:
-  bin: /mnt/ligandpro/soft/docking/gnina/gnina  # Binary path (NOT included in config file)
-  env_path: /mnt/ligandpro/soft/docking/gnina/env  # Environment path for activation (NOT included in config file)
-  
-  # Input files
-  # receptor: auto-set from receptor_pdb
-  # ligand: auto-set from input ligands
-  # out: auto-set output SDF file
-  
-  # Search space (choose one: autobox_ligand OR center_x/center_y/center_z + size_x/size_y/size_z)
-  autobox_ligand: data/test/05C_from_7EW9.sdf  # Ligand to use for autobox
-  autobox_add: 4  # Amount of buffer space to add to auto-generated box
-  # center_x: -1.258  # X coordinate of the center (use with center_y, center_z, size_x, size_y, size_z)
-  # center_y: -12.520  # Y coordinate of the center
-  # center_z: 11.390  # Z coordinate of the center
-  # size_x: 10.0  # size in the X dimension (Angstroms)
-  # size_y: 10.0  # size in the Y dimension (Angstroms)
-  # size_z: 10.0  # size in the Z dimension (Angstroms)
-  
-  # GNINA uses same arguments as SMINA (see SMINA section above for full list)
-  # Additional GNINA-specific options:
+  bin: /mnt/ligandpro/soft/docking/smina/smina
+  autobox_ligand: ../../data/test/05C_from_7EW9.sdf
+  autobox_add: 4
   cpu: 32
   seed: 42
-  # exhaustiveness: 8  # exhaustiveness of the global search
-  # num_modes: 9  # maximum number of binding modes to generate
-  # scoring: default  # scoring function
-  # minimize: false  # energy minimization
-  # log: gnina_detailed.log  # log file
-  
-  # Output directory (NOT included in config file, used by pipeline)
+  exhaustiveness: 8
+  num_modes: 9
+gnina_config:
+  bin: /mnt/ligandpro/soft/docking/gnina/gnina
+  env_path: /mnt/ligandpro/soft/docking/gnina/env
+  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_add: 4
+  cpu: 32
+  seed: 42
   output_dir: Docking/gnina_results

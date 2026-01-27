@@ -1,12 +1,52 @@
 // Screen types
-export type Screen = 
+export type Screen =
   | 'welcome'
   | 'configMain'
   | 'configDescriptors'
   | 'configFilters'
   | 'configSynthesis'
   | 'configDocking'
-  | 'pipelineRunner';
+  | 'pipelineRunner'
+  | 'history'
+  | 'results'
+  | 'wizardInputSelection'
+  | 'wizardStageSelection'
+  | 'wizardStageOrder'
+  | 'wizardConfigDescriptors'
+  | 'wizardConfigFilters'
+  | 'wizardConfigSynthesis'
+  | 'wizardConfigDocking'
+  | 'wizardReview';
+
+// Screen shortcut definition
+export interface ScreenShortcut {
+  key: string;
+  label: string;
+  disabled?: boolean;
+}
+
+// Job status type
+export type JobStatus = 'running' | 'completed' | 'cancelled' | 'error';
+
+// Job history record
+export interface JobHistoryRecord {
+  id: string;
+  name: string;
+  startTime: string;
+  endTime?: string;
+  status: JobStatus;
+  config: {
+    inputPath: string;
+    outputPath: string;
+    stages: string[];
+  };
+  results?: {
+    moleculesProcessed: number;
+    moleculesFiltered?: number;
+    dockingHits?: number;
+  };
+  error?: string;
+}
 
 // Config types
 export interface MainConfig {
@@ -73,19 +113,45 @@ export interface SynthesisConfig {
 
 export interface DockingToolConfig {
   bin: string;
+  env_path?: string;
+  // Search space - autobox
   autobox_ligand?: string;
   autobox_add?: number;
+  // Search space - manual
   center_x?: number;
   center_y?: number;
   center_z?: number;
   size_x?: number;
   size_y?: number;
   size_z?: number;
+  // Flexible docking
+  flex?: string;
+  flexres?: string;
+  flexdist_ligand?: string;
+  flexdist?: number;
+  // Scoring
+  scoring?: string;
+  custom_scoring?: string;
+  custom_atoms?: string;
+  // Modes
+  score_only?: boolean;
+  local_only?: boolean;
+  minimize?: boolean;
+  minimize_iters?: number;
+  randomize_only?: boolean;
+  // Output options
+  energy_range?: number;
+  min_rmsd_filter?: number;
+  out_flex?: string;
+  log?: string;
+  quiet?: boolean;
+  addH?: boolean;
+  // Processing
   cpu?: number;
   seed?: number;
   exhaustiveness?: number;
   num_modes?: number;
-  env_path?: string;
+  output_dir?: string;
 }
 
 export interface DockingConfig {
@@ -163,4 +229,82 @@ export interface FileInfo {
   isDirectory: boolean;
   size?: number;
   modified?: Date;
+}
+
+// Toast notification types
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
+
+export interface Toast {
+  id: string;
+  type: ToastType;
+  message: string;
+  duration: number;
+}
+
+// Confirmation dialog types
+export interface ConfirmDialogConfig {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onConfirm: () => void;
+  onCancel?: () => void;
+}
+
+// Help overlay types
+export interface HelpShortcut {
+  key: string;
+  description: string;
+}
+
+export interface ScreenHelp {
+  title: string;
+  shortcuts: HelpShortcut[];
+}
+
+// Pipeline Wizard types
+export type WizardStep =
+  | 'stage-selection'
+  | 'stage-order'
+  | 'config-descriptors'
+  | 'config-filters'
+  | 'config-synthesis'
+  | 'config-docking'
+  | 'review';
+
+export interface WizardStageConfig {
+  enabled: boolean;
+  order: number;
+  quickParams: Record<string, unknown>;
+  preset?: string;
+}
+
+export interface WizardDependencies {
+  runFiltersBeforeDescriptors: boolean;
+}
+
+export interface WizardState {
+  currentStep: WizardStep;
+  selectedStages: string[];
+  stageOrder: string[];
+  stageConfigs: Record<string, WizardStageConfig>;
+  dependencies: WizardDependencies;
+}
+
+// Quick config parameter definitions
+export interface QuickParamDef {
+  key: string;
+  label: string;
+  type: 'boolean' | 'number' | 'range' | 'select';
+  min?: number;
+  max?: number;
+  options?: string[];
+  description?: string;
+}
+
+export interface StageQuickParams {
+  stageName: string;
+  displayName: string;
+  params: QuickParamDef[];
+  presets?: Record<string, Record<string, unknown>>;
 }

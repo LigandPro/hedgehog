@@ -12,12 +12,66 @@ function findProjectRoot(): string {
   return resolve(__dirname, '..', '..', '..');
 }
 
+// Notification throttling to reduce UI flickering
+class NotificationThrottler {
+  private pendingNotifications: Map<string, { method: string; params: Record<string, unknown> }> = new Map();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private handler: NotificationHandler | null = null;
+  private throttleMs: number;
+
+  constructor(throttleMs = 100) {
+    this.throttleMs = throttleMs;
+  }
+
+  setHandler(handler: NotificationHandler | null): void {
+    this.handler = handler;
+  }
+
+  push(method: string, params: Record<string, unknown>): void {
+    // Immediate dispatch for critical notifications
+    if (method === 'complete' || method === 'error' || method === 'stage_start' || method === 'stage_complete' || method === 'stage_error') {
+      this.flush();
+      this.handler?.(method, params);
+      return;
+    }
+
+    // Throttle progress and log notifications - keep only latest per type
+    const key = method === 'progress' ? `progress:${params?.stage}` : method;
+    this.pendingNotifications.set(key, { method, params });
+
+    if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), this.throttleMs);
+    }
+  }
+
+  private flush(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+
+    for (const { method, params } of this.pendingNotifications.values()) {
+      this.handler?.(method, params);
+    }
+    this.pendingNotifications.clear();
+  }
+
+  clear(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.pendingNotifications.clear();
+  }
+}
+
 export class PythonBridge {
   private process: ChildProcess | null = null;
   private rpcClient: RpcClient | null = null;
   private isReady = false;
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
+  private throttler = new NotificationThrottler(300);
 
   constructor(
     private command: string = 'uv',
@@ -94,6 +148,8 @@ export class PythonBridge {
   }
 
   private cleanup(): void {
+    this.throttler.clear();
+    this.throttler.setHandler(null);
     this.process = null;
     this.rpcClient = null;
     this.isReady = false;
@@ -102,6 +158,7 @@ export class PythonBridge {
   stop(): void {
     if (this.process) {
       this.rpcClient?.cancelPending();
+      this.throttler.clear();
       this.process.kill();
       this.cleanup();
     }
@@ -111,7 +168,12 @@ export class PythonBridge {
     if (!this.rpcClient) {
       return () => {};
     }
-    return this.rpcClient.onNotification(handler);
+    // Set up throttled handler
+    this.throttler.setHandler(handler);
+    // Subscribe to raw notifications and push through throttler
+    return this.rpcClient.onNotification((method, params) => {
+      this.throttler.push(method, params);
+    });
   }
 
   async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
@@ -148,6 +210,45 @@ export class PythonBridge {
 
   async cancelPipeline(jobId: string): Promise<boolean> {
     return this.call<boolean>('cancel_pipeline', { job_id: jobId });
+  }
+
+  // History convenience methods
+  async getJobHistory(limit = 50): Promise<Record<string, unknown>[]> {
+    return this.call<Record<string, unknown>[]>('get_job_history', { limit });
+  }
+
+  async addJob(
+    jobId: string,
+    name: string | null,
+    inputPath: string,
+    outputPath: string,
+    stages: string[]
+  ): Promise<Record<string, unknown>> {
+    return this.call<Record<string, unknown>>('add_job', {
+      job_id: jobId,
+      name,
+      input_path: inputPath,
+      output_path: outputPath,
+      stages,
+    });
+  }
+
+  async updateJob(
+    jobId: string,
+    status?: string,
+    results?: Record<string, unknown>,
+    error?: string
+  ): Promise<Record<string, unknown> | null> {
+    return this.call<Record<string, unknown> | null>('update_job', {
+      job_id: jobId,
+      status,
+      results,
+      error,
+    });
+  }
+
+  async deleteJob(jobId: string): Promise<boolean> {
+    return this.call<boolean>('delete_job', { job_id: jobId });
   }
 }
 
