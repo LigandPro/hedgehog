@@ -6,6 +6,7 @@ import pandas as pd
 import yaml
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.reporting import ReportGenerator
 from hedgehog.stages.descriptors.main import main as descriptors_main
 from hedgehog.stages.docking.utils import run_docking as docking_main
 from hedgehog.stages.structFilters.main import main as structural_filters_main
@@ -626,8 +627,24 @@ class MolecularAnalysisPipeline:
         _generate_structure_readme(
             self.data_checker.base_path, self.stages, initial_count, final_count
         )
+        self._generate_html_report(initial_count, final_count)
 
         return success_count == total_enabled
+
+    def _generate_html_report(self, initial_count: int, final_count: int) -> None:
+        """Generate HTML report for the pipeline run."""
+        try:
+            report_generator = ReportGenerator(
+                base_path=self.data_checker.base_path,
+                stages=self.stages,
+                config=self.config,
+                initial_count=initial_count,
+                final_count=final_count,
+            )
+            report_path = report_generator.generate()
+            logger.info("HTML report generated: %s", report_path)
+        except Exception as e:
+            logger.warning("Failed to generate HTML report: %s", e)
 
     def _log_molecule_summary(self, initial_count: int, final_count: int) -> None:
         """Log molecule count summary."""
