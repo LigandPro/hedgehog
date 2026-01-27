@@ -1,11 +1,17 @@
 {
   "name": "hedgehog-tui",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "TUI for Hedgehog molecular design pipeline",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "hedgehog-tui": "./bin/hedgehog-tui.js"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "assets": [],
+    "targets": ["node20-linux-x64", "node20-macos-x64", "node20-win-x64"],
+    "outputPath": "."
   },
   "scripts": {
     "build": "tsc",
