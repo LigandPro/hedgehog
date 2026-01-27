@@ -83,6 +83,18 @@ def main(config: dict) -> None:
         logger.info("Saved 0 molecules to %s", filtered_output)
         return
 
+    # Check if retrosynthesis is enabled
+    run_retrosynthesis = config_synthesis.get("run_retrosynthesis", True)
+    if not run_retrosynthesis:
+        logger.info("Retrosynthesis disabled (run_retrosynthesis=false)")
+        _save_ordered_csv(score_filtered_df, filtered_output)
+        logger.info(
+            "Saved %d molecules (scores only) to %s",
+            len(score_filtered_df),
+            filtered_output,
+        )
+        return
+
     aizynth_config = _get_aizynthfinder_config()
     if not aizynth_config.exists():
         _log_aizynthfinder_setup_instructions(aizynth_config)
