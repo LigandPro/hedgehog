@@ -7,12 +7,6 @@
   "bin": {
     "hedgehog-tui": "./bin/hedgehog-tui.js"
   },
-  "pkg": {
-    "scripts": "dist/**/*.js",
-    "assets": [],
-    "targets": ["node20-linux-x64", "node20-macos-x64", "node20-win-x64"],
-    "outputPath": "."
-  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
