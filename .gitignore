@@ -64,6 +64,7 @@ env.bak/
 venv.bak/
 *.conda
 *.lock
+.python-version
 
 # UV package manager
 .uv/
