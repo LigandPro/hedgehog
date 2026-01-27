@@ -852,8 +852,9 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 +-- stages/                             Pipeline stages (numbered by execution order)
 {stages_content}+-- output/                             Final results
 |   +-- final_molecules.csv            Final filtered molecules
-|   +-- report.html                    Interactive HTML report
-|   +-- report_data.json               Report data
+|
++-- report.html                         Interactive HTML report
++-- report_data.json                    Report data
 |
 +-- configs/                            Configuration snapshots
 |   +-- master_config_resolved.yml

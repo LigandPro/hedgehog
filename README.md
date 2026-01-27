@@ -59,7 +59,7 @@ See [tui/README.md](tui/README.md) for details.
 
 **HTML Reports**
 
-After each pipeline run, an interactive HTML report is automatically generated in `output/report.html`. The report includes:
+After each pipeline run, an interactive HTML report is automatically generated as `report.html` in the results folder. The report includes:
 - Pipeline summary and molecule retention funnel
 - Per-stage statistics and visualizations
 - Descriptor distributions
