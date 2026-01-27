@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from ..validators import ConfigValidator
+
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
 
@@ -66,39 +68,5 @@ class ConfigHandler:
         return True
 
     def validate_config(self, config_type: str, data: dict[str, Any]) -> dict[str, Any]:
-        """Validate config data."""
-        errors = []
-
-        if config_type == "main":
-            if not data.get("generated_mols_path"):
-                errors.append("generated_mols_path is required")
-            if not data.get("folder_to_save"):
-                errors.append("folder_to_save is required")
-            if data.get("n_jobs", 0) < 1:
-                errors.append("n_jobs must be at least 1")
-            if data.get("sample_size", 0) < 1:
-                errors.append("sample_size must be at least 1")
-
-        elif config_type == "descriptors":
-            borders = data.get("borders", {})
-            for key in ["molWt_min", "molWt_max", "logP_min", "logP_max"]:
-                if key in borders and not isinstance(borders[key], (int, float)):
-                    errors.append(f"{key} must be a number")
-
-        elif config_type == "synthesis":
-            if data.get("sa_score_min", 0) < 0:
-                errors.append("sa_score_min must be non-negative")
-            if data.get("ra_score_min", 0) < 0 or data.get("ra_score_min", 0) > 1:
-                errors.append("ra_score_min must be between 0 and 1")
-
-        elif config_type == "docking":
-            if not data.get("receptor_pdb"):
-                errors.append("receptor_pdb is required")
-            tools = data.get("tools", "")
-            if tools not in ["both", "smina", "gnina"]:
-                errors.append("tools must be one of: both, smina, gnina")
-
-        return {
-            "valid": len(errors) == 0,
-            "errors": errors,
-        }
+        """Validate config data using centralized ConfigValidator."""
+        return ConfigValidator.validate(config_type, data)

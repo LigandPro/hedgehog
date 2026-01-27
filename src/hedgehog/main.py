@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from hedgehog.configs.logger import load_config, logger
+from hedgehog.configs.logger import LoggerSingleton, load_config, logger
 from hedgehog.pipeline import calculate_metrics
 from hedgehog.utils.data_prep import prepare_input_data
 from hedgehog.utils.mol_index import assign_mol_idx
@@ -457,6 +457,7 @@ def run(
         config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
     )
     config_dict["folder_to_save"] = str(folder_to_save)
+    LoggerSingleton().configure_log_directory(folder_to_save)
 
     _preprocess_input(config_dict, folder_to_save)
 

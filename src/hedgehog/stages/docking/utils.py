@@ -9,6 +9,7 @@ import datamol as dm
 import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.utils.input_paths import find_latest_input_source
 
 
 def _find_latest_input_source(base_folder):
@@ -16,39 +17,20 @@ def _find_latest_input_source(base_folder):
 
     Supports both new hierarchical structure and legacy flat structure.
     """
-    candidates = [
-        base_folder / "stages" / "04_synthesis" / "filtered_molecules.csv",
-        base_folder
-        / "stages"
-        / "03_structural_filters_post"
-        / "filtered_molecules.csv",
-        base_folder
-        / "stages"
-        / "01_descriptors_initial"
-        / "filtered"
-        / "filtered_molecules.csv",
-        base_folder / "input" / "sampled_molecules.csv",
-        base_folder / "Synthesis" / "passSynthesisSMILES.csv",
-        base_folder / "StructFilters" / "passStructFiltersSMILES.csv",
-        base_folder / "Descriptors" / "passDescriptorsSMILES.csv",
-        base_folder / "sampled_molecules.csv",
-    ]
-    for path in candidates:
-        if path.exists():
-            logger.debug("Using docking input: %s", path)
-            return path
-    return None
+    path = find_latest_input_source(base_folder)
+    if path:
+        logger.debug("Using docking input: %s", path)
+    return path
 
 
 def _prepare_ligands_dataframe(df, output_csv):
     """Prepare ligands CSV from input DataFrame with SMILES validation."""
     output_csv.parent.mkdir(parents=True, exist_ok=True)
 
-    names = df["mol_idx"].astype(str)
     rows = []
     skipped_smiles = []
 
-    for idx, row in df.iterrows():
+    for _, row in df.iterrows():
         smi = str(row["smiles"])
         try:
             mol = dm.to_mol(smi)
@@ -65,7 +47,7 @@ def _prepare_ligands_dataframe(df, output_csv):
         rows.append(
             {
                 "smiles": smi,
-                "name": str(names.iloc[idx]),
+                "name": mol_idx,
                 "model_name": model_name,
                 "mol_idx": mol_idx,
             }

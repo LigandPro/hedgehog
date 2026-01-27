@@ -3,7 +3,19 @@ from pathlib import Path
 import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.stages.structFilters.utils import *
+from hedgehog.stages.structFilters.utils import (
+    filter_data,
+    filter_function_applier,
+    get_basic_stats,
+    inject_identity_columns_to_all_csvs,
+    plot_calculated_stats,
+    plot_filter_failures_analysis,
+    plot_restriction_ratios,
+    process_one_dataframe,
+    process_one_file,
+    process_path,
+)
+from hedgehog.utils.input_paths import find_sampled_molecules
 
 IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
 
@@ -33,12 +45,8 @@ def _find_existing_file(paths):
 
 def _get_sampled_molecules_path(folder_to_save):
     """Get path to sampled molecules file, checking both new and legacy locations."""
-    base = Path(folder_to_save)
-    candidates = [
-        str(base / "input" / "sampled_molecules.csv"),
-        str(base / "sampled_molecules.csv"),
-    ]
-    return _find_existing_file(candidates)
+    path = find_sampled_molecules(Path(folder_to_save))
+    return str(path) if path else None
 
 
 def _get_input_path(config, stage_dir, folder_to_save):
@@ -200,7 +208,7 @@ def main(config, stage_dir):
     input_path = _get_input_path(config, stage_dir, folder_to_save)
 
     try:
-        _, model_name = _load_input_data(input_path)
+        input_df, model_name = _load_input_data(input_path)
     except Exception as e:
         logger.error("Could not load input data from %s: %s", input_path, e)
         raise
@@ -208,9 +216,19 @@ def main(config, stage_dir):
     config_structFilters = load_config(config["config_structFilters"])
     filters_to_calculate = _get_enabled_filters(config_structFilters)
 
+    # Determine if input is CSV (use DataFrame directly to avoid re-reading)
+    is_csv = input_path.lower().endswith(".csv")
+
     for filter_name in filters_to_calculate:
         apply_func = filter_function_applier(filter_name)
-        filter_results = process_one_file(config, input_path, apply_func, sample_size)
+        if is_csv:
+            filter_results = process_one_dataframe(
+                config, input_df, apply_func, sample_size
+            )
+        else:
+            filter_results = process_one_file(
+                config, input_path, apply_func, sample_size
+            )
 
         if filter_results is None:
             logger.warning("No molecules to process for filter: %s", filter_name)

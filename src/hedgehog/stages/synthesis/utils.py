@@ -10,6 +10,7 @@ from rdkit import Chem
 
 from hedgehog.configs.logger import logger
 from hedgehog.stages.structFilters.utils import process_path
+from hedgehog.utils.input_paths import get_all_input_candidates
 
 # Lazy-loaded module cache
 _lazy_cache: dict[str, Any] = {
@@ -153,18 +154,7 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
 
 def _get_input_path_candidates(base_folder: str) -> list:
     """Get ordered list of candidate input paths to check."""
-    base = Path(base_folder)
-    new_structure = [
-        ("stages", "03_structural_filters_post", "filtered_molecules.csv"),
-        ("stages", "01_descriptors_initial", "filtered", "filtered_molecules.csv"),
-        ("input", "sampled_molecules.csv"),
-    ]
-    legacy_structure = [
-        ("StructFilters", "passStructFiltersSMILES.csv"),
-        ("Descriptors", "passDescriptorsSMILES.csv"),
-        ("sampledMols.csv",),
-    ]
-    return [str(base.joinpath(*parts)) for parts in new_structure + legacy_structure]
+    return [str(p) for p in get_all_input_candidates(Path(base_folder))]
 
 
 def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
