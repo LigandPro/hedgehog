@@ -18,6 +18,8 @@ class LoggerSingleton:
     _instance: LoggerSingleton | None = None
     _logger: logging.Logger | None = None
     _console: Console | None = None
+    _log_directory: Path | None = None
+    _file_handler_added: bool = False
 
     def __new__(cls):
         """Create or reuse singleton instance."""
@@ -32,13 +34,50 @@ class LoggerSingleton:
             self._logger = self._setup_logger(name)
         return self._logger
 
-    def _setup_logger(self, name="run"):
-        """Configure console and file handlers for Rich logging output."""
-        config = load_config(CONFIG_PATH)
-        folder_to_save = Path(config["folder_to_save"])
-        logs_dir = folder_to_save
-        logs_dir.mkdir(parents=True, exist_ok=True)
+    def configure_log_directory(self, folder_to_save: Path) -> None:
+        """Configure the log directory and add file handler.
 
+        This method should be called after CLI overrides are applied to ensure
+        logs are written to the correct directory.
+
+        Args:
+            folder_to_save: Directory where log files should be written.
+        """
+        if self._file_handler_added:
+            return
+
+        self._log_directory = Path(folder_to_save)
+        self._log_directory.mkdir(parents=True, exist_ok=True)
+
+        if self._logger is None:
+            return
+
+        current_time = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+        log_file = self._log_directory / f"run_{current_time}.log"
+        file_console = Console(
+            file=log_file.open("w", encoding="utf-8"),
+            no_color=True,
+            width=120,
+        )
+        file_handler = RichHandler(
+            rich_tracebacks=True,
+            tracebacks_show_locals=True,
+            markup=True,
+            show_time=True,
+            show_level=True,
+            show_path=False,
+            console=file_console,
+        )
+        file_handler.setLevel(logging.INFO)
+        self._logger.addHandler(file_handler)
+        self._file_handler_added = True
+
+    def _setup_logger(self, name="run"):
+        """Configure console handler for Rich logging output.
+
+        File handler is added later via configure_log_directory() to ensure
+        CLI-overridden folder_to_save is respected.
+        """
         logger = logging.getLogger(name)
         logger.setLevel(logging.INFO)
         logger.handlers = []
@@ -55,26 +94,6 @@ class LoggerSingleton:
         )
         console_handler.setLevel(logging.INFO)
         logger.addHandler(console_handler)
-
-        # Rich file handler - plain text (no colors/markup) using native rich solution
-        current_time = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
-        log_file = logs_dir / f"{name}_{current_time}.log"
-        file_console = Console(
-            file=log_file.open("w", encoding="utf-8"),
-            no_color=True,
-            width=120,
-        )
-        file_handler = RichHandler(
-            rich_tracebacks=True,
-            tracebacks_show_locals=True,
-            markup=True,
-            show_time=True,
-            show_level=True,
-            show_path=False,
-            console=file_console,
-        )
-        file_handler.setLevel(logging.INFO)
-        logger.addHandler(file_handler)
 
         return logger
 

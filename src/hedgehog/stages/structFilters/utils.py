@@ -211,28 +211,80 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
     return res_df, filter_extended
 
 
+def process_one_dataframe(config, df, apply_filter, subsample):
+    """Process a DataFrame directly without re-reading from file.
+
+    Args:
+        config: Configuration dictionary
+        df: DataFrame with 'smiles', 'model_name', and 'mol_idx' columns
+        apply_filter: Filter function to apply
+        subsample: Maximum number of molecules to process
+
+    Returns:
+        DataFrame with filter results or None if no molecules to process
+    """
+    if df is None or len(df) == 0:
+        return None
+
+    data = df.head(subsample) if len(df) > subsample else df
+    smiles_col = "smiles"
+
+    is_multi = data["model_name"].nunique(dropna=True) > 1
+    if is_multi:
+        smiles_str = data[smiles_col].tolist()
+        model_names = data["model_name"].tolist()
+        mols = [dm.to_mol(x, sanitize=True) for x in smiles_str]
+        mol_indices = data["mol_idx"].tolist()
+        smiles = list(zip(smiles_str, model_names, mols, mol_indices, strict=False))
+    else:
+        smiles_list = data[smiles_col].tolist()
+        mols = [dm.to_mol(x, sanitize=True) for x in smiles_list]
+        mol_indices = data["mol_idx"].tolist()
+        smiles = list(
+            zip(smiles_list, [None] * len(smiles_list), mols, mol_indices, strict=False)
+        )
+
+    # Filter out invalid molecules
+    cleaned = []
+    for item in smiles:
+        if len(item) >= 3:
+            smi, model, mol = item[0], item[1], item[2]
+            if mol is not None:
+                if len(item) >= 4:
+                    mol_idx = item[3]
+                    cleaned.append((smi, model, mol, mol_idx))
+                else:
+                    cleaned.append((smi, model, mol))
+    smiles = cleaned
+    mols = [it[2] for it in smiles]
+
+    if len(mols) == 0:
+        return None
+
+    return apply_filter(config, mols, smiles)
+
+
 def process_one_file(config, input_path, apply_filter, subsample):
+    """Process molecules from file through a filter function.
+
+    For CSV files, consider using process_one_dataframe() directly if you
+    already have the DataFrame loaded to avoid reading the file twice.
+
+    Args:
+        config: Configuration dictionary
+        input_path: Path to input file (csv, smi, sdf, or txt)
+        apply_filter: Filter function to apply
+        subsample: Maximum number of molecules to process
+
+    Returns:
+        DataFrame with filter results or None if no molecules to process
+    """
     input_type = input_path[input_path.rfind(".") + 1 :]
     assert input_type in {"csv", "smi", "sdf", "txt"}
 
     if input_type == "csv":
         data = pd.read_csv(input_path)
-        smiles_col = "smiles"
-
-        is_multi = data["model_name"].nunique(dropna=True) > 1
-        if is_multi:
-            smiles_str = data[smiles_col].tolist()
-            model_names = data["model_name"].tolist()
-            mols = [dm.to_mol(x, sanitize=True) for x in smiles_str]
-            mol_indices = data["mol_idx"].tolist()
-            smiles = list(zip(smiles_str, model_names, mols, mol_indices, strict=False))
-        else:
-            smiles = data[smiles_col].tolist()
-            mols = [dm.to_mol(x, sanitize=True) for x in smiles]
-            mol_indices = data["mol_idx"].tolist()
-            smiles = list(
-                zip(smiles, [None] * len(smiles), mols, mol_indices, strict=False)
-            )
+        return process_one_dataframe(config, data, apply_filter, subsample)
 
     elif input_type == "smi" or input_type == "txt":
         with open(input_path) as file:

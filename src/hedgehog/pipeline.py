@@ -10,6 +10,7 @@ from hedgehog.stages.descriptors.main import main as descriptors_main
 from hedgehog.stages.docking.utils import run_docking as docking_main
 from hedgehog.stages.structFilters.main import main as structural_filters_main
 from hedgehog.stages.synthesis.main import main as synthesis_main
+from hedgehog.utils.input_paths import find_latest_input_source as _find_input
 
 # Directory names
 DIR_INPUT = "input"
@@ -149,6 +150,7 @@ class DataChecker:
 class PipelineStageRunner:
     """Executes individual pipeline stages and manages stage data flow."""
 
+    # Local priority list for stage-based data checking (uses directory names)
     DATA_SOURCE_PRIORITY = [
         DIR_SYNTHESIS,
         DIR_STRUCT_FILTERS_POST,
@@ -162,7 +164,25 @@ class PipelineStageRunner:
         self.data_checker = data_checker
 
     def find_latest_data_source(self) -> str | None:
-        """Find the most recent stage with available output data."""
+        """Find the most recent stage with available output data.
+
+        Uses centralized input path discovery from utils.input_paths module.
+        """
+        # Use centralized function for file discovery
+        base_path = self.data_checker.base_path
+        input_path = _find_input(base_path)
+        if input_path:
+            # Convert path back to stage directory name
+            rel_path = input_path.relative_to(base_path)
+            for source in self.DATA_SOURCE_PRIORITY:
+                if source in str(rel_path):
+                    logger.debug("Found data from stage: %s", source)
+                    return source
+            # Fallback: return None if path doesn't match known stages
+            logger.debug("Found data at %s but doesn't match known stages", input_path)
+            return None
+
+        # Fallback to original logic if centralized function returns None
         for source in self.DATA_SOURCE_PRIORITY:
             if self.data_checker.check_stage_data(source):
                 logger.debug("Found data from stage: %s", source)

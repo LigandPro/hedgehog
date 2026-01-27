@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 
@@ -11,6 +12,25 @@ from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.structFilters.utils import process_path
+
+# Canonical mapping for descriptor keys (lowercase -> canonical case)
+# Used to prevent confusion between similar names like logP and clogP
+_DESCRIPTOR_KEY_MAP = {
+    "logp": "logP",
+    "clogp": "clogP",
+    "molwt": "molWt",
+    "tpsa": "tpsa",
+    "hbd": "hbd",
+    "hba": "hba",
+    "qed": "qed",
+    "fsp3": "fsp3",
+    "sw": "sw",
+    "n_atoms": "n_atoms",
+    "n_heavy_atoms": "n_heavy_atoms",
+    "n_rot_bonds": "n_rot_bonds",
+    "n_rigid_bonds": "n_rigid_bonds",
+    "n_rings": "n_rings",
+}
 
 # Disable RDKit warnings
 RDLogger.DisableLog("rdApp.*")
@@ -61,15 +81,43 @@ def drop_false_rows(df, borders):
     return df_masked
 
 
+def _parse_literal_list(value, label):
+    """Parse list-like values from strings safely using ast.literal_eval.
+
+    This function deserializes lists that were saved as strings in CSV files
+    (e.g., ['C', 'N', 'O'] for atom symbols or [5, 6] for ring sizes).
+
+    Security: ast.literal_eval is safe for untrusted input. Unlike Python's
+    built-in eval function, literal_eval only parses literal data structures
+    (strings, numbers, tuples, lists, dicts, sets, booleans, None) and
+    rejects any other Python code, preventing code injection attacks.
+
+    Args:
+        value: Value to parse (string representation of a list or list itself)
+        label: Label for error messages (e.g., "chars", "ring sizes")
+
+    Returns:
+        Parsed list, or empty list if parsing fails
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = ast.literal_eval(value)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception as e:
+            logger.error("Error parsing %s: %s, %s", label, value, e)
+            return []
+    logger.error("Error parsing %s: %s, unsupported type", label, value)
+    return []
+
+
 def _parse_chars_in_mol_column(series):
     """Parse character lists from series for plotting."""
     parsed = []
     for val in series.dropna():
-        try:
-            chars = val if isinstance(val, list) else eval(val)  # noqa: S307
-            parsed.extend(chars)
-        except Exception as e:
-            logger.error("Error parsing chars: %s, %s", val, e)
+        parsed.extend(_parse_literal_list(val, "chars"))
     return parsed
 
 
@@ -77,8 +125,8 @@ def _parse_ring_size_column(series):
     """Parse ring size lists from series for plotting."""
     parsed = []
     for val in series.dropna():
+        sizes = _parse_literal_list(val, "ring sizes")
         try:
-            sizes = val if isinstance(val, list) else eval(val)  # noqa: S307
             parsed.extend([float(size) for size in sizes])
         except Exception as e:
             logger.error("Error parsing ring sizes: %s, %s", val, e)
@@ -99,7 +147,11 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     mol = Chem.AddHs(mol_n)
 
     symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
-    charged_mol = not any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
+    has_formal_charge = any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
+    is_neutral = not has_formal_charge
+    # DEPRECATED: charged_mol has inverted semantics (True = neutral molecule).
+    # Kept for backwards compatibility. Use is_neutral or has_formal_charge instead.
+    charged_mol = is_neutral
 
     ring_info = mol.GetRingInfo()
     rings = [len(x) for x in ring_info.AtomRings()]
@@ -125,7 +177,9 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         ),
         "n_N_atoms": n_N_atoms,
         "fN_atoms": n_N_atoms / n_heavy_atoms if n_heavy_atoms > 0 else 0,
-        "charged_mol": charged_mol,
+        "is_neutral": is_neutral,
+        "has_formal_charge": has_formal_charge,
+        "charged_mol": charged_mol,  # DEPRECATED: use is_neutral instead
         "molWt": molWt,
         "logP": Descriptors.MolLogP(mol_n),
         "clogP": clogp,
@@ -167,7 +221,7 @@ def compute_metrics(df, save_path, config=None):
         )
         return pd.DataFrame()
 
-    metrics = {}
+    metrics = []
     skipped_molecules = []
 
     for _, row in df.iterrows():
@@ -177,9 +231,11 @@ def compute_metrics(df, save_path, config=None):
 
         mol_n = Chem.MolFromSmiles(smiles)
         if mol_n:
-            metrics[smiles] = _compute_single_molecule_descriptors(
+            row_metrics = _compute_single_molecule_descriptors(
                 mol_n, model_name, mol_idx
             )
+            row_metrics["smiles"] = smiles
+            metrics.append(row_metrics)
         else:
             skipped_molecules.append((smiles, model_name, mol_idx))
 
@@ -198,11 +254,7 @@ def compute_metrics(df, save_path, config=None):
             skipped_df["mol_idx"] = [idx for _, _, idx in skipped_molecules]
         skipped_df.to_csv(save_path / "skipped_molecules.csv", index=False)
 
-    metrics_df = (
-        pd.DataFrame.from_dict(metrics, orient="index")
-        .reset_index()
-        .rename(columns={"index": "smiles"})
-    )
+    metrics_df = pd.DataFrame(metrics)
     metrics_df = order_identity_columns(metrics_df)
     metrics_df.to_csv(save_path / "descriptors_all.csv", index=False)
     return metrics_df
@@ -211,6 +263,9 @@ def compute_metrics(df, save_path, config=None):
 def _get_border_values(col, borders):
     """Get min and max border values for a column from borders config.
 
+    Uses explicit key mapping to prevent case-insensitive confusion between
+    similar descriptor names (e.g., logP vs clogP).
+
     Args:
         col: Column name
         borders: Dictionary with border configurations
@@ -218,9 +273,32 @@ def _get_border_values(col, borders):
     Returns:
         tuple: (min_border, max_border)
     """
-    relevant_keys = [k for k in borders.keys() if col.lower() in k.lower()]
-    min_border = next((borders[k] for k in relevant_keys if "min" in k), None)
-    max_border = next((borders[k] for k in relevant_keys if "max" in k), None)
+    # Try exact match first (preserves case distinction)
+    min_key = f"{col}_min"
+    max_key = f"{col}_max"
+    if min_key in borders or max_key in borders:
+        return borders.get(min_key), borders.get(max_key)
+
+    # Try canonical mapping for case-insensitive lookup
+    col_lower = col.lower()
+    canonical = _DESCRIPTOR_KEY_MAP.get(col_lower, col)
+    min_key = f"{canonical}_min"
+    max_key = f"{canonical}_max"
+    if min_key in borders or max_key in borders:
+        return borders.get(min_key), borders.get(max_key)
+
+    # Fallback: search all keys (legacy behavior)
+    min_border = None
+    max_border = None
+    for key, value in borders.items():
+        if key.endswith("_min"):
+            base = key[: -len("_min")]
+            if base.lower() == col_lower:
+                min_border = value
+        elif key.endswith("_max"):
+            base = key[: -len("_max")]
+            if base.lower() == col_lower:
+                max_border = value
     return min_border, max_border
 
 
@@ -242,7 +320,7 @@ def _apply_column_filter(df, col, borders):
         return df[col].apply(
             lambda x: all(
                 str(char).strip() in allowed_chars
-                for char in (x if isinstance(x, list) else eval(x))  # noqa: S307
+                for char in _parse_literal_list(x, "chars")
             )
         )
 
@@ -250,9 +328,17 @@ def _apply_column_filter(df, col, borders):
         return df[col].apply(
             lambda x: all(
                 min_border <= float(ring_size) <= max_border
-                for ring_size in (x if isinstance(x, list) else eval(x))  # noqa: S307
+                for ring_size in _parse_literal_list(x, "ring sizes")
             )
         )
+
+    if col in ("charged_mol", "is_neutral"):
+        # Both charged_mol and is_neutral have the same semantics:
+        # True = neutral molecule, False = charged molecule
+        charged_allowed = borders.get("charged_mol_allowed", True)
+        if charged_allowed:
+            return pd.Series(True, index=df.index)
+        return df[col] == True  # noqa: E712
 
     if col == "syba_score" and max_border == "inf":
         return df[col] >= min_border

@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..validators import ConfigValidator
+
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
 
@@ -152,34 +154,5 @@ class ValidationHandler:
     def validate_config(
         self, config_type: str, config: dict[str, Any]
     ) -> dict[str, Any]:
-        """Validate a configuration dictionary."""
-        result = {
-            "valid": True,
-            "errors": [],
-            "warnings": [],
-        }
-
-        if config_type == "main":
-            # Validate main config
-            required_fields = ["generated_mols_path", "folder_to_save"]
-            for field in required_fields:
-                if field not in config or not config[field]:
-                    result["errors"].append(f"Missing required field: {field}")
-
-            if "n_jobs" in config:
-                if not isinstance(config["n_jobs"], int) or config["n_jobs"] < 1:
-                    result["errors"].append("n_jobs must be a positive integer")
-
-            if "sample_size" in config:
-                if not isinstance(config["sample_size"], (int, type(None))):
-                    result["errors"].append("sample_size must be an integer or null")
-
-        elif config_type == "docking":
-            if config.get("run", False):
-                if not config.get("receptor_pdb"):
-                    result["errors"].append(
-                        "Receptor PDB is required when docking is enabled"
-                    )
-
-        result["valid"] = len(result["errors"]) == 0
-        return result
+        """Validate a configuration dictionary using centralized ConfigValidator."""
+        return ConfigValidator.validate(config_type, config)
