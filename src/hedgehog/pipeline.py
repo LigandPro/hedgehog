@@ -739,7 +739,7 @@ _README_STAGE_SECTIONS = {
 """,
     STAGE_STRUCT_FILTERS: """\
 |   +-- 03_structural_filters_post/     Post-descriptors structural filters
-|   |   +-- {filter_name}/             Per-filter results (pains, brenk, nih, etc.)
+|   |   +-- {filter_name}/             Per-filter results (bredt, common_alerts, lilly, etc.)
 |   |   |   +-- metrics.csv
 |   |   |   +-- extended.csv
 |   |   |   +-- filtered_molecules.csv
@@ -751,7 +751,7 @@ _README_STAGE_SECTIONS = {
 """,
     STAGE_SYNTHESIS: """\
 |   +-- 04_synthesis/                   Retrosynthesis analysis
-|   |   +-- synthesis_scores.csv       RAScore, SAScore, SCScore, SYBA
+|   |   +-- synthesis_scores.csv       SA Score, RA Score, SYBA
 |   |   +-- synthesis_extended.csv     With retrosynthesis results
 |   |   +-- filtered_molecules.csv     Synthesizable molecules
 |   |   +-- input_smiles.smi           Input for AiZynthFinder
@@ -835,10 +835,15 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 +-- stages/                             Pipeline stages (numbered by execution order)
 {stages_content}+-- output/                             Final results
 |   +-- final_molecules.csv            Final filtered molecules
+|   +-- report.html                    Interactive HTML report
+|   +-- report_data.json               Report data
 |
 +-- configs/                            Configuration snapshots
 |   +-- master_config_resolved.yml
 |   +-- config_*.yml
+|
++-- run_configs/                        Runtime configuration
+|   +-- model_index_map.json
 |
 +-- logs/                               Pipeline logs
     +-- pipeline_*.log

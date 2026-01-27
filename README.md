@@ -46,6 +46,16 @@ uv run hedge run --stage descriptors
 uv run hedge --help
 ```
 
+**Terminal UI (TUI)**
+
+For interactive configuration and pipeline management, use the TUI:
+```bash
+./run-tui.sh
+# or
+npm run tui
+```
+
+See [tui/README.md](tui/README.md) for details.
 
 **Configure your run**
 Edit config for each stage in [configs folder](src/hedgehog/configs/) based on metrics you want to calculate.
