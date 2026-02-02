@@ -200,6 +200,27 @@ class TestMergeRetrosynthesisResults:
         assert result["solved"].iloc[2] == 0
         assert result["solved"].iloc[3] == 0
 
+    def test_merge_respects_index_column(self):
+        """Merge should respect retrosynthesis index column ordering."""
+        input_df = pd.DataFrame(
+            {
+                "smiles": ["a", "b", "c"],
+                "model_name": ["m1", "m1", "m1"],
+            }
+        )
+        retro_df = pd.DataFrame(
+            {
+                "index": [2, 0],
+                "SMILES": ["c", "a"],
+                "solved": [1, 0],
+                "search_time": [3.0, 1.0],
+            }
+        )
+        result = merge_retrosynthesis_results(input_df, retro_df)
+
+        assert result["solved"].tolist() == [0, 0, 1]
+        assert result["search_time"].tolist() == [1.0, 0.0, 3.0]
+
     def test_preserve_input_columns(self):
         """Original columns from input should be preserved."""
         input_df = pd.DataFrame(

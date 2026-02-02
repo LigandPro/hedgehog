@@ -73,13 +73,29 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
     output_abs = output_json_file.resolve()
     config_abs = config_file.resolve()
 
-    cmd = f"cd {aizynthfinder_dir} && uv run aizynthcli --config {config_abs} --smiles {input_abs} --output {output_abs}"
+    cmd = [
+        "uv",
+        "run",
+        "aizynthcli",
+        "--config",
+        str(config_abs),
+        "--smiles",
+        str(input_abs),
+        "--output",
+        str(output_abs),
+    ]
 
     try:
         logger.info("Running retrosynthesis analysis...")
         logger.debug("Command: %s", cmd)
 
-        subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+        subprocess.run(
+            cmd,
+            cwd=str(aizynthfinder_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
 
         logger.info("Retrosynthesis analysis completed successfully")
         return True
@@ -144,10 +160,28 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
     merged["solved"] = 0
     merged["search_time"] = 0.0
 
-    for idx, row in retrosynth_df_copy.iterrows():
-        if idx < len(merged):
-            merged.loc[idx, "solved"] = row.get("solved", 0)
-            merged.loc[idx, "search_time"] = row.get("search_time", 0.0)
+    if "index" in retrosynth_df_copy.columns:
+        for _, row in retrosynth_df_copy.iterrows():
+            idx = row.get("index")
+            if isinstance(idx, (int, np.integer)) and 0 <= idx < len(merged):
+                merged.loc[idx, "solved"] = row.get("solved", 0)
+                merged.loc[idx, "search_time"] = row.get("search_time", 0.0)
+        return merged
+
+    if "SMILES" in retrosynth_df_copy.columns and "smiles" in merged.columns:
+        results_by_smiles = retrosynth_df_copy.dropna(subset=["SMILES"]).copy()
+        results_by_smiles = results_by_smiles.drop_duplicates(subset=["SMILES"])
+        merged = merged.merge(
+            results_by_smiles[["SMILES", "solved", "search_time"]],
+            left_on="smiles",
+            right_on="SMILES",
+            how="left",
+        )
+        merged["solved"] = merged["solved_y"].fillna(merged["solved_x"]).astype(int)
+        merged["search_time"] = merged["search_time_y"].fillna(
+            merged["search_time_x"]
+        )
+        return merged.drop(columns=["SMILES", "solved_x", "solved_y", "search_time_x", "search_time_y"])
 
     return merged
 

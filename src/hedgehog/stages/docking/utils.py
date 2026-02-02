@@ -1083,9 +1083,13 @@ def run_docking(config):
                     try:
                         import time
 
+                        prep_args = [
+                            protein_preparation_tool,
+                            str(Path(original_receptor).resolve()),
+                            str(Path(prepared_receptor_path).resolve()),
+                        ]
                         result = subprocess.run(
-                            prep_cmd,
-                            shell=True,
+                            prep_args,
                             capture_output=True,
                             text=True,
                             cwd=str(ligands_dir),

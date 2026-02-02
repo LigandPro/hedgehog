@@ -19,6 +19,8 @@ RUN_CONFIGS_DIR = "run_configs"
 RUN_MODELS_MAPPING_FILE = "run_models_mapping.csv"
 MODEL_INDEX_MAP_FILE = "model_index_map.json"
 
+EXPECTED_HEADERS = {SMILES_COLUMN, MODEL_NAME_COLUMN, NAME_COLUMN, MOL_IDX_COLUMN}
+
 
 def _find_column_case_insensitive(df: pd.DataFrame, column_name: str) -> str | None:
     """Find a column by name (case-insensitive)."""
@@ -123,14 +125,57 @@ def _remove_duplicates(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame
     return df
 
 
+def _detect_delimiter_from_line(line: str) -> str:
+    """Detect delimiter from a single line."""
+    if "\t" in line and "," not in line:
+        return "\t"
+    if ";" in line and "," not in line:
+        return ";"
+    return ","
+
+
+def _first_line_has_known_headers(path: str) -> bool:
+    """Check if the first line contains expected header names."""
+    try:
+        with open(path, newline="", encoding="utf-8") as handle:
+            first_line = handle.readline().strip()
+    except OSError:
+        return False
+
+    if not first_line:
+        return False
+
+    delimiter = _detect_delimiter_from_line(first_line)
+    header_cells = [
+        cell.strip().strip('"').strip("'").lower()
+        for cell in first_line.split(delimiter)
+    ]
+    return any(cell in EXPECTED_HEADERS for cell in header_cells)
+
+
+def _read_headerless_csv(path: str) -> pd.DataFrame:
+    """Read a CSV file that does not include headers."""
+    try:
+        with open(path, newline="", encoding="utf-8") as handle:
+            first_line = handle.readline()
+    except OSError:
+        first_line = ""
+
+    delimiter = _detect_delimiter_from_line(first_line)
+    df = pd.read_csv(path, header=None, sep=delimiter)
+    df.columns = [SMILES_COLUMN] + [f"col_{i}" for i in range(1, len(df.columns))]
+    return df
+
+
 def _read_csv_with_fallback(path: str) -> pd.DataFrame:
     """Read CSV, falling back to headerless format if parsing fails."""
+    if not _first_line_has_known_headers(path):
+        return _read_headerless_csv(path)
+
     try:
         return pd.read_csv(path)
     except (pd.errors.ParserError, ValueError):
-        df = pd.read_csv(path, header=None)
-        df.columns = [SMILES_COLUMN] + [f"col_{i}" for i in range(1, len(df.columns))]
-        return df
+        return _read_headerless_csv(path)
 
 
 def _detect_mode_and_paths(

@@ -290,6 +290,5 @@ class TestReadCsvWithFallback:
 
         result = _read_csv_with_fallback(str(test_file))
 
-        # First row 'CCO' becomes column name
-        assert "CCO" in result.columns
-        assert len(result) == 2  # CC and CCC are data rows
+        assert "smiles" in result.columns
+        assert len(result) == 3
