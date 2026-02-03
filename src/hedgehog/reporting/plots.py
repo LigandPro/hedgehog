@@ -1376,7 +1376,6 @@ def plot_synthesis_sa_histogram(scores: list[float]) -> str:
     )
 
     fig.update_layout(
-        xaxis_title="SA Score (lower = easier to synthesize)",
         yaxis_title="Count",
         height=350,
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
@@ -1422,7 +1421,6 @@ def plot_synthesis_syba_histogram(scores: list[float]) -> str:
     )
 
     fig.update_layout(
-        xaxis_title="SYBA Score (higher = easier to synthesize)",
         yaxis_title="Count",
         height=350,
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
@@ -1468,9 +1466,8 @@ def plot_synthesis_ra_histogram(scores: list[float]) -> str:
     )
 
     fig.update_layout(
-        xaxis_title="RA Score (higher = easier to synthesize)",
         yaxis_title="Count",
-        height=300,
+        height=350,
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",

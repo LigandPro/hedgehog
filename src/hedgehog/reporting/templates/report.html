@@ -581,10 +581,10 @@
 
                     var layout = {
                         title: title ? { text: title, font: { size: 14 } } : undefined,
-                        xaxis: { title: xLabel },
+                        xaxis: {},
                         yaxis: { title: 'Count' },
                         height: 380,
-                        margin: { l: 50, r: 25, t: title ? 40 : 25, b: 50 },
+                        margin: { l: 50, r: 25, t: title ? 40 : 25, b: 30 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
@@ -1773,6 +1773,11 @@
                         {% if plots.synthesis_ra_hist %}{{ plots.synthesis_ra_hist | safe }}{% endif %}
                     </div>
                 </div>
+            </div>
+            <div style="text-align: center; margin-top: 8px;">
+                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SA Score (lower = easier)</p>
+                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SYBA Score (higher = easier)</p>
+                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">RA Score (higher = easier)</p>
             </div>
 
             <!-- ==================== AiZynthFinder Section ==================== -->

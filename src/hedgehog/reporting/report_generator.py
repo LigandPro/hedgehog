@@ -1625,36 +1625,42 @@ class ReportGenerator:
     def _get_docking_detailed(self) -> dict[str, Any]:
         """Get detailed docking data for enhanced visualization.
 
+        Supports both CSV and SDF file formats, with automatic tool detection.
+
         Returns:
             Dictionary with raw_data, top_molecules, summary stats, by_model
         """
         docking_dir = self.base_path / STAGE_DIRS["docking"]
 
-        result = {
-            "gnina": {
-                "raw_data": [],
-                "top_molecules": [],
-                "summary": {},
-                "by_model": {},
-            },
-            "smina": {
-                "raw_data": [],
-                "top_molecules": [],
-                "summary": {},
-                "by_model": {},
-            },
-        }
+        # Detect available tools dynamically
+        tools = self._detect_docking_tools()
+        if not tools:
+            tools = ["gnina", "smina"]  # Fallback to common tools
 
-        for tool in ["gnina", "smina"]:
-            # Try multiple possible score file locations
-            score_paths = [
+        # Initialize result with detected tools
+        result = {}
+        for tool in tools:
+            result[tool] = {
+                "raw_data": [],
+                "top_molecules": [],
+                "summary": {},
+                "by_model": {},
+            }
+
+        model_lookup = self._get_model_name_lookup()
+
+        for tool in tools:
+            records = []
+
+            # Try CSV files first
+            csv_paths = [
                 docking_dir / tool / "scores.csv",
                 docking_dir / tool / "docking_results.csv",
                 docking_dir / f"{tool}_scores.csv",
             ]
 
             df = None
-            for path in score_paths:
+            for path in csv_paths:
                 if path.exists():
                     try:
                         df = pd.read_csv(path)
@@ -1662,97 +1668,85 @@ class ReportGenerator:
                     except Exception:
                         continue
 
-            if df is None:
+            if df is not None:
+                # Process CSV data
+                score_col = None
+                for col in ["affinity", "score", "minimizedAffinity", "docking_score"]:
+                    if col in df.columns:
+                        score_col = col
+                        break
+
+                if score_col:
+                    id_col = None
+                    for col in ["molecule_id", "mol_id", "name", "smiles"]:
+                        if col in df.columns:
+                            id_col = col
+                            break
+
+                    for _, row in df.iterrows():
+                        if pd.notna(row.get(score_col)):
+                            record = {
+                                "molecule_id": row.get(id_col, "Unknown")
+                                if id_col
+                                else "Unknown",
+                                "affinity": float(row[score_col]),
+                                "model_name": row.get("model_name", "Unknown")
+                                if "model_name" in df.columns
+                                else model_lookup.get(
+                                    str(row.get(id_col, "")), "Unknown"
+                                ),
+                            }
+                            records.append(record)
+            else:
+                # Try SDF files
+                sdf_paths = [
+                    docking_dir / tool / f"{tool}_out.sdf",
+                    docking_dir / tool / "output.sdf",
+                    docking_dir / f"{tool}_out.sdf",
+                ]
+
+                for sdf_path in sdf_paths:
+                    if sdf_path.exists():
+                        records = self._parse_docking_sdf(sdf_path, model_lookup)
+                        break
+
+            if not records:
                 continue
 
-            # Identify score column
-            score_cols = ["affinity", "score", "minimizedAffinity", "docking_score"]
-            score_col = None
-            for col in score_cols:
-                if col in df.columns:
-                    score_col = col
-                    break
+            # Store raw data
+            result[tool]["raw_data"] = records
 
-            if score_col is None:
-                continue
-
-            scores = df[score_col].dropna().tolist()
-            if not scores:
-                continue
-
-            # Basic stats
+            # Calculate summary stats
+            scores = [r["affinity"] for r in records]
             result[tool]["summary"] = {
-                "avg_affinity": float(df[score_col].mean()),
-                "best_affinity": float(df[score_col].min()),
-                "count": len(df),
+                "avg_affinity": sum(scores) / len(scores),
+                "best_affinity": min(scores),
+                "count": len(records),
             }
 
-            # Identify molecule ID column
-            id_col = None
-            for col in ["molecule_id", "mol_id", "smiles", "name"]:
-                if col in df.columns:
-                    id_col = col
-                    break
+            # Top 10 molecules by affinity (lowest is best)
+            sorted_records = sorted(records, key=lambda x: x["affinity"])
+            result[tool]["top_molecules"] = sorted_records[:10]
 
-            # Collect raw data for box plot by model
-            if "model_name" in df.columns:
-                for _, row in df.iterrows():
-                    if pd.notna(row.get(score_col)):
-                        record = {
-                            "model_name": row.get("model_name", "Unknown"),
-                            "affinity": row.get(score_col),
-                        }
-                        # Add molecule identifier if available
-                        if id_col and pd.notna(row.get(id_col)):
-                            record["molecule_id"] = row.get(id_col)
-                        result[tool]["raw_data"].append(record)
+            # Group data by model
+            models = set(r["model_name"] for r in records if r["model_name"] != "Unknown")
+            for model in models:
+                model_records = [r for r in records if r["model_name"] == model]
+                if not model_records:
+                    continue
 
-            # Top molecules by affinity (all models)
-            if id_col:
-                top_df = df.nsmallest(10, score_col)
-                for _, row in top_df.iterrows():
-                    result[tool]["top_molecules"].append(
-                        {
-                            "molecule_id": row.get(id_col, "Unknown"),
-                            "affinity": row.get(score_col),
-                            "model_name": row.get("model_name", "Unknown")
-                            if "model_name" in df.columns
-                            else "Unknown",
-                        }
-                    )
+                model_scores = [r["affinity"] for r in model_records]
+                model_sorted = sorted(model_records, key=lambda x: x["affinity"])
 
-            # Group data by model for comparison views
-            if "model_name" in df.columns:
-                for model in df["model_name"].dropna().unique():
-                    model_df = df[df["model_name"] == model]
-                    model_scores = model_df[score_col].dropna().tolist()
-
-                    if not model_scores:
-                        continue
-
-                    model_data = {
-                        "scores": model_scores,
-                        "summary": {
-                            "avg_affinity": float(model_df[score_col].mean()),
-                            "best_affinity": float(model_df[score_col].min()),
-                            "count": len(model_df),
-                        },
-                        "top_molecules": [],
-                    }
-
-                    # Top 10 molecules for this model
-                    if id_col:
-                        model_top_df = model_df.nsmallest(10, score_col)
-                        for _, row in model_top_df.iterrows():
-                            model_data["top_molecules"].append(
-                                {
-                                    "molecule_id": row.get(id_col, "Unknown"),
-                                    "affinity": row.get(score_col),
-                                    "model_name": model,
-                                }
-                            )
-
-                    result[tool]["by_model"][model] = model_data
+                result[tool]["by_model"][model] = {
+                    "scores": model_scores,
+                    "summary": {
+                        "avg_affinity": sum(model_scores) / len(model_scores),
+                        "best_affinity": min(model_scores),
+                        "count": len(model_records),
+                    },
+                    "top_molecules": model_sorted[:10],
+                }
 
         return result
 
