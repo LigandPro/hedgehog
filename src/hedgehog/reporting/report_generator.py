@@ -893,7 +893,7 @@ class ReportGenerator:
         compare_data = {
             "is_comparison": True,
             "models": available_models,
-            "model_colors": plots.PURPLE_PALETTE[: len(available_models)],
+            "model_colors": plots.COMPARE_PALETTE[: len(available_models)],
             "data": by_model,
         }
 
@@ -1012,6 +1012,14 @@ class ReportGenerator:
                             main_ratio_col = candidate
                             break
 
+                    # Check if we need to add passed/failed pair
+                    has_only_failed = (
+                        sub_metric_names == ["failed"] or
+                        (len(sub_metric_names) == 1 and "failed" in sub_metric_names)
+                    )
+                    if has_only_failed:
+                        filter_info["sub_metric_names"] = ["passed", "failed"]
+
                     for model in available_models:
                         model_df = df[df["model_name"] == model]
                         if not model_df.empty:
@@ -1025,6 +1033,11 @@ class ReportGenerator:
                                         model_metrics[name] = int(round(num_mol * ratio))
                                     else:
                                         model_metrics[name] = 0
+
+                            # Add passed count if we only have failed
+                            if has_only_failed and "failed" in model_metrics:
+                                model_metrics["passed"] = num_mol - model_metrics["failed"]
+
                             filter_info["sub_metrics"][model] = model_metrics
 
                             # Calculate pass_rate from main ratio column
@@ -1762,7 +1775,7 @@ class ReportGenerator:
                 synthesis_data["__compare__"] = {
                     "is_comparison": True,
                     "models": list(by_model.keys()),
-                    "model_colors": plots.PURPLE_PALETTE[: len(by_model)],
+                    "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
                     "data": by_model,
                 }
             plot_htmls["synthesis_data"] = json.dumps(synthesis_data)
@@ -1810,7 +1823,7 @@ class ReportGenerator:
                     docking_tool_data["__compare__"] = {
                         "is_comparison": True,
                         "models": list(by_model.keys()),
-                        "model_colors": plots.PURPLE_PALETTE[: len(by_model)],
+                        "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
                         "data": by_model,
                     }
                 plot_htmls[f"docking_{tool}_data"] = json.dumps(docking_tool_data)

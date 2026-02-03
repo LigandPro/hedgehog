@@ -488,12 +488,10 @@
                     if (data.is_comparison) {
                         drawCompareHistogram('synthesis-sa-hist', data, 'sa_scores', 'SA Score (lower = easier)', 'SA Score Distribution');
                         drawCompareHistogram('synthesis-syba-hist', data, 'syba_scores', 'SYBA Score (higher = easier)', 'SYBA Score Distribution');
-                        drawCompareScatter('synthesis-scatter', data);
                         drawComparePie('synthesis-solved-pie', data);
                     } else {
                         drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', 'SA Score Distribution');
                         drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', 'SYBA Score Distribution');
-                        drawScatter('synthesis-scatter', data.sa_scores || [], data.syba_scores || []);
                         drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
                     }
                 }
@@ -505,17 +503,26 @@
                     var pctSolvedEl = document.getElementById('synthesis-pct-solved');
                     var avgTimeEl = document.getElementById('synthesis-avg-time');
 
-                    if (avgSaEl && summary.avg_sa_score !== undefined) {
-                        avgSaEl.textContent = summary.avg_sa_score.toFixed(2);
+                    // In Compare mode, show "-" since there's no aggregate summary
+                    if (data.is_comparison) {
+                        if (avgSaEl) avgSaEl.textContent = '-';
+                        if (avgSybaEl) avgSybaEl.textContent = '-';
+                        if (pctSolvedEl) pctSolvedEl.textContent = '-';
+                        if (avgTimeEl) avgTimeEl.textContent = '-';
+                        return;
                     }
-                    if (avgSybaEl && summary.avg_syba_score !== undefined) {
-                        avgSybaEl.textContent = summary.avg_syba_score.toFixed(2);
+
+                    if (avgSaEl) {
+                        avgSaEl.textContent = summary.avg_sa_score !== undefined ? summary.avg_sa_score.toFixed(2) : '-';
                     }
-                    if (pctSolvedEl && summary.pct_solved !== undefined) {
-                        pctSolvedEl.textContent = summary.pct_solved.toFixed(1) + '%';
+                    if (avgSybaEl) {
+                        avgSybaEl.textContent = summary.avg_syba_score !== undefined ? summary.avg_syba_score.toFixed(2) : '-';
                     }
-                    if (avgTimeEl && summary.avg_search_time !== undefined) {
-                        avgTimeEl.textContent = summary.avg_search_time.toFixed(1) + 's';
+                    if (pctSolvedEl) {
+                        pctSolvedEl.textContent = summary.pct_solved !== undefined ? summary.pct_solved.toFixed(1) + '%' : '-';
+                    }
+                    if (avgTimeEl) {
+                        avgTimeEl.textContent = summary.avg_search_time !== undefined ? summary.avg_search_time.toFixed(1) + 's' : '-';
                     }
                 }
 
@@ -1333,38 +1340,39 @@
                         }
                     }
 
-                    // Annotations for subplot titles with readable names
+                    // Build layout with subplot titles anchored to axis domains
                     var annotations = [];
-                    for (var i = 0; i < descriptors.length; i++) {
-                        var row = Math.floor(i / nCols);
-                        var col = i % nCols;
-                        var displayName = readableNames[descriptors[i]] || descriptors[i];
-                        annotations.push({
-                            text: '<b>' + displayName + '</b>',
-                            font: { size: 12, color: '#1f2937' },
-                            showarrow: false,
-                            xref: 'paper', yref: 'paper',
-                            x: (col + 0.5) / nCols,
-                            y: 1 - (row / nRows) - 0.02,
-                            xanchor: 'center', yanchor: 'bottom'
-                        });
-                    }
-
                     var layout = {
                         height: 280 * nRows,
-                        margin: { l: 50, r: 30, t: 70, b: 50 },
+                        margin: { l: 50, r: 30, t: 30, b: 50 },
                         paper_bgcolor: 'white', plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
                         showlegend: (model === '__compare__'),
                         legend: { orientation: 'h', y: 1.02, x: 0.5, xanchor: 'center' },
                         shapes: shapes,
-                        annotations: annotations,
                         barmode: 'overlay',
-                        grid: { rows: nRows, columns: nCols, pattern: 'independent', roworder: 'top to bottom' }
+                        grid: { rows: nRows, columns: nCols, pattern: 'independent', roworder: 'top to bottom', xgap: 0.1, ygap: 0.15 }
                     };
 
                     for (var i = 0; i < descriptors.length; i++) {
                         var axisNum = i + 1;
+                        var displayName = readableNames[descriptors[i]] || descriptors[i];
+                        var xAxisName = i === 0 ? 'x' : ('x' + axisNum);
+                        var yAxisName = i === 0 ? 'y' : ('y' + axisNum);
+
+                        // Title annotation anchored to subplot domain
+                        annotations.push({
+                            text: '<b>' + displayName + '</b>',
+                            font: { size: 12, color: '#1f2937' },
+                            showarrow: false,
+                            xref: xAxisName + ' domain',
+                            yref: yAxisName + ' domain',
+                            x: 0.5,
+                            y: 1.08,
+                            xanchor: 'center',
+                            yanchor: 'bottom'
+                        });
+
                         layout['xaxis' + axisNum] = { showgrid: false, zeroline: false, tickfont: { size: 10 } };
                         layout['yaxis' + axisNum] = { showgrid: true, gridcolor: '#e5e7eb', zeroline: false, showticklabels: false };
                     }
@@ -1435,23 +1443,23 @@
             {% if plots.filters_data %}
             <div class="view-toggle" id="filter-chart-toggle">
                 <button class="active" onclick="selectFilterChartType('overview', this)">Overview</button>
-                <button onclick="selectFilterChartType('counts', this)">Molecule Counts</button>
-                <button onclick="selectFilterChartType('heatmap', this)">Passed by Sub-filter</button>
+                <button onclick="selectFilterChartType('heatmap', this)">Sub-filters</button>
             </div>
 
             <div id="filter-overview-container" class="plot-container"></div>
-            <div id="filter-counts-container" class="plot-container" style="display: none;"></div>
             <div id="filter-heatmaps-container" class="plot-container" style="display: none;"></div>
 
             <!-- Filter descriptions (visible only for Overview, below chart) -->
-            <div id="filter-legend" style="margin-top: 12px; font-size: 11px; color: #6b7280; line-height: 1.6;">
-                <strong style="color: #374151;">Filters:</strong>
-                <strong>NIBR</strong> — Novartis alerts;
-                <strong>bredt</strong> — Bredt's rule;
-                <strong>common_alerts</strong> — PAINS, toxicophores, skin sensitizers;
-                <strong>lilly</strong> — Eli Lilly MedChem;
-                <strong>molcomplexity</strong> — SAS, QED;
-                <strong>molgraph_stats</strong> — graph constraints
+            <div id="filter-legend" style="margin-top: 16px; font-size: 13px; color: #374151; line-height: 1.8;">
+                <div style="font-weight: 600; margin-bottom: 8px; color: #1f2937;">Filter Descriptions:</div>
+                <div style="margin-left: 8px;">
+                    <div><strong>NIBR</strong> — Novartis Institutes structural alerts for identifying reactive and toxic functional groups in drug candidates</div>
+                    <div><strong>bredt</strong> — Bredt's rule validation that detects chemically impossible bridgehead double bonds in bicyclic systems</div>
+                    <div><strong>common_alerts</strong> — Collection of structural alerts including PAINS (pan-assay interference compounds), toxicophores, skin sensitizers, and frequent hitters</div>
+                    <div><strong>lilly</strong> — Eli Lilly MedChem rules with demerit-based scoring system for identifying problematic structural features</div>
+                    <div><strong>molcomplexity</strong> — Molecular complexity metrics including synthetic accessibility score (SAS), QED drug-likeness, and Bertz complexity index</div>
+                    <div><strong>molgraph_stats</strong> — Graph-based molecular structure constraints for ring count, heavy atom count, and connectivity patterns</div>
+                </div>
             </div>
 
             <script>
@@ -1475,7 +1483,6 @@
                     btn.className = 'active';
 
                     document.getElementById('filter-overview-container').style.display = (chartType === 'overview') ? 'block' : 'none';
-                    document.getElementById('filter-counts-container').style.display = (chartType === 'counts') ? 'block' : 'none';
                     document.getElementById('filter-heatmaps-container').style.display = (chartType === 'heatmap') ? 'block' : 'none';
                     document.getElementById('filter-legend').style.display = (chartType === 'overview') ? 'block' : 'none';
 
@@ -1484,7 +1491,6 @@
 
                 function updateFilterPlots() {
                     if (currentFilterChartType === 'overview') renderFilterOverview();
-                    else if (currentFilterChartType === 'counts') renderFilterCounts();
                     else renderFilterHeatmaps();
                 }
 
@@ -1507,7 +1513,7 @@
                                 var numMol = filterInfo.num_mol[m] || 0;
                                 var rejectedCount = Math.round(numMol * (100 - passedPct) / 100);
                                 rowVals.push(passedPct);
-                                rowText.push(passedPct.toFixed(0) + '%\n(' + rejectedCount + ' rej)');
+                                rowText.push(passedPct.toFixed(0) + '%');
                                 var desc = filterDescriptions[fn] || fn;
                                 rowHover.push(
                                     '<b>' + fn + '</b><br>' + desc + '<br><br>' +
@@ -1802,19 +1808,11 @@
                 </div>
             </div>
 
-            <!-- Scatter plot and solved pie (dynamic) -->
-            <div class="two-col" style="margin-top: 30px;">
-                <div>
-                    <h3 style="margin-bottom: 15px;">SA Score vs SYBA Score</h3>
-                    <div id="synthesis-scatter" class="plot-container">
-                        {% if plots.synthesis_scatter %}{{ plots.synthesis_scatter | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h3 style="margin-bottom: 15px;">Synthesis Route Status</h3>
-                    <div id="synthesis-solved-pie" class="plot-container">
-                        {% if plots.synthesis_solved_pie %}{{ plots.synthesis_solved_pie | safe }}{% endif %}
-                    </div>
+            <!-- Synthesis Route Status -->
+            <div style="margin-top: 30px;">
+                <h3 style="margin-bottom: 15px;">Synthesis Route Status</h3>
+                <div id="synthesis-solved-pie" class="plot-container" style="max-width: 500px;">
+                    {% if plots.synthesis_solved_pie %}{{ plots.synthesis_solved_pie | safe }}{% endif %}
                 </div>
             </div>
 

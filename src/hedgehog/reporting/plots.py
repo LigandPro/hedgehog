@@ -927,7 +927,7 @@ def _empty_plot(message: str) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
-# Purple color palette for consistent styling
+# Purple color palette for consistent styling (single model views)
 PURPLE_PALETTE = [
     "rgba(139, 92, 246, 0.85)",  # Purple 500
     "rgba(167, 139, 250, 0.85)",  # Purple 400
@@ -937,6 +937,18 @@ PURPLE_PALETTE = [
     "rgba(221, 214, 254, 0.85)",  # Purple 200
     "rgba(91, 33, 182, 0.85)",  # Purple 800
     "rgba(76, 29, 149, 0.85)",  # Purple 900
+]
+
+# Distinct color palette for Compare mode (easily distinguishable)
+COMPARE_PALETTE = [
+    "rgba(59, 130, 246, 0.75)",  # Blue
+    "rgba(239, 68, 68, 0.75)",  # Red
+    "rgba(34, 197, 94, 0.75)",  # Green
+    "rgba(249, 115, 22, 0.75)",  # Orange
+    "rgba(168, 85, 247, 0.75)",  # Purple
+    "rgba(236, 72, 153, 0.75)",  # Pink
+    "rgba(20, 184, 166, 0.75)",  # Teal
+    "rgba(234, 179, 8, 0.75)",  # Yellow
 ]
 
 
