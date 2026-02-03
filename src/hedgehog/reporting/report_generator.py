@@ -209,12 +209,14 @@ class ReportGenerator:
                     )
                     if has_output:
                         completed_stages.append(stage_key)
-                    stage_statuses.append({
-                        "name": display_name,
-                        "enabled": True,
-                        "completed": has_output,
-                        "status": "completed" if has_output else "failed",
-                    })
+                    stage_statuses.append(
+                        {
+                            "name": display_name,
+                            "enabled": True,
+                            "completed": has_output,
+                            "status": "completed" if has_output else "failed",
+                        }
+                    )
 
         return {
             "initial_molecules": self.initial_count,
@@ -1017,9 +1019,7 @@ class ReportGenerator:
         all_data = {}
         for desc_name in descriptor_names:
             values = [
-                r.get(desc_name)
-                for r in raw_data
-                if r.get(desc_name) is not None
+                r.get(desc_name) for r in raw_data if r.get(desc_name) is not None
             ]
             if values:
                 all_data[desc_name] = {
@@ -1139,10 +1139,13 @@ class ReportGenerator:
 
                 # Identify ratio columns (those that represent molecule fractions)
                 ratio_cols = [
-                    c for c in all_cols
-                    if c.endswith("_banned_ratio") or c == "banned_ratio"
+                    c
+                    for c in all_cols
+                    if c.endswith("_banned_ratio")
+                    or c == "banned_ratio"
                     or c.startswith("banned_ratio_")  # e.g. banned_ratio_s_1
-                    or c.endswith("_ratio") or c == "all_banned_ratio"
+                    or c.endswith("_ratio")
+                    or c == "all_banned_ratio"
                     or c == "any_banned_ratio"
                 ]
 
@@ -1180,9 +1183,8 @@ class ReportGenerator:
                             break
 
                     # Check if we need to add passed/failed pair
-                    has_only_failed = (
-                        sub_metric_names == ["failed"] or
-                        (len(sub_metric_names) == 1 and "failed" in sub_metric_names)
+                    has_only_failed = sub_metric_names == ["failed"] or (
+                        len(sub_metric_names) == 1 and "failed" in sub_metric_names
                     )
                     if has_only_failed:
                         filter_info["sub_metric_names"] = ["passed", "failed"]
@@ -1197,13 +1199,17 @@ class ReportGenerator:
                                     ratio = model_df[col].iloc[0]
                                     if pd.notna(ratio):
                                         # Convert ratio to absolute count
-                                        model_metrics[name] = int(round(num_mol * ratio))
+                                        model_metrics[name] = int(
+                                            round(num_mol * ratio)
+                                        )
                                     else:
                                         model_metrics[name] = 0
 
                             # Add passed count if we only have failed
                             if has_only_failed and "failed" in model_metrics:
-                                model_metrics["passed"] = num_mol - model_metrics["failed"]
+                                model_metrics["passed"] = (
+                                    num_mol - model_metrics["failed"]
+                                )
 
                             filter_info["sub_metrics"][model] = model_metrics
 
@@ -1229,11 +1235,13 @@ class ReportGenerator:
                         if not model_df.empty:
                             num_mol = int(model_df["num_mol"].iloc[0])
                             ratio = model_df["banned_ratio"].iloc[0]
-                            failed = int(round(num_mol * ratio)) if pd.notna(ratio) else 0
+                            failed = (
+                                int(round(num_mol * ratio)) if pd.notna(ratio) else 0
+                            )
                             passed = num_mol - failed
                             filter_info["sub_metrics"][model] = {
                                 "passed": passed,
-                                "failed": failed
+                                "failed": failed,
                             }
                             # Calculate pass_rate
                             if pd.notna(ratio):
@@ -1729,7 +1737,9 @@ class ReportGenerator:
             result[tool]["top_molecules"] = sorted_records[:10]
 
             # Group data by model
-            models = set(r["model_name"] for r in records if r["model_name"] != "Unknown")
+            models = set(
+                r["model_name"] for r in records if r["model_name"] != "Unknown"
+            )
             for model in models:
                 model_records = [r for r in records if r["model_name"] == model]
                 if not model_records:
