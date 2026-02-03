@@ -1192,7 +1192,10 @@ class ReportGenerator:
             Dictionary with raw_data, solved/unsolved counts, time stats, by_model
         """
         synth_dir = self.base_path / STAGE_DIRS["synthesis"]
-        scores_path = synth_dir / "synthesis_scores.csv"
+        # Prefer synthesis_extended.csv which has solved/search_time columns
+        scores_path = synth_dir / "synthesis_extended.csv"
+        if not scores_path.exists():
+            scores_path = synth_dir / "synthesis_scores.csv"
 
         if not scores_path.exists():
             return {}
