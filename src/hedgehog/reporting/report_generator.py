@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -982,8 +983,6 @@ class ReportGenerator:
         Returns:
             Dictionary with structure for JavaScript plotting
         """
-        import statistics
-
         raw_data = desc_detailed.get("raw_data", [])
         if not raw_data:
             return {}
@@ -1531,8 +1530,6 @@ class ReportGenerator:
         Returns:
             Dictionary with route_scores, steps, precursors, solve_rate, summary
         """
-        import statistics
-
         synth_dir = self.base_path / STAGE_DIRS["synthesis"]
         json_path = synth_dir / "retrosynthesis_results.json"
 

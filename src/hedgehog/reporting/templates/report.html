@@ -517,10 +517,52 @@
                     'ra_scores': { min: 0.5 }     // RA < 0.5 is hard to synthesize
                 };
 
+                // Common font configuration for all plots
+                var plotFont = { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 };
+
+                // Show empty state message in container
+                function showEmptyState(container) {
+                    if (container) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                    }
+                }
+
+                // Build threshold shapes for synthesis score histograms
+                function buildThresholdShapes(threshold, xMin, xMax, xPad) {
+                    var shapes = [];
+                    if (!threshold) return shapes;
+
+                    if (threshold.min !== undefined && threshold.min > xMin) {
+                        shapes.push({
+                            type: 'rect', xref: 'x', yref: 'paper',
+                            x0: xMin - xPad, x1: threshold.min, y0: 0, y1: 1,
+                            fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                        });
+                        shapes.push({
+                            type: 'line', xref: 'x', yref: 'paper',
+                            x0: threshold.min, x1: threshold.min, y0: 0, y1: 1,
+                            line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                        });
+                    }
+                    if (threshold.max !== undefined && threshold.max < xMax) {
+                        shapes.push({
+                            type: 'rect', xref: 'x', yref: 'paper',
+                            x0: threshold.max, x1: xMax + xPad, y0: 0, y1: 1,
+                            fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                        });
+                        shapes.push({
+                            type: 'line', xref: 'x', yref: 'paper',
+                            x0: threshold.max, x1: threshold.max, y0: 0, y1: 1,
+                            line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                        });
+                    }
+                    return shapes;
+                }
+
                 function drawHistogram(containerId, values, xLabel, title, scoreKey) {
                     var container = document.getElementById(containerId);
                     if (!container || !values || values.length === 0) {
-                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -539,40 +581,10 @@
                         }
                     };
 
-                    var shapes = [];
                     var threshold = scoreKey ? synthesisThresholds[scoreKey] : null;
+                    var shapes = buildThresholdShapes(threshold, xMin, xMax, xPad);
 
-                    // Gray zone for out-of-range (left side - below min)
-                    if (threshold && threshold.min !== undefined && threshold.min > xMin) {
-                        shapes.push({
-                            type: 'rect', xref: 'x', yref: 'paper',
-                            x0: xMin - xPad, x1: threshold.min, y0: 0, y1: 1,
-                            fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
-                        });
-                        // Threshold line
-                        shapes.push({
-                            type: 'line', xref: 'x', yref: 'paper',
-                            x0: threshold.min, x1: threshold.min, y0: 0, y1: 1,
-                            line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
-                        });
-                    }
-
-                    // Gray zone for out-of-range (right side - above max)
-                    if (threshold && threshold.max !== undefined && threshold.max < xMax) {
-                        shapes.push({
-                            type: 'rect', xref: 'x', yref: 'paper',
-                            x0: threshold.max, x1: xMax + xPad, y0: 0, y1: 1,
-                            fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
-                        });
-                        // Threshold line
-                        shapes.push({
-                            type: 'line', xref: 'x', yref: 'paper',
-                            x0: threshold.max, x1: threshold.max, y0: 0, y1: 1,
-                            line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
-                        });
-                    }
-
-                    // Mean line
+                    // Add mean line
                     shapes.push({
                         type: 'line', xref: 'x', yref: 'paper',
                         x0: mean, x1: mean, y0: 0, y1: 1,
@@ -587,11 +599,11 @@
                         margin: { l: 50, r: 25, t: title ? 40 : 25, b: 30 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
-                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        font: plotFont,
                         shapes: shapes,
                         annotations: [{
                             x: mean, y: 1, yref: 'paper',
-                            text: 'μ=' + mean.toFixed(2),
+                            text: '\u03bc=' + mean.toFixed(2),
                             showarrow: false, yanchor: 'bottom', font: { size: 10 }
                         }]
                     };
@@ -602,7 +614,7 @@
                 function drawCompareHistogram(containerId, data, scoreKey, xLabel, title) {
                     var container = document.getElementById(containerId);
                     if (!container || !data.data) {
-                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -627,43 +639,14 @@
                     }
 
                     if (traces.length === 0) {
-                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
-                    // Calculate shapes for thresholds
-                    var shapes = [];
-                    var threshold = synthesisThresholds[scoreKey];
-                    if (allValues.length > 0) {
-                        var xMin = Math.min.apply(null, allValues);
-                        var xMax = Math.max.apply(null, allValues);
-                        var xPad = (xMax - xMin) * 0.1;
-
-                        if (threshold && threshold.min !== undefined && threshold.min > xMin) {
-                            shapes.push({
-                                type: 'rect', xref: 'x', yref: 'paper',
-                                x0: xMin - xPad, x1: threshold.min, y0: 0, y1: 1,
-                                fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
-                            });
-                            shapes.push({
-                                type: 'line', xref: 'x', yref: 'paper',
-                                x0: threshold.min, x1: threshold.min, y0: 0, y1: 1,
-                                line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
-                            });
-                        }
-                        if (threshold && threshold.max !== undefined && threshold.max < xMax) {
-                            shapes.push({
-                                type: 'rect', xref: 'x', yref: 'paper',
-                                x0: threshold.max, x1: xMax + xPad, y0: 0, y1: 1,
-                                fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
-                            });
-                            shapes.push({
-                                type: 'line', xref: 'x', yref: 'paper',
-                                x0: threshold.max, x1: threshold.max, y0: 0, y1: 1,
-                                line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
-                            });
-                        }
-                    }
+                    var xMin = Math.min.apply(null, allValues);
+                    var xMax = Math.max.apply(null, allValues);
+                    var xPad = (xMax - xMin) * 0.1;
+                    var shapes = buildThresholdShapes(synthesisThresholds[scoreKey], xMin, xMax, xPad);
 
                     var layout = {
                         title: title ? { text: title, font: { size: 14 } } : undefined,
@@ -674,7 +657,7 @@
                         margin: { l: 45, r: 20, t: title ? 40 : 25, b: 45 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
-                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        font: plotFont,
                         legend: { orientation: 'h', y: 1.15, x: 0.5, xanchor: 'center' },
                         shapes: shapes
                     };
@@ -685,7 +668,7 @@
                 function drawScatter(containerId, saScores, sybaScores) {
                     var container = document.getElementById(containerId);
                     if (!container || !saScores || saScores.length === 0) {
-                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -707,7 +690,7 @@
                         margin: { l: 50, r: 30, t: 30, b: 50 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
-                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
+                        font: plotFont
                     };
 
                     Plotly.react(containerId, [trace], layout, {displayModeBar: true});
@@ -716,7 +699,7 @@
                 function drawCompareScatter(containerId, data) {
                     var container = document.getElementById(containerId);
                     if (!container || !data.data) {
-                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -742,7 +725,7 @@
                     }
 
                     if (traces.length === 0) {
-                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -753,7 +736,7 @@
                         margin: { l: 50, r: 30, t: 30, b: 50 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
-                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        font: plotFont,
                         legend: { orientation: 'h', y: 1.1, x: 0 }
                     };
 
@@ -763,7 +746,7 @@
                 function drawPie(containerId, solved, unsolved) {
                     var container = document.getElementById(containerId);
                     if (!container || (solved === 0 && unsolved === 0)) {
-                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -786,7 +769,7 @@
                         height: 350,
                         margin: { l: 30, r: 30, t: 30, b: 30 },
                         paper_bgcolor: 'white',
-                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        font: plotFont,
                         showlegend: false,
                         annotations: [{
                             text: pct + '%<br>Solved',
@@ -803,7 +786,7 @@
                 function drawComparePie(containerId, data) {
                     var container = document.getElementById(containerId);
                     if (!container || !data.data) {
-                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -828,7 +811,7 @@
                     }
 
                     if (labels.length === 0) {
-                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        showEmptyState(container);
                         return;
                     }
 
@@ -848,7 +831,7 @@
                         margin: { l: 50, r: 30, t: 50, b: 50 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
-                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
+                        font: plotFont
                     };
 
                     Plotly.react(containerId, [trace], layout, {displayModeBar: true});

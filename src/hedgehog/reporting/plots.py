@@ -1,6 +1,7 @@
 """Plot generation functions for HEDGEHOG reports using Plotly."""
 
 import statistics
+from collections import Counter
 from typing import Any
 
 import plotly.express as px
@@ -1340,6 +1341,73 @@ def plot_filter_top_reasons_bar(reasons_data: dict[str, int], top_n: int = 10) -
 # SYNTHESIS (Stage 04) - Enhanced plots
 # =============================================================================
 
+# Color schemes for synthesis score histograms
+SYNTHESIS_SCORE_COLORS = {
+    "sa": {
+        "fill": "rgba(139, 92, 246, 0.75)",
+        "line": "rgba(109, 40, 217, 1)",
+        "empty_msg": "No SA score data available",
+    },
+    "syba": {
+        "fill": "rgba(167, 139, 250, 0.75)",
+        "line": "rgba(124, 58, 237, 1)",
+        "empty_msg": "No SYBA score data available",
+    },
+    "ra": {
+        "fill": "rgba(34, 197, 94, 0.75)",
+        "line": "rgba(22, 163, 74, 1)",
+        "empty_msg": "No RA score data available",
+    },
+}
+
+
+def _plot_synthesis_score_histogram(
+    scores: list[float],
+    score_type: str,
+) -> str:
+    """Create histogram for a synthesis score (SA, SYBA, or RA).
+
+    Args:
+        scores: List of score values
+        score_type: One of "sa", "syba", "ra"
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    colors = SYNTHESIS_SCORE_COLORS.get(score_type, SYNTHESIS_SCORE_COLORS["sa"])
+
+    if not scores:
+        return _empty_plot(colors["empty_msg"])
+
+    mean_val = statistics.mean(scores)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Histogram(
+            x=scores,
+            nbinsx=30,
+            marker_color=colors["fill"],
+            marker_line_color=colors["line"],
+            marker_line_width=1,
+        )
+    )
+    fig.add_vline(
+        x=mean_val,
+        line_dash="dash",
+        line_color=colors["line"],
+        annotation_text=f"Mean: {mean_val:.2f}",
+        annotation_position="top",
+    )
+    fig.update_layout(
+        yaxis_title="Count",
+        height=350,
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
 
 def plot_synthesis_sa_histogram(scores: list[float]) -> str:
     """Create histogram of SA (Synthetic Accessibility) scores.
@@ -1350,40 +1418,7 @@ def plot_synthesis_sa_histogram(scores: list[float]) -> str:
     Returns:
         HTML string of the plotly figure
     """
-    if not scores:
-        return _empty_plot("No SA score data available")
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Histogram(
-            x=scores,
-            nbinsx=30,
-            marker_color="rgba(139, 92, 246, 0.75)",
-            marker_line_color="rgba(109, 40, 217, 1)",
-            marker_line_width=1,
-        )
-    )
-
-    # Add mean line
-    mean_val = statistics.mean(scores)
-    fig.add_vline(
-        x=mean_val,
-        line_dash="dash",
-        line_color="rgba(109, 40, 217, 1)",
-        annotation_text=f"Mean: {mean_val:.2f}",
-        annotation_position="top",
-    )
-
-    fig.update_layout(
-        yaxis_title="Count",
-        height=350,
-        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-    )
-
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _plot_synthesis_score_histogram(scores, "sa")
 
 
 def plot_synthesis_syba_histogram(scores: list[float]) -> str:
@@ -1395,40 +1430,7 @@ def plot_synthesis_syba_histogram(scores: list[float]) -> str:
     Returns:
         HTML string of the plotly figure
     """
-    if not scores:
-        return _empty_plot("No SYBA score data available")
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Histogram(
-            x=scores,
-            nbinsx=30,
-            marker_color="rgba(167, 139, 250, 0.75)",
-            marker_line_color="rgba(124, 58, 237, 1)",
-            marker_line_width=1,
-        )
-    )
-
-    # Add mean line
-    mean_val = statistics.mean(scores)
-    fig.add_vline(
-        x=mean_val,
-        line_dash="dash",
-        line_color="rgba(124, 58, 237, 1)",
-        annotation_text=f"Mean: {mean_val:.2f}",
-        annotation_position="top",
-    )
-
-    fig.update_layout(
-        yaxis_title="Count",
-        height=350,
-        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-    )
-
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _plot_synthesis_score_histogram(scores, "syba")
 
 
 def plot_synthesis_ra_histogram(scores: list[float]) -> str:
@@ -1440,40 +1442,7 @@ def plot_synthesis_ra_histogram(scores: list[float]) -> str:
     Returns:
         HTML string of the plotly figure
     """
-    if not scores:
-        return _empty_plot("No RA score data available")
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Histogram(
-            x=scores,
-            nbinsx=30,
-            marker_color="rgba(34, 197, 94, 0.75)",
-            marker_line_color="rgba(22, 163, 74, 1)",
-            marker_line_width=1,
-        )
-    )
-
-    # Add mean line
-    mean_val = statistics.mean(scores)
-    fig.add_vline(
-        x=mean_val,
-        line_dash="dash",
-        line_color="rgba(22, 163, 74, 1)",
-        annotation_text=f"Mean: {mean_val:.2f}",
-        annotation_position="top",
-    )
-
-    fig.update_layout(
-        yaxis_title="Count",
-        height=350,
-        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-    )
-
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _plot_synthesis_score_histogram(scores, "ra")
 
 
 def plot_synthesis_solved_pie(solved_count: int, unsolved_count: int) -> str:
@@ -1759,8 +1728,6 @@ def plot_retrosynthesis_route_score_histogram(scores: list[float]) -> str:
     if not scores:
         return _empty_plot("No route score data available")
 
-    import statistics
-
     mean_val = statistics.mean(scores)
 
     fig = go.Figure()
@@ -1807,10 +1774,6 @@ def plot_retrosynthesis_steps_histogram(steps: list[int]) -> str:
     """
     if not steps:
         return _empty_plot("No synthesis steps data available")
-
-    from collections import Counter
-
-    import statistics
 
     step_counts = Counter(steps)
     step_values = sorted(step_counts.keys())
