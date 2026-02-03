@@ -12,6 +12,7 @@ const SCREEN_BREADCRUMBS: Record<Screen, string[]> = {
   configDescriptors: ['Home', 'Configuration', 'Descriptors'],
   configFilters: ['Home', 'Configuration', 'Filters'],
   configSynthesis: ['Home', 'Configuration', 'Synthesis'],
+  configRetrosynthesis: ['Home', 'Configuration', 'Synthesis', 'Retrosynthesis'],
   configDocking: ['Home', 'Configuration', 'Docking'],
   pipelineRunner: ['Home', 'Pipeline'],
   history: ['Home', 'History'],
@@ -102,7 +103,7 @@ export function Footer({
         ))}
 
         {/* Search shortcut hint in list screens */}
-        {['configMain', 'configDescriptors', 'configDocking', 'configFilters', 'configSynthesis', 'history'].includes(screen) && !searchActive && (
+        {['configMain', 'configDescriptors', 'configDocking', 'configFilters', 'configSynthesis', 'configRetrosynthesis', 'history'].includes(screen) && !searchActive && (
           <Text>
             <Text color="cyan" bold>[/]</Text>
             <Text> Search  </Text>

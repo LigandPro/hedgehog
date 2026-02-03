@@ -16,6 +16,7 @@ CONFIG_PATHS = {
     "descriptors": "src/hedgehog/configs/config_descriptors.yml",
     "filters": "src/hedgehog/configs/config_structFilters.yml",
     "synthesis": "src/hedgehog/configs/config_synthesis.yml",
+    "retrosynthesis": "modules/retrosynthesis/aizynthfinder/public/config.yml",
     "docking": "src/hedgehog/configs/config_docking.yml",
 }
 
@@ -49,7 +50,70 @@ class ConfigHandler:
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
         with open(config_path) as f:
-            return yaml.safe_load(f) or {}
+            data = yaml.safe_load(f) or {}
+
+        # Special handling for retrosynthesis config - flatten nested structure
+        if config_type == "retrosynthesis":
+            data = self._flatten_retrosynthesis_config(data)
+
+        return data
+
+    def _flatten_retrosynthesis_config(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Flatten AiZynthFinder nested config to TUI flat structure."""
+        flat = {}
+
+        # Expansion models
+        expansion = data.get("expansion", {})
+        uspto = expansion.get("uspto", [])
+        if len(uspto) >= 2:
+            flat["expansion_uspto_model"] = uspto[0]
+            flat["expansion_uspto_templates"] = uspto[1]
+        ringbreaker = expansion.get("ringbreaker", [])
+        if len(ringbreaker) >= 2:
+            flat["expansion_ringbreaker_model"] = ringbreaker[0]
+            flat["expansion_ringbreaker_templates"] = ringbreaker[1]
+
+        # Filter models
+        filter_data = data.get("filter", {})
+        flat["filter_uspto"] = filter_data.get("uspto", "")
+
+        # Stock databases
+        stock = data.get("stock", {})
+        flat["stock_zinc"] = stock.get("zinc", "")
+
+        return flat
+
+    def _unflatten_retrosynthesis_config(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Convert TUI flat structure back to AiZynthFinder nested config."""
+        nested = {
+            "expansion": {},
+            "filter": {},
+            "stock": {},
+        }
+
+        # Expansion models
+        if data.get("expansion_uspto_model") or data.get("expansion_uspto_templates"):
+            nested["expansion"]["uspto"] = [
+                data.get("expansion_uspto_model", ""),
+                data.get("expansion_uspto_templates", ""),
+            ]
+        if data.get("expansion_ringbreaker_model") or data.get(
+            "expansion_ringbreaker_templates"
+        ):
+            nested["expansion"]["ringbreaker"] = [
+                data.get("expansion_ringbreaker_model", ""),
+                data.get("expansion_ringbreaker_templates", ""),
+            ]
+
+        # Filter models
+        if data.get("filter_uspto"):
+            nested["filter"]["uspto"] = data["filter_uspto"]
+
+        # Stock databases
+        if data.get("stock_zinc"):
+            nested["stock"]["zinc"] = data["stock_zinc"]
+
+        return nested
 
     def save_config(self, config_type: str, data: dict[str, Any]) -> bool:
         """Save data to a config file."""
@@ -59,6 +123,10 @@ class ConfigHandler:
         if config_path.exists():
             backup_path = config_path.with_suffix(".yml.bak")
             backup_path.write_text(config_path.read_text())
+
+        # Special handling for retrosynthesis config - unflatten to nested structure
+        if config_type == "retrosynthesis":
+            data = self._unflatten_retrosynthesis_config(data)
 
         with open(config_path, "w") as f:
             yaml.dump(

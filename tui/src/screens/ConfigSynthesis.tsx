@@ -13,12 +13,14 @@ interface FormField {
   label: string;
   type: 'number' | 'boolean';
   description?: string;
+  section?: string;
 }
 
 const fields: FormField[] = [
-  { key: 'run', label: 'Run Stage', type: 'boolean' },
-  { key: 'filter_solved_only', label: 'Filter Solved Only', type: 'boolean', description: 'Only keep molecules with retrosynthesis path' },
-  { key: 'sa_score_min', label: 'SA Score Min', type: 'number', description: 'Synthetic Accessibility (1-10, lower = easier)' },
+  { key: 'run', label: 'Run Stage', type: 'boolean', section: 'General' },
+  { key: 'run_retrosynthesis', label: 'Run Retrosynthesis', type: 'boolean', description: 'Enable AiZynthFinder retrosynthesis route search (press [r] to configure)' },
+  { key: 'filter_solved_only', label: 'Filter Solved Only', type: 'boolean', description: 'Only keep molecules with found retrosynthesis path' },
+  { key: 'sa_score_min', label: 'SA Score Min', type: 'number', section: 'Score Thresholds', description: 'Synthetic Accessibility (1-10, lower = easier)' },
   { key: 'sa_score_max', label: 'SA Score Max', type: 'number' },
   { key: 'syba_score_min', label: 'SYBA Score Min', type: 'number', description: 'Synthetic Bayesian Accessibility' },
   { key: 'syba_score_max', label: 'SYBA Score Max', type: 'number' },
@@ -128,6 +130,25 @@ export function ConfigSynthesis(): React.ReactElement {
       }
     } else if (input === 's') {
       saveConfig();
+    } else if (input === 'r') {
+      // Navigate to retrosynthesis config
+      if (isDirty) {
+        showConfirm({
+          title: 'Unsaved Changes',
+          message: 'Save changes before configuring retrosynthesis?',
+          confirmLabel: 'Save & Continue',
+          cancelLabel: 'Discard',
+          onConfirm: async () => {
+            await saveConfig();
+            setScreen('configRetrosynthesis');
+          },
+          onCancel: () => {
+            setScreen('configRetrosynthesis');
+          },
+        });
+      } else {
+        setScreen('configRetrosynthesis');
+      }
     } else if (key.escape || key.leftArrow || input === 'q') {
       handleExit();
     }
@@ -136,6 +157,7 @@ export function ConfigSynthesis(): React.ReactElement {
   const shortcuts = [
     { key: '↑↓', label: 'Navigate' },
     { key: 'e/Enter', label: 'Edit' },
+    { key: 'r', label: 'Retrosynthesis' },
     { key: 's', label: 'Save' },
     { key: '←/Esc', label: 'Back' },
   ];
@@ -164,34 +186,42 @@ export function ConfigSynthesis(): React.ReactElement {
           const isSelected = index === selectedIndex;
           const isEditing = isSelected && editMode;
           const value = values[field.key];
+          const showSection = field.section && (index === 0 || fields[index - 1]?.section !== field.section);
 
           return (
-            <Box key={field.key} flexDirection="column">
-              <Box>
-                <Text color={isSelected ? 'cyan' : 'white'}>
-                  {isSelected ? '▶ ' : '  '}
-                </Text>
-                <Text dimColor>{field.label.padEnd(20)}</Text>
-                {isEditing ? (
-                  <Box>
-                    <TextInput
-                      value={editValue}
-                      onChange={setEditValue}
-                      focus={true}
-                    />
-                  </Box>
-                ) : (
-                  <Text color={field.type === 'boolean' ? (value ? 'green' : 'red') : 'yellow'}>
-                    {field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value ?? '')}
-                  </Text>
-                )}
-              </Box>
-              {isSelected && field.description && (
-                <Box paddingLeft={4}>
-                  <Text dimColor italic>{field.description}</Text>
+            <React.Fragment key={field.key}>
+              {showSection && (
+                <Box marginTop={index > 0 ? 1 : 0}>
+                  <Text color="cyan" bold>─ {field.section} ─</Text>
                 </Box>
               )}
-            </Box>
+              <Box flexDirection="column">
+                <Box>
+                  <Text color={isSelected ? 'cyan' : 'white'}>
+                    {isSelected ? '▶ ' : '  '}
+                  </Text>
+                  <Text dimColor>{field.label.padEnd(20)}</Text>
+                  {isEditing ? (
+                    <Box>
+                      <TextInput
+                        value={editValue}
+                        onChange={setEditValue}
+                        focus={true}
+                      />
+                    </Box>
+                  ) : (
+                    <Text color={field.type === 'boolean' ? (value ? 'green' : 'red') : 'yellow'}>
+                      {field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value ?? '')}
+                    </Text>
+                  )}
+                </Box>
+                {isSelected && field.description && (
+                  <Box paddingLeft={4}>
+                    <Text dimColor italic>{field.description}</Text>
+                  </Box>
+                )}
+              </Box>
+            </React.Fragment>
           );
         })}
       </Box>

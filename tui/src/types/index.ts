@@ -5,6 +5,7 @@ export type Screen =
   | 'configDescriptors'
   | 'configFilters'
   | 'configSynthesis'
+  | 'configRetrosynthesis'
   | 'configDocking'
   | 'pipelineRunner'
   | 'history'
@@ -102,6 +103,7 @@ export interface FiltersConfig {
 
 export interface SynthesisConfig {
   run: boolean;
+  run_retrosynthesis: boolean;
   filter_solved_only: boolean;
   sa_score_min: number;
   sa_score_max: number | string;
@@ -109,6 +111,18 @@ export interface SynthesisConfig {
   syba_score_max: number | string;
   ra_score_min: number;
   ra_score_max: number;
+}
+
+export interface RetrosynthesisConfig {
+  // AiZynthFinder expansion models
+  expansion_uspto_model: string;
+  expansion_uspto_templates: string;
+  expansion_ringbreaker_model: string;
+  expansion_ringbreaker_templates: string;
+  // Filter model
+  filter_uspto: string;
+  // Stock database
+  stock_zinc: string;
 }
 
 export interface DockingToolConfig {
