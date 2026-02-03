@@ -491,46 +491,17 @@
                     updateSynthesisMetrics(data);
 
                     // Update plots
-                    if (data.is_comparison) {
-                        drawCompareHistogram('synthesis-sa-hist', data, 'sa_scores', 'SA Score (lower = easier)', '');
-                        drawCompareHistogram('synthesis-syba-hist', data, 'syba_scores', 'SYBA Score (higher = easier)', '');
-                        drawCompareHistogram('synthesis-ra-hist', data, 'ra_scores', 'RA Score (higher = easier)', '');
-                        drawComparePie('synthesis-solved-pie', data);
-                    } else {
-                        drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', '', 'sa_scores');
-                        drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', '', 'syba_scores');
-                        drawHistogram('synthesis-ra-hist', data.ra_scores || [], 'RA Score (higher = easier)', '', 'ra_scores');
-                        drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
-                    }
+                    drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', '', 'sa_scores');
+                    drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', '', 'syba_scores');
+                    drawHistogram('synthesis-ra-hist', data.ra_scores || [], 'RA Score (higher = easier)', '', 'ra_scores');
+                    drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
                 }
 
                 function updateSynthesisMetrics(data) {
                     var summary = data.summary || {};
-                    var avgSaEl = document.getElementById('synthesis-avg-sa');
-                    var avgSybaEl = document.getElementById('synthesis-avg-syba');
-                    var avgRaEl = document.getElementById('synthesis-avg-ra');
                     var pctSolvedEl = document.getElementById('synthesis-pct-solved');
                     var avgTimeEl = document.getElementById('synthesis-avg-time');
 
-                    // In Compare mode, show "-" since there's no aggregate summary
-                    if (data.is_comparison) {
-                        if (avgSaEl) avgSaEl.textContent = '-';
-                        if (avgSybaEl) avgSybaEl.textContent = '-';
-                        if (avgRaEl) avgRaEl.textContent = '-';
-                        if (pctSolvedEl) pctSolvedEl.textContent = '-';
-                        if (avgTimeEl) avgTimeEl.textContent = '-';
-                        return;
-                    }
-
-                    if (avgSaEl) {
-                        avgSaEl.textContent = summary.avg_sa_score !== undefined ? summary.avg_sa_score.toFixed(2) : '-';
-                    }
-                    if (avgSybaEl) {
-                        avgSybaEl.textContent = summary.avg_syba_score !== undefined ? summary.avg_syba_score.toFixed(2) : '-';
-                    }
-                    if (avgRaEl) {
-                        avgRaEl.textContent = summary.avg_ra_score !== undefined ? summary.avg_ra_score.toFixed(2) : '-';
-                    }
                     if (pctSolvedEl) {
                         pctSolvedEl.textContent = summary.pct_solved !== undefined ? summary.pct_solved.toFixed(1) + '%' : '-';
                     }
@@ -612,8 +583,8 @@
                         title: title ? { text: title, font: { size: 14 } } : undefined,
                         xaxis: { title: xLabel },
                         yaxis: { title: 'Count' },
-                        height: 300,
-                        margin: { l: 45, r: 20, t: title ? 40 : 25, b: 45 },
+                        height: 380,
+                        margin: { l: 50, r: 25, t: title ? 40 : 25, b: 50 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
@@ -1762,11 +1733,10 @@
         <section>
             <h2>Synthesis Analysis</h2>
 
-            <!-- View Toggle for model comparison -->
+            <!-- View Toggle for model selection -->
             {% if data.available_models and data.synthesis_detailed.by_model %}
             <div class="view-toggle" id="synthesis-toggle">
                 <button class="active" onclick="selectSynthesisModel('all', this)">All Models</button>
-                <button onclick="selectSynthesisModel('__compare__', this)">Compare</button>
                 {% for model in data.available_models %}
                 <button onclick="selectSynthesisModel('{{ model }}', this)">{{ model }}</button>
                 {% endfor %}
@@ -1775,28 +1745,6 @@
 
             <!-- ==================== Synthesis Scores Section ==================== -->
             <h3 style="margin-top: 20px; margin-bottom: 15px;">Synthesis Scores</h3>
-
-            <!-- Score metrics cards -->
-            <div id="synthesis-metrics" class="metrics-grid">
-                {% if data.synthesis_detailed.summary.avg_sa_score %}
-                <div class="metric-card">
-                    <div class="metric-value" id="synthesis-avg-sa">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_sa_score) }}</div>
-                    <div class="metric-label">Avg SA Score</div>
-                </div>
-                {% endif %}
-                {% if data.synthesis_detailed.summary.avg_syba_score %}
-                <div class="metric-card">
-                    <div class="metric-value" id="synthesis-avg-syba">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_syba_score) }}</div>
-                    <div class="metric-label">Avg SYBA Score</div>
-                </div>
-                {% endif %}
-                {% if data.synthesis_detailed.summary.avg_ra_score %}
-                <div class="metric-card">
-                    <div class="metric-value" id="synthesis-avg-ra">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_ra_score) }}</div>
-                    <div class="metric-label">Avg RA Score</div>
-                </div>
-                {% endif %}
-            </div>
 
             <!-- Legend for score histograms -->
             <div style="display: flex; justify-content: flex-start; gap: 24px; margin: 15px 0 10px 0; font-size: 12px; color: #4b5563;">

@@ -674,39 +674,206 @@ class ReportGenerator:
 
         return stats
 
+    def _get_model_name_lookup(self) -> dict[str, str]:
+        """Build a lookup table from molecule name to model name.
+
+        Returns:
+            Dictionary mapping molecule name/ID to model name
+        """
+        lookup = {}
+        ligands_csv = self.base_path / STAGE_DIRS["docking"] / "ligands.csv"
+        if ligands_csv.exists():
+            try:
+                df = pd.read_csv(ligands_csv)
+                if "model_name" in df.columns:
+                    for id_col in ["name", "mol_idx", "molecule_id"]:
+                        if id_col in df.columns:
+                            for _, row in df.iterrows():
+                                if pd.notna(row.get(id_col)) and pd.notna(
+                                    row.get("model_name")
+                                ):
+                                    lookup[str(row[id_col])] = row["model_name"]
+                            break
+            except Exception:
+                pass
+        return lookup
+
+    def _detect_docking_tools(self) -> list[str]:
+        """Detect available docking tools from directory structure.
+
+        Scans the docking directory for subdirectories and SDF files to
+        identify which docking tools were used.
+
+        Returns:
+            List of tool names (e.g., ["gnina", "smina"])
+        """
+        docking_dir = self.base_path / STAGE_DIRS["docking"]
+        if not docking_dir.exists():
+            return []
+
+        tools = set()
+
+        # Check for subdirectories with SDF results
+        for subdir in docking_dir.iterdir():
+            if subdir.is_dir():
+                # Check for *_out.sdf or output.sdf in subdirectory
+                for sdf_file in subdir.glob("*.sdf"):
+                    if "out" in sdf_file.name.lower():
+                        tools.add(subdir.name)
+                        break
+
+        # Check for *_out.sdf files in main docking directory
+        for sdf_file in docking_dir.glob("*_out.sdf"):
+            tool_name = sdf_file.stem.replace("_out", "")
+            tools.add(tool_name)
+
+        # Check for config files (gnina_config.ini, smina_config.ini)
+        for config_file in docking_dir.glob("*_config.ini"):
+            tool_name = config_file.stem.replace("_config", "")
+            tools.add(tool_name)
+
+        return sorted(tools)
+
+    def _parse_docking_sdf(
+        self, sdf_path: Path, model_lookup: dict[str, str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Parse SDF file to extract docking scores and molecule info.
+
+        Args:
+            sdf_path: Path to SDF file with docking results
+            model_lookup: Optional dict mapping molecule names to model names
+
+        Returns:
+            List of dicts with molecule_id, affinity, model_name, and any extra scores
+        """
+        try:
+            from rdkit import Chem
+        except ImportError:
+            logger.warning("RDKit not available for SDF parsing")
+            return []
+
+        if not sdf_path.exists():
+            return []
+
+        results = []
+        mol_best_scores: dict[str, dict] = {}  # Track best score per molecule
+
+        try:
+            supplier = Chem.SDMolSupplier(str(sdf_path))
+            for mol in supplier:
+                if mol is None:
+                    continue
+
+                # Get molecule name
+                mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
+                if not mol_name:
+                    continue
+
+                # Get affinity score
+                affinity = None
+                for prop_name in ["minimizedAffinity", "affinity", "score"]:
+                    if mol.HasProp(prop_name):
+                        try:
+                            affinity = float(mol.GetProp(prop_name))
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+                if affinity is None:
+                    continue
+
+                # Get model name from SDF property or lookup
+                model_name = "Unknown"
+                if mol.HasProp("s_sm_model_name"):
+                    model_name = mol.GetProp("s_sm_model_name")
+                elif model_lookup and mol_name in model_lookup:
+                    model_name = model_lookup[mol_name]
+
+                # Collect additional scores (GNINA CNN scores)
+                extra_scores = {}
+                for prop_name in ["CNNscore", "CNNaffinity", "CNN_VS"]:
+                    if mol.HasProp(prop_name):
+                        try:
+                            extra_scores[prop_name] = float(mol.GetProp(prop_name))
+                        except (ValueError, TypeError):
+                            pass
+
+                record = {
+                    "molecule_id": mol_name,
+                    "affinity": affinity,
+                    "model_name": model_name,
+                    **extra_scores,
+                }
+
+                # Keep only best score per molecule (lowest affinity)
+                if mol_name not in mol_best_scores:
+                    mol_best_scores[mol_name] = record
+                elif affinity < mol_best_scores[mol_name]["affinity"]:
+                    mol_best_scores[mol_name] = record
+
+            results = list(mol_best_scores.values())
+
+        except Exception as e:
+            logger.warning("Error parsing SDF file %s: %s", sdf_path, e)
+
+        return results
+
     def _get_docking_stats(self) -> dict[str, Any]:
         """Get docking statistics."""
         docking_dir = self.base_path / STAGE_DIRS["docking"]
 
-        stats = {"gnina": {}, "smina": {}}
+        # Detect available tools dynamically
+        tools = self._detect_docking_tools()
+        if not tools:
+            tools = ["gnina", "smina"]  # Fallback to common tools
 
-        # Check GNINA results
-        gnina_scores = docking_dir / "gnina" / "scores.csv"
-        if gnina_scores.exists():
-            try:
-                df = pd.read_csv(gnina_scores)
-                if "score" in df.columns or "affinity" in df.columns:
-                    score_col = "score" if "score" in df.columns else "affinity"
-                    stats["gnina"] = {
-                        "scores": df[score_col].dropna().tolist(),
-                        "count": len(df),
-                    }
-            except Exception:
-                pass
+        stats = {tool: {} for tool in tools}
+        model_lookup = self._get_model_name_lookup()
 
-        # Check SMINA results
-        smina_scores = docking_dir / "smina" / "scores.csv"
-        if smina_scores.exists():
-            try:
-                df = pd.read_csv(smina_scores)
-                if "score" in df.columns or "affinity" in df.columns:
-                    score_col = "score" if "score" in df.columns else "affinity"
-                    stats["smina"] = {
-                        "scores": df[score_col].dropna().tolist(),
-                        "count": len(df),
-                    }
-            except Exception:
-                pass
+        for tool in tools:
+            # Try CSV first (legacy format)
+            csv_paths = [
+                docking_dir / tool / "scores.csv",
+                docking_dir / f"{tool}_scores.csv",
+                docking_dir / tool / "docking_results.csv",
+            ]
+
+            csv_found = False
+            for csv_path in csv_paths:
+                if csv_path.exists():
+                    try:
+                        df = pd.read_csv(csv_path)
+                        for score_col in ["affinity", "score", "minimizedAffinity"]:
+                            if score_col in df.columns:
+                                stats[tool] = {
+                                    "scores": df[score_col].dropna().tolist(),
+                                    "count": len(df),
+                                }
+                                csv_found = True
+                                break
+                    except Exception:
+                        pass
+                    if csv_found:
+                        break
+
+            # Try SDF if CSV not found
+            if not csv_found:
+                sdf_paths = [
+                    docking_dir / tool / f"{tool}_out.sdf",
+                    docking_dir / tool / "output.sdf",
+                    docking_dir / f"{tool}_out.sdf",
+                ]
+
+                for sdf_path in sdf_paths:
+                    if sdf_path.exists():
+                        records = self._parse_docking_sdf(sdf_path, model_lookup)
+                        if records:
+                            scores = [r["affinity"] for r in records]
+                            stats[tool] = {
+                                "scores": scores,
+                                "count": len(records),
+                            }
+                            break
 
         return stats
 
