@@ -1591,9 +1591,34 @@ class ReportGenerator:
 
     def _get_config_summary(self) -> dict[str, Any]:
         """Get configuration summary."""
+        # Get folder from config or use base_path
+        folder = self.config.get("folder_to_save", "")
+        if not folder:
+            folder = str(self.base_path)
+
+        # Get stages from self.stages or detect from directories
+        if self.stages:
+            stages_enabled = [s.name for s in self.stages if s.enabled]
+        else:
+            # Auto-detect from existing stage directories
+            stages_enabled = []
+            stages_dir = self.base_path / "stages"
+            if stages_dir.exists():
+                stage_names = {
+                    "01_descriptors_initial": "Descriptors (Initial)",
+                    "02_structural_filters_pre": "Structural Filters (Pre)",
+                    "03_structural_filters_post": "Structural Filters (Post)",
+                    "04_synthesis": "Synthesis Analysis",
+                    "05_docking": "Molecular Docking",
+                    "06_descriptors_final": "Descriptors (Final)",
+                }
+                for dir_name, display_name in stage_names.items():
+                    if (stages_dir / dir_name).exists():
+                        stages_enabled.append(display_name)
+
         return {
-            "folder_to_save": self.config.get("folder_to_save", ""),
-            "stages_enabled": [s.name for s in self.stages if s.enabled],
+            "folder_to_save": folder,
+            "stages_enabled": stages_enabled,
         }
 
     def _generate_plots(self, data: dict[str, Any]) -> dict[str, str]:

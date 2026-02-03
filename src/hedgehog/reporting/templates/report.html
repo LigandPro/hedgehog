@@ -497,9 +497,9 @@
                         drawCompareHistogram('synthesis-ra-hist', data, 'ra_scores', 'RA Score (higher = easier)', '');
                         drawComparePie('synthesis-solved-pie', data);
                     } else {
-                        drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', '');
-                        drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', '');
-                        drawHistogram('synthesis-ra-hist', data.ra_scores || [], 'RA Score (higher = easier)', '');
+                        drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', '', 'sa_scores');
+                        drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', '', 'syba_scores');
+                        drawHistogram('synthesis-ra-hist', data.ra_scores || [], 'RA Score (higher = easier)', '', 'ra_scores');
                         drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
                     }
                 }
@@ -539,7 +539,14 @@
                     }
                 }
 
-                function drawHistogram(containerId, values, xLabel, title) {
+                // Synthesis score thresholds for gray zones
+                var synthesisThresholds = {
+                    'sa_scores': { max: 6 },      // SA > 6 is hard to synthesize
+                    'syba_scores': { min: 0 },    // SYBA < 0 is hard to synthesize
+                    'ra_scores': { min: 0.5 }     // RA < 0.5 is hard to synthesize
+                };
+
+                function drawHistogram(containerId, values, xLabel, title, scoreKey) {
                     var container = document.getElementById(containerId);
                     if (!container || !values || values.length === 0) {
                         if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
@@ -547,45 +554,78 @@
                     }
 
                     var mean = values.reduce(function(a,b) { return a + b; }, 0) / values.length;
+                    var xMin = Math.min.apply(null, values);
+                    var xMax = Math.max.apply(null, values);
+                    var xPad = (xMax - xMin) * 0.1;
 
                     var trace = {
                         x: values,
                         type: 'histogram',
-                        nbinsx: 30,
+                        nbinsx: 40,
                         marker: {
                             color: 'rgba(139, 92, 246, 0.75)',
                             line: { color: 'rgba(109, 40, 217, 1)', width: 1 }
                         }
                     };
 
+                    var shapes = [];
+                    var threshold = scoreKey ? synthesisThresholds[scoreKey] : null;
+
+                    // Gray zone for out-of-range (left side - below min)
+                    if (threshold && threshold.min !== undefined && threshold.min > xMin) {
+                        shapes.push({
+                            type: 'rect', xref: 'x', yref: 'paper',
+                            x0: xMin - xPad, x1: threshold.min, y0: 0, y1: 1,
+                            fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                        });
+                        // Threshold line
+                        shapes.push({
+                            type: 'line', xref: 'x', yref: 'paper',
+                            x0: threshold.min, x1: threshold.min, y0: 0, y1: 1,
+                            line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                        });
+                    }
+
+                    // Gray zone for out-of-range (right side - above max)
+                    if (threshold && threshold.max !== undefined && threshold.max < xMax) {
+                        shapes.push({
+                            type: 'rect', xref: 'x', yref: 'paper',
+                            x0: threshold.max, x1: xMax + xPad, y0: 0, y1: 1,
+                            fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                        });
+                        // Threshold line
+                        shapes.push({
+                            type: 'line', xref: 'x', yref: 'paper',
+                            x0: threshold.max, x1: threshold.max, y0: 0, y1: 1,
+                            line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                        });
+                    }
+
+                    // Mean line
+                    shapes.push({
+                        type: 'line', xref: 'x', yref: 'paper',
+                        x0: mean, x1: mean, y0: 0, y1: 1,
+                        line: { color: 'rgba(109, 40, 217, 0.9)', width: 2 }
+                    });
+
                     var layout = {
                         title: title ? { text: title, font: { size: 14 } } : undefined,
                         xaxis: { title: xLabel },
                         yaxis: { title: 'Count' },
-                        height: 350,
-                        margin: { l: 50, r: 30, t: title ? 50 : 30, b: 50 },
+                        height: 300,
+                        margin: { l: 45, r: 20, t: title ? 40 : 25, b: 45 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
-                        shapes: [{
-                            type: 'line',
-                            x0: mean, x1: mean,
-                            y0: 0, y1: 1,
-                            yref: 'paper',
-                            line: { color: 'rgba(109, 40, 217, 1)', width: 2, dash: 'dash' }
-                        }],
+                        shapes: shapes,
                         annotations: [{
-                            x: mean,
-                            y: 1,
-                            yref: 'paper',
-                            text: 'Mean: ' + mean.toFixed(2),
-                            showarrow: false,
-                            yanchor: 'bottom',
-                            font: { size: 10 }
+                            x: mean, y: 1, yref: 'paper',
+                            text: 'μ=' + mean.toFixed(2),
+                            showarrow: false, yanchor: 'bottom', font: { size: 10 }
                         }]
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
                 }
 
                 function drawCompareHistogram(containerId, data, scoreKey, xLabel, title) {
@@ -598,15 +638,18 @@
                     var traces = [];
                     var models = data.models || [];
                     var colors = data.model_colors || [];
+                    var allValues = [];
 
                     for (var i = 0; i < models.length; i++) {
                         var modelData = data.data[models[i]];
                         if (modelData && modelData[scoreKey] && modelData[scoreKey].length > 0) {
+                            allValues = allValues.concat(modelData[scoreKey]);
                             traces.push({
                                 x: modelData[scoreKey],
                                 type: 'histogram',
                                 name: models[i],
                                 opacity: 0.6,
+                                nbinsx: 40,
                                 marker: { color: colors[i] || 'rgba(139, 92, 246, 0.75)' }
                             });
                         }
@@ -617,20 +660,55 @@
                         return;
                     }
 
+                    // Calculate shapes for thresholds
+                    var shapes = [];
+                    var threshold = synthesisThresholds[scoreKey];
+                    if (allValues.length > 0) {
+                        var xMin = Math.min.apply(null, allValues);
+                        var xMax = Math.max.apply(null, allValues);
+                        var xPad = (xMax - xMin) * 0.1;
+
+                        if (threshold && threshold.min !== undefined && threshold.min > xMin) {
+                            shapes.push({
+                                type: 'rect', xref: 'x', yref: 'paper',
+                                x0: xMin - xPad, x1: threshold.min, y0: 0, y1: 1,
+                                fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                            });
+                            shapes.push({
+                                type: 'line', xref: 'x', yref: 'paper',
+                                x0: threshold.min, x1: threshold.min, y0: 0, y1: 1,
+                                line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                            });
+                        }
+                        if (threshold && threshold.max !== undefined && threshold.max < xMax) {
+                            shapes.push({
+                                type: 'rect', xref: 'x', yref: 'paper',
+                                x0: threshold.max, x1: xMax + xPad, y0: 0, y1: 1,
+                                fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                            });
+                            shapes.push({
+                                type: 'line', xref: 'x', yref: 'paper',
+                                x0: threshold.max, x1: threshold.max, y0: 0, y1: 1,
+                                line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                            });
+                        }
+                    }
+
                     var layout = {
                         title: title ? { text: title, font: { size: 14 } } : undefined,
                         xaxis: { title: xLabel },
                         yaxis: { title: 'Count' },
                         barmode: 'overlay',
-                        height: 350,
-                        margin: { l: 50, r: 30, t: title ? 50 : 30, b: 50 },
+                        height: 300,
+                        margin: { l: 45, r: 20, t: title ? 40 : 25, b: 45 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
-                        legend: { orientation: 'h', y: 1.1, x: 0 }
+                        legend: { orientation: 'h', y: 1.15, x: 0.5, xanchor: 'center' },
+                        shapes: shapes
                     };
 
-                    Plotly.react(containerId, traces, layout, {displayModeBar: true});
+                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
                 }
 
                 function drawScatter(containerId, saScores, sybaScores) {
@@ -1695,7 +1773,10 @@
             </div>
             {% endif %}
 
-            <!-- Dynamic metrics cards -->
+            <!-- ==================== Synthesis Scores Section ==================== -->
+            <h3 style="margin-top: 20px; margin-bottom: 15px;">Synthesis Scores</h3>
+
+            <!-- Score metrics cards -->
             <div id="synthesis-metrics" class="metrics-grid">
                 {% if data.synthesis_detailed.summary.avg_sa_score %}
                 <div class="metric-card">
@@ -1715,6 +1796,43 @@
                     <div class="metric-label">Avg RA Score</div>
                 </div>
                 {% endif %}
+            </div>
+
+            <!-- Legend for score histograms -->
+            <div style="display: flex; justify-content: flex-start; gap: 24px; margin: 15px 0 10px 0; font-size: 12px; color: #4b5563;">
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(109, 40, 217, 0.9); vertical-align: middle; margin-right: 6px;"></span>Mean</span>
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(239, 68, 68, 0.9); vertical-align: middle; margin-right: 6px;"></span>Threshold</span>
+                <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.3); vertical-align: middle; margin-right: 6px; border: 1px solid #d1d5db;"></span>Out of Range</span>
+            </div>
+
+            <!-- SA, SYBA, RA histograms (dynamic) -->
+            <div class="three-col">
+                <div>
+                    <h4 style="margin-bottom: 8px;">SA Score Distribution</h4>
+                    <div id="synthesis-sa-hist" class="plot-container">
+                        {% if plots.synthesis_sa_hist %}{{ plots.synthesis_sa_hist | safe }}{% endif %}
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 8px;">SYBA Score Distribution</h4>
+                    <div id="synthesis-syba-hist" class="plot-container">
+                        {% if plots.synthesis_syba_hist %}{{ plots.synthesis_syba_hist | safe }}{% endif %}
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 8px;">RA Score Distribution</h4>
+                    <div id="synthesis-ra-hist" class="plot-container">
+                        {% if plots.synthesis_ra_hist %}{{ plots.synthesis_ra_hist | safe }}{% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== AiZynthFinder Section ==================== -->
+            {% if data.retrosynthesis and data.retrosynthesis.summary %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid var(--border);">AiZynthFinder Retrosynthesis</h3>
+
+            <!-- AiZynthFinder metrics -->
+            <div class="metrics-grid">
                 {% if data.synthesis_detailed.summary.pct_solved is defined %}
                 <div class="metric-card">
                     <div class="metric-value" id="synthesis-pct-solved">{{ "%.1f"|format(data.synthesis_detailed.summary.pct_solved) }}%</div>
@@ -1725,56 +1843,6 @@
                 <div class="metric-card">
                     <div class="metric-value" id="synthesis-avg-time">{{ "%.1f"|format(data.synthesis_detailed.summary.avg_search_time) }}s</div>
                     <div class="metric-label">Avg Search Time</div>
-                </div>
-                {% endif %}
-            </div>
-
-            <!-- SA, SYBA, RA histograms (dynamic) -->
-            <div class="three-col" style="margin-top: 30px;">
-                <div>
-                    <h4 style="margin-bottom: 10px;">SA Score Distribution</h4>
-                    <div id="synthesis-sa-hist" class="plot-container">
-                        {% if plots.synthesis_sa_hist %}{{ plots.synthesis_sa_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 10px;">SYBA Score Distribution</h4>
-                    <div id="synthesis-syba-hist" class="plot-container">
-                        {% if plots.synthesis_syba_hist %}{{ plots.synthesis_syba_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 10px;">RA Score Distribution</h4>
-                    <div id="synthesis-ra-hist" class="plot-container">
-                        {% if plots.synthesis_ra_hist %}{{ plots.synthesis_ra_hist | safe }}{% endif %}
-                    </div>
-                </div>
-            </div>
-
-            <!-- Synthesis Route Status -->
-            <div style="margin-top: 30px;">
-                <h3 style="margin-bottom: 15px;">Synthesis Route Status</h3>
-                <div id="synthesis-solved-pie" class="plot-container" style="max-width: 500px;">
-                    {% if plots.synthesis_solved_pie %}{{ plots.synthesis_solved_pie | safe }}{% endif %}
-                </div>
-            </div>
-
-            <!-- Search time by model -->
-            {% if plots.synthesis_time_box %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Search Time by Model</h3>
-            <div class="plot-container">{{ plots.synthesis_time_box | safe }}</div>
-            {% endif %}
-
-            <!-- AiZynthFinder Retrosynthesis subsection -->
-            {% if data.retrosynthesis and data.retrosynthesis.summary %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid var(--border);">AiZynthFinder Retrosynthesis</h3>
-
-            <!-- AiZynthFinder summary cards -->
-            <div class="metrics-grid">
-                {% if data.retrosynthesis.summary.solve_rate is defined %}
-                <div class="metric-card">
-                    <div class="metric-value">{{ "%.1f"|format(data.retrosynthesis.summary.solve_rate) }}%</div>
-                    <div class="metric-label">Solve Rate</div>
                 </div>
                 {% endif %}
                 {% if data.retrosynthesis.summary.avg_route_score is defined %}
@@ -1795,6 +1863,22 @@
                     <div class="metric-label">Avg Precursors</div>
                 </div>
                 {% endif %}
+            </div>
+
+            <!-- Route Status pie chart -->
+            <div class="two-col" style="margin-top: 20px;">
+                <div>
+                    <h4 style="margin-bottom: 8px;">Route Status</h4>
+                    <div id="synthesis-solved-pie" class="plot-container">
+                        {% if plots.synthesis_solved_pie %}{{ plots.synthesis_solved_pie | safe }}{% endif %}
+                    </div>
+                </div>
+                <div>
+                    {% if plots.synthesis_time_box %}
+                    <h4 style="margin-bottom: 8px;">Search Time by Model</h4>
+                    <div class="plot-container">{{ plots.synthesis_time_box | safe }}</div>
+                    {% endif %}
+                </div>
             </div>
 
             <!-- AiZynthFinder plots - compact -->
@@ -1924,23 +2008,6 @@
             {% endif %}
         </section>
         {% endif %}
-
-        <!-- Configuration Summary -->
-        <section>
-            <h2>Configuration</h2>
-            <table>
-                <tbody>
-                    <tr>
-                        <td><strong>Output Directory</strong></td>
-                        <td>{{ data.config.folder_to_save }}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Enabled Stages</strong></td>
-                        <td>{{ data.config.stages_enabled | join(', ') }}</td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
 
         <footer>
             <p><strong>HEDGEHOG</strong></p>
