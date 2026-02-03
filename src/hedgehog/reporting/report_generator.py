@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ KEY_DESCRIPTORS = [
 DESCRIPTOR_ALIASES = {
     "molwt": "MolWt",
     "logp": "LogP",
+    "clogp": "cLogP",
     "tpsa": "TPSA",
     "numhdonors": "NumHDonors",
     "numhacceptors": "NumHAcceptors",
@@ -56,7 +58,23 @@ DESCRIPTOR_ALIASES = {
     "hba": "NumHAcceptors",
     "qed": "QED",
     "fsp3": "Fsp3",
+    "n_atoms": "n_atoms",
+    "n_heavy_atoms": "n_heavy_atoms",
+    "n_het_atoms": "n_het_atoms",
+    "n_n_atoms": "n_N_atoms",
+    "fn_atoms": "fN_atoms",
+    "charged_mol": "charged_mol",
+    "sw": "SW",
+    "ring_size": "ring_size",
+    "n_rings": "n_rings",
+    "n_aroma_rings": "n_aroma_rings",
+    "n_fused_aromatic_rings": "n_fused_aromatic_rings",
+    "n_rigid_bonds": "n_rigid_bonds",
+    "n_rot_bonds": "n_rot_bonds",
 }
+
+# Columns to exclude from descriptor analysis (not numeric descriptors)
+DESCRIPTOR_EXCLUDE_COLS = {"smiles", "model_name", "mol_idx", "chars", "name", "id"}
 
 
 class ReportGenerator:
@@ -134,6 +152,7 @@ class ReportGenerator:
             "filters_detailed": self._get_filters_detailed(),
             "synthesis": self._get_synthesis_stats(),
             "synthesis_detailed": self._get_synthesis_detailed(),
+            "retrosynthesis": self._get_retrosynthesis_detailed(),
             "docking": self._get_docking_stats(),
             "docking_detailed": self._get_docking_detailed(),
             "existing_plots": self._get_existing_plots(),
@@ -154,17 +173,11 @@ class ReportGenerator:
             self.final_count / self.initial_count if self.initial_count > 0 else 0
         )
 
-        enabled_stages = [s for s in self.stages if s.enabled]
-        completed_stages = [s for s in self.stages if s.completed]
-
-        return {
-            "initial_molecules": self.initial_count,
-            "final_molecules": self.final_count,
-            "retention_rate": retention_rate,
-            "retention_percent": f"{retention_rate * 100:.2f}%",
-            "stages_enabled": len(enabled_stages),
-            "stages_completed": len(completed_stages),
-            "stage_statuses": [
+        # If stages not provided, detect from directory structure
+        if self.stages:
+            enabled_stages = [s for s in self.stages if s.enabled]
+            completed_stages = [s for s in self.stages if s.completed]
+            stage_statuses = [
                 {
                     "name": s.name,
                     "enabled": s.enabled,
@@ -174,7 +187,46 @@ class ReportGenerator:
                     else ("failed" if s.enabled else "disabled"),
                 }
                 for s in self.stages
-            ],
+            ]
+        else:
+            # Auto-detect stages from existing directories
+            stage_order = [
+                ("descriptors_initial", "Initial Descriptors"),
+                ("struct_filters_pre", "Structural Filters"),
+                ("synthesis", "Synthesis Analysis"),
+                ("docking", "Molecular Docking"),
+                ("descriptors_final", "Final Descriptors"),
+            ]
+            enabled_stages = []
+            completed_stages = []
+            stage_statuses = []
+            for stage_key, display_name in stage_order:
+                stage_dir = self.base_path / STAGE_DIRS.get(stage_key, "")
+                if stage_dir.exists():
+                    enabled_stages.append(stage_key)
+                    # Check if stage has output files (completed)
+                    has_output = any(stage_dir.glob("*.csv")) or any(
+                        stage_dir.glob("*/*.csv")
+                    )
+                    if has_output:
+                        completed_stages.append(stage_key)
+                    stage_statuses.append(
+                        {
+                            "name": display_name,
+                            "enabled": True,
+                            "completed": has_output,
+                            "status": "completed" if has_output else "failed",
+                        }
+                    )
+
+        return {
+            "initial_molecules": self.initial_count,
+            "final_molecules": self.final_count,
+            "retention_rate": retention_rate,
+            "retention_percent": f"{retention_rate * 100:.2f}%",
+            "stages_enabled": len(enabled_stages),
+            "stages_completed": len(completed_stages),
+            "stage_statuses": stage_statuses,
         }
 
     def _get_funnel_data(self) -> list[dict[str, Any]]:
@@ -625,39 +677,206 @@ class ReportGenerator:
 
         return stats
 
+    def _get_model_name_lookup(self) -> dict[str, str]:
+        """Build a lookup table from molecule name to model name.
+
+        Returns:
+            Dictionary mapping molecule name/ID to model name
+        """
+        lookup = {}
+        ligands_csv = self.base_path / STAGE_DIRS["docking"] / "ligands.csv"
+        if ligands_csv.exists():
+            try:
+                df = pd.read_csv(ligands_csv)
+                if "model_name" in df.columns:
+                    for id_col in ["name", "mol_idx", "molecule_id"]:
+                        if id_col in df.columns:
+                            for _, row in df.iterrows():
+                                if pd.notna(row.get(id_col)) and pd.notna(
+                                    row.get("model_name")
+                                ):
+                                    lookup[str(row[id_col])] = row["model_name"]
+                            break
+            except Exception:
+                pass
+        return lookup
+
+    def _detect_docking_tools(self) -> list[str]:
+        """Detect available docking tools from directory structure.
+
+        Scans the docking directory for subdirectories and SDF files to
+        identify which docking tools were used.
+
+        Returns:
+            List of tool names (e.g., ["gnina", "smina"])
+        """
+        docking_dir = self.base_path / STAGE_DIRS["docking"]
+        if not docking_dir.exists():
+            return []
+
+        tools = set()
+
+        # Check for subdirectories with SDF results
+        for subdir in docking_dir.iterdir():
+            if subdir.is_dir():
+                # Check for *_out.sdf or output.sdf in subdirectory
+                for sdf_file in subdir.glob("*.sdf"):
+                    if "out" in sdf_file.name.lower():
+                        tools.add(subdir.name)
+                        break
+
+        # Check for *_out.sdf files in main docking directory
+        for sdf_file in docking_dir.glob("*_out.sdf"):
+            tool_name = sdf_file.stem.replace("_out", "")
+            tools.add(tool_name)
+
+        # Check for config files (gnina_config.ini, smina_config.ini)
+        for config_file in docking_dir.glob("*_config.ini"):
+            tool_name = config_file.stem.replace("_config", "")
+            tools.add(tool_name)
+
+        return sorted(tools)
+
+    def _parse_docking_sdf(
+        self, sdf_path: Path, model_lookup: dict[str, str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Parse SDF file to extract docking scores and molecule info.
+
+        Args:
+            sdf_path: Path to SDF file with docking results
+            model_lookup: Optional dict mapping molecule names to model names
+
+        Returns:
+            List of dicts with molecule_id, affinity, model_name, and any extra scores
+        """
+        try:
+            from rdkit import Chem
+        except ImportError:
+            logger.warning("RDKit not available for SDF parsing")
+            return []
+
+        if not sdf_path.exists():
+            return []
+
+        results = []
+        mol_best_scores: dict[str, dict] = {}  # Track best score per molecule
+
+        try:
+            supplier = Chem.SDMolSupplier(str(sdf_path))
+            for mol in supplier:
+                if mol is None:
+                    continue
+
+                # Get molecule name
+                mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
+                if not mol_name:
+                    continue
+
+                # Get affinity score
+                affinity = None
+                for prop_name in ["minimizedAffinity", "affinity", "score"]:
+                    if mol.HasProp(prop_name):
+                        try:
+                            affinity = float(mol.GetProp(prop_name))
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+                if affinity is None:
+                    continue
+
+                # Get model name from SDF property or lookup
+                model_name = "Unknown"
+                if mol.HasProp("s_sm_model_name"):
+                    model_name = mol.GetProp("s_sm_model_name")
+                elif model_lookup and mol_name in model_lookup:
+                    model_name = model_lookup[mol_name]
+
+                # Collect additional scores (GNINA CNN scores)
+                extra_scores = {}
+                for prop_name in ["CNNscore", "CNNaffinity", "CNN_VS"]:
+                    if mol.HasProp(prop_name):
+                        try:
+                            extra_scores[prop_name] = float(mol.GetProp(prop_name))
+                        except (ValueError, TypeError):
+                            pass
+
+                record = {
+                    "molecule_id": mol_name,
+                    "affinity": affinity,
+                    "model_name": model_name,
+                    **extra_scores,
+                }
+
+                # Keep only best score per molecule (lowest affinity)
+                if mol_name not in mol_best_scores:
+                    mol_best_scores[mol_name] = record
+                elif affinity < mol_best_scores[mol_name]["affinity"]:
+                    mol_best_scores[mol_name] = record
+
+            results = list(mol_best_scores.values())
+
+        except Exception as e:
+            logger.warning("Error parsing SDF file %s: %s", sdf_path, e)
+
+        return results
+
     def _get_docking_stats(self) -> dict[str, Any]:
         """Get docking statistics."""
         docking_dir = self.base_path / STAGE_DIRS["docking"]
 
-        stats = {"gnina": {}, "smina": {}}
+        # Detect available tools dynamically
+        tools = self._detect_docking_tools()
+        if not tools:
+            tools = ["gnina", "smina"]  # Fallback to common tools
 
-        # Check GNINA results
-        gnina_scores = docking_dir / "gnina" / "scores.csv"
-        if gnina_scores.exists():
-            try:
-                df = pd.read_csv(gnina_scores)
-                if "score" in df.columns or "affinity" in df.columns:
-                    score_col = "score" if "score" in df.columns else "affinity"
-                    stats["gnina"] = {
-                        "scores": df[score_col].dropna().tolist(),
-                        "count": len(df),
-                    }
-            except Exception:
-                pass
+        stats = {tool: {} for tool in tools}
+        model_lookup = self._get_model_name_lookup()
 
-        # Check SMINA results
-        smina_scores = docking_dir / "smina" / "scores.csv"
-        if smina_scores.exists():
-            try:
-                df = pd.read_csv(smina_scores)
-                if "score" in df.columns or "affinity" in df.columns:
-                    score_col = "score" if "score" in df.columns else "affinity"
-                    stats["smina"] = {
-                        "scores": df[score_col].dropna().tolist(),
-                        "count": len(df),
-                    }
-            except Exception:
-                pass
+        for tool in tools:
+            # Try CSV first (legacy format)
+            csv_paths = [
+                docking_dir / tool / "scores.csv",
+                docking_dir / f"{tool}_scores.csv",
+                docking_dir / tool / "docking_results.csv",
+            ]
+
+            csv_found = False
+            for csv_path in csv_paths:
+                if csv_path.exists():
+                    try:
+                        df = pd.read_csv(csv_path)
+                        for score_col in ["affinity", "score", "minimizedAffinity"]:
+                            if score_col in df.columns:
+                                stats[tool] = {
+                                    "scores": df[score_col].dropna().tolist(),
+                                    "count": len(df),
+                                }
+                                csv_found = True
+                                break
+                    except Exception:
+                        pass
+                    if csv_found:
+                        break
+
+            # Try SDF if CSV not found
+            if not csv_found:
+                sdf_paths = [
+                    docking_dir / tool / f"{tool}_out.sdf",
+                    docking_dir / tool / "output.sdf",
+                    docking_dir / f"{tool}_out.sdf",
+                ]
+
+                for sdf_path in sdf_paths:
+                    if sdf_path.exists():
+                        records = self._parse_docking_sdf(sdf_path, model_lookup)
+                        if records:
+                            scores = [r["affinity"] for r in records]
+                            stats[tool] = {
+                                "scores": scores,
+                                "count": len(records),
+                            }
+                            break
 
         return stats
 
@@ -667,6 +886,8 @@ class ReportGenerator:
 
     def _get_descriptors_detailed(self) -> dict[str, Any]:
         """Get detailed descriptor data for enhanced visualization.
+
+        Reads ALL numeric columns from the CSV file, not just predefined ones.
 
         Returns:
             Dictionary with raw_data, summary_by_model, and key_descriptors
@@ -697,8 +918,24 @@ class ReportGenerator:
             "key_descriptors": ["MolWt", "LogP", "TPSA", "QED"],
         }
 
-        # Build case-insensitive column mapping
-        col_map = self._build_descriptor_column_map(df.columns)
+        # Build column name normalization map (actual_col -> display_name)
+        # Use DESCRIPTOR_ALIASES for known mappings, otherwise keep original name
+        col_normalize = {}
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in DESCRIPTOR_EXCLUDE_COLS:
+                continue
+            if col_lower in DESCRIPTOR_ALIASES:
+                col_normalize[col] = DESCRIPTOR_ALIASES[col_lower]
+            else:
+                # Keep original name for unknown columns
+                col_normalize[col] = col
+
+        # Identify numeric columns
+        numeric_cols = []
+        for col in col_normalize.keys():
+            if df[col].dtype in ["int64", "float64", "int32", "float32"]:
+                numeric_cols.append(col)
 
         # Collect raw data records with normalized column names
         for _, row in df.iterrows():
@@ -707,10 +944,14 @@ class ReportGenerator:
             if "model_name" in df.columns and pd.notna(row.get("model_name")):
                 record["model_name"] = row.get("model_name")
 
-            # Add descriptors with standard names
-            for std_name, actual_col in col_map.items():
-                if actual_col in df.columns and pd.notna(row.get(actual_col)):
-                    record[std_name] = row.get(actual_col)
+            # Add ALL numeric descriptors with normalized names
+            for actual_col in numeric_cols:
+                display_name = col_normalize[actual_col]
+                if pd.notna(row.get(actual_col)):
+                    val = row.get(actual_col)
+                    # Convert to Python native types
+                    if isinstance(val, (int, float)):
+                        record[display_name] = float(val)
 
             if record:
                 result["raw_data"].append(record)
@@ -720,13 +961,298 @@ class ReportGenerator:
             for model in df["model_name"].dropna().unique():
                 model_df = df[df["model_name"] == model]
                 model_summary = {}
-                for std_name, actual_col in col_map.items():
-                    if actual_col in model_df.columns:
-                        values = model_df[actual_col].dropna()
-                        if len(values) > 0:
-                            model_summary[std_name] = float(values.mean())
+                for actual_col in numeric_cols:
+                    display_name = col_normalize[actual_col]
+                    values = model_df[actual_col].dropna()
+                    if len(values) > 0:
+                        model_summary[display_name] = float(values.mean())
                 if model_summary:
                     result["summary_by_model"][model] = model_summary
+
+        return result
+
+    def _build_descriptors_js_data(
+        self, desc_detailed: dict[str, Any], available_models: list[str]
+    ) -> dict[str, Any]:
+        """Build JSON data for JavaScript descriptors visualization.
+
+        Args:
+            desc_detailed: Detailed descriptor data from _get_descriptors_detailed
+            available_models: List of model names
+
+        Returns:
+            Dictionary with structure for JavaScript plotting
+        """
+        raw_data = desc_detailed.get("raw_data", [])
+        if not raw_data:
+            return {}
+
+        # Thresholds for Lipinski/drug-likeness visualization
+        thresholds = {
+            "MolWt": {"min": 100, "max": 500},
+            "LogP": {"min": -2, "max": 5},
+            "cLogP": {"min": -2, "max": 5},
+            "TPSA": {"min": 20, "max": 140},
+            "NumHDonors": {"min": 0, "max": 5},
+            "NumHAcceptors": {"min": 0, "max": 10},
+            "NumRotatableBonds": {"min": 0, "max": 10},
+            "n_rot_bonds": {"min": 0, "max": 10},
+            "QED": {"min": 0.3, "max": 1},
+            "Fsp3": {"min": 0, "max": 1},
+            "n_atoms": {"min": 10, "max": 70},
+            "n_heavy_atoms": {"min": 10, "max": 50},
+            "n_rings": {"min": 1, "max": 6},
+            "n_aroma_rings": {"min": 0, "max": 4},
+            "n_rigid_bonds": {"min": 0, "max": 30},
+        }
+
+        # Get all descriptor names from raw_data
+        all_descriptors = set()
+        for record in raw_data:
+            for key in record.keys():
+                if key != "model_name":
+                    all_descriptors.add(key)
+        descriptor_names = sorted(list(all_descriptors))
+
+        # Build "all" data (aggregated across all models)
+        all_data = {}
+        for desc_name in descriptor_names:
+            values = [
+                r.get(desc_name) for r in raw_data if r.get(desc_name) is not None
+            ]
+            if values:
+                all_data[desc_name] = {
+                    "values": values,
+                    "mean": statistics.mean(values),
+                    "median": statistics.median(values),
+                    "std": statistics.stdev(values) if len(values) > 1 else 0,
+                    "min": min(values),
+                    "max": max(values),
+                }
+
+        # Build per-model data
+        by_model = {}
+        for model in available_models:
+            model_records = [r for r in raw_data if r.get("model_name") == model]
+            if not model_records:
+                continue
+            model_data = {}
+            for desc_name in descriptor_names:
+                values = [
+                    r.get(desc_name)
+                    for r in model_records
+                    if r.get(desc_name) is not None
+                ]
+                if values:
+                    model_data[desc_name] = {
+                        "values": values,
+                        "mean": statistics.mean(values),
+                        "median": statistics.median(values),
+                        "std": statistics.stdev(values) if len(values) > 1 else 0,
+                        "min": min(values),
+                        "max": max(values),
+                    }
+            if model_data:
+                by_model[model] = model_data
+
+        # Build compare data
+        compare_data = {
+            "is_comparison": True,
+            "models": available_models,
+            "model_colors": plots.COMPARE_PALETTE[: len(available_models)],
+            "data": by_model,
+        }
+
+        return {
+            "all": all_data,
+            "by_model": by_model,
+            "__compare__": compare_data,
+            "models": available_models,
+            "descriptors": descriptor_names,
+            "thresholds": thresholds,
+        }
+
+    def _build_filters_js_data(self, available_models: list[str]) -> dict[str, Any]:
+        """Build JSON data for JavaScript filters visualization.
+
+        Args:
+            available_models: List of model names
+
+        Returns:
+            Dictionary with structure for JavaScript plotting.
+            Sub-metrics are converted from ratios to absolute molecule counts.
+        """
+        result = {
+            "filters": [],
+            "models": available_models,
+            "filter_data": {},
+        }
+
+        # Read filter data from each filter subdirectory
+        for stage_key in ["struct_filters_pre", "struct_filters_post"]:
+            stage_dir = self.base_path / STAGE_DIRS.get(stage_key, "")
+            if not stage_dir.exists():
+                continue
+
+            for subdir in sorted(stage_dir.iterdir()):
+                if not subdir.is_dir() or subdir.name in ["plots", "logs"]:
+                    continue
+
+                filter_name = subdir.name
+                if filter_name in result["filter_data"]:
+                    continue  # Already processed
+
+                metrics_path = subdir / "metrics.csv"
+                if not metrics_path.exists():
+                    continue
+
+                try:
+                    df = pd.read_csv(metrics_path)
+                except Exception:
+                    continue
+
+                if "model_name" not in df.columns:
+                    continue
+
+                filter_info = {
+                    "models": available_models,
+                    "num_mol": {},
+                    "pass_rate": {},  # Pass rate percentage per model
+                    "sub_metrics": {},
+                    "sub_metric_names": [],
+                }
+
+                # Get number of molecules per model
+                if "num_mol" in df.columns:
+                    for model in available_models:
+                        model_df = df[df["model_name"] == model]
+                        if not model_df.empty:
+                            filter_info["num_mol"][model] = int(
+                                model_df["num_mol"].iloc[0]
+                            )
+
+                # Find ratio columns and convert to absolute counts
+                # Look for columns with banned_ratio pattern
+                exclude_cols = {"model_name", "num_mol", "smiles", "mol_idx"}
+                all_cols = [c for c in df.columns if c not in exclude_cols]
+
+                # Identify ratio columns (those that represent molecule fractions)
+                ratio_cols = [
+                    c
+                    for c in all_cols
+                    if c.endswith("_banned_ratio")
+                    or c == "banned_ratio"
+                    or c.startswith("banned_ratio_")  # e.g. banned_ratio_s_1
+                    or c.endswith("_ratio")
+                    or c == "all_banned_ratio"
+                    or c == "any_banned_ratio"
+                ]
+
+                # If we have ratio columns, use them for sub-metrics
+                if ratio_cols:
+                    # Build clean names: remove banned_ratio patterns
+                    sub_metric_names = []
+                    col_to_name = {}
+                    for col in ratio_cols:
+                        if col == "banned_ratio":
+                            name = "failed"
+                        elif col == "all_banned_ratio":
+                            name = "all"
+                        elif col == "any_banned_ratio":
+                            continue  # Skip any_banned_ratio (usually 0)
+                        elif col.startswith("banned_ratio_"):
+                            # e.g. banned_ratio_s_1 -> s_1
+                            name = col.replace("banned_ratio_", "")
+                        elif col.endswith("_banned_ratio"):
+                            name = col.replace("_banned_ratio", "")
+                        elif col.endswith("_ratio"):
+                            name = col.replace("_ratio", "")
+                        else:
+                            name = col
+                        sub_metric_names.append(name)
+                        col_to_name[col] = name
+
+                    filter_info["sub_metric_names"] = sub_metric_names
+
+                    # Determine which column represents the main banned ratio
+                    main_ratio_col = None
+                    for candidate in ["all_banned_ratio", "banned_ratio"]:
+                        if candidate in df.columns:
+                            main_ratio_col = candidate
+                            break
+
+                    # Check if we need to add passed/failed pair
+                    has_only_failed = sub_metric_names == ["failed"] or (
+                        len(sub_metric_names) == 1 and "failed" in sub_metric_names
+                    )
+                    if has_only_failed:
+                        filter_info["sub_metric_names"] = ["passed", "failed"]
+
+                    for model in available_models:
+                        model_df = df[df["model_name"] == model]
+                        if not model_df.empty:
+                            num_mol = int(model_df["num_mol"].iloc[0])
+                            model_metrics = {}
+                            for col, name in col_to_name.items():
+                                if col in model_df.columns:
+                                    ratio = model_df[col].iloc[0]
+                                    if pd.notna(ratio):
+                                        # Convert ratio to absolute count
+                                        model_metrics[name] = int(
+                                            round(num_mol * ratio)
+                                        )
+                                    else:
+                                        model_metrics[name] = 0
+
+                            # Add passed count if we only have failed
+                            if has_only_failed and "failed" in model_metrics:
+                                model_metrics["passed"] = (
+                                    num_mol - model_metrics["failed"]
+                                )
+
+                            filter_info["sub_metrics"][model] = model_metrics
+
+                            # Calculate pass_rate from main ratio column
+                            if main_ratio_col and main_ratio_col in model_df.columns:
+                                main_ratio = model_df[main_ratio_col].iloc[0]
+                                if pd.notna(main_ratio):
+                                    filter_info["pass_rate"][model] = round(
+                                        (1 - main_ratio) * 100, 1
+                                    )
+                                else:
+                                    filter_info["pass_rate"][model] = 100.0
+                            else:
+                                filter_info["pass_rate"][model] = 100.0
+                else:
+                    # No ratio columns - create simple passed/failed
+                    if "banned_ratio" not in all_cols:
+                        # Skip filters without meaningful data
+                        continue
+                    filter_info["sub_metric_names"] = ["passed", "failed"]
+                    for model in available_models:
+                        model_df = df[df["model_name"] == model]
+                        if not model_df.empty:
+                            num_mol = int(model_df["num_mol"].iloc[0])
+                            ratio = model_df["banned_ratio"].iloc[0]
+                            failed = (
+                                int(round(num_mol * ratio)) if pd.notna(ratio) else 0
+                            )
+                            passed = num_mol - failed
+                            filter_info["sub_metrics"][model] = {
+                                "passed": passed,
+                                "failed": failed,
+                            }
+                            # Calculate pass_rate
+                            if pd.notna(ratio):
+                                filter_info["pass_rate"][model] = round(
+                                    (1 - ratio) * 100, 1
+                                )
+                            else:
+                                filter_info["pass_rate"][model] = 100.0
+
+                if filter_info["sub_metrics"]:
+                    result["filters"].append(filter_name)
+                    result["filter_data"][filter_name] = filter_info
 
         return result
 
@@ -853,7 +1379,10 @@ class ReportGenerator:
             Dictionary with raw_data, solved/unsolved counts, time stats, by_model
         """
         synth_dir = self.base_path / STAGE_DIRS["synthesis"]
-        scores_path = synth_dir / "synthesis_scores.csv"
+        # Prefer synthesis_extended.csv which has solved/search_time columns
+        scores_path = synth_dir / "synthesis_extended.csv"
+        if not scores_path.exists():
+            scores_path = synth_dir / "synthesis_scores.csv"
 
         if not scores_path.exists():
             return {}
@@ -867,20 +1396,30 @@ class ReportGenerator:
             "raw_data": [],
             "sa_scores": [],
             "syba_scores": [],
+            "ra_scores": [],
             "solved_count": 0,
             "unsolved_count": 0,
             "summary": {},
             "by_model": {},
         }
 
-        # Extract SA and SYBA scores
+        # Extract SA, SYBA, and RA scores
         if "sa_score" in df.columns:
             result["sa_scores"] = df["sa_score"].dropna().tolist()
-            result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
+            if result["sa_scores"]:
+                result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
 
         if "syba_score" in df.columns:
             result["syba_scores"] = df["syba_score"].dropna().tolist()
-            result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
+            if result["syba_scores"]:
+                result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
+
+        if "ra_score" in df.columns:
+            result["ra_scores"] = df["ra_score"].dropna().tolist()
+            if result["ra_scores"]:
+                result["summary"]["avg_ra_score"] = float(
+                    df["ra_score"].dropna().mean()
+                )
 
         # Count solved/unsolved (look for solved, route_found, etc.)
         solved_col = None
@@ -933,6 +1472,9 @@ class ReportGenerator:
                     "syba_scores": model_df["syba_score"].dropna().tolist()
                     if "syba_score" in df.columns
                     else [],
+                    "ra_scores": model_df["ra_score"].dropna().tolist()
+                    if "ra_score" in df.columns
+                    else [],
                     "solved_count": 0,
                     "unsolved_count": 0,
                     "summary": {},
@@ -950,6 +1492,11 @@ class ReportGenerator:
                 ):
                     model_data["summary"]["avg_syba_score"] = float(
                         model_df["syba_score"].mean()
+                    )
+
+                if "ra_score" in model_df.columns and len(model_data["ra_scores"]) > 0:
+                    model_data["summary"]["avg_ra_score"] = float(
+                        model_df["ra_score"].dropna().mean()
                     )
 
                 # Count solved/unsolved per model
@@ -974,6 +1521,63 @@ class ReportGenerator:
                         )
 
                 result["by_model"][model] = model_data
+
+        return result
+
+    def _get_retrosynthesis_detailed(self) -> dict[str, Any]:
+        """Get detailed retrosynthesis data from AiZynthFinder results.
+
+        Returns:
+            Dictionary with route_scores, steps, precursors, solve_rate, summary
+        """
+        synth_dir = self.base_path / STAGE_DIRS["synthesis"]
+        json_path = synth_dir / "retrosynthesis_results.json"
+
+        if not json_path.exists():
+            return {}
+
+        try:
+            with open(json_path) as f:
+                data = json.load(f)
+        except Exception:
+            return {}
+
+        if "data" not in data:
+            return {}
+
+        result = {
+            "route_scores": [],
+            "steps": [],
+            "precursors": [],
+            "solved_count": 0,
+            "total_count": 0,
+            "summary": {},
+        }
+
+        for item in data["data"]:
+            result["total_count"] += 1
+            if item.get("is_solved", False):
+                result["solved_count"] += 1
+                if item.get("top_score") is not None:
+                    result["route_scores"].append(item["top_score"])
+                if item.get("number_of_steps") is not None:
+                    result["steps"].append(item["number_of_steps"])
+                if item.get("number_of_precursors") is not None:
+                    result["precursors"].append(item["number_of_precursors"])
+
+        # Calculate summary statistics
+        if result["total_count"] > 0:
+            result["summary"]["solve_rate"] = (
+                100.0 * result["solved_count"] / result["total_count"]
+            )
+        if result["route_scores"]:
+            result["summary"]["avg_route_score"] = statistics.mean(
+                result["route_scores"]
+            )
+        if result["steps"]:
+            result["summary"]["avg_steps"] = statistics.mean(result["steps"])
+        if result["precursors"]:
+            result["summary"]["avg_precursors"] = statistics.mean(result["precursors"])
 
         return result
 
@@ -1026,36 +1630,42 @@ class ReportGenerator:
     def _get_docking_detailed(self) -> dict[str, Any]:
         """Get detailed docking data for enhanced visualization.
 
+        Supports both CSV and SDF file formats, with automatic tool detection.
+
         Returns:
             Dictionary with raw_data, top_molecules, summary stats, by_model
         """
         docking_dir = self.base_path / STAGE_DIRS["docking"]
 
-        result = {
-            "gnina": {
-                "raw_data": [],
-                "top_molecules": [],
-                "summary": {},
-                "by_model": {},
-            },
-            "smina": {
-                "raw_data": [],
-                "top_molecules": [],
-                "summary": {},
-                "by_model": {},
-            },
-        }
+        # Detect available tools dynamically
+        tools = self._detect_docking_tools()
+        if not tools:
+            tools = ["gnina", "smina"]  # Fallback to common tools
 
-        for tool in ["gnina", "smina"]:
-            # Try multiple possible score file locations
-            score_paths = [
+        # Initialize result with detected tools
+        result = {}
+        for tool in tools:
+            result[tool] = {
+                "raw_data": [],
+                "top_molecules": [],
+                "summary": {},
+                "by_model": {},
+            }
+
+        model_lookup = self._get_model_name_lookup()
+
+        for tool in tools:
+            records = []
+
+            # Try CSV files first
+            csv_paths = [
                 docking_dir / tool / "scores.csv",
                 docking_dir / tool / "docking_results.csv",
                 docking_dir / f"{tool}_scores.csv",
             ]
 
             df = None
-            for path in score_paths:
+            for path in csv_paths:
                 if path.exists():
                     try:
                         df = pd.read_csv(path)
@@ -1063,105 +1673,120 @@ class ReportGenerator:
                     except Exception:
                         continue
 
-            if df is None:
+            if df is not None:
+                # Process CSV data
+                score_col = None
+                for col in ["affinity", "score", "minimizedAffinity", "docking_score"]:
+                    if col in df.columns:
+                        score_col = col
+                        break
+
+                if score_col:
+                    id_col = None
+                    for col in ["molecule_id", "mol_id", "name", "smiles"]:
+                        if col in df.columns:
+                            id_col = col
+                            break
+
+                    for _, row in df.iterrows():
+                        if pd.notna(row.get(score_col)):
+                            record = {
+                                "molecule_id": row.get(id_col, "Unknown")
+                                if id_col
+                                else "Unknown",
+                                "affinity": float(row[score_col]),
+                                "model_name": row.get("model_name", "Unknown")
+                                if "model_name" in df.columns
+                                else model_lookup.get(
+                                    str(row.get(id_col, "")), "Unknown"
+                                ),
+                            }
+                            records.append(record)
+            else:
+                # Try SDF files
+                sdf_paths = [
+                    docking_dir / tool / f"{tool}_out.sdf",
+                    docking_dir / tool / "output.sdf",
+                    docking_dir / f"{tool}_out.sdf",
+                ]
+
+                for sdf_path in sdf_paths:
+                    if sdf_path.exists():
+                        records = self._parse_docking_sdf(sdf_path, model_lookup)
+                        break
+
+            if not records:
                 continue
 
-            # Identify score column
-            score_cols = ["affinity", "score", "minimizedAffinity", "docking_score"]
-            score_col = None
-            for col in score_cols:
-                if col in df.columns:
-                    score_col = col
-                    break
+            # Store raw data
+            result[tool]["raw_data"] = records
 
-            if score_col is None:
-                continue
-
-            scores = df[score_col].dropna().tolist()
-            if not scores:
-                continue
-
-            # Basic stats
+            # Calculate summary stats
+            scores = [r["affinity"] for r in records]
             result[tool]["summary"] = {
-                "avg_affinity": float(df[score_col].mean()),
-                "best_affinity": float(df[score_col].min()),
-                "count": len(df),
+                "avg_affinity": sum(scores) / len(scores),
+                "best_affinity": min(scores),
+                "count": len(records),
             }
 
-            # Identify molecule ID column
-            id_col = None
-            for col in ["molecule_id", "mol_id", "smiles", "name"]:
-                if col in df.columns:
-                    id_col = col
-                    break
+            # Top 10 molecules by affinity (lowest is best)
+            sorted_records = sorted(records, key=lambda x: x["affinity"])
+            result[tool]["top_molecules"] = sorted_records[:10]
 
-            # Collect raw data for box plot by model
-            if "model_name" in df.columns:
-                for _, row in df.iterrows():
-                    if pd.notna(row.get(score_col)):
-                        record = {
-                            "model_name": row.get("model_name", "Unknown"),
-                            "affinity": row.get(score_col),
-                        }
-                        # Add molecule identifier if available
-                        if id_col and pd.notna(row.get(id_col)):
-                            record["molecule_id"] = row.get(id_col)
-                        result[tool]["raw_data"].append(record)
+            # Group data by model
+            models = set(
+                r["model_name"] for r in records if r["model_name"] != "Unknown"
+            )
+            for model in models:
+                model_records = [r for r in records if r["model_name"] == model]
+                if not model_records:
+                    continue
 
-            # Top molecules by affinity (all models)
-            if id_col:
-                top_df = df.nsmallest(10, score_col)
-                for _, row in top_df.iterrows():
-                    result[tool]["top_molecules"].append(
-                        {
-                            "molecule_id": row.get(id_col, "Unknown"),
-                            "affinity": row.get(score_col),
-                            "model_name": row.get("model_name", "Unknown")
-                            if "model_name" in df.columns
-                            else "Unknown",
-                        }
-                    )
+                model_scores = [r["affinity"] for r in model_records]
+                model_sorted = sorted(model_records, key=lambda x: x["affinity"])
 
-            # Group data by model for comparison views
-            if "model_name" in df.columns:
-                for model in df["model_name"].dropna().unique():
-                    model_df = df[df["model_name"] == model]
-                    model_scores = model_df[score_col].dropna().tolist()
-
-                    if not model_scores:
-                        continue
-
-                    model_data = {
-                        "scores": model_scores,
-                        "summary": {
-                            "avg_affinity": float(model_df[score_col].mean()),
-                            "best_affinity": float(model_df[score_col].min()),
-                            "count": len(model_df),
-                        },
-                        "top_molecules": [],
-                    }
-
-                    # Top 10 molecules for this model
-                    if id_col:
-                        model_top_df = model_df.nsmallest(10, score_col)
-                        for _, row in model_top_df.iterrows():
-                            model_data["top_molecules"].append(
-                                {
-                                    "molecule_id": row.get(id_col, "Unknown"),
-                                    "affinity": row.get(score_col),
-                                    "model_name": model,
-                                }
-                            )
-
-                    result[tool]["by_model"][model] = model_data
+                result[tool]["by_model"][model] = {
+                    "scores": model_scores,
+                    "summary": {
+                        "avg_affinity": sum(model_scores) / len(model_scores),
+                        "best_affinity": min(model_scores),
+                        "count": len(model_records),
+                    },
+                    "top_molecules": model_sorted[:10],
+                }
 
         return result
 
     def _get_config_summary(self) -> dict[str, Any]:
         """Get configuration summary."""
+        # Get folder from config or use base_path
+        folder = self.config.get("folder_to_save", "")
+        if not folder:
+            folder = str(self.base_path)
+
+        # Get stages from self.stages or detect from directories
+        if self.stages:
+            stages_enabled = [s.name for s in self.stages if s.enabled]
+        else:
+            # Auto-detect from existing stage directories
+            stages_enabled = []
+            stages_dir = self.base_path / "stages"
+            if stages_dir.exists():
+                stage_names = {
+                    "01_descriptors_initial": "Descriptors (Initial)",
+                    "02_structural_filters_pre": "Structural Filters (Pre)",
+                    "03_structural_filters_post": "Structural Filters (Post)",
+                    "04_synthesis": "Synthesis Analysis",
+                    "05_docking": "Molecular Docking",
+                    "06_descriptors_final": "Descriptors (Final)",
+                }
+                for dir_name, display_name in stage_names.items():
+                    if (stages_dir / dir_name).exists():
+                        stages_enabled.append(display_name)
+
         return {
-            "folder_to_save": self.config.get("folder_to_save", ""),
-            "stages_enabled": [s.name for s in self.stages if s.enabled],
+            "folder_to_save": folder,
+            "stages_enabled": stages_enabled,
         }
 
     def _generate_plots(self, data: dict[str, Any]) -> dict[str, str]:
@@ -1280,6 +1905,10 @@ class ReportGenerator:
             plot_htmls["synthesis_syba_hist"] = plots.plot_synthesis_syba_histogram(
                 synth_detailed["syba_scores"]
             )
+        if synth_detailed.get("ra_scores"):
+            plot_htmls["synthesis_ra_hist"] = plots.plot_synthesis_ra_histogram(
+                synth_detailed["ra_scores"]
+            )
         if (
             synth_detailed.get("solved_count", 0) > 0
             or synth_detailed.get("unsolved_count", 0) > 0
@@ -1291,6 +1920,19 @@ class ReportGenerator:
         if synth_detailed.get("raw_data"):
             plot_htmls["synthesis_time_box"] = plots.plot_synthesis_time_box(
                 synth_detailed["raw_data"]
+            )
+
+        # Retrosynthesis (AiZynthFinder) plots
+        retrosynth = data.get("retrosynthesis", {})
+        if retrosynth.get("route_scores"):
+            plot_htmls["retrosynthesis_route_score_hist"] = (
+                plots.plot_retrosynthesis_route_score_histogram(
+                    retrosynth["route_scores"]
+                )
+            )
+        if retrosynth.get("steps"):
+            plot_htmls["retrosynthesis_steps_hist"] = (
+                plots.plot_retrosynthesis_steps_histogram(retrosynth["steps"])
             )
 
         # Docking scores (original)
@@ -1333,6 +1975,7 @@ class ReportGenerator:
                 "all": {
                     "sa_scores": synth_detailed.get("sa_scores", []),
                     "syba_scores": synth_detailed.get("syba_scores", []),
+                    "ra_scores": synth_detailed.get("ra_scores", []),
                     "solved_count": synth_detailed.get("solved_count", 0),
                     "unsolved_count": synth_detailed.get("unsolved_count", 0),
                     "summary": synth_detailed.get("summary", {}),
@@ -1348,10 +1991,26 @@ class ReportGenerator:
                 synthesis_data["__compare__"] = {
                     "is_comparison": True,
                     "models": list(by_model.keys()),
-                    "model_colors": plots.PURPLE_PALETTE[: len(by_model)],
+                    "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
                     "data": by_model,
                 }
             plot_htmls["synthesis_data"] = json.dumps(synthesis_data)
+
+        # Generate JSON data for JavaScript descriptors visualization
+        desc_detailed = data.get("descriptors_detailed", {})
+        available_models = data.get("available_models", [])
+        if desc_detailed.get("raw_data"):
+            descriptors_data = self._build_descriptors_js_data(
+                desc_detailed, available_models
+            )
+            plot_htmls["descriptors_data"] = json.dumps(descriptors_data)
+
+        # Generate JSON data for JavaScript filters visualization
+        filters_detailed = data.get("filters_detailed", {})
+        if available_models:
+            filters_js_data = self._build_filters_js_data(available_models)
+            if filters_js_data.get("filter_data"):
+                plot_htmls["filters_data"] = json.dumps(filters_js_data)
 
         # Generate JSON data for JavaScript model filtering (Docking)
         for tool in ["gnina", "smina"]:
@@ -1380,7 +2039,7 @@ class ReportGenerator:
                     docking_tool_data["__compare__"] = {
                         "is_comparison": True,
                         "models": list(by_model.keys()),
-                        "model_colors": plots.PURPLE_PALETTE[: len(by_model)],
+                        "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
                         "data": by_model,
                     }
                 plot_htmls[f"docking_{tool}_data"] = json.dumps(docking_tool_data)
@@ -1722,10 +2381,9 @@ class ReportGenerator:
                     }};
 
                     var layout = {{
-                        title: {{ text: 'Pipeline Molecule Flow (Sankey Diagram)', font: {{ size: 16 }} }},
                         font: {{ size: 12 }},
                         height: 450,
-                        margin: {{ l: 20, r: 20, t: 60, b: 20 }}
+                        margin: {{ l: 20, r: 20, t: 20, b: 20 }}
                     }};
 
                     Plotly.react('sankey-container', [trace], layout);

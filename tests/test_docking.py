@@ -15,7 +15,7 @@ class TestFindLatestInputSource:
         """Should find synthesis output in new structure."""
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").touch()
+        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -25,7 +25,7 @@ class TestFindLatestInputSource:
         """Should find structural filters output."""
         sf_dir = tmp_path / "stages" / "03_structural_filters_post"
         sf_dir.mkdir(parents=True)
-        (sf_dir / "filtered_molecules.csv").touch()
+        (sf_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -35,7 +35,7 @@ class TestFindLatestInputSource:
         """Should find descriptors output."""
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").touch()
+        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -45,7 +45,7 @@ class TestFindLatestInputSource:
         """Should find sampled molecules in input directory."""
         input_dir = tmp_path / "input"
         input_dir.mkdir(parents=True)
-        (input_dir / "sampled_molecules.csv").touch()
+        (input_dir / "sampled_molecules.csv").write_text("smiles\nCCO")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -56,11 +56,11 @@ class TestFindLatestInputSource:
         # Create both synthesis and descriptors outputs
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").touch()
+        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
 
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").touch()
+        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCC")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -75,7 +75,7 @@ class TestFindLatestInputSource:
     def test_legacy_structure(self, tmp_path):
         """Should find legacy flat structure files."""
         (tmp_path / "Synthesis").mkdir()
-        (tmp_path / "Synthesis" / "passSynthesisSMILES.csv").touch()
+        (tmp_path / "Synthesis" / "passSynthesisSMILES.csv").write_text("smiles\nCCO")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
