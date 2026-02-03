@@ -109,16 +109,16 @@ class FilesHandler:
         try:
             if ext in (".csv",):
                 # CSV: count lines minus header
-                with open(file_path, "r") as f:
+                with open(file_path) as f:
                     count = sum(1 for _ in f) - 1  # subtract header
                     count = max(0, count)
             elif ext in (".smi", ".smiles"):
                 # SMI: count non-empty lines
-                with open(file_path, "r") as f:
+                with open(file_path) as f:
                     count = sum(1 for line in f if line.strip())
             elif ext in (".sdf", ".mol2"):
                 # SDF: count $$$$ delimiters
-                with open(file_path, "r") as f:
+                with open(file_path) as f:
                     content = f.read()
                     count = content.count("$$$$")
                     if count == 0:
@@ -126,7 +126,7 @@ class FilesHandler:
                         count = 1 if content.strip() else 0
             else:
                 # Unknown format - try counting lines
-                with open(file_path, "r") as f:
+                with open(file_path) as f:
                     count = sum(1 for line in f if line.strip())
         except Exception as e:
             return {"count": 0, "error": str(e)}

@@ -11,6 +11,7 @@ import { ConfigMain } from './screens/ConfigMain.js';
 import { ConfigDescriptors } from './screens/ConfigDescriptors.js';
 import { ConfigFilters } from './screens/ConfigFilters.js';
 import { ConfigSynthesis } from './screens/ConfigSynthesis.js';
+import { ConfigRetrosynthesis } from './screens/ConfigRetrosynthesis.js';
 import { ConfigDocking } from './screens/ConfigDocking.js';
 import { PipelineRunner } from './screens/PipelineRunner.js';
 import { History } from './screens/History.js';
@@ -40,6 +41,7 @@ export const BACK_MAP: Record<Screen, Screen | null> = {
   configDescriptors: 'configMain',
   configFilters: 'configMain',
   configSynthesis: 'configMain',
+  configRetrosynthesis: 'configSynthesis',
   configDocking: 'configMain',
   pipelineRunner: 'welcome',
   history: 'welcome',
@@ -62,6 +64,7 @@ export const SCREEN_TITLES: Record<Screen, string> = {
   configDescriptors: 'Descriptors Settings',
   configFilters: 'Structure Filters',
   configSynthesis: 'Synthesis Scoring',
+  configRetrosynthesis: 'Retrosynthesis Config',
   configDocking: 'Docking Configuration',
   pipelineRunner: 'Pipeline Runner',
   history: 'Job History',
@@ -108,6 +111,14 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
   configSynthesis: [
     { key: '↑↓', label: 'Navigate' },
     { key: 'e', label: 'Edit' },
+    { key: 'r', label: 'Retrosynthesis' },
+    { key: 's', label: 'Save' },
+    { key: '←/Esc', label: 'Back' },
+  ],
+  configRetrosynthesis: [
+    { key: '↑↓', label: 'Navigate' },
+    { key: 'b/Enter', label: 'Browse' },
+    { key: '/', label: 'Search' },
     { key: 's', label: 'Save' },
     { key: '←/Esc', label: 'Back' },
   ],
@@ -198,6 +209,8 @@ function ScreenRouter({ screen }: { screen: Screen }): React.ReactElement {
         return <ConfigFilters />;
       case 'configSynthesis':
         return <ConfigSynthesis />;
+      case 'configRetrosynthesis':
+        return <ConfigRetrosynthesis />;
       case 'configDocking':
         return <ConfigDocking />;
       case 'pipelineRunner':

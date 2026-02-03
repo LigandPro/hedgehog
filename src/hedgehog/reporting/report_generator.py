@@ -850,7 +850,7 @@ class ReportGenerator:
         """Get detailed synthesis data for enhanced visualization.
 
         Returns:
-            Dictionary with raw_data, solved/unsolved counts, time stats
+            Dictionary with raw_data, solved/unsolved counts, time stats, by_model
         """
         synth_dir = self.base_path / STAGE_DIRS["synthesis"]
         scores_path = synth_dir / "synthesis_scores.csv"
@@ -870,6 +870,7 @@ class ReportGenerator:
             "solved_count": 0,
             "unsolved_count": 0,
             "summary": {},
+            "by_model": {},
         }
 
         # Extract SA and SYBA scores
@@ -882,12 +883,16 @@ class ReportGenerator:
             result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
 
         # Count solved/unsolved (look for solved, route_found, etc.)
+        solved_col = None
         solved_cols = ["solved", "route_found", "synthesis_solved"]
         for col in solved_cols:
             if col in df.columns:
+                solved_col = col
                 solved = (
-                    df[col].sum() if df[col].dtype == bool else (df[col] == True).sum()
-                )  # noqa: E712
+                    df[col].sum()
+                    if df[col].dtype == bool
+                    else df[col].astype(bool).sum()
+                )
                 result["solved_count"] = int(solved)
                 result["unsolved_count"] = len(df) - int(solved)
                 result["summary"]["pct_solved"] = (
@@ -896,11 +901,13 @@ class ReportGenerator:
                 break
 
         # Collect time data if available
+        time_col = None
         time_cols = ["search_time", "route_time", "synthesis_time"]
         for col in time_cols:
             if col in df.columns:
                 times = df[col].dropna().tolist()
                 if times:
+                    time_col = col
                     result["summary"]["avg_search_time"] = float(df[col].mean())
 
                     # Collect raw data with model info for box plot
@@ -914,6 +921,59 @@ class ReportGenerator:
                                     }
                                 )
                 break
+
+        # Group data by model for comparison views
+        if "model_name" in df.columns:
+            for model in df["model_name"].dropna().unique():
+                model_df = df[df["model_name"] == model]
+                model_data = {
+                    "sa_scores": model_df["sa_score"].dropna().tolist()
+                    if "sa_score" in df.columns
+                    else [],
+                    "syba_scores": model_df["syba_score"].dropna().tolist()
+                    if "syba_score" in df.columns
+                    else [],
+                    "solved_count": 0,
+                    "unsolved_count": 0,
+                    "summary": {},
+                }
+
+                # Calculate per-model summary
+                if "sa_score" in model_df.columns and len(model_data["sa_scores"]) > 0:
+                    model_data["summary"]["avg_sa_score"] = float(
+                        model_df["sa_score"].mean()
+                    )
+
+                if (
+                    "syba_score" in model_df.columns
+                    and len(model_data["syba_scores"]) > 0
+                ):
+                    model_data["summary"]["avg_syba_score"] = float(
+                        model_df["syba_score"].mean()
+                    )
+
+                # Count solved/unsolved per model
+                if solved_col and solved_col in model_df.columns:
+                    model_solved = (
+                        model_df[solved_col].sum()
+                        if model_df[solved_col].dtype == bool
+                        else (model_df[solved_col] == True).sum()  # noqa: E712
+                    )
+                    model_data["solved_count"] = int(model_solved)
+                    model_data["unsolved_count"] = len(model_df) - int(model_solved)
+                    model_data["summary"]["pct_solved"] = (
+                        100 * model_solved / len(model_df) if len(model_df) > 0 else 0
+                    )
+
+                # Time data per model
+                if time_col and time_col in model_df.columns:
+                    model_times = model_df[time_col].dropna()
+                    if len(model_times) > 0:
+                        model_data["summary"]["avg_search_time"] = float(
+                            model_times.mean()
+                        )
+
+                result["by_model"][model] = model_data
 
         return result
 
@@ -967,13 +1027,23 @@ class ReportGenerator:
         """Get detailed docking data for enhanced visualization.
 
         Returns:
-            Dictionary with raw_data, top_molecules, summary stats
+            Dictionary with raw_data, top_molecules, summary stats, by_model
         """
         docking_dir = self.base_path / STAGE_DIRS["docking"]
 
         result = {
-            "gnina": {"raw_data": [], "top_molecules": [], "summary": {}},
-            "smina": {"raw_data": [], "top_molecules": [], "summary": {}},
+            "gnina": {
+                "raw_data": [],
+                "top_molecules": [],
+                "summary": {},
+                "by_model": {},
+            },
+            "smina": {
+                "raw_data": [],
+                "top_molecules": [],
+                "summary": {},
+                "by_model": {},
+            },
         }
 
         for tool in ["gnina", "smina"]:
@@ -1018,6 +1088,13 @@ class ReportGenerator:
                 "count": len(df),
             }
 
+            # Identify molecule ID column
+            id_col = None
+            for col in ["molecule_id", "mol_id", "smiles", "name"]:
+                if col in df.columns:
+                    id_col = col
+                    break
+
             # Collect raw data for box plot by model
             if "model_name" in df.columns:
                 for _, row in df.iterrows():
@@ -1027,19 +1104,11 @@ class ReportGenerator:
                             "affinity": row.get(score_col),
                         }
                         # Add molecule identifier if available
-                        for id_col in ["molecule_id", "mol_id", "smiles", "name"]:
-                            if id_col in df.columns and pd.notna(row.get(id_col)):
-                                record["molecule_id"] = row.get(id_col)
-                                break
+                        if id_col and pd.notna(row.get(id_col)):
+                            record["molecule_id"] = row.get(id_col)
                         result[tool]["raw_data"].append(record)
 
-            # Top molecules by affinity
-            id_col = None
-            for col in ["molecule_id", "mol_id", "smiles", "name"]:
-                if col in df.columns:
-                    id_col = col
-                    break
-
+            # Top molecules by affinity (all models)
             if id_col:
                 top_df = df.nsmallest(10, score_col)
                 for _, row in top_df.iterrows():
@@ -1052,6 +1121,39 @@ class ReportGenerator:
                             else "Unknown",
                         }
                     )
+
+            # Group data by model for comparison views
+            if "model_name" in df.columns:
+                for model in df["model_name"].dropna().unique():
+                    model_df = df[df["model_name"] == model]
+                    model_scores = model_df[score_col].dropna().tolist()
+
+                    if not model_scores:
+                        continue
+
+                    model_data = {
+                        "scores": model_scores,
+                        "summary": {
+                            "avg_affinity": float(model_df[score_col].mean()),
+                            "best_affinity": float(model_df[score_col].min()),
+                            "count": len(model_df),
+                        },
+                        "top_molecules": [],
+                    }
+
+                    # Top 10 molecules for this model
+                    if id_col:
+                        model_top_df = model_df.nsmallest(10, score_col)
+                        for _, row in model_top_df.iterrows():
+                            model_data["top_molecules"].append(
+                                {
+                                    "molecule_id": row.get(id_col, "Unknown"),
+                                    "affinity": row.get(score_col),
+                                    "model_name": model,
+                                }
+                            )
+
+                    result[tool]["by_model"][model] = model_data
 
         return result
 
@@ -1223,6 +1325,65 @@ class ReportGenerator:
                 plot_htmls[f"docking_{tool}_top_molecules"] = (
                     plots.plot_docking_top_molecules(tool_data["top_molecules"])
                 )
+
+        # Generate JSON data for JavaScript model filtering (Synthesis)
+        synth_detailed = data.get("synthesis_detailed", {})
+        if synth_detailed:
+            synthesis_data = {
+                "all": {
+                    "sa_scores": synth_detailed.get("sa_scores", []),
+                    "syba_scores": synth_detailed.get("syba_scores", []),
+                    "solved_count": synth_detailed.get("solved_count", 0),
+                    "unsolved_count": synth_detailed.get("unsolved_count", 0),
+                    "summary": synth_detailed.get("summary", {}),
+                }
+            }
+            # Add per-model data
+            for model, model_data in synth_detailed.get("by_model", {}).items():
+                synthesis_data[model] = model_data
+
+            # Add compare mode data
+            by_model = synth_detailed.get("by_model", {})
+            if by_model:
+                synthesis_data["__compare__"] = {
+                    "is_comparison": True,
+                    "models": list(by_model.keys()),
+                    "model_colors": plots.PURPLE_PALETTE[: len(by_model)],
+                    "data": by_model,
+                }
+            plot_htmls["synthesis_data"] = json.dumps(synthesis_data)
+
+        # Generate JSON data for JavaScript model filtering (Docking)
+        for tool in ["gnina", "smina"]:
+            tool_data = docking_detailed.get(tool, {})
+            if tool_data.get("raw_data") or tool_data.get("by_model"):
+                # Collect all scores for "all" view
+                all_scores = [
+                    d.get("affinity")
+                    for d in tool_data.get("raw_data", [])
+                    if d.get("affinity") is not None
+                ]
+                docking_tool_data = {
+                    "all": {
+                        "scores": all_scores,
+                        "summary": tool_data.get("summary", {}),
+                        "top_molecules": tool_data.get("top_molecules", []),
+                    }
+                }
+                # Add per-model data
+                for model, model_data in tool_data.get("by_model", {}).items():
+                    docking_tool_data[model] = model_data
+
+                # Add compare mode data
+                by_model = tool_data.get("by_model", {})
+                if by_model:
+                    docking_tool_data["__compare__"] = {
+                        "is_comparison": True,
+                        "models": list(by_model.keys()),
+                        "model_colors": plots.PURPLE_PALETTE[: len(by_model)],
+                        "data": by_model,
+                    }
+                plot_htmls[f"docking_{tool}_data"] = json.dumps(docking_tool_data)
 
         return plot_htmls
 

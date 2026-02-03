@@ -5,6 +5,7 @@ import type {
   DescriptorsConfig,
   FiltersConfig,
   SynthesisConfig,
+  RetrosynthesisConfig,
   DockingConfig,
   StageInfo,
   LogEntry,
@@ -23,6 +24,7 @@ interface Configs {
   descriptors: DescriptorsConfig | null;
   filters: FiltersConfig | null;
   synthesis: SynthesisConfig | null;
+  retrosynthesis: RetrosynthesisConfig | null;
   docking: DockingConfig | null;
 }
 
@@ -240,6 +242,7 @@ export const useStore = create<AppState>((set, get) => ({
     descriptors: null,
     filters: null,
     synthesis: null,
+    retrosynthesis: null,
     docking: null,
   },
   configDirty: {},

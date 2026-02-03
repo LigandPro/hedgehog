@@ -34,7 +34,7 @@ class ValidationHandler:
             result["errors"].append(f"Not a file: {path}")
             return result
 
-        if not file_path.suffix.lower() in [".sdf", ".csv", ".smi", ".smiles"]:
+        if file_path.suffix.lower() not in [".sdf", ".csv", ".smi", ".smiles"]:
             result["warnings"].append(f"Unexpected file extension: {file_path.suffix}")
 
         # Check file size

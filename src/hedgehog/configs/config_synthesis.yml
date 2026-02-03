@@ -1,11 +1,5 @@
 run: true
-
-# Enable/disable retrosynthesis analysis with AiZynthFinder
-# If false, only SA/SYBA/RA scores will be calculated, no route search performed
 run_retrosynthesis: true
-
-# Filter molecules: if true, only keep molecules with a solved retrosynthesis path
-# Only applies when run_retrosynthesis is true
 filter_solved_only: true
 sa_score_min: 0
 sa_score_max: 4.5

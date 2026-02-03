@@ -428,6 +428,591 @@
 
                     Plotly.react('sankey-container', [trace], layout, {displayModeBar: false});
                 }
+
+                // =====================================================
+                // Synthesis Analysis - Model Filtering
+                // =====================================================
+                var synthesisDataByModel = {{ plots.synthesis_data | safe if plots.synthesis_data else '{}' }};
+                var currentSynthesisModel = 'all';
+
+                function selectSynthesisModel(model, btn) {
+                    currentSynthesisModel = model;
+                    var toggle = document.getElementById('synthesis-toggle');
+                    if (toggle) {
+                        var buttons = toggle.querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                    }
+                    updateSynthesisPlots();
+                }
+
+                function updateSynthesisPlots() {
+                    var data = synthesisDataByModel[currentSynthesisModel];
+                    if (!data) return;
+
+                    // Update metrics
+                    updateSynthesisMetrics(data);
+
+                    // Update plots
+                    if (data.is_comparison) {
+                        drawCompareHistogram('synthesis-sa-hist', data, 'sa_scores', 'SA Score (lower = easier)', 'SA Score Distribution');
+                        drawCompareHistogram('synthesis-syba-hist', data, 'syba_scores', 'SYBA Score (higher = easier)', 'SYBA Score Distribution');
+                        drawCompareScatter('synthesis-scatter', data);
+                        drawComparePie('synthesis-solved-pie', data);
+                    } else {
+                        drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', 'SA Score Distribution');
+                        drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', 'SYBA Score Distribution');
+                        drawScatter('synthesis-scatter', data.sa_scores || [], data.syba_scores || []);
+                        drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
+                    }
+                }
+
+                function updateSynthesisMetrics(data) {
+                    var summary = data.summary || {};
+                    var avgSaEl = document.getElementById('synthesis-avg-sa');
+                    var avgSybaEl = document.getElementById('synthesis-avg-syba');
+                    var pctSolvedEl = document.getElementById('synthesis-pct-solved');
+                    var avgTimeEl = document.getElementById('synthesis-avg-time');
+
+                    if (avgSaEl && summary.avg_sa_score !== undefined) {
+                        avgSaEl.textContent = summary.avg_sa_score.toFixed(2);
+                    }
+                    if (avgSybaEl && summary.avg_syba_score !== undefined) {
+                        avgSybaEl.textContent = summary.avg_syba_score.toFixed(2);
+                    }
+                    if (pctSolvedEl && summary.pct_solved !== undefined) {
+                        pctSolvedEl.textContent = summary.pct_solved.toFixed(1) + '%';
+                    }
+                    if (avgTimeEl && summary.avg_search_time !== undefined) {
+                        avgTimeEl.textContent = summary.avg_search_time.toFixed(1) + 's';
+                    }
+                }
+
+                function drawHistogram(containerId, values, xLabel, title) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !values || values.length === 0) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var mean = values.reduce(function(a,b) { return a + b; }, 0) / values.length;
+
+                    var trace = {
+                        x: values,
+                        type: 'histogram',
+                        nbinsx: 30,
+                        marker: {
+                            color: 'rgba(139, 92, 246, 0.75)',
+                            line: { color: 'rgba(109, 40, 217, 1)', width: 1 }
+                        }
+                    };
+
+                    var layout = {
+                        title: title ? { text: title, font: { size: 14 } } : undefined,
+                        xaxis: { title: xLabel },
+                        yaxis: { title: 'Count' },
+                        height: 350,
+                        margin: { l: 50, r: 30, t: title ? 50 : 30, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        shapes: [{
+                            type: 'line',
+                            x0: mean, x1: mean,
+                            y0: 0, y1: 1,
+                            yref: 'paper',
+                            line: { color: 'rgba(109, 40, 217, 1)', width: 2, dash: 'dash' }
+                        }],
+                        annotations: [{
+                            x: mean,
+                            y: 1,
+                            yref: 'paper',
+                            text: 'Mean: ' + mean.toFixed(2),
+                            showarrow: false,
+                            yanchor: 'bottom',
+                            font: { size: 10 }
+                        }]
+                    };
+
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                }
+
+                function drawCompareHistogram(containerId, data, scoreKey, xLabel, title) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !data.data) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var traces = [];
+                    var models = data.models || [];
+                    var colors = data.model_colors || [];
+
+                    for (var i = 0; i < models.length; i++) {
+                        var modelData = data.data[models[i]];
+                        if (modelData && modelData[scoreKey] && modelData[scoreKey].length > 0) {
+                            traces.push({
+                                x: modelData[scoreKey],
+                                type: 'histogram',
+                                name: models[i],
+                                opacity: 0.6,
+                                marker: { color: colors[i] || 'rgba(139, 92, 246, 0.75)' }
+                            });
+                        }
+                    }
+
+                    if (traces.length === 0) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var layout = {
+                        title: title ? { text: title, font: { size: 14 } } : undefined,
+                        xaxis: { title: xLabel },
+                        yaxis: { title: 'Count' },
+                        barmode: 'overlay',
+                        height: 350,
+                        margin: { l: 50, r: 30, t: title ? 50 : 30, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        legend: { orientation: 'h', y: 1.1, x: 0 }
+                    };
+
+                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
+                }
+
+                function drawScatter(containerId, saScores, sybaScores) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !saScores || saScores.length === 0) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var trace = {
+                        x: saScores,
+                        y: sybaScores,
+                        mode: 'markers',
+                        type: 'scatter',
+                        marker: {
+                            color: 'rgba(139, 92, 246, 0.6)',
+                            size: 6
+                        }
+                    };
+
+                    var layout = {
+                        xaxis: { title: 'SA Score' },
+                        yaxis: { title: 'SYBA Score' },
+                        height: 350,
+                        margin: { l: 50, r: 30, t: 30, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
+                    };
+
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                }
+
+                function drawCompareScatter(containerId, data) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !data.data) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var traces = [];
+                    var models = data.models || [];
+                    var colors = data.model_colors || [];
+
+                    for (var i = 0; i < models.length; i++) {
+                        var modelData = data.data[models[i]];
+                        if (modelData && modelData.sa_scores && modelData.syba_scores) {
+                            traces.push({
+                                x: modelData.sa_scores,
+                                y: modelData.syba_scores,
+                                mode: 'markers',
+                                type: 'scatter',
+                                name: models[i],
+                                marker: {
+                                    color: colors[i] || 'rgba(139, 92, 246, 0.6)',
+                                    size: 6
+                                }
+                            });
+                        }
+                    }
+
+                    if (traces.length === 0) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var layout = {
+                        xaxis: { title: 'SA Score' },
+                        yaxis: { title: 'SYBA Score' },
+                        height: 350,
+                        margin: { l: 50, r: 30, t: 30, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        legend: { orientation: 'h', y: 1.1, x: 0 }
+                    };
+
+                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
+                }
+
+                function drawPie(containerId, solved, unsolved) {
+                    var container = document.getElementById(containerId);
+                    if (!container || (solved === 0 && unsolved === 0)) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var total = solved + unsolved;
+                    var pct = total > 0 ? (100 * solved / total).toFixed(1) : 0;
+
+                    var trace = {
+                        labels: ['Route Found', 'No Route'],
+                        values: [solved, unsolved],
+                        type: 'pie',
+                        hole: 0.5,
+                        marker: {
+                            colors: ['rgba(139, 92, 246, 0.85)', 'rgba(229, 231, 235, 0.85)']
+                        },
+                        textinfo: 'percent+label',
+                        textfont: { size: 12 }
+                    };
+
+                    var layout = {
+                        height: 350,
+                        margin: { l: 30, r: 30, t: 30, b: 30 },
+                        paper_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        showlegend: false,
+                        annotations: [{
+                            text: pct + '%<br>Solved',
+                            x: 0.5,
+                            y: 0.5,
+                            font: { size: 16 },
+                            showarrow: false
+                        }]
+                    };
+
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                }
+
+                function drawComparePie(containerId, data) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !data.data) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var models = data.models || [];
+                    var colors = data.model_colors || [];
+                    var labels = [];
+                    var values = [];
+                    var barColors = [];
+
+                    for (var i = 0; i < models.length; i++) {
+                        var modelData = data.data[models[i]];
+                        if (modelData) {
+                            labels.push(models[i]);
+                            var pct = 0;
+                            var total = (modelData.solved_count || 0) + (modelData.unsolved_count || 0);
+                            if (total > 0) {
+                                pct = 100 * (modelData.solved_count || 0) / total;
+                            }
+                            values.push(pct);
+                            barColors.push(colors[i] || 'rgba(139, 92, 246, 0.85)');
+                        }
+                    }
+
+                    if (labels.length === 0) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var trace = {
+                        x: labels,
+                        y: values,
+                        type: 'bar',
+                        marker: { color: barColors },
+                        text: values.map(function(v) { return v.toFixed(1) + '%'; }),
+                        textposition: 'outside'
+                    };
+
+                    var layout = {
+                        title: { text: 'Routes Found by Model', font: { size: 14 } },
+                        yaxis: { title: '% Routes Found', range: [0, 100] },
+                        height: 350,
+                        margin: { l: 50, r: 30, t: 50, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
+                    };
+
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                }
+
+                // =====================================================
+                // Docking Results - Model Filtering
+                // =====================================================
+                var dockingGninaData = {{ plots.docking_gnina_data | safe if plots.docking_gnina_data else '{}' }};
+                var dockingSminaData = {{ plots.docking_smina_data | safe if plots.docking_smina_data else '{}' }};
+                var currentDockingModel = 'all';
+
+                function selectDockingModel(model, btn) {
+                    currentDockingModel = model;
+                    var toggle = document.getElementById('docking-toggle');
+                    if (toggle) {
+                        var buttons = toggle.querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                    }
+                    updateDockingPlots();
+                }
+
+                function updateDockingPlots() {
+                    // Update GNINA plots
+                    var gninaData = dockingGninaData[currentDockingModel];
+                    if (gninaData) {
+                        updateDockingMetrics(gninaData, 'GNINA');
+                        if (gninaData.is_comparison) {
+                            drawDockingCompareHistogram('docking-gnina-hist', gninaData, 'GNINA');
+                            drawDockingCompareTopMolecules('docking-gnina-top', gninaData);
+                        } else {
+                            drawDockingHistogram('docking-gnina-hist', gninaData.scores || [], 'GNINA');
+                            drawDockingTopMolecules('docking-gnina-top', gninaData.top_molecules || []);
+                        }
+                    }
+
+                    // Update SMINA plots
+                    var sminaData = dockingSminaData[currentDockingModel];
+                    if (sminaData) {
+                        if (!gninaData) {
+                            updateDockingMetrics(sminaData, 'SMINA');
+                        }
+                        if (sminaData.is_comparison) {
+                            drawDockingCompareHistogram('docking-smina-hist', sminaData, 'SMINA');
+                            drawDockingCompareTopMolecules('docking-smina-top', sminaData);
+                        } else {
+                            drawDockingHistogram('docking-smina-hist', sminaData.scores || [], 'SMINA');
+                            drawDockingTopMolecules('docking-smina-top', sminaData.top_molecules || []);
+                        }
+                    }
+                }
+
+                function updateDockingMetrics(data, tool) {
+                    var summary = data.summary || {};
+                    var avgEl = document.getElementById('docking-avg-affinity');
+                    var bestEl = document.getElementById('docking-best-affinity');
+                    var countEl = document.getElementById('docking-count');
+                    var avgLabel = document.getElementById('docking-avg-label');
+                    var bestLabel = document.getElementById('docking-best-label');
+
+                    if (avgEl && summary.avg_affinity !== undefined) {
+                        avgEl.textContent = summary.avg_affinity.toFixed(2);
+                    }
+                    if (bestEl && summary.best_affinity !== undefined) {
+                        bestEl.textContent = summary.best_affinity.toFixed(2);
+                    }
+                    if (countEl && summary.count !== undefined) {
+                        countEl.textContent = summary.count;
+                    }
+                    if (avgLabel) avgLabel.textContent = 'Avg Affinity (' + tool + ')';
+                    if (bestLabel) bestLabel.textContent = 'Best Affinity (' + tool + ')';
+                }
+
+                function drawDockingHistogram(containerId, scores, tool) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !scores || scores.length === 0) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var mean = scores.reduce(function(a,b) { return a + b; }, 0) / scores.length;
+                    var best = Math.min.apply(null, scores);
+
+                    var trace = {
+                        x: scores,
+                        type: 'histogram',
+                        nbinsx: 30,
+                        marker: {
+                            color: 'rgba(139, 92, 246, 0.75)',
+                            line: { color: 'rgba(109, 40, 217, 1)', width: 1 }
+                        }
+                    };
+
+                    var layout = {
+                        title: { text: tool + ' Binding Affinity Distribution', font: { size: 14 } },
+                        xaxis: { title: 'Binding Affinity (kcal/mol)' },
+                        yaxis: { title: 'Count' },
+                        height: 350,
+                        margin: { l: 50, r: 30, t: 50, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        shapes: [
+                            { type: 'line', x0: mean, x1: mean, y0: 0, y1: 1, yref: 'paper',
+                              line: { color: 'rgba(109, 40, 217, 0.8)', width: 2, dash: 'dash' } },
+                            { type: 'line', x0: best, x1: best, y0: 0, y1: 1, yref: 'paper',
+                              line: { color: 'rgba(76, 29, 149, 1)', width: 2 } }
+                        ],
+                        annotations: [
+                            { x: mean, y: 1, yref: 'paper', text: 'Mean: ' + mean.toFixed(2),
+                              showarrow: false, yanchor: 'bottom', xanchor: 'left', font: { size: 10 } },
+                            { x: best, y: 0.9, yref: 'paper', text: 'Best: ' + best.toFixed(2),
+                              showarrow: false, yanchor: 'bottom', xanchor: 'right', font: { size: 10 } }
+                        ]
+                    };
+
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                }
+
+                function drawDockingCompareHistogram(containerId, data, tool) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !data.data) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var traces = [];
+                    var models = data.models || [];
+                    var colors = data.model_colors || [];
+
+                    for (var i = 0; i < models.length; i++) {
+                        var modelData = data.data[models[i]];
+                        if (modelData && modelData.scores && modelData.scores.length > 0) {
+                            traces.push({
+                                x: modelData.scores,
+                                type: 'histogram',
+                                name: models[i],
+                                opacity: 0.6,
+                                marker: { color: colors[i] || 'rgba(139, 92, 246, 0.75)' }
+                            });
+                        }
+                    }
+
+                    if (traces.length === 0) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var layout = {
+                        title: { text: tool + ' Binding Affinity Comparison', font: { size: 14 } },
+                        xaxis: { title: 'Binding Affinity (kcal/mol)' },
+                        yaxis: { title: 'Count' },
+                        barmode: 'overlay',
+                        height: 350,
+                        margin: { l: 50, r: 30, t: 50, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        legend: { orientation: 'h', y: 1.12, x: 0 }
+                    };
+
+                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
+                }
+
+                function drawDockingTopMolecules(containerId, topMolecules) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !topMolecules || topMolecules.length === 0) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var labels = [];
+                    var scores = [];
+                    var n = Math.min(10, topMolecules.length);
+
+                    for (var i = 0; i < n; i++) {
+                        var mol = topMolecules[i];
+                        var label = mol.molecule_id || 'Unknown';
+                        if (label.length > 20) label = label.substring(0, 17) + '...';
+                        labels.push(label);
+                        scores.push(mol.affinity);
+                    }
+
+                    var colors = [];
+                    for (var j = 0; j < n; j++) {
+                        colors.push('rgba(139, 92, 246, ' + (0.95 - j * 0.05) + ')');
+                    }
+
+                    var trace = {
+                        x: scores,
+                        y: labels,
+                        type: 'bar',
+                        orientation: 'h',
+                        marker: { color: colors },
+                        text: scores.map(function(s) { return s.toFixed(2); }),
+                        textposition: 'outside'
+                    };
+
+                    var layout = {
+                        title: { text: 'Top 10 Molecules by Binding Affinity', font: { size: 14 } },
+                        xaxis: { title: 'Binding Affinity (kcal/mol)' },
+                        height: Math.max(300, 35 * n),
+                        margin: { l: 150, r: 50, t: 50, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        yaxis: { categoryorder: 'total descending' }
+                    };
+
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                }
+
+                function drawDockingCompareTopMolecules(containerId, data) {
+                    var container = document.getElementById(containerId);
+                    if (!container || !data.data) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var models = data.models || [];
+                    var colors = data.model_colors || [];
+                    var labels = [];
+                    var values = [];
+                    var barColors = [];
+
+                    // Show best affinity per model
+                    for (var i = 0; i < models.length; i++) {
+                        var modelData = data.data[models[i]];
+                        if (modelData && modelData.summary && modelData.summary.best_affinity !== undefined) {
+                            labels.push(models[i]);
+                            values.push(modelData.summary.best_affinity);
+                            barColors.push(colors[i] || 'rgba(139, 92, 246, 0.85)');
+                        }
+                    }
+
+                    if (labels.length === 0) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No data available</p>';
+                        return;
+                    }
+
+                    var trace = {
+                        x: values,
+                        y: labels,
+                        type: 'bar',
+                        orientation: 'h',
+                        marker: { color: barColors },
+                        text: values.map(function(v) { return v.toFixed(2); }),
+                        textposition: 'outside'
+                    };
+
+                    var layout = {
+                        title: { text: 'Best Binding Affinity by Model', font: { size: 14 } },
+                        xaxis: { title: 'Binding Affinity (kcal/mol)' },
+                        height: Math.max(300, 40 * labels.length),
+                        margin: { l: 100, r: 50, t: 50, b: 50 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        yaxis: { categoryorder: 'total descending' }
+                    };
+
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                }
             </script>
         </section>
 
@@ -716,63 +1301,74 @@
         <section>
             <h2>Synthesis Analysis</h2>
 
-            <!-- Summary cards for synthesis -->
-            <div class="metrics-grid">
+            <!-- View Toggle for model comparison -->
+            {% if data.available_models and data.synthesis_detailed.by_model %}
+            <div class="view-toggle" id="synthesis-toggle">
+                <button class="active" onclick="selectSynthesisModel('all', this)">All Models</button>
+                <button onclick="selectSynthesisModel('__compare__', this)">Compare</button>
+                {% for model in data.available_models %}
+                <button onclick="selectSynthesisModel('{{ model }}', this)">{{ model }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Dynamic metrics cards -->
+            <div id="synthesis-metrics" class="metrics-grid">
                 {% if data.synthesis_detailed.summary.avg_sa_score %}
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_sa_score) }}</div>
+                    <div class="metric-value" id="synthesis-avg-sa">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_sa_score) }}</div>
                     <div class="metric-label">Avg SA Score</div>
                 </div>
                 {% endif %}
                 {% if data.synthesis_detailed.summary.avg_syba_score %}
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_syba_score) }}</div>
+                    <div class="metric-value" id="synthesis-avg-syba">{{ "%.2f"|format(data.synthesis_detailed.summary.avg_syba_score) }}</div>
                     <div class="metric-label">Avg SYBA Score</div>
                 </div>
                 {% endif %}
                 {% if data.synthesis_detailed.summary.pct_solved is defined %}
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.1f"|format(data.synthesis_detailed.summary.pct_solved) }}%</div>
+                    <div class="metric-value" id="synthesis-pct-solved">{{ "%.1f"|format(data.synthesis_detailed.summary.pct_solved) }}%</div>
                     <div class="metric-label">Routes Found</div>
                 </div>
                 {% endif %}
                 {% if data.synthesis_detailed.summary.avg_search_time %}
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.1f"|format(data.synthesis_detailed.summary.avg_search_time) }}s</div>
+                    <div class="metric-value" id="synthesis-avg-time">{{ "%.1f"|format(data.synthesis_detailed.summary.avg_search_time) }}s</div>
                     <div class="metric-label">Avg Search Time</div>
                 </div>
                 {% endif %}
             </div>
 
-            <!-- SA and SYBA histograms -->
+            <!-- SA and SYBA histograms (dynamic) -->
             <div class="two-col" style="margin-top: 30px;">
                 <div>
-                    {% if plots.synthesis_sa_hist %}
                     <h3 style="margin-bottom: 15px;">SA Score Distribution</h3>
-                    <div class="plot-container">{{ plots.synthesis_sa_hist | safe }}</div>
-                    {% endif %}
+                    <div id="synthesis-sa-hist" class="plot-container">
+                        {% if plots.synthesis_sa_hist %}{{ plots.synthesis_sa_hist | safe }}{% endif %}
+                    </div>
                 </div>
                 <div>
-                    {% if plots.synthesis_syba_hist %}
                     <h3 style="margin-bottom: 15px;">SYBA Score Distribution</h3>
-                    <div class="plot-container">{{ plots.synthesis_syba_hist | safe }}</div>
-                    {% endif %}
+                    <div id="synthesis-syba-hist" class="plot-container">
+                        {% if plots.synthesis_syba_hist %}{{ plots.synthesis_syba_hist | safe }}{% endif %}
+                    </div>
                 </div>
             </div>
 
-            <!-- Scatter plot and solved pie -->
+            <!-- Scatter plot and solved pie (dynamic) -->
             <div class="two-col" style="margin-top: 30px;">
                 <div>
-                    {% if plots.synthesis_scatter %}
                     <h3 style="margin-bottom: 15px;">SA Score vs SYBA Score</h3>
-                    <div class="plot-container">{{ plots.synthesis_scatter | safe }}</div>
-                    {% endif %}
+                    <div id="synthesis-scatter" class="plot-container">
+                        {% if plots.synthesis_scatter %}{{ plots.synthesis_scatter | safe }}{% endif %}
+                    </div>
                 </div>
                 <div>
-                    {% if plots.synthesis_solved_pie %}
                     <h3 style="margin-bottom: 15px;">Synthesis Route Status</h3>
-                    <div class="plot-container">{{ plots.synthesis_solved_pie | safe }}</div>
-                    {% endif %}
+                    <div id="synthesis-solved-pie" class="plot-container">
+                        {% if plots.synthesis_solved_pie %}{{ plots.synthesis_solved_pie | safe }}{% endif %}
+                    </div>
                 </div>
             </div>
 
@@ -789,32 +1385,43 @@
         <section>
             <h2>Docking Results</h2>
 
-            <!-- Summary cards for docking -->
-            <div class="metrics-grid">
+            <!-- View Toggle for model comparison -->
+            {% if data.available_models and (data.docking_detailed.gnina.by_model or data.docking_detailed.smina.by_model) %}
+            <div class="view-toggle" id="docking-toggle">
+                <button class="active" onclick="selectDockingModel('all', this)">All Models</button>
+                <button onclick="selectDockingModel('__compare__', this)">Compare</button>
+                {% for model in data.available_models %}
+                <button onclick="selectDockingModel('{{ model }}', this)">{{ model }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Dynamic metrics cards -->
+            <div id="docking-metrics" class="metrics-grid">
                 {% if data.docking_detailed.gnina.summary %}
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.gnina.summary.avg_affinity) }}</div>
-                    <div class="metric-label">Avg Affinity (GNINA)</div>
+                    <div class="metric-value" id="docking-avg-affinity">{{ "%.2f"|format(data.docking_detailed.gnina.summary.avg_affinity) }}</div>
+                    <div class="metric-label" id="docking-avg-label">Avg Affinity (GNINA)</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.gnina.summary.best_affinity) }}</div>
-                    <div class="metric-label">Best Affinity (GNINA)</div>
+                    <div class="metric-value" id="docking-best-affinity">{{ "%.2f"|format(data.docking_detailed.gnina.summary.best_affinity) }}</div>
+                    <div class="metric-label" id="docking-best-label">Best Affinity (GNINA)</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">{{ data.docking_detailed.gnina.summary.count }}</div>
+                    <div class="metric-value" id="docking-count">{{ data.docking_detailed.gnina.summary.count }}</div>
                     <div class="metric-label">Molecules Docked</div>
                 </div>
                 {% elif data.docking_detailed.smina.summary %}
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.smina.summary.avg_affinity) }}</div>
-                    <div class="metric-label">Avg Affinity (SMINA)</div>
+                    <div class="metric-value" id="docking-avg-affinity">{{ "%.2f"|format(data.docking_detailed.smina.summary.avg_affinity) }}</div>
+                    <div class="metric-label" id="docking-avg-label">Avg Affinity (SMINA)</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">{{ "%.2f"|format(data.docking_detailed.smina.summary.best_affinity) }}</div>
-                    <div class="metric-label">Best Affinity (SMINA)</div>
+                    <div class="metric-value" id="docking-best-affinity">{{ "%.2f"|format(data.docking_detailed.smina.summary.best_affinity) }}</div>
+                    <div class="metric-label" id="docking-best-label">Best Affinity (SMINA)</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">{{ data.docking_detailed.smina.summary.count }}</div>
+                    <div class="metric-value" id="docking-count">{{ data.docking_detailed.smina.summary.count }}</div>
                     <div class="metric-label">Molecules Docked</div>
                 </div>
                 {% endif %}
@@ -822,52 +1429,54 @@
 
             <!-- GNINA Results -->
             {% if data.docking_detailed.gnina.raw_data or plots.docking_gnina %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">GNINA Results</h3>
+            <div id="docking-gnina-section">
+                <h3 style="margin-top: 30px; margin-bottom: 15px;">GNINA Results</h3>
 
-            <div class="two-col">
-                <div>
-                    {% if plots.docking_gnina_affinity_hist %}
-                    <div class="plot-container">{{ plots.docking_gnina_affinity_hist | safe }}</div>
-                    {% elif plots.docking_gnina %}
-                    <div class="plot-container">{{ plots.docking_gnina | safe }}</div>
-                    {% endif %}
+                <div class="two-col">
+                    <div>
+                        <div id="docking-gnina-hist" class="plot-container">
+                            {% if plots.docking_gnina_affinity_hist %}{{ plots.docking_gnina_affinity_hist | safe }}
+                            {% elif plots.docking_gnina %}{{ plots.docking_gnina | safe }}{% endif %}
+                        </div>
+                    </div>
+                    <div>
+                        <div id="docking-gnina-top" class="plot-container">
+                            {% if plots.docking_gnina_top_molecules %}{{ plots.docking_gnina_top_molecules | safe }}{% endif %}
+                        </div>
+                    </div>
                 </div>
-                <div>
-                    {% if plots.docking_gnina_top_molecules %}
-                    <div class="plot-container">{{ plots.docking_gnina_top_molecules | safe }}</div>
-                    {% endif %}
-                </div>
+
+                {% if plots.docking_gnina_affinity_box %}
+                <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
+                <div class="plot-container">{{ plots.docking_gnina_affinity_box | safe }}</div>
+                {% endif %}
             </div>
-
-            {% if plots.docking_gnina_affinity_box %}
-            <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
-            <div class="plot-container">{{ plots.docking_gnina_affinity_box | safe }}</div>
-            {% endif %}
             {% endif %}
 
             <!-- SMINA Results -->
             {% if data.docking_detailed.smina.raw_data or plots.docking_smina %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">SMINA Results</h3>
+            <div id="docking-smina-section">
+                <h3 style="margin-top: 30px; margin-bottom: 15px;">SMINA Results</h3>
 
-            <div class="two-col">
-                <div>
-                    {% if plots.docking_smina_affinity_hist %}
-                    <div class="plot-container">{{ plots.docking_smina_affinity_hist | safe }}</div>
-                    {% elif plots.docking_smina %}
-                    <div class="plot-container">{{ plots.docking_smina | safe }}</div>
-                    {% endif %}
+                <div class="two-col">
+                    <div>
+                        <div id="docking-smina-hist" class="plot-container">
+                            {% if plots.docking_smina_affinity_hist %}{{ plots.docking_smina_affinity_hist | safe }}
+                            {% elif plots.docking_smina %}{{ plots.docking_smina | safe }}{% endif %}
+                        </div>
+                    </div>
+                    <div>
+                        <div id="docking-smina-top" class="plot-container">
+                            {% if plots.docking_smina_top_molecules %}{{ plots.docking_smina_top_molecules | safe }}{% endif %}
+                        </div>
+                    </div>
                 </div>
-                <div>
-                    {% if plots.docking_smina_top_molecules %}
-                    <div class="plot-container">{{ plots.docking_smina_top_molecules | safe }}</div>
-                    {% endif %}
-                </div>
+
+                {% if plots.docking_smina_affinity_box %}
+                <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
+                <div class="plot-container">{{ plots.docking_smina_affinity_box | safe }}</div>
+                {% endif %}
             </div>
-
-            {% if plots.docking_smina_affinity_box %}
-            <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
-            <div class="plot-container">{{ plots.docking_smina_affinity_box | safe }}</div>
-            {% endif %}
             {% endif %}
         </section>
         {% endif %}

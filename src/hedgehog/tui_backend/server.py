@@ -3,7 +3,6 @@
 import json
 import sys
 import threading
-from pathlib import Path
 from typing import Any
 
 from .handlers.config import ConfigHandler

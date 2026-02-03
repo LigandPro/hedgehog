@@ -56,7 +56,8 @@ const FILTERS_PARAMS: ParamDef[] = [
 
 const SYNTHESIS_PARAMS: ParamDef[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable synthesis scoring' },
-  { key: 'filter_solved_only', label: 'Filter Solved Only', type: 'boolean', description: 'Keep only synthesizable molecules' },
+  { key: 'run_retrosynthesis', label: 'Run Retrosynthesis', type: 'boolean', description: 'Enable AiZynthFinder route search' },
+  { key: 'filter_solved_only', label: 'Filter Solved Only', type: 'boolean', description: 'Keep only molecules with found routes' },
   { key: 'sa_score', label: 'SA Score', type: 'range', minKey: 'sa_score_min', maxKey: 'sa_score_max', description: 'Synthetic Accessibility (1-10, lower=easier)' },
   { key: 'syba_score', label: 'SYBA Score', type: 'range', minKey: 'syba_score_min', maxKey: 'syba_score_max', description: 'Synthetic Bayesian Accessibility' },
   { key: 'ra_score', label: 'RA Score', type: 'range', minKey: 'ra_score_min', maxKey: 'ra_score_max', description: 'Retrosynthesis probability (0-1)' },
@@ -327,6 +328,9 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
     } else if (key.return || input === 's') {
       // Enter or 's' - save and return to stage selection
       saveConfig();
+    } else if (input === 'r' && stageName === 'synthesis') {
+      // 'r' - go to detailed retrosynthesis config (only for synthesis stage)
+      setScreen('configRetrosynthesis');
     } else if (key.leftArrow || key.escape || input === 'q') {
       goBack();
     }
@@ -340,6 +344,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
   const shortcuts = [
     { key: '↑↓', label: 'Navigate' },
     { key: 'Space', label: 'Edit' },
+    ...(stageName === 'synthesis' ? [{ key: 'r', label: 'Retrosynthesis' }] : []),
     { key: 'Enter', label: 'Save & Back' },
     { key: '←/Esc', label: 'Back' },
   ];
@@ -362,6 +367,30 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
         title="Pipeline Wizard"
         subtitle={`Configure ${stageConfig.displayName}${isDirty ? ' *' : ''}`}
       />
+
+      {/* Stage-specific hints */}
+      {stageName === 'synthesis' && (
+        <Box marginBottom={1}>
+          <Text dimColor>Synthesis scoring (SA, SYBA, RA) and retrosynthesis route search. </Text>
+          <Text color="cyan">[r]</Text>
+          <Text dimColor> for AiZynthFinder model paths.</Text>
+        </Box>
+      )}
+      {stageName === 'descriptors' && (
+        <Box marginBottom={1}>
+          <Text dimColor>Molecular property calculation and filtering by descriptor ranges.</Text>
+        </Box>
+      )}
+      {stageName === 'struct_filters' && (
+        <Box marginBottom={1}>
+          <Text dimColor>Structural alerts: PAINS, NIBR, Lilly medchem filters.</Text>
+        </Box>
+      )}
+      {stageName === 'docking' && (
+        <Box marginBottom={1}>
+          <Text dimColor>Molecular docking with smina (CPU) or gnina (GPU+CNN scoring).</Text>
+        </Box>
+      )}
 
       <Box flexDirection={showSideDescription ? 'row' : 'column'} marginY={1} width={contentWidth}>
         <Box flexDirection="column" flexGrow={1} flexShrink={1} paddingRight={showSideDescription ? 2 : 0}>
