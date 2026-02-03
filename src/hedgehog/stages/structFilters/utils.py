@@ -445,9 +445,11 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
             # Apply all SMARTS patterns
             df = alert_data.copy()
             df["matches"] = df.smarts.apply(
-                lambda x: mol.GetSubstructMatches(Chem.MolFromSmarts(x))
-                if Chem.MolFromSmarts(x)
-                else ()
+                lambda x: (
+                    mol.GetSubstructMatches(Chem.MolFromSmarts(x))
+                    if Chem.MolFromSmarts(x)
+                    else ()
+                )
             )
 
             grouped = (
