@@ -1433,6 +1433,52 @@ def plot_synthesis_syba_histogram(scores: list[float]) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
+def plot_synthesis_ra_histogram(scores: list[float]) -> str:
+    """Create histogram of RA (Retrosynthetic Accessibility) scores.
+
+    Args:
+        scores: List of RA score values (0-1, higher is easier)
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not scores:
+        return _empty_plot("No RA score data available")
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Histogram(
+            x=scores,
+            nbinsx=30,
+            marker_color="rgba(34, 197, 94, 0.75)",
+            marker_line_color="rgba(22, 163, 74, 1)",
+            marker_line_width=1,
+        )
+    )
+
+    # Add mean line
+    mean_val = statistics.mean(scores)
+    fig.add_vline(
+        x=mean_val,
+        line_dash="dash",
+        line_color="rgba(22, 163, 74, 1)",
+        annotation_text=f"Mean: {mean_val:.2f}",
+        annotation_position="top",
+    )
+
+    fig.update_layout(
+        xaxis_title="RA Score (higher = easier to synthesize)",
+        yaxis_title="Count",
+        height=300,
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
 def plot_synthesis_solved_pie(solved_count: int, unsolved_count: int) -> str:
     """Create pie/donut chart showing % of molecules with synthesis route found.
 

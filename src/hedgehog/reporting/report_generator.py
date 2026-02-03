@@ -1222,20 +1222,30 @@ class ReportGenerator:
             "raw_data": [],
             "sa_scores": [],
             "syba_scores": [],
+            "ra_scores": [],
             "solved_count": 0,
             "unsolved_count": 0,
             "summary": {},
             "by_model": {},
         }
 
-        # Extract SA and SYBA scores
+        # Extract SA, SYBA, and RA scores
         if "sa_score" in df.columns:
             result["sa_scores"] = df["sa_score"].dropna().tolist()
-            result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
+            if result["sa_scores"]:
+                result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
 
         if "syba_score" in df.columns:
             result["syba_scores"] = df["syba_score"].dropna().tolist()
-            result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
+            if result["syba_scores"]:
+                result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
+
+        if "ra_score" in df.columns:
+            result["ra_scores"] = df["ra_score"].dropna().tolist()
+            if result["ra_scores"]:
+                result["summary"]["avg_ra_score"] = float(
+                    df["ra_score"].dropna().mean()
+                )
 
         # Count solved/unsolved (look for solved, route_found, etc.)
         solved_col = None
@@ -1288,6 +1298,9 @@ class ReportGenerator:
                     "syba_scores": model_df["syba_score"].dropna().tolist()
                     if "syba_score" in df.columns
                     else [],
+                    "ra_scores": model_df["ra_score"].dropna().tolist()
+                    if "ra_score" in df.columns
+                    else [],
                     "solved_count": 0,
                     "unsolved_count": 0,
                     "summary": {},
@@ -1305,6 +1318,11 @@ class ReportGenerator:
                 ):
                     model_data["summary"]["avg_syba_score"] = float(
                         model_df["syba_score"].mean()
+                    )
+
+                if "ra_score" in model_df.columns and len(model_data["ra_scores"]) > 0:
+                    model_data["summary"]["avg_ra_score"] = float(
+                        model_df["ra_score"].dropna().mean()
                     )
 
                 # Count solved/unsolved per model
@@ -1694,6 +1712,10 @@ class ReportGenerator:
             plot_htmls["synthesis_syba_hist"] = plots.plot_synthesis_syba_histogram(
                 synth_detailed["syba_scores"]
             )
+        if synth_detailed.get("ra_scores"):
+            plot_htmls["synthesis_ra_hist"] = plots.plot_synthesis_ra_histogram(
+                synth_detailed["ra_scores"]
+            )
         if (
             synth_detailed.get("solved_count", 0) > 0
             or synth_detailed.get("unsolved_count", 0) > 0
@@ -1760,6 +1782,7 @@ class ReportGenerator:
                 "all": {
                     "sa_scores": synth_detailed.get("sa_scores", []),
                     "syba_scores": synth_detailed.get("syba_scores", []),
+                    "ra_scores": synth_detailed.get("ra_scores", []),
                     "solved_count": synth_detailed.get("solved_count", 0),
                     "unsolved_count": synth_detailed.get("unsolved_count", 0),
                     "summary": synth_detailed.get("summary", {}),
