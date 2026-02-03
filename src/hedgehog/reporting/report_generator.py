@@ -84,7 +84,7 @@ class ReportGenerator:
         self.config = config
         self.initial_count = initial_count
         self.final_count = final_count
-        self.output_dir = self.base_path / "output"
+        self.output_dir = self.base_path
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def generate(self) -> Path:

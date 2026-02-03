@@ -57,6 +57,15 @@ npm run tui
 
 See [tui/README.md](tui/README.md) for details.
 
+**HTML Reports**
+
+After each pipeline run, an interactive HTML report is automatically generated as `report.html` in the results folder. The report includes:
+- Pipeline summary and molecule retention funnel
+- Per-stage statistics and visualizations
+- Descriptor distributions
+- Filter pass/fail breakdowns
+- Synthesis scores and docking results
+
 **Configure your run**
 Edit config for each stage in [configs folder](src/hedgehog/configs/) based on metrics you want to calculate.
 
