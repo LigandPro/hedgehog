@@ -79,7 +79,7 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
 
     # Colors for main flow stages (soft purple palette)
     stage_color = "rgba(139, 92, 246, 0.85)"  # Soft purple
-    lost_color = "rgba(167, 139, 250, 0.5)"  # Lighter purple
+    lost_color = "rgba(156, 163, 175, 0.6)"  # Gray for lost molecules
 
     for _ in stages:
         node_colors.append(stage_color)
@@ -109,7 +109,7 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     link_colors = []
 
     main_flow_color = "rgba(139, 92, 246, 0.35)"  # Soft purple
-    lost_flow_color = "rgba(167, 139, 250, 0.25)"  # Lighter purple
+    lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
 
     # Main flow links (between consecutive stages)
     for i in range(len(stages) - 1):
@@ -143,10 +143,10 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     # Y positions: main stages at top, lost nodes at bottom
     y_positions = []
     for _ in range(n_stages):
-        y_positions.append(0.2)  # Main flow at top
+        y_positions.append(0.3)  # Main flow at top
 
     for _ in lost_nodes:
-        y_positions.append(0.85)  # Lost nodes at bottom
+        y_positions.append(0.7)  # Lost nodes below (closer to main)
 
     # Hover text
     customdata = []
@@ -194,13 +194,9 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     )
 
     fig.update_layout(
-        title={
-            "text": "Pipeline Molecule Flow (Sankey Diagram)",
-            "font": {"size": 16},
-        },
         font={"size": 12},
         height=450,
-        margin={"l": 20, "r": 20, "t": 60, "b": 20},
+        margin={"l": 20, "r": 20, "t": 20, "b": 20},
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)
@@ -228,7 +224,7 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
     node_colors = []
 
     stage_color = "rgba(139, 92, 246, 0.85)"
-    lost_color = "rgba(167, 139, 250, 0.5)"
+    lost_color = "rgba(156, 163, 175, 0.6)"  # Gray for lost molecules
 
     for _ in stages:
         node_colors.append(stage_color)
@@ -254,7 +250,7 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
     link_colors = []
 
     main_flow_color = "rgba(139, 92, 246, 0.35)"
-    lost_flow_color = "rgba(167, 139, 250, 0.25)"
+    lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
 
     for i in range(len(stages) - 1):
         sources.append(i)
@@ -274,7 +270,7 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
         target_idx = lost["from_idx"] + 1
         x_positions.append(target_idx / max(n_stages - 1, 1))
 
-    y_positions = [0.2] * n_stages + [0.85] * len(lost_nodes)
+    y_positions = [0.3] * n_stages + [0.7] * len(lost_nodes)
 
     return {
         "labels": labels,
@@ -357,12 +353,12 @@ def plot_sankey_compare_json(
 
     # Calculate positions
     x_positions = [i / max(n_stages - 1, 1) for i in range(n_stages)]
-    y_positions = [0.2] * n_stages
+    y_positions = [0.3] * n_stages
 
-    # Lost nodes at bottom
+    # Lost nodes at bottom (closer to main flow)
     for i in range(n_stages - 1):
         x_positions.append((i + 1) / max(n_stages - 1, 1))
-        y_positions.append(0.85)
+        y_positions.append(0.7)
 
     sources = []
     targets = []
@@ -1147,10 +1143,12 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
     header = "<th>Model</th>" + "".join(f"<th>{d}</th>" for d in descriptors)
 
     return f"""
-    <table class="descriptor-table">
-        <thead><tr>{header}</tr></thead>
-        <tbody>{"".join(rows)}</tbody>
-    </table>
+    <div style="overflow-x: auto; max-width: 100%;">
+        <table class="descriptor-table" style="min-width: 600px;">
+            <thead><tr>{header}</tr></thead>
+            <tbody>{"".join(rows)}</tbody>
+        </table>
+    </div>
     """
 
 
@@ -1684,6 +1682,117 @@ def plot_docking_affinity_box(
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+# =============================================================================
+# Retrosynthesis (AiZynthFinder) Plots
+# =============================================================================
+
+
+def plot_retrosynthesis_route_score_histogram(scores: list[float]) -> str:
+    """Create histogram of retrosynthesis route scores.
+
+    Args:
+        scores: List of route score values (0-1, higher is better)
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not scores:
+        return _empty_plot("No route score data available")
+
+    import statistics
+
+    mean_val = statistics.mean(scores)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Histogram(
+            x=scores,
+            nbinsx=20,
+            marker_color="rgba(139, 92, 246, 0.75)",
+            marker_line_color="rgba(109, 40, 217, 1)",
+            marker_line_width=1,
+        )
+    )
+
+    fig.add_vline(
+        x=mean_val,
+        line_dash="dash",
+        line_color="rgba(109, 40, 217, 1)",
+        annotation_text=f"Mean: {mean_val:.2f}",
+        annotation_position="top",
+    )
+
+    fig.update_layout(
+        xaxis_title="Route Score (higher = better)",
+        yaxis_title="Count",
+        height=300,
+        margin={"l": 50, "r": 30, "t": 30, "b": 50},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_retrosynthesis_steps_histogram(steps: list[int]) -> str:
+    """Create bar chart of synthesis steps count.
+
+    Args:
+        steps: List of number of synthesis steps
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not steps:
+        return _empty_plot("No synthesis steps data available")
+
+    from collections import Counter
+
+    import statistics
+
+    step_counts = Counter(steps)
+    step_values = sorted(step_counts.keys())
+    counts = [step_counts[s] for s in step_values]
+    mean_val = statistics.mean(steps)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=step_values,
+            y=counts,
+            marker_color="rgba(167, 139, 250, 0.75)",
+            marker_line_color="rgba(124, 58, 237, 1)",
+            marker_line_width=1,
+            text=counts,
+            textposition="outside",
+        )
+    )
+
+    fig.add_vline(
+        x=mean_val,
+        line_dash="dash",
+        line_color="rgba(109, 40, 217, 1)",
+        annotation_text=f"Avg: {mean_val:.1f}",
+        annotation_position="top",
+    )
+
+    fig.update_layout(
+        xaxis_title="Number of Synthesis Steps",
+        yaxis_title="Count",
+        height=300,
+        margin={"l": 50, "r": 30, "t": 30, "b": 50},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        xaxis={"dtick": 1},
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)

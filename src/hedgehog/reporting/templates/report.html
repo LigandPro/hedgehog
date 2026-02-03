@@ -326,6 +326,37 @@
             </div>
         </div>
 
+        <!-- Stage Execution Summary -->
+        {% if data.summary.stage_statuses %}
+        <section>
+            <h2>Stage Execution Summary</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Stage</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stage in data.summary.stage_statuses %}
+                    <tr>
+                        <td>{{ stage.name }}</td>
+                        <td class="status-{{ stage.status }}">
+                            {% if stage.completed %}
+                            &#10003; COMPLETED
+                            {% elif stage.enabled %}
+                            &#10007; FAILED
+                            {% else %}
+                            &#8722; DISABLED
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+        {% endif %}
+
         <!-- Pipeline Flow -->
         <section>
             <h2>Pipeline Flow</h2>
@@ -426,7 +457,7 @@
                         }
                     }
 
-                    Plotly.react('sankey-container', [trace], layout, {displayModeBar: false});
+                    Plotly.react('sankey-container', [trace], layout, {displayModeBar: true});
                 }
 
                 // =====================================================
@@ -534,7 +565,7 @@
                         }]
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
                 }
 
                 function drawCompareHistogram(containerId, data, scoreKey, xLabel, title) {
@@ -579,7 +610,7 @@
                         legend: { orientation: 'h', y: 1.1, x: 0 }
                     };
 
-                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
+                    Plotly.react(containerId, traces, layout, {displayModeBar: true});
                 }
 
                 function drawScatter(containerId, saScores, sybaScores) {
@@ -610,7 +641,7 @@
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
                 }
 
                 function drawCompareScatter(containerId, data) {
@@ -657,7 +688,7 @@
                         legend: { orientation: 'h', y: 1.1, x: 0 }
                     };
 
-                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
+                    Plotly.react(containerId, traces, layout, {displayModeBar: true});
                 }
 
                 function drawPie(containerId, solved, unsolved) {
@@ -697,7 +728,7 @@
                         }]
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
                 }
 
                 function drawComparePie(containerId, data) {
@@ -751,7 +782,7 @@
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
                 }
 
                 // =====================================================
@@ -866,7 +897,7 @@
                         ]
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
                 }
 
                 function drawDockingCompareHistogram(containerId, data, tool) {
@@ -911,7 +942,7 @@
                         legend: { orientation: 'h', y: 1.12, x: 0 }
                     };
 
-                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
+                    Plotly.react(containerId, traces, layout, {displayModeBar: true});
                 }
 
                 function drawDockingTopMolecules(containerId, topMolecules) {
@@ -959,7 +990,7 @@
                         yaxis: { categoryorder: 'total descending' }
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
                 }
 
                 function drawDockingCompareTopMolecules(containerId, data) {
@@ -1011,47 +1042,9 @@
                         yaxis: { categoryorder: 'total descending' }
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
                 }
             </script>
-        </section>
-
-        <!-- Stage Summary -->
-        <section>
-            <h2>Stage Execution Summary</h2>
-            <div class="two-col">
-                <div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Stage</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for stage in data.summary.stage_statuses %}
-                            <tr>
-                                <td>{{ stage.name }}</td>
-                                <td class="status-{{ stage.status }}">
-                                    {% if stage.completed %}
-                                    &#10003; COMPLETED
-                                    {% elif stage.enabled %}
-                                    &#10007; FAILED
-                                    {% else %}
-                                    &#8722; DISABLED
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                <div class="plot-container">
-                    {% if plots.stage_summary %}
-                    {{ plots.stage_summary | safe }}
-                    {% endif %}
-                </div>
-            </div>
         </section>
 
         <!-- Model Comparison -->
@@ -1100,76 +1093,311 @@
         <section>
             <h2>Descriptor Analysis</h2>
 
-            <!-- Summary cards for descriptors -->
-            {% if data.descriptors.summary %}
-            <div class="metrics-grid">
-                {% for desc in ['MolWt', 'LogP', 'TPSA', 'QED'] %}
-                {% if desc in data.descriptors.summary %}
-                <div class="metric-card">
-                    <div class="metric-value">{{ "%.1f"|format(data.descriptors.summary[desc].mean) }}</div>
-                    <div class="metric-label">Avg {{ desc }}</div>
-                </div>
-                {% endif %}
+            <!-- View Toggle for model comparison -->
+            {% if data.available_models and plots.descriptors_data %}
+            <div class="view-toggle" id="descriptor-model-toggle">
+                <button class="active" onclick="selectDescriptorModel('all', this)">All Models</button>
+                <button onclick="selectDescriptorModel('__compare__', this)">Compare</button>
+                {% for model in data.available_models %}
+                <button onclick="selectDescriptorModel('{{ model }}', this)">{{ model }}</button>
                 {% endfor %}
             </div>
             {% endif %}
 
-            <!-- Violin plots by model -->
+            <!-- Interactive Plotly histograms -->
+            {% if plots.descriptors_data %}
+            <!-- Legend for descriptor plots (above, left-aligned) -->
+            <div style="display: flex; justify-content: flex-start; gap: 24px; margin-bottom: 12px; font-size: 12px; color: #4b5563;">
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(109, 40, 217, 0.9); vertical-align: middle; margin-right: 6px;"></span>Mean</span>
+                <span><span style="display: inline-block; width: 20px; height: 0; border-top: 3px dashed rgba(34, 197, 94, 0.9); vertical-align: middle; margin-right: 6px;"></span>Median</span>
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(239, 68, 68, 0.9); vertical-align: middle; margin-right: 6px;"></span>Filter Threshold</span>
+                <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.3); vertical-align: middle; margin-right: 6px; border: 1px solid #d1d5db;"></span>Out of Range</span>
+            </div>
+            <div id="descriptor-histograms-container" class="plot-container" style="min-height: 600px;">
+                <!-- Will be populated by JavaScript -->
+            </div>
+
+            <script>
+                var descriptorsData = {{ plots.descriptors_data | safe }};
+                var currentDescriptorModel = 'all';
+
+                function selectDescriptorModel(model, btn) {
+                    currentDescriptorModel = model;
+                    var buttons = document.getElementById('descriptor-model-toggle').querySelectorAll('button');
+                    buttons.forEach(function(b) { b.className = ''; });
+                    btn.className = 'active';
+                    updateDescriptorPlots();
+                }
+
+                function updateDescriptorPlots() {
+                    var container = document.getElementById('descriptor-histograms-container');
+                    if (!container || !descriptorsData || !descriptorsData.descriptors) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No descriptor data available</p>';
+                        return;
+                    }
+
+                    var model = currentDescriptorModel;
+                    var descriptors = descriptorsData.descriptors || [];
+                    var thresholds = descriptorsData.thresholds || {};
+
+                    // Readable names for descriptors
+                    var readableNames = {
+                        'MolWt': 'Molecular Weight',
+                        'LogP': 'LogP',
+                        'cLogP': 'cLogP',
+                        'TPSA': 'TPSA',
+                        'NumHDonors': 'H-Bond Donors',
+                        'NumHAcceptors': 'H-Bond Acceptors',
+                        'QED': 'QED Score',
+                        'Fsp3': 'Fsp³ Fraction',
+                        'n_atoms': 'Total Atoms',
+                        'n_heavy_atoms': 'Heavy Atoms',
+                        'n_het_atoms': 'Heteroatoms',
+                        'n_rings': 'Ring Count',
+                        'n_aroma_rings': 'Aromatic Rings',
+                        'n_rot_bonds': 'Rotatable Bonds',
+                        'n_rigid_bonds': 'Rigid Bonds',
+                        'SW': 'Solubility (SW)',
+                        'n_N_atoms': 'Nitrogen Atoms',
+                        'fN_atoms': 'Nitrogen Fraction',
+                        'n_fused_aromatic_rings': 'Fused Arom. Rings',
+                        'charged_mol': 'Charged Molecule',
+                        'ring_size': 'Ring Size'
+                    };
+
+                    if (!descriptors.length) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No descriptor data available</p>';
+                        return;
+                    }
+
+                    var nCols = 3;
+                    var nRows = Math.ceil(descriptors.length / nCols);
+                    var traces = [];
+                    var shapes = [];
+
+                    // Brighter colors for Compare mode
+                    var modelColors = [
+                        'rgba(139, 92, 246, 0.8)', 'rgba(59, 130, 246, 0.8)', 'rgba(34, 197, 94, 0.8)',
+                        'rgba(249, 115, 22, 0.8)', 'rgba(236, 72, 153, 0.8)', 'rgba(20, 184, 166, 0.8)',
+                        'rgba(245, 158, 11, 0.8)', 'rgba(168, 85, 247, 0.8)'
+                    ];
+                    var modelLineColors = [
+                        'rgba(109, 40, 217, 1)', 'rgba(37, 99, 235, 1)', 'rgba(22, 163, 74, 1)',
+                        'rgba(234, 88, 12, 1)', 'rgba(219, 39, 119, 1)', 'rgba(13, 148, 136, 1)',
+                        'rgba(217, 119, 6, 1)', 'rgba(147, 51, 234, 1)'
+                    ];
+
+                    for (var i = 0; i < descriptors.length; i++) {
+                        var desc = descriptors[i];
+                        var descThresholds = thresholds[desc] || {};
+
+                        if (model === '__compare__') {
+                            // Compare mode: smooth violin plots overlaid
+                            var models = descriptorsData.models || [];
+
+                            // Calculate global min/max for gray shading
+                            var globalMin = Infinity, globalMax = -Infinity;
+                            for (var j = 0; j < models.length; j++) {
+                                var md = descriptorsData.by_model && descriptorsData.by_model[models[j]] && descriptorsData.by_model[models[j]][desc];
+                                if (md && md.values) {
+                                    globalMin = Math.min(globalMin, md.min || Math.min.apply(null, md.values));
+                                    globalMax = Math.max(globalMax, md.max || Math.max.apply(null, md.values));
+                                }
+                            }
+
+                            // Gray shading for out-of-range (left)
+                            if (descThresholds.min !== undefined && descThresholds.min > globalMin) {
+                                shapes.push({
+                                    type: 'rect', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                    x0: globalMin - (globalMax - globalMin) * 0.1, x1: descThresholds.min, y0: 0, y1: 1,
+                                    fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                                });
+                            }
+                            // Gray shading for out-of-range (right)
+                            if (descThresholds.max !== undefined && descThresholds.max < globalMax) {
+                                shapes.push({
+                                    type: 'rect', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                    x0: descThresholds.max, x1: globalMax + (globalMax - globalMin) * 0.1, y0: 0, y1: 1,
+                                    fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                                });
+                            }
+
+                            for (var j = 0; j < models.length; j++) {
+                                var modelName = models[j];
+                                var modelData = descriptorsData.by_model && descriptorsData.by_model[modelName] && descriptorsData.by_model[modelName][desc];
+                                if (modelData && modelData.values && modelData.values.length > 0) {
+                                    traces.push({
+                                        type: 'violin',
+                                        x: modelData.values,
+                                        y0: 0,
+                                        name: modelName,
+                                        orientation: 'h',
+                                        side: 'positive',
+                                        width: 1.8,
+                                        points: false,
+                                        line: { color: modelLineColors[j % modelLineColors.length], width: 2 },
+                                        fillcolor: modelColors[j % modelColors.length],
+                                        xaxis: 'x' + (i + 1), yaxis: 'y' + (i + 1),
+                                        showlegend: (i === 0), legendgroup: modelName,
+                                        scalemode: 'width', spanmode: 'hard'
+                                    });
+                                }
+                            }
+                            // Threshold lines for compare mode
+                            if (descThresholds.min !== undefined) {
+                                shapes.push({
+                                    type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                    x0: descThresholds.min, x1: descThresholds.min, y0: 0, y1: 1,
+                                    line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                                });
+                            }
+                            if (descThresholds.max !== undefined) {
+                                shapes.push({
+                                    type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                    x0: descThresholds.max, x1: descThresholds.max, y0: 0, y1: 1,
+                                    line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                                });
+                            }
+                        } else {
+                            // All Models / Single model: histogram
+                            var data = model === 'all'
+                                ? (descriptorsData.all && descriptorsData.all[desc])
+                                : (descriptorsData.by_model && descriptorsData.by_model[model] && descriptorsData.by_model[model][desc]);
+
+                            if (data && data.values && data.values.length > 0) {
+                                var xMin = data.min, xMax = data.max;
+
+                                traces.push({
+                                    type: 'histogram',
+                                    x: data.values,
+                                    name: desc,
+                                    nbinsx: 50,
+                                    marker: {
+                                        color: 'rgba(139, 92, 246, 0.7)',
+                                        line: { color: 'rgba(109, 40, 217, 0.9)', width: 1 }
+                                    },
+                                    xaxis: 'x' + (i + 1), yaxis: 'y' + (i + 1),
+                                    showlegend: false
+                                });
+
+                                // Gray shading for out-of-range (left)
+                                if (descThresholds.min !== undefined && descThresholds.min > xMin) {
+                                    shapes.push({
+                                        type: 'rect', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: xMin - (xMax - xMin) * 0.1, x1: descThresholds.min, y0: 0, y1: 1,
+                                        fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                                    });
+                                }
+                                // Gray shading for out-of-range (right)
+                                if (descThresholds.max !== undefined && descThresholds.max < xMax) {
+                                    shapes.push({
+                                        type: 'rect', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: descThresholds.max, x1: xMax + (xMax - xMin) * 0.1, y0: 0, y1: 1,
+                                        fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                                    });
+                                }
+
+                                // Mean line (purple solid)
+                                shapes.push({
+                                    type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                    x0: data.mean, x1: data.mean, y0: 0, y1: 1,
+                                    line: { color: 'rgba(109, 40, 217, 0.9)', width: 2 }
+                                });
+
+                                // Median line (green dashed)
+                                if (data.median !== undefined) {
+                                    shapes.push({
+                                        type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: data.median, x1: data.median, y0: 0, y1: 1,
+                                        line: { color: 'rgba(34, 197, 94, 0.9)', width: 2, dash: 'dash' }
+                                    });
+                                }
+
+                                // Threshold min line (red)
+                                if (descThresholds.min !== undefined) {
+                                    shapes.push({
+                                        type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: descThresholds.min, x1: descThresholds.min, y0: 0, y1: 1,
+                                        line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                                    });
+                                }
+                                // Threshold max line (red)
+                                if (descThresholds.max !== undefined) {
+                                    shapes.push({
+                                        type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: descThresholds.max, x1: descThresholds.max, y0: 0, y1: 1,
+                                        line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    // Annotations for subplot titles with readable names
+                    var annotations = [];
+                    for (var i = 0; i < descriptors.length; i++) {
+                        var row = Math.floor(i / nCols);
+                        var col = i % nCols;
+                        var displayName = readableNames[descriptors[i]] || descriptors[i];
+                        annotations.push({
+                            text: '<b>' + displayName + '</b>',
+                            font: { size: 12, color: '#1f2937' },
+                            showarrow: false,
+                            xref: 'paper', yref: 'paper',
+                            x: (col + 0.5) / nCols,
+                            y: 1 - (row / nRows) - 0.02,
+                            xanchor: 'center', yanchor: 'bottom'
+                        });
+                    }
+
+                    var layout = {
+                        height: 280 * nRows,
+                        margin: { l: 50, r: 30, t: 70, b: 50 },
+                        paper_bgcolor: 'white', plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        showlegend: (model === '__compare__'),
+                        legend: { orientation: 'h', y: 1.02, x: 0.5, xanchor: 'center' },
+                        shapes: shapes,
+                        annotations: annotations,
+                        barmode: 'overlay',
+                        grid: { rows: nRows, columns: nCols, pattern: 'independent', roworder: 'top to bottom' }
+                    };
+
+                    for (var i = 0; i < descriptors.length; i++) {
+                        var axisNum = i + 1;
+                        layout['xaxis' + axisNum] = { showgrid: false, zeroline: false, tickfont: { size: 10 } };
+                        layout['yaxis' + axisNum] = { showgrid: true, gridcolor: '#e5e7eb', zeroline: false, showticklabels: false };
+                    }
+
+                    Plotly.newPlot(container, traces, layout, { displayModeBar: true });
+                }
+
+                // Initialize on page load
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (document.getElementById('descriptor-histograms-container')) {
+                        updateDescriptorPlots();
+                    }
+                });
+            </script>
+
+            {% else %}
+            <!-- Fallback: Violin plots by model -->
             {% if plots.descriptors_violin %}
             <h3 style="margin-top: 30px; margin-bottom: 15px;">Descriptor Distributions by Model</h3>
             <div class="plot-container">{{ plots.descriptors_violin | safe }}</div>
             {% endif %}
-
-            <!-- HBD/HBA box plots -->
-            {% if plots.descriptors_hbd_hba %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Hydrogen Bond Donors/Acceptors</h3>
-            <div class="plot-container">{{ plots.descriptors_hbd_hba | safe }}</div>
             {% endif %}
 
             <!-- Summary table by model -->
             {% if plots.descriptors_table %}
             <h3 style="margin-top: 30px; margin-bottom: 15px;">Mean Values by Model</h3>
             {{ plots.descriptors_table | safe }}
-            {% elif data.descriptors.summary %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Descriptor Statistics</h3>
-            <table class="descriptor-table">
-                <thead>
-                    <tr>
-                        <th>Descriptor</th>
-                        <th>Mean</th>
-                        <th>Std</th>
-                        <th>Min</th>
-                        <th>Max</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for desc, stats in data.descriptors.summary.items() %}
-                    <tr>
-                        <td>{{ desc }}</td>
-                        <td>{{ "%.2f"|format(stats.mean) }}</td>
-                        <td>{{ "%.2f"|format(stats.std) }}</td>
-                        <td>{{ "%.2f"|format(stats.min) }}</td>
-                        <td>{{ "%.2f"|format(stats.max) }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% endif %}
-
-            <!-- Existing matplotlib plots from pipeline -->
-            {% if data.existing_plots.descriptors_initial_distribution %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Detailed Descriptor Distributions</h3>
-            <div class="plot-container" style="text-align: center;">
-                <img src="{{ data.existing_plots.descriptors_initial_distribution }}"
-                     alt="Descriptor Distributions"
-                     style="max-width: 100%; height: auto; border-radius: 8px;">
-            </div>
             {% endif %}
         </section>
         {% endif %}
 
         <!-- Structural Filters Analysis (Stage 02) -->
-        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter %}
+        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter or plots.filters_data %}
         <section>
             <h2>Structural Filters Analysis</h2>
 
@@ -1203,95 +1431,313 @@
             </div>
             {% endif %}
 
-            <!-- Stacked bar: molecules rejected per filter by model -->
-            {% if plots.filter_stacked_bar %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Molecules Rejected by Filter</h3>
-            <div class="plot-container">{{ plots.filter_stacked_bar | safe }}</div>
-            {% endif %}
-
-            <div class="two-col">
-                <!-- Banned ratio heatmap -->
-                <div>
-                    {% if plots.filter_banned_heatmap %}
-                    <h3 style="margin-bottom: 15px;">Rejection Rate by Filter × Model</h3>
-                    <div class="plot-container">{{ plots.filter_banned_heatmap | safe }}</div>
-                    {% elif plots.filter_heatmap %}
-                    <h3 style="margin-bottom: 15px;">Filter Failures by Model</h3>
-                    <div class="plot-container">{{ plots.filter_heatmap | safe }}</div>
-                    {% endif %}
-                </div>
-
-                <!-- Top rejection reasons -->
-                <div>
-                    {% if plots.filter_top_reasons %}
-                    <h3 style="margin-bottom: 15px;">Top Rejection Reasons</h3>
-                    <div class="plot-container">{{ plots.filter_top_reasons | safe }}</div>
-                    {% elif plots.filter_failures %}
-                    <h3 style="margin-bottom: 15px;">Top Filter Failures</h3>
-                    <div class="plot-container">{{ plots.filter_failures | safe }}</div>
-                    {% endif %}
-                </div>
+            <!-- Interactive Filter Analysis Charts -->
+            {% if plots.filters_data %}
+            <div class="view-toggle" id="filter-chart-toggle">
+                <button class="active" onclick="selectFilterChartType('overview', this)">Overview</button>
+                <button onclick="selectFilterChartType('counts', this)">Molecule Counts</button>
+                <button onclick="selectFilterChartType('heatmap', this)">Passed by Sub-filter</button>
             </div>
 
-            {% if data.filters.totals %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Filter Failure Summary</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Filter</th>
-                        <th>Total Failed</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for filter_name, count in data.filters.totals.items() %}
-                    <tr>
-                        <td>{{ filter_name }}</td>
-                        <td>{{ count }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% endif %}
+            <div id="filter-overview-container" class="plot-container"></div>
+            <div id="filter-counts-container" class="plot-container" style="display: none;"></div>
+            <div id="filter-heatmaps-container" class="plot-container" style="display: none;"></div>
 
-            <!-- Existing matplotlib plots from pipeline -->
-            {% if data.existing_plots.filters_pre_counts or data.existing_plots.filters_pre_ratios %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Pre-Descriptors Filter Results</h3>
-            <div class="two-col">
-                {% if data.existing_plots.filters_pre_counts %}
-                <div class="plot-container" style="text-align: center;">
-                    <img src="{{ data.existing_plots.filters_pre_counts }}"
-                         alt="Molecule Counts"
-                         style="max-width: 100%; height: auto; border-radius: 8px;">
-                </div>
-                {% endif %}
-                {% if data.existing_plots.filters_pre_ratios %}
-                <div class="plot-container" style="text-align: center;">
-                    <img src="{{ data.existing_plots.filters_pre_ratios }}"
-                         alt="Restriction Ratios"
-                         style="max-width: 100%; height: auto; border-radius: 8px;">
-                </div>
-                {% endif %}
+            <!-- Filter descriptions (visible only for Overview, below chart) -->
+            <div id="filter-legend" style="margin-top: 12px; font-size: 11px; color: #6b7280; line-height: 1.6;">
+                <strong style="color: #374151;">Filters:</strong>
+                <strong>NIBR</strong> — Novartis alerts;
+                <strong>bredt</strong> — Bredt's rule;
+                <strong>common_alerts</strong> — PAINS, toxicophores, skin sensitizers;
+                <strong>lilly</strong> — Eli Lilly MedChem;
+                <strong>molcomplexity</strong> — SAS, QED;
+                <strong>molgraph_stats</strong> — graph constraints
             </div>
-            {% endif %}
 
-            {% if data.existing_plots.filters_post_counts or data.existing_plots.filters_post_ratios %}
-            <h3 style="margin-top: 30px; margin-bottom: 15px;">Post-Descriptors Filter Results</h3>
-            <div class="two-col">
-                {% if data.existing_plots.filters_post_counts %}
-                <div class="plot-container" style="text-align: center;">
-                    <img src="{{ data.existing_plots.filters_post_counts }}"
-                         alt="Molecule Counts"
-                         style="max-width: 100%; height: auto; border-radius: 8px;">
-                </div>
-                {% endif %}
-                {% if data.existing_plots.filters_post_ratios %}
-                <div class="plot-container" style="text-align: center;">
-                    <img src="{{ data.existing_plots.filters_post_ratios }}"
-                         alt="Restriction Ratios"
-                         style="max-width: 100%; height: auto; border-radius: 8px;">
-                </div>
-                {% endif %}
-            </div>
+            <script>
+                var filtersData = {{ plots.filters_data | safe }};
+                var currentFilterChartType = 'overview';
+
+                // Filter descriptions for tooltips
+                var filterDescriptions = {
+                    'NIBR': 'Novartis structural alerts - identifies reactive and toxic functional groups',
+                    'bredt': "Bredt's rule - detects impossible bridgehead double bonds",
+                    'common_alerts': 'Common structural alerts including PAINS, toxicophores, skin sensitizers, frequent hitters',
+                    'lilly': 'Eli Lilly MedChem rules with demerit scoring system',
+                    'molcomplexity': 'Molecular complexity metrics: synthetic accessibility (SAS), QED, Bertz complexity',
+                    'molgraph_stats': 'Graph-based molecular structure constraints'
+                };
+
+                function selectFilterChartType(chartType, btn) {
+                    currentFilterChartType = chartType;
+                    var buttons = document.getElementById('filter-chart-toggle').querySelectorAll('button');
+                    buttons.forEach(function(b) { b.className = ''; });
+                    btn.className = 'active';
+
+                    document.getElementById('filter-overview-container').style.display = (chartType === 'overview') ? 'block' : 'none';
+                    document.getElementById('filter-counts-container').style.display = (chartType === 'counts') ? 'block' : 'none';
+                    document.getElementById('filter-heatmaps-container').style.display = (chartType === 'heatmap') ? 'block' : 'none';
+                    document.getElementById('filter-legend').style.display = (chartType === 'overview') ? 'block' : 'none';
+
+                    updateFilterPlots();
+                }
+
+                function updateFilterPlots() {
+                    if (currentFilterChartType === 'overview') renderFilterOverview();
+                    else if (currentFilterChartType === 'counts') renderFilterCounts();
+                    else renderFilterHeatmaps();
+                }
+
+                function renderFilterOverview() {
+                    var container = document.getElementById('filter-overview-container');
+                    if (!container || !filtersData.filter_data) return;
+
+                    var filterNames = filtersData.filters || [];
+                    var models = filtersData.models || [];
+                    var zVals = [], textVals = [], hoverVals = [];
+
+                    for (var mi = 0; mi < models.length; mi++) {
+                        var m = models[mi];
+                        var rowVals = [], rowText = [], rowHover = [];
+                        for (var fi = 0; fi < filterNames.length; fi++) {
+                            var fn = filterNames[fi];
+                            var filterInfo = filtersData.filter_data[fn];
+                            if (filterInfo && filterInfo.pass_rate && filterInfo.pass_rate[m] !== undefined) {
+                                var passedPct = filterInfo.pass_rate[m];
+                                var numMol = filterInfo.num_mol[m] || 0;
+                                var rejectedCount = Math.round(numMol * (100 - passedPct) / 100);
+                                rowVals.push(passedPct);
+                                rowText.push(passedPct.toFixed(0) + '%\n(' + rejectedCount + ' rej)');
+                                var desc = filterDescriptions[fn] || fn;
+                                rowHover.push(
+                                    '<b>' + fn + '</b><br>' + desc + '<br><br>' +
+                                    '<b>Model:</b> ' + m + '<br>' +
+                                    '<b>Pass rate:</b> ' + passedPct.toFixed(1) + '%<br>' +
+                                    '<b>Total:</b> ' + numMol + '<br>' +
+                                    '<b>Rejected:</b> ' + rejectedCount
+                                );
+                            } else {
+                                rowVals.push(100);
+                                rowText.push('100%');
+                                rowHover.push(fn + '<br>Pass rate: 100%');
+                            }
+                        }
+                        zVals.push(rowVals);
+                        textVals.push(rowText);
+                        hoverVals.push(rowHover);
+                    }
+
+                    var trace = {
+                        type: 'heatmap', z: zVals, x: filterNames, y: models,
+                        text: textVals, texttemplate: '%{text}', textfont: { size: 10 },
+                        hovertext: hoverVals, hoverinfo: 'text',
+                        colorscale: [[0, 'rgba(252, 165, 165, 0.9)'], [0.5, 'rgba(245, 243, 255, 0.9)'], [1, 'rgba(134, 239, 172, 0.9)']],
+                        zmin: 0, zmax: 100, showscale: false
+                    };
+
+                    var layout = {
+                        title: 'Pass Rate per Filter × Model',
+                        height: Math.max(300, models.length * 50 + 100),
+                        margin: { l: 100, r: 30, t: 50, b: 80 },
+                        xaxis: { tickangle: -45 },
+                        paper_bgcolor: 'white', plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
+                    };
+
+                    Plotly.react('filter-overview-container', [trace], layout, {displayModeBar: true});
+                }
+
+                // Color palette for stacked bars (purple shades)
+                var stackColors = [
+                    '#8b5cf6', '#a78bfa', '#c4b5fd', '#ddd6fe', '#ede9fe',
+                    '#7c3aed', '#6d28d9', '#5b21b6', '#4c1d95', '#9333ea',
+                    '#a855f7', '#d946ef', '#e879f9', '#f0abfc', '#f5d0fe'
+                ];
+
+                function renderFilterCounts() {
+                    var container = document.getElementById('filter-counts-container');
+                    if (!container || !filtersData.filter_data) return;
+
+                    var filterNames = filtersData.filters || [];
+                    var modelsToShow = filtersData.models || [];
+
+                    var nFilters = filterNames.length;
+                    var nCols = Math.min(3, nFilters);
+                    var nRows = Math.ceil(nFilters / nCols);
+
+                    var traces = [];
+                    var annotations = [];
+
+                    for (var fi = 0; fi < nFilters; fi++) {
+                        var filterName = filterNames[fi];
+                        var filterInfo = filtersData.filter_data[filterName];
+                        if (!filterInfo) continue;
+
+                        var subMetrics = filterInfo.sub_metric_names || [];
+                        var xAxisIdx = fi + 1;
+                        var yAxisIdx = fi + 1;
+
+                        var col = fi % nCols;
+                        var row = Math.floor(fi / nCols);
+                        annotations.push({
+                            text: '<b>' + filterName + '</b>',
+                            font: { size: 13, color: '#1f2937' },
+                            showarrow: false,
+                            xref: 'paper', yref: 'paper',
+                            x: (col + 0.5) / nCols,
+                            y: 1 - (row / nRows) - 0.02,
+                            xanchor: 'center', yanchor: 'bottom'
+                        });
+
+                        for (var si = 0; si < subMetrics.length; si++) {
+                            var subMetric = subMetrics[si];
+                            var xVals = [];
+                            var yVals = [];
+
+                            for (var mi = 0; mi < modelsToShow.length; mi++) {
+                                var m = modelsToShow[mi];
+                                var subData = filterInfo.sub_metrics[m] || {};
+                                xVals.push(subData[subMetric] || 0);
+                                yVals.push(m);
+                            }
+
+                            traces.push({
+                                type: 'bar',
+                                name: subMetric,
+                                x: xVals,
+                                y: yVals,
+                                orientation: 'h',
+                                marker: { color: stackColors[si % stackColors.length] },
+                                xaxis: 'x' + xAxisIdx,
+                                yaxis: 'y' + yAxisIdx,
+                                showlegend: (fi === 0),
+                                legendgroup: subMetric
+                            });
+                        }
+
+                        for (var mi = 0; mi < modelsToShow.length; mi++) {
+                            var m = modelsToShow[mi];
+                            var numMol = filterInfo.num_mol[m] || 0;
+                            annotations.push({
+                                text: numMol.toString(),
+                                font: { size: 10, color: '#6b7280' },
+                                showarrow: false,
+                                xref: 'x' + xAxisIdx,
+                                yref: 'y' + yAxisIdx,
+                                x: numMol + 5,
+                                y: m,
+                                xanchor: 'left'
+                            });
+                        }
+                    }
+
+                    var layout = {
+                        height: 200 * nRows,
+                        margin: { l: 80, r: 50, t: 50, b: 30 },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        barmode: 'stack',
+                        showlegend: true,
+                        legend: { orientation: 'h', y: -0.05, x: 0.5, xanchor: 'center' },
+                        annotations: annotations,
+                        grid: { rows: nRows, columns: nCols, pattern: 'independent' }
+                    };
+
+                    for (var i = 0; i < nFilters; i++) {
+                        var idx = i + 1;
+                        layout['xaxis' + idx] = { showgrid: true, gridcolor: '#e5e7eb', zeroline: false };
+                        layout['yaxis' + idx] = { showgrid: false, autorange: 'reversed' };
+                    }
+
+                    Plotly.newPlot(container, traces, layout, { displayModeBar: true });
+                }
+
+                function renderFilterHeatmaps() {
+                    var container = document.getElementById('filter-heatmaps-container');
+                    if (!container || !filtersData.filter_data) return;
+
+                    var filterNames = filtersData.filters || [];
+                    var models = filtersData.models || [];
+
+                    // Find filters with detailed sub-metrics (more than just banned_ratio)
+                    var detailedFilters = [];
+                    for (var fi = 0; fi < filterNames.length; fi++) {
+                        var fn = filterNames[fi];
+                        var filterInfo = filtersData.filter_data[fn];
+                        if (filterInfo && filterInfo.sub_metric_names && filterInfo.sub_metric_names.length > 2) {
+                            detailedFilters.push(fn);
+                        }
+                    }
+
+                    if (detailedFilters.length === 0) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No detailed sub-filter metrics available</p>';
+                        return;
+                    }
+
+                    // Create a heatmap for each detailed filter
+                    container.innerHTML = '';
+                    for (var di = 0; di < detailedFilters.length; di++) {
+                        var fn = detailedFilters[di];
+                        var filterInfo = filtersData.filter_data[fn];
+                        var subMetrics = filterInfo.sub_metric_names.filter(function(m) {
+                            return m.indexOf('_banned_ratio') > -1 || m.indexOf('_ratio') > -1;
+                        });
+                        if (subMetrics.length === 0) continue;
+
+                        var zVals = [], textVals = [];
+                        for (var mi = 0; mi < models.length; mi++) {
+                            var m = models[mi];
+                            var rowVals = [], rowText = [];
+                            var metrics = filterInfo.sub_metrics[m] || {};
+                            for (var si = 0; si < subMetrics.length; si++) {
+                                var sm = subMetrics[si];
+                                var val = metrics[sm] || 0;
+                                var passedPct = ((1 - val) * 100).toFixed(1);
+                                rowVals.push(100 - val * 100);
+                                rowText.push(passedPct + '%');
+                            }
+                            zVals.push(rowVals);
+                            textVals.push(rowText);
+                        }
+
+                        // Clean up sub-metric names for display
+                        var cleanNames = subMetrics.map(function(s) {
+                            return s.replace('_banned_ratio', '').replace('_ratio', '');
+                        });
+
+                        var divId = 'filter-heatmap-' + fn;
+                        var div = document.createElement('div');
+                        div.id = divId;
+                        div.style.marginBottom = '30px';
+                        container.appendChild(div);
+
+                        var trace = {
+                            type: 'heatmap', z: zVals, x: cleanNames, y: models,
+                            text: textVals, texttemplate: '%{text}', textfont: { size: 10 },
+                            colorscale: [[0, 'rgba(252, 165, 165, 0.9)'], [0.5, 'rgba(245, 243, 255, 0.9)'], [1, 'rgba(134, 239, 172, 0.9)']],
+                            zmin: 0, zmax: 100
+                        };
+
+                        var layout = {
+                            title: fn + ' - Pass Rate by Sub-filter (%)',
+                            height: Math.max(250, models.length * 35 + 100),
+                            margin: { l: 100, r: 30, t: 50, b: Math.max(80, cleanNames.length > 10 ? 120 : 80) },
+                            xaxis: { tickangle: cleanNames.length > 5 ? -45 : 0 },
+                            paper_bgcolor: 'white', plot_bgcolor: 'white',
+                            font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
+                        };
+
+                        Plotly.react(divId, [trace], layout, {displayModeBar: true});
+                    }
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (document.getElementById('filter-overview-container')) {
+                        updateFilterPlots();
+                    }
+                });
+            </script>
             {% endif %}
         </section>
         {% endif %}
@@ -1376,6 +1822,63 @@
             {% if plots.synthesis_time_box %}
             <h3 style="margin-top: 30px; margin-bottom: 15px;">Search Time by Model</h3>
             <div class="plot-container">{{ plots.synthesis_time_box | safe }}</div>
+            {% endif %}
+
+            <!-- AiZynthFinder Retrosynthesis subsection -->
+            {% if data.retrosynthesis and data.retrosynthesis.summary %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid var(--border);">AiZynthFinder Retrosynthesis</h3>
+
+            <!-- AiZynthFinder summary cards -->
+            <div class="metrics-grid">
+                {% if data.retrosynthesis.summary.solve_rate is defined %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.retrosynthesis.summary.solve_rate) }}%</div>
+                    <div class="metric-label">Solve Rate</div>
+                </div>
+                {% endif %}
+                {% if data.retrosynthesis.summary.avg_route_score is defined %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(data.retrosynthesis.summary.avg_route_score) }}</div>
+                    <div class="metric-label">Avg Route Score</div>
+                </div>
+                {% endif %}
+                {% if data.retrosynthesis.summary.avg_steps is defined %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.retrosynthesis.summary.avg_steps) }}</div>
+                    <div class="metric-label">Avg Steps</div>
+                </div>
+                {% endif %}
+                {% if data.retrosynthesis.summary.avg_precursors is defined %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(data.retrosynthesis.summary.avg_precursors) }}</div>
+                    <div class="metric-label">Avg Precursors</div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- AiZynthFinder plots - compact -->
+            <div class="two-col" style="margin-top: 15px;">
+                <div>
+                    <h4 style="margin-bottom: 8px;">Route Score Distribution</h4>
+                    <div class="plot-container">
+                        {% if plots.retrosynthesis_route_score_hist %}
+                        {{ plots.retrosynthesis_route_score_hist | safe }}
+                        {% else %}
+                        <div class="empty-state">No route score data available</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 8px;">Synthesis Steps</h4>
+                    <div class="plot-container">
+                        {% if plots.retrosynthesis_steps_hist %}
+                        {{ plots.retrosynthesis_steps_hist | safe }}
+                        {% else %}
+                        <div class="empty-state">No steps data available</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
             {% endif %}
         </section>
         {% endif %}
