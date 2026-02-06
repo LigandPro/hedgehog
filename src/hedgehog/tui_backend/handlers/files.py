@@ -7,6 +7,19 @@ if TYPE_CHECKING:
     from ..server import JsonRpcServer
 
 
+def _validate_path(resolved_path: Path, allowed_base: Path | None = None) -> None:
+    """Validate that a resolved path is within the allowed base directory.
+
+    Raises ValueError if the path escapes the allowed directory tree.
+    """
+    if allowed_base is None:
+        allowed_base = Path.home()
+    try:
+        resolved_path.relative_to(allowed_base)
+    except ValueError:
+        raise ValueError(f"Access denied: path '{resolved_path}' is outside '{allowed_base}'")
+
+
 class FilesHandler:
     """Handler for file-related RPC methods."""
 
@@ -16,6 +29,7 @@ class FilesHandler:
     def list_files(self, path: str, extensions: list[str] | None = None) -> list[str]:
         """List files in a directory, optionally filtered by extension."""
         dir_path = Path(path).expanduser().resolve()
+        _validate_path(dir_path)
 
         if not dir_path.exists():
             raise FileNotFoundError(f"Directory not found: {path}")
@@ -43,6 +57,7 @@ class FilesHandler:
     ) -> list[dict[str, Any]]:
         """List directory contents with metadata."""
         dir_path = Path(path).expanduser().resolve()
+        _validate_path(dir_path)
 
         if not dir_path.exists():
             raise FileNotFoundError(f"Directory not found: {path}")
@@ -88,14 +103,15 @@ class FilesHandler:
                         pass
 
                 entries.append(entry)
-        except PermissionError:
-            raise PermissionError(f"Permission denied: {path}")
+        except PermissionError as e:
+            raise PermissionError(f"Permission denied: {path}") from e
 
         return entries
 
     def count_molecules(self, path: str) -> dict[str, Any]:
         """Count molecules in a file (CSV, SMI, SDF)."""
         file_path = Path(path).expanduser().resolve()
+        _validate_path(file_path)
 
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
