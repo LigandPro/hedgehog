@@ -1,14 +1,16 @@
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import yaml
 
-from hedgehog.configs.logger import load_config, logger
+from hedgehog.configs.logger import LoggerSingleton, load_config, logger
 from hedgehog.reporting import ReportGenerator
 from hedgehog.stages.descriptors.main import main as descriptors_main
 from hedgehog.stages.docking.utils import run_docking as docking_main
+from hedgehog.stages.dockingFilters.main import docking_filters_main
 from hedgehog.stages.structFilters.main import main as structural_filters_main
 from hedgehog.stages.synthesis.main import main as synthesis_main
 from hedgehog.utils.input_paths import find_latest_input_source as _find_input
@@ -26,7 +28,8 @@ DIR_STRUCT_FILTERS_PRE = "stages/02_structural_filters_pre"
 DIR_STRUCT_FILTERS_POST = "stages/03_structural_filters_post"
 DIR_SYNTHESIS = "stages/04_synthesis"
 DIR_DOCKING = "stages/05_docking"
-DIR_DESCRIPTORS_FINAL = "stages/06_descriptors_final"
+DIR_DOCKING_FILTERS = "stages/06_docking_filters"
+DIR_DESCRIPTORS_FINAL = "stages/07_descriptors_final"
 
 # Legacy names for backwards compatibility
 DIR_DESCRIPTORS = DIR_DESCRIPTORS_INITIAL
@@ -49,6 +52,7 @@ STAGE_DESCRIPTORS = "descriptors"
 STAGE_STRUCT_FILTERS = "struct_filters"
 STAGE_SYNTHESIS = "synthesis"
 STAGE_DOCKING = "docking"
+STAGE_DOCKING_FILTERS = "docking_filters"
 STAGE_FINAL_DESCRIPTORS = "final_descriptors"
 
 # Config keys
@@ -56,6 +60,7 @@ CONFIG_DESCRIPTORS = "config_descriptors"
 CONFIG_STRUCT_FILTERS = "config_structFilters"
 CONFIG_SYNTHESIS = "config_synthesis"
 CONFIG_DOCKING = "config_docking"
+CONFIG_DOCKING_FILTERS = "config_docking_filters"
 CONFIG_RUN_KEY = "run"
 CONFIG_RUN_BEFORE_DESCRIPTORS = "run_before_descriptors"
 CONFIG_TOOLS = "tools"
@@ -75,6 +80,9 @@ DOCKING_RESULTS_DIR_TEMPLATE = {
 }
 
 
+FILE_RUN_INCOMPLETE = ".RUN_INCOMPLETE"
+
+
 def _log_stage_header(stage_label: str) -> None:
     """Log a formatted stage header."""
     separator = "[#B29EEE]" + "\u2500" * 59 + "[/#B29EEE]"
@@ -89,6 +97,25 @@ def _file_exists_and_not_empty(file_path: Path) -> bool:
     """Check if a file exists and is not empty."""
     try:
         return file_path.exists() and file_path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _csv_has_data_rows(file_path: Path) -> bool:
+    """Return True if a CSV file has at least one data row (header-only -> False)."""
+    try:
+        if not file_path.exists():
+            return False
+        with file_path.open(encoding="utf-8", errors="ignore") as f:
+            # First non-empty line is assumed to be a header
+            for line in f:
+                if line.strip():
+                    break
+            # Any subsequent non-empty line counts as data
+            for line in f:
+                if line.strip():
+                    return True
+        return False
     except OSError:
         return False
 
@@ -124,6 +151,7 @@ class DataChecker:
         / FILE_FILTERED_MOLECULES,
         DIR_STRUCT_FILTERS_PRE: Path(DIR_STRUCT_FILTERS_PRE) / FILE_FILTERED_MOLECULES,
         DIR_SYNTHESIS: Path(DIR_SYNTHESIS) / FILE_FILTERED_MOLECULES,
+        DIR_DOCKING_FILTERS: Path(DIR_DOCKING_FILTERS) / FILE_FILTERED_MOLECULES,
         # Legacy paths
         "Descriptors": Path("Descriptors") / "passDescriptorsSMILES.csv",
         "StructFilters": Path("StructFilters") / "passStructFiltersSMILES.csv",
@@ -142,6 +170,15 @@ class DataChecker:
         path = self._get_stage_output_path(stage_name.strip())
         return _file_exists_and_not_empty(path) if path else False
 
+    def stage_has_molecules(self, stage_name: str) -> bool:
+        """Check if a stage output contains at least one molecule row."""
+        path = self._get_stage_output_path(stage_name.strip())
+        if path is None:
+            return False
+        if path.suffix.lower() == ".csv":
+            return _csv_has_data_rows(path)
+        return _file_exists_and_not_empty(path)
+
     def _get_stage_output_path(self, stage_name: str) -> Path | None:
         """Get the expected output file path for a stage."""
         relative_path = self._STAGE_OUTPUT_PATHS.get(stage_name)
@@ -153,6 +190,7 @@ class PipelineStageRunner:
 
     # Local priority list for stage-based data checking (uses directory names)
     DATA_SOURCE_PRIORITY = [
+        DIR_DOCKING_FILTERS,
         DIR_SYNTHESIS,
         DIR_STRUCT_FILTERS_POST,
         DIR_DESCRIPTORS_INITIAL,
@@ -349,6 +387,35 @@ class PipelineStageRunner:
             logger.error("Error running docking: %s", e)
             return False
 
+    def run_docking_filters(self) -> bool:
+        """Run docking filters stage."""
+        try:
+            # Check if config exists
+            config_path = self.config.get(CONFIG_DOCKING_FILTERS)
+            if config_path is None:
+                logger.info("Docking filters config not specified, skipping")
+                return False
+
+            config_filters = load_config(config_path)
+            if not config_filters.get(CONFIG_RUN_KEY, False):
+                logger.info("Docking filters disabled in config")
+                return False
+
+            # Check if docking results exist before running filters
+            if not self.docking_results_present():
+                logger.warning(
+                    "No docking results found. Skipping docking filters. "
+                    "Ensure docking stage completed successfully before running filters."
+                )
+                return False
+
+            # Run docking filters
+            result = docking_filters_main(self.config)
+            return result is not None and len(result) > 0
+        except Exception as e:
+            logger.error("Error running docking filters: %s", e)
+            return False
+
 
 class MolecularAnalysisPipeline:
     """Orchestrates the execution of the molecular analysis pipeline."""
@@ -360,6 +427,7 @@ class MolecularAnalysisPipeline:
         (STAGE_STRUCT_FILTERS, CONFIG_STRUCT_FILTERS, DIR_STRUCT_FILTERS),
         (STAGE_SYNTHESIS, CONFIG_SYNTHESIS, DIR_SYNTHESIS),
         (STAGE_DOCKING, CONFIG_DOCKING, DIR_DOCKING),
+        (STAGE_DOCKING_FILTERS, CONFIG_DOCKING_FILTERS, DIR_DOCKING_FILTERS),
         (STAGE_FINAL_DESCRIPTORS, CONFIG_DESCRIPTORS, DIR_FINAL_DESCRIPTORS),
     ]
 
@@ -370,7 +438,8 @@ class MolecularAnalysisPipeline:
         STAGE_STRUCT_FILTERS: "Stage 2: Post-descriptors Structural Filters",
         STAGE_SYNTHESIS: "Stage 3: Synthesis Analysis",
         STAGE_DOCKING: "Stage 4: Molecular Docking",
-        STAGE_FINAL_DESCRIPTORS: "Stage 5': Final Descriptors Calculation",
+        STAGE_DOCKING_FILTERS: "Stage 5: Docking Filters",
+        STAGE_FINAL_DESCRIPTORS: "Stage 6': Final Descriptors Calculation",
     }
 
     def __init__(self, config: dict, progress_callback=None):
@@ -380,6 +449,8 @@ class MolecularAnalysisPipeline:
         self.stage_runner = PipelineStageRunner(config, self.data_checker)
         self.current_data = None
         self.stages = [PipelineStage(*defn) for defn in self._STAGE_DEFINITIONS]
+        self._stage_by_name = {stage.name: stage for stage in self.stages}
+        self.stage_timings: dict[str, float] = {}  # Stage name -> elapsed seconds
         self._initialize_stages()
 
     def _initialize_stages(self) -> None:
@@ -412,7 +483,9 @@ class MolecularAnalysisPipeline:
                 logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
 
-    def get_latest_data(self, skip_descriptors: bool = False):
+    def get_latest_data(
+        self, skip_descriptors: bool = False, fallback_on_empty: bool = True
+    ):
         """Load the most recent stage output data."""
         priority = self.stage_runner.DATA_SOURCE_PRIORITY.copy()
         if skip_descriptors:
@@ -426,7 +499,7 @@ class MolecularAnalysisPipeline:
             path = self._build_data_path(latest_source)
             data = pd.read_csv(path)
 
-            if len(data) == 0:
+            if len(data) == 0 and fallback_on_empty:
                 return self._try_fallback_sources(priority, latest_source, data)
             return data
         except Exception as e:
@@ -488,13 +561,15 @@ class MolecularAnalysisPipeline:
             self._run_post_descriptors_filters(),
             self._run_synthesis(),
             self._run_docking(),
+            self._run_docking_filters(),
             self._run_final_descriptors(),
         ]
 
         # Check for early exit conditions
-        for i, (completed, early_exit) in enumerate(stage_results):
+        stage_names = [defn[0] for defn in self._STAGE_DEFINITIONS]
+        for name, (completed, early_exit) in zip(stage_names, stage_results):
             if completed:
-                self.stages[i].completed = True
+                self._stage_by_name[name].completed = True
                 success_count += 1
             if early_exit:
                 return self._finalize_pipeline(data, success_count, total_enabled)
@@ -504,9 +579,9 @@ class MolecularAnalysisPipeline:
         )
         return self._finalize_pipeline(data, success_count, total_enabled)
 
-    def _run_stage(self, stage_idx: int, runner_func, *args) -> tuple[bool, bool]:
+    def _run_stage(self, stage_name: str, runner_func, *args) -> tuple[bool, bool]:
         """Run a pipeline stage with standard logging. Returns (completed, early_exit)."""
-        stage = self.stages[stage_idx]
+        stage = self._stage_by_name[stage_name]
         if not stage.enabled:
             return False, False
 
@@ -519,22 +594,47 @@ class MolecularAnalysisPipeline:
             self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
+        start_time = time.perf_counter()
         completed = runner_func(*args)
+        elapsed = time.perf_counter() - start_time
+        self.stage_timings[stage.name] = elapsed
+        logger.info("Stage %s completed in %.1f seconds", stage.name, elapsed)
         return completed, False
 
     def _run_pre_descriptors_filters(self) -> tuple[bool, bool]:
         """Run pre-descriptors structural filters stage."""
         return self._run_stage(
-            0, self.stage_runner.run_structural_filters, DIR_STRUCT_FILTERS_PRE
+            STAGE_STRUCT_INI_FILTERS, self.stage_runner.run_structural_filters, DIR_STRUCT_FILTERS_PRE
         )
 
     def _run_descriptors(self, data) -> tuple[bool, bool]:
         """Run descriptors calculation stage."""
-        return self._run_stage(1, self.stage_runner.run_descriptors, data)
+        descriptors_input = data
+
+        # If pre-descriptors structural filters are enabled, use their output as the
+        # input to descriptors (otherwise stage 1' becomes analysis-only and the
+        # molecule counts become inconsistent across stages).
+        pre_stage = self._stage_by_name[STAGE_STRUCT_INI_FILTERS]
+        if pre_stage.enabled:
+            pre_path = self._build_data_path(DIR_STRUCT_FILTERS_PRE)
+            if pre_path.exists():
+                try:
+                    pre_df = pd.read_csv(pre_path)
+                    if len(pre_df) > 0:
+                        descriptors_input = pre_df
+                        self.current_data = pre_df
+                except Exception as e:
+                    logger.warning(
+                        "Could not load pre-descriptors structural filters output (%s): %s",
+                        pre_path,
+                        e,
+                    )
+
+        return self._run_stage(STAGE_DESCRIPTORS, self.stage_runner.run_descriptors, descriptors_input)
 
     def _run_post_descriptors_filters(self) -> tuple[bool, bool]:
         """Run post-descriptors structural filters stage."""
-        stage = self.stages[2]
+        stage = self._stage_by_name[STAGE_STRUCT_FILTERS]
         if not stage.enabled:
             return False, False
 
@@ -555,7 +655,7 @@ class MolecularAnalysisPipeline:
 
     def _run_synthesis(self) -> tuple[bool, bool]:
         """Run synthesis analysis stage."""
-        stage = self.stages[3]
+        stage = self._stage_by_name[STAGE_SYNTHESIS]
         if not stage.enabled:
             return False, False
 
@@ -600,11 +700,15 @@ class MolecularAnalysisPipeline:
 
     def _run_docking(self) -> tuple[bool, bool]:
         """Run molecular docking stage."""
-        return self._run_stage(4, self.stage_runner.run_docking)
+        return self._run_stage(STAGE_DOCKING, self.stage_runner.run_docking)
+
+    def _run_docking_filters(self) -> tuple[bool, bool]:
+        """Run docking filters stage."""
+        return self._run_stage(STAGE_DOCKING_FILTERS, self.stage_runner.run_docking_filters)
 
     def _run_final_descriptors(self) -> tuple[bool, bool]:
         """Run final descriptors calculation stage."""
-        stage = self.stages[5]
+        stage = self._stage_by_name[STAGE_FINAL_DESCRIPTORS]
         if not stage.enabled:
             return False, False
 
@@ -617,16 +721,15 @@ class MolecularAnalysisPipeline:
             self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
-        final_data = self.get_latest_data(skip_descriptors=True)
+        final_data = self.get_latest_data(
+            skip_descriptors=True, fallback_on_empty=False
+        )
 
-        if final_data is None or len(final_data) == 0:
-            logger.info(
-                "No molecules available for final descriptors calculation (skipping descriptors stage as source)"
-            )
-            if final_data is not None and len(final_data) == 0:
-                logger.info(
-                    "Ending pipeline: no molecules from previous steps (excluding descriptors)"
-                )
+        if final_data is None:
+            logger.info("No data source found for final descriptors (skipping)")
+            return False, False
+        if len(final_data) == 0:
+            logger.info("No molecules from previous steps; skipping final descriptors")
             return False, False
 
         completed = self.stage_runner.run_descriptors(
@@ -639,7 +742,9 @@ class MolecularAnalysisPipeline:
         self._log_pipeline_summary()
 
         initial_count = len(data)
-        final_data = self.get_latest_data(skip_descriptors=True)
+        final_data = self.get_latest_data(
+            skip_descriptors=True, fallback_on_empty=False
+        )
         final_count = len(final_data) if final_data is not None else 0
 
         self._log_molecule_summary(initial_count, final_count)
@@ -649,7 +754,49 @@ class MolecularAnalysisPipeline:
         )
         self._generate_html_report(initial_count, final_count)
 
-        return success_count == total_enabled
+        return not any(self._stage_is_failed(stage) for stage in self.stages)
+
+    def _stage_is_failed(self, stage: PipelineStage) -> bool:
+        """Return True if an enabled stage is considered a failure.
+
+        Stages are not treated as failures when they are skipped due to having
+        no molecules available at their required input boundary.
+        """
+        if not stage.enabled:
+            return False
+        if stage.completed:
+            return False
+
+        if stage.name == STAGE_FINAL_DESCRIPTORS:
+            # Final descriptors depends on the latest non-descriptor stage output.
+            # If that latest output is empty (0 molecules), we treat it as skipped,
+            # not as a pipeline failure.
+            sources = [
+                DIR_DOCKING_FILTERS,
+                DIR_SYNTHESIS,
+                DIR_STRUCT_FILTERS_POST,
+                DIR_STRUCT_FILTERS_PRE,
+            ]
+            latest = self._find_data_source(sources)
+            if not latest:
+                return False
+            try:
+                latest_df = pd.read_csv(self._build_data_path(latest))
+            except Exception:
+                # If the latest output exists but cannot be read, treat as failure.
+                return True
+            return len(latest_df) > 0
+
+        # Other stages are skippable when their required upstream output is absent/empty.
+        skip_conditions = {
+            STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
+            STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
+        }
+        required_data = skip_conditions.get(stage.name)
+        if required_data and not self.data_checker.stage_has_molecules(required_data):
+            return False
+
+        return True
 
     def _generate_html_report(self, initial_count: int, final_count: int) -> None:
         """Generate HTML report for the pipeline run."""
@@ -677,23 +824,37 @@ class MolecularAnalysisPipeline:
 
     def _save_final_output(self, final_data, final_count: int) -> None:
         """Save final molecules to output directory."""
-        if final_data is None or len(final_data) == 0:
-            return
-
         final_output_path = (
             self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
         )
         final_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if final_data is None or len(final_data) == 0:
+            # Always create the file so downstream tooling can rely on its presence.
+            pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]).to_csv(
+                final_output_path, index=False
+            )
+            logger.info("Saved 0 final molecules to %s", final_output_path)
+            return
         final_data.to_csv(final_output_path, index=False)
         logger.info("Saved %d final molecules to %s", final_count, final_output_path)
 
     def _log_pipeline_summary(self) -> None:
-        """Log a summary of pipeline execution status."""
+        """Log a summary of pipeline execution status and timings."""
         _log_stage_header("Pipeline Execution Summary")
 
         for stage in self.stages:
             status = self._get_stage_status(stage)
-            logger.info("%s: %s", stage.name, status)
+            timing = self.stage_timings.get(stage.name)
+            if timing is not None:
+                logger.info("%s: %s (%.1fs)", stage.name, status, timing)
+            else:
+                logger.info("%s: %s", stage.name, status)
+
+        # Log total time for completed stages
+        if self.stage_timings:
+            total_time = sum(self.stage_timings.values())
+            logger.info("Total pipeline time: %.1f seconds", total_time)
 
     def _get_stage_status(self, stage: PipelineStage) -> str:
         """Get display status for a stage."""
@@ -702,15 +863,34 @@ class MolecularAnalysisPipeline:
         if stage.completed:
             return "[#B29EEE]\u2713 COMPLETED[/#B29EEE]"
 
+        if stage.name == STAGE_FINAL_DESCRIPTORS:
+            # Final descriptors can run on the latest available non-descriptor output
+            # (docking filters, synthesis, structural filters, etc.). Mark as skipped
+            # only if that latest output has no molecules.
+            sources = [
+                DIR_DOCKING_FILTERS,
+                DIR_SYNTHESIS,
+                DIR_STRUCT_FILTERS_POST,
+                DIR_STRUCT_FILTERS_PRE,
+            ]
+            latest = self._find_data_source(sources)
+            if not latest:
+                return "[yellow]\u27c2 SKIPPED (no molecules)[/yellow]"
+            try:
+                latest_df = pd.read_csv(self._build_data_path(latest))
+            except Exception:
+                return "[red]\u2717 FAILED[/red]"
+            if len(latest_df) == 0:
+                return "[yellow]\u27c2 SKIPPED (no molecules)[/yellow]"
+
         # Check for skipped conditions
         skip_conditions = {
             STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
-            STAGE_FINAL_DESCRIPTORS: DIR_STRUCT_FILTERS,
             STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
         }
 
         required_data = skip_conditions.get(stage.name)
-        if required_data and not self.data_checker.check_stage_data(required_data):
+        if required_data and not self.data_checker.stage_has_molecules(required_data):
             return "[yellow]\u27c2 SKIPPED (no molecules)[/yellow]"
 
         return "[red]\u2717 FAILED[/red]"
@@ -755,8 +935,9 @@ _README_STAGE_SECTIONS = {
 |   |   |   +-- filtered_molecules.csv
 |   |   +-- filtered_molecules.csv     Combined passed molecules
 |   |   +-- failed_molecules.csv       Combined failed molecules
-|   |   +-- molecule_counts_comparison.png
-|   |   +-- restriction_ratios_comparison.png
+|   |   +-- plots/
+|   |       +-- molecule_counts_comparison.png
+|   |       +-- restriction_ratios_comparison.png
 |
 """,
     STAGE_DESCRIPTORS: """\
@@ -782,8 +963,9 @@ _README_STAGE_SECTIONS = {
 |   |   |   +-- filtered_molecules.csv
 |   |   +-- filtered_molecules.csv     Combined passed molecules
 |   |   +-- failed_molecules.csv       Combined failed molecules
-|   |   +-- molecule_counts_comparison.png
-|   |   +-- restriction_ratios_comparison.png
+|   |   +-- plots/
+|   |       +-- molecule_counts_comparison.png
+|   |       +-- restriction_ratios_comparison.png
 |
 """,
     STAGE_SYNTHESIS: """\
@@ -798,16 +980,29 @@ _README_STAGE_SECTIONS = {
     STAGE_DOCKING: """\
 |   +-- 05_docking/                     Molecular docking
 |   |   +-- ligands.csv                Prepared ligands
+|   |   +-- job_meta.json              Job metadata
 |   |   +-- smina/
-|   |   |   +-- poses/                 Docking poses (.pdbqt)
-|   |   |   +-- scores.csv
+|   |   |   +-- smina_out.sdf          Aggregated SMINA results
 |   |   +-- gnina/
-|   |       +-- output.sdf
-|   |       +-- scores.csv
+|   |   |   +-- gnina_out.sdf          Aggregated GNINA results
+|   |   +-- _workdir/                  Intermediate files
+|   |       +-- molecules/             Per-molecule SDF files
+|   |       +-- configs/               Per-molecule docking configs
+|   |       +-- smina/                 SMINA per-molecule results & logs
+|   |       +-- gnina/                 GNINA per-molecule results & logs
+|   |       +-- run_smina.sh           SMINA run script
+|   |       +-- run_gnina.sh           GNINA run script
+|
+""",
+    STAGE_DOCKING_FILTERS: """\
+|   +-- 06_docking_filters/             Post-docking pose and interaction filters
+|   |   +-- metrics.csv                 Per-pose filter metrics and pass flags
+|   |   +-- filtered_molecules.csv      Passed poses with extracted identifiers
+|   |   +-- filtered_poses.sdf          Filtered poses (SDF)
 |
 """,
     STAGE_FINAL_DESCRIPTORS: """\
-|   +-- 06_descriptors_final/           Final descriptor calculation
+|   +-- 07_descriptors_final/           Final descriptor calculation
 |       +-- metrics/
 |       +-- filtered/
 |       +-- plots/
@@ -876,11 +1071,9 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 +-- report.html                         Interactive HTML report
 +-- report_data.json                    Report data
 |
-+-- configs/                            Configuration snapshots
++-- configs/                            Configuration snapshots & runtime config
 |   +-- master_config_resolved.yml
 |   +-- config_*.yml
-|
-+-- run_configs/                        Runtime configuration
 |   +-- model_index_map.json
 |
 +-- logs/                               Pipeline logs
@@ -943,10 +1136,28 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
     Returns:
         True if all enabled stages completed successfully, False otherwise
     """
+    folder = Path(config[CONFIG_FOLDER_TO_SAVE])
+    incomplete_marker = folder / FILE_RUN_INCOMPLETE
+
     try:
+        # Ensure a per-run log file is created inside folder_to_save.
+        LoggerSingleton().configure_log_directory(folder / "logs")
+
+        # Drop a marker so that interrupted runs are detectable.
+        folder.mkdir(parents=True, exist_ok=True)
+        incomplete_marker.write_text(
+            f"Pipeline started: {datetime.now().isoformat()}\n"
+            "This file is removed automatically on successful completion.\n"
+            "If you see it, the run was interrupted or failed.\n"
+        )
+
         _save_config_snapshot(config)
         pipeline = MolecularAnalysisPipeline(config, progress_callback)
-        return pipeline.run_pipeline(data)
+        success = pipeline.run_pipeline(data)
+
+        # Pipeline finished normally — remove the marker.
+        incomplete_marker.unlink(missing_ok=True)
+        return success
     except Exception as e:
         logger.error("Pipeline execution failed: %s", e)
         return False
