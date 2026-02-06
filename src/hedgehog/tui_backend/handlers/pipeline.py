@@ -28,6 +28,7 @@ class PipelineJob:
         "struct_filters": "struct_filters",
         "synthesis": "synthesis",
         "docking": "docking",
+        "docking_filters": "docking_filters",
         "final_descriptors": "descriptors",
     }
 
@@ -209,6 +210,9 @@ class PipelineJob:
             )
 
 
+_MAX_COMPLETED_JOBS = 50
+
+
 class PipelineHandler:
     """Handler for pipeline-related RPC methods."""
 
@@ -216,8 +220,20 @@ class PipelineHandler:
         self.server = server
         self.jobs: dict[str, PipelineJob] = {}
 
+    def _cleanup_completed_jobs(self) -> None:
+        """Remove oldest completed jobs when exceeding the limit."""
+        completed = [
+            jid for jid, job in self.jobs.items()
+            if not job._thread or not job._thread.is_alive()
+        ]
+        excess = len(completed) - _MAX_COMPLETED_JOBS
+        if excess > 0:
+            for jid in completed[:excess]:
+                del self.jobs[jid]
+
     def start_pipeline(self, stages: list[str]) -> str:
         """Start a new pipeline run."""
+        self._cleanup_completed_jobs()
         job_id = str(uuid.uuid4())[:8]
         job = PipelineJob(job_id, stages, self.server)
         self.jobs[job_id] = job

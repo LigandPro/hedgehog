@@ -123,6 +123,8 @@ def build_identity_map_from_descriptors(config):
 
 def process_path(folder_to_save, key_word=None):
     """Ensure path ends with '/' and create directory if needed."""
+    # Accept both str and Path-like inputs.
+    folder_to_save = str(folder_to_save)
     if not folder_to_save.endswith("/"):
         folder_to_save += "/"
 
@@ -429,8 +431,6 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
         len(rule_set_names),
     )
 
-    n_jobs = config["n_jobs"]
-
     # Process molecules sequentially since pandarallel has issues with closures
     # This is more reliable than parallel_apply with complex nested functions
     results_list = []
@@ -444,13 +444,11 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
         if mol is not None:
             # Apply all SMARTS patterns
             df = alert_data.copy()
-            df["matches"] = df.smarts.apply(
-                lambda x: (
-                    mol.GetSubstructMatches(Chem.MolFromSmarts(x))
-                    if Chem.MolFromSmarts(x)
-                    else ()
-                )
-            )
+            matches: list[tuple[tuple[int, ...], ...] | tuple[()]] = []
+            for smarts in df["smarts"].tolist():
+                patt = Chem.MolFromSmarts(smarts)
+                matches.append(mol.GetSubstructMatches(patt) if patt else ())
+            df["matches"] = matches
 
             grouped = (
                 df.groupby("rule_set_name")
@@ -544,7 +542,7 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
         final_result[f"pass_{name}"] = final_result["mol"].apply(cfilter)
         final_result["pass"] = final_result["pass"] * final_result[f"pass_{name}"]
         final_result["pass_any"] = (
-            final_result["pass_any"] + final_result[f"pass_{name}"]
+            final_result["pass_any"] | final_result[f"pass_{name}"]
         )
 
     if smiles_modelName_mols is not None:
@@ -1131,8 +1129,10 @@ def plot_calculated_stats(config, stage_dir):
 
     plt.subplots_adjust(right=0.85, hspace=0.6, wspace=0.5)
 
+    plots_dir = struct_folder / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
     plt.savefig(
-        struct_folder / "molecule_counts_comparison.png",
+        plots_dir / "molecule_counts_comparison.png",
         dpi=300,
         bbox_inches="tight",
         facecolor="white",
@@ -1284,8 +1284,10 @@ def plot_restriction_ratios(config, stage_dir):
             )
 
     plt.tight_layout()
+    plots_dir = struct_folder / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
     plt.savefig(
-        struct_folder / "restriction_ratios_comparison.png",
+        plots_dir / "restriction_ratios_comparison.png",
         dpi=300,
         bbox_inches="tight",
         facecolor="white",

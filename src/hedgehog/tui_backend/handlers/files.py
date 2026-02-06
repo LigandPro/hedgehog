@@ -16,8 +16,8 @@ def _validate_path(resolved_path: Path, allowed_base: Path | None = None) -> Non
         allowed_base = Path.home()
     try:
         resolved_path.relative_to(allowed_base)
-    except ValueError:
-        raise ValueError(f"Access denied: path '{resolved_path}' is outside '{allowed_base}'")
+    except ValueError as err:
+        raise ValueError(f"Access denied: path '{resolved_path}' is outside '{allowed_base}'") from err
 
 
 class FilesHandler:
