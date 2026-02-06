@@ -141,9 +141,12 @@ def parse_retrosynthesis_results(json_file):
 def merge_retrosynthesis_results(input_df, retrosynth_df):
     """Merge retrosynthesis results with input DataFrame.
 
+    Uses SMILES-based matching when a SMILES column is available in both
+    DataFrames, falling back to positional merge otherwise.
+
     Args:
         input_df: Original input DataFrame with molecules (may have duplicate SMILES)
-        retrosynth_df: DataFrame with retrosynthesis results indexed by position
+        retrosynth_df: DataFrame with retrosynthesis results
 
     Returns:
         Merged DataFrame with retrosynthesis information, preserving all input rows
@@ -154,10 +157,45 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
     merged["solved"] = 0
     merged["search_time"] = 0.0
 
-    for idx, row in retrosynth_df_copy.iterrows():
-        if idx < len(merged):
-            merged.loc[idx, "solved"] = row.get("solved", 0)
-            merged.loc[idx, "search_time"] = row.get("search_time", 0.0)
+    # Determine SMILES column names
+    input_smi_col = None
+    for col in ("smiles", "SMILES"):
+        if col in merged.columns:
+            input_smi_col = col
+            break
+
+    retro_smi_col = None
+    for col in ("SMILES", "smiles"):
+        if col in retrosynth_df_copy.columns:
+            retro_smi_col = col
+            break
+
+    if input_smi_col and retro_smi_col:
+        # SMILES-based merge: build lookup from retrosynth results
+        retro_lookup: dict[str, dict] = {}
+        for _, row in retrosynth_df_copy.iterrows():
+            smi = str(row[retro_smi_col])
+            if smi not in retro_lookup:
+                retro_lookup[smi] = {
+                    "solved": row.get("solved", 0),
+                    "search_time": row.get("search_time", 0.0),
+                }
+
+        for idx, row in merged.iterrows():
+            smi = str(row[input_smi_col])
+            match = retro_lookup.get(smi)
+            if match:
+                merged.loc[idx, "solved"] = match["solved"]
+                merged.loc[idx, "search_time"] = match["search_time"]
+    else:
+        # Positional fallback when SMILES column is unavailable
+        logger.warning(
+            "No SMILES column found for merge; using positional matching"
+        )
+        for idx, row in retrosynth_df_copy.iterrows():
+            if idx < len(merged):
+                merged.loc[idx, "solved"] = row.get("solved", 0)
+                merged.loc[idx, "search_time"] = row.get("search_time", 0.0)
 
     return merged
 

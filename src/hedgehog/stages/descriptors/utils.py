@@ -454,7 +454,7 @@ def filter_molecules(df, borders, folder_to_save):
             filtered_data[col] = df[col]
             continue
 
-        col_in_borders = any(col.lower() in k.lower() for k in borders.keys())
+        col_in_borders = any(v is not None for v in _get_border_values(col, borders))
         if col_in_borders:
             filtered_data[col] = df[col]
             filtered_data[f"{col}_pass"] = _apply_column_filter(df, col, borders)
@@ -491,6 +491,12 @@ def filter_molecules(df, borders, folder_to_save):
 
     # Save failed molecules
     all_computed_path = folder_to_save / "descriptors_all.csv"
+    if not all_computed_path.exists():
+        # descriptors_all.csv is written into the sibling "metrics/" folder
+        # by compute_metrics(). Fall back to that location for provenance.
+        sibling_metrics = folder_to_save.parent / "metrics" / "descriptors_all.csv"
+        if sibling_metrics.exists():
+            all_computed_path = sibling_metrics
     flags_path = folder_to_save / "pass_flags.csv"
 
     if all_computed_path.exists():
@@ -970,7 +976,13 @@ def draw_filtered_mols(df, folder_to_save, config):
 
     # Plot each column
     for i, col in enumerate(cols_to_plot):
-        relevant_keys = [k for k in borders.keys() if col.lower() in k.lower()]
+        col_lower = col.lower()
+        canonical = _DESCRIPTOR_KEY_MAP.get(col_lower, col).lower()
+        relevant_keys = [
+            k for k in borders
+            if k.endswith(("_min", "_max"))
+            and k.rsplit("_", 1)[0].lower() in (col_lower, canonical)
+        ]
         if not relevant_keys:
             continue
         _plot_single_column(
