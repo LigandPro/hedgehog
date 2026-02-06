@@ -1,4 +1,3 @@
-import re
 import subprocess
 import warnings
 from enum import Enum
@@ -20,7 +19,7 @@ from hedgehog.utils.mol_index import assign_mol_idx
 mpl.use("Agg")
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 
-DEFAULT_CONFIG_PATH = "./src/hedgehog/configs/config.yml"
+DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.yml")
 SAMPLED_MOLS_FILENAME = "sampled_molecules.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
 
@@ -43,38 +42,40 @@ def _folder_is_empty(folder: Path) -> bool:
 
 def _get_unique_results_folder(base_folder) -> Path:
     """
-    Generate a unique folder name by appending a number if the folder already exists.
+    Generate a unique folder name with sequential number suffix.
 
-    If the base folder exists and contains any files or directories, creates a new folder
-    with an incremented suffix (e.g., results -> results1 -> results2).
+    Creates folders like: results/run_1, results/run_2, etc.
 
     Parameters
     ----------
     base_folder : Path or str
-        Path object or string representing the base folder
+        Path object or string representing the base folder (e.g., results/run)
 
     Returns
     -------
     Path
-        Path object with a unique folder name
+        Path object with a unique sequentially numbered folder name
     """
+    import re
+
     base_folder = Path(base_folder)
-
-    if _folder_is_empty(base_folder):
-        return base_folder
-
     parent = base_folder.parent
     base_name = base_folder.name
 
-    match = re.match(r"^(.+?)(\d+)$", base_name)
-    name_prefix = match.group(1) if match else base_name
-    counter = int(match.group(2)) + 1 if match else 1
+    # Find existing folders matching pattern {base_name}_N
+    max_number = 0
+    pattern = re.compile(rf"^{re.escape(base_name)}_(\d+)$")
 
-    while True:
-        new_folder = parent / f"{name_prefix}{counter}"
-        if _folder_is_empty(new_folder):
-            return new_folder
-        counter += 1
+    if parent.exists():
+        for item in parent.iterdir():
+            if item.is_dir():
+                match = pattern.match(item.name)
+                if match:
+                    number = int(match.group(1))
+                    max_number = max(max_number, number)
+
+    new_folder = parent / f"{base_name}_{max_number + 1}"
+    return new_folder
 
 
 def _canonicalize_smiles(smi: str) -> str | None:
@@ -207,7 +208,8 @@ def preprocess_input_with_tool(
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         return str(prepared_output) if prepared_output.exists() else None
-    except Exception:
+    except Exception as e:
+        log.debug("Ligand preparation failed: %s", e)
         return None
 
 
@@ -366,6 +368,8 @@ class Stage(str, Enum):
     struct_filters = "struct_filters"
     synthesis = "synthesis"
     docking = "docking"
+    docking_filters = "docking_filters"
+    final_descriptors = "final_descriptors"
 
     @property
     def description(self) -> str:
@@ -378,6 +382,8 @@ class Stage(str, Enum):
                 "(AiZynthFinder) and other metrics"
             ),
             Stage.docking: "Calculate docking scores with Smina/Gnina",
+            Stage.docking_filters: "Filter docking poses by quality and interactions",
+            Stage.final_descriptors: "Recompute descriptors on the final filtered set",
         }
         return descriptions[self]
 
@@ -470,7 +476,10 @@ def run(
     _save_sampled_molecules(data, folder_to_save, should_save)
 
     logger.info("[bold #B29EEE]Starting pipeline...[/bold #B29EEE]")
-    calculate_metrics(data, config_dict)
+    success = calculate_metrics(data, config_dict)
+    if not success:
+        logger.error("Pipeline completed with failures")
+        raise typer.Exit(code=1)
     logger.info(
         "[bold][#B29EEE]Ligand Pro[/#B29EEE] thanks you for using "
         "[#B29EEE]🦔 HEDGEHOG[/#B29EEE]![/bold]"
@@ -506,10 +515,6 @@ def version() -> None:
     console.print("[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]")
 
 
-if __name__ == "__main__":
-    app()
-
-
 @app.command()
 def tui() -> None:
     """
@@ -527,13 +532,35 @@ def tui() -> None:
     import subprocess
     from pathlib import Path
 
-    # Find the TUI directory
-    tui_dir = Path(__file__).parent.parent.parent.parent / "tui"
+    def _find_tui_dir() -> Path | None:
+        """Find the `tui/` directory in a source checkout."""
+        search_roots: list[Path] = []
+        try:
+            search_roots.append(Path.cwd().resolve())
+        except OSError:
+            pass
+        try:
+            search_roots.append(Path(__file__).resolve().parent)
+        except OSError:
+            pass
 
-    if not tui_dir.exists():
+        for root in search_roots:
+            for parent in [root] + list(root.parents):
+                if (parent / "pyproject.toml").exists():
+                    candidate = parent / "tui"
+                    if candidate.exists():
+                        return candidate
+                candidate = parent / "tui"
+                if candidate.exists():
+                    return candidate
+        return None
+
+    tui_dir = _find_tui_dir()
+
+    if tui_dir is None or not tui_dir.exists():
         console.print(
             "[red]Error:[/red] TUI directory not found. "
-            "Please ensure the TUI is installed."
+            "Please run from a source checkout that contains the `tui/` folder."
         )
         raise typer.Exit(code=1)
 
@@ -565,7 +592,7 @@ def tui() -> None:
             )
         except subprocess.CalledProcessError as e:
             console.print(f"[red]Error building TUI:[/red] {e}")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from e
 
     # Launch the TUI
     try:
@@ -576,6 +603,10 @@ def tui() -> None:
         )
     except subprocess.CalledProcessError as e:
         console.print(f"[red]TUI exited with error:[/red] {e.returncode}")
-        raise typer.Exit(code=e.returncode)
+        raise typer.Exit(code=e.returncode) from e
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    app()
