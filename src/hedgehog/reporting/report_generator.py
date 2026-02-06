@@ -22,7 +22,8 @@ STAGE_DIRS = {
     "struct_filters_post": "stages/03_structural_filters_post",
     "synthesis": "stages/04_synthesis",
     "docking": "stages/05_docking",
-    "descriptors_final": "stages/06_descriptors_final",
+    "docking_filters": "stages/06_docking_filters",
+    "descriptors_final": "stages/07_descriptors_final",
 }
 
 # Stage display names
@@ -32,6 +33,7 @@ STAGE_DISPLAY_NAMES = {
     "struct_filters_post": "Post-Descriptors Filters",
     "synthesis": "Synthesis Analysis",
     "docking": "Molecular Docking",
+    "docking_filters": "Docking Filters",
     "descriptors_final": "Final Descriptors",
 }
 
@@ -195,6 +197,7 @@ class ReportGenerator:
                 ("struct_filters_pre", "Structural Filters"),
                 ("synthesis", "Synthesis Analysis"),
                 ("docking", "Molecular Docking"),
+                ("docking_filters", "Docking Filters"),
                 ("descriptors_final", "Final Descriptors"),
             ]
             enabled_stages = []
@@ -233,12 +236,15 @@ class ReportGenerator:
         """Get molecule funnel data through pipeline stages."""
         funnel = [{"stage": "Initial", "count": self.initial_count}]
 
-        # Correct pipeline order: Descriptors → Structural Filters → Synthesis → Docking
+        # Pipeline order: Pre-Filters → Descriptors → Post-Filters → Synthesis → Docking → Docking Filters → Final Descriptors
         stage_order = [
+            ("struct_filters_pre", "Pre-Filters"),
             ("descriptors_initial", "Descriptors"),
-            ("struct_filters_pre", "Structural Filters"),
+            ("struct_filters_post", "Post-Filters"),
             ("synthesis", "Synthesis"),
             ("docking", "Docking"),
+            ("docking_filters", "Docking Filters"),
+            ("descriptors_final", "Final Descriptors"),
         ]
 
         for stage_key, display_name in stage_order:
@@ -270,7 +276,8 @@ class ReportGenerator:
                 try:
                     df = pd.read_csv(path)
                     return len(df)
-                except Exception:
+                except Exception as e:
+                    logger.debug("Could not read %s: %s", path, e)
                     continue
         return None
 
@@ -303,7 +310,8 @@ class ReportGenerator:
                     if model_name and "model_name" in df.columns:
                         df = df[df["model_name"] == model_name]
                     return len(df)
-                except Exception:
+                except Exception as e:
+                    logger.debug("Could not read %s: %s", path, e)
                     continue
         return None
 
@@ -322,8 +330,8 @@ class ReportGenerator:
                 df = pd.read_csv(input_path)
                 if "model_name" in df.columns:
                     models.update(df["model_name"].dropna().unique())
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Could not read %s: %s", input_path, e)
 
         # Try output file
         output_path = self.output_dir / "final_molecules.csv"
@@ -332,8 +340,8 @@ class ReportGenerator:
                 df = pd.read_csv(output_path)
                 if "model_name" in df.columns:
                     models.update(df["model_name"].dropna().unique())
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Could not read %s: %s", output_path, e)
 
         return sorted(models)
 
@@ -355,8 +363,8 @@ class ReportGenerator:
                 df = pd.read_csv(input_path)
                 if "model_name" in df.columns:
                     return len(df[df["model_name"] == model_name])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Could not read %s: %s", input_path, e)
         return 0
 
     def _get_funnel_data_by_model(
@@ -374,10 +382,13 @@ class ReportGenerator:
         funnel = [{"stage": "Initial", "count": initial_count}]
 
         stage_order = [
+            ("struct_filters_pre", "Pre-Filters"),
             ("descriptors_initial", "Descriptors"),
-            ("struct_filters_pre", "Structural Filters"),
+            ("struct_filters_post", "Post-Filters"),
             ("synthesis", "Synthesis"),
             ("docking", "Docking"),
+            ("docking_filters", "Docking Filters"),
+            ("descriptors_final", "Final Descriptors"),
         ]
 
         for stage_key, display_name in stage_order:
@@ -505,6 +516,7 @@ class ReportGenerator:
             ("struct_filters", "struct_filters_post"),
             ("synthesis", "synthesis"),
             ("docking", "docking"),
+            ("docking_filters", "docking_filters"),
         ]
 
         for loss_key, stage_key in stage_pairs:
@@ -825,10 +837,10 @@ class ReportGenerator:
         """Get docking statistics."""
         docking_dir = self.base_path / STAGE_DIRS["docking"]
 
-        # Detect available tools dynamically
-        tools = self._detect_docking_tools()
-        if not tools:
-            tools = ["gnina", "smina"]  # Fallback to common tools
+        # Detect available tools dynamically but always include common keys
+        # expected by the report template.
+        detected = self._detect_docking_tools()
+        tools = sorted(set(detected) | {"gnina", "smina"})
 
         stats = {tool: {} for tool in tools}
         model_lookup = self._get_model_name_lookup()
@@ -1601,16 +1613,16 @@ class ReportGenerator:
             ),
             # Structural filters
             "filters_pre_counts": (
-                STAGE_DIRS["struct_filters_pre"] + "/molecule_counts_comparison.png"
+                STAGE_DIRS["struct_filters_pre"] + "/plots/molecule_counts_comparison.png"
             ),
             "filters_pre_ratios": (
-                STAGE_DIRS["struct_filters_pre"] + "/restriction_ratios_comparison.png"
+                STAGE_DIRS["struct_filters_pre"] + "/plots/restriction_ratios_comparison.png"
             ),
             "filters_post_counts": (
-                STAGE_DIRS["struct_filters_post"] + "/molecule_counts_comparison.png"
+                STAGE_DIRS["struct_filters_post"] + "/plots/molecule_counts_comparison.png"
             ),
             "filters_post_ratios": (
-                STAGE_DIRS["struct_filters_post"] + "/restriction_ratios_comparison.png"
+                STAGE_DIRS["struct_filters_post"] + "/plots/restriction_ratios_comparison.png"
             ),
         }
 
@@ -1637,10 +1649,10 @@ class ReportGenerator:
         """
         docking_dir = self.base_path / STAGE_DIRS["docking"]
 
-        # Detect available tools dynamically
-        tools = self._detect_docking_tools()
-        if not tools:
-            tools = ["gnina", "smina"]  # Fallback to common tools
+        # Detect available tools dynamically but always include common keys
+        # expected by the report template.
+        detected = self._detect_docking_tools()
+        tools = sorted(set(detected) | {"gnina", "smina"})
 
         # Initialize result with detected tools
         result = {}
@@ -1778,7 +1790,8 @@ class ReportGenerator:
                     "03_structural_filters_post": "Structural Filters (Post)",
                     "04_synthesis": "Synthesis Analysis",
                     "05_docking": "Molecular Docking",
-                    "06_descriptors_final": "Descriptors (Final)",
+                    "06_docking_filters": "Docking Filters",
+                    "07_descriptors_final": "Descriptors (Final)",
                 }
                 for dir_name, display_name in stage_names.items():
                     if (stages_dir / dir_name).exists():

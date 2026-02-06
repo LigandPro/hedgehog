@@ -1,12 +1,12 @@
 import json
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from rdkit import Chem
+from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
 from hedgehog.stages.structFilters.utils import process_path
@@ -16,7 +16,7 @@ from hedgehog.utils.input_paths import get_all_input_candidates
 _lazy_cache: dict[str, Any] = {
     "sascorer": None,
     "syba_model": None,
-    "rascore_available": None,
+    "rascore_booster": None,
 }
 
 
@@ -75,14 +75,24 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
 
     cmd = f"cd {aizynthfinder_dir} && uv run aizynthcli --config {config_abs} --smiles {input_abs} --output {output_abs}"
 
+    _RETROSYNTHESIS_TIMEOUT = 3600  # 1 hour
+
     try:
         logger.info("Running retrosynthesis analysis...")
         logger.debug("Command: %s", cmd)
 
-        subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+        subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, check=True,
+            timeout=_RETROSYNTHESIS_TIMEOUT,
+        )
 
         logger.info("Retrosynthesis analysis completed successfully")
         return True
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "Retrosynthesis analysis timed out after %d seconds", _RETROSYNTHESIS_TIMEOUT
+        )
+        return False
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else e.stdout
         logger.error("Retrosynthesis analysis failed with exit code %d", e.returncode)
@@ -207,15 +217,24 @@ def _load_syba_model_impl():
 
 
 def _load_rascore_impl():
-    """Check if RAScore model is available."""
+    """Load RAScore XGBoost model."""
     model_path = _get_rascore_model_path()
-    if model_path.exists():
-        logger.debug("RAScore model available for calculation")
-        return True
-    logger.warning(
-        "RAScore model not found at %s. RA scores will be set to np.nan", model_path
-    )
-    return False
+    if not model_path.exists():
+        logger.warning(
+            "RAScore model not found at %s. RA scores will be set to np.nan",
+            model_path,
+        )
+        return False
+    try:
+        import xgboost as xgb
+
+        booster = xgb.Booster()
+        booster.load_model(str(model_path))
+        logger.debug("RAScore model loaded successfully")
+        return booster
+    except Exception as e:
+        logger.warning("Failed to load RAScore model: %s", e)
+        return False
 
 
 def _load_sascorer():
@@ -229,8 +248,8 @@ def _load_syba_model():
 
 
 def _load_rascore():
-    """Check if RAScore is available with caching."""
-    return _get_cached("rascore_available", _load_rascore_impl)
+    """Load RAScore model with caching."""
+    return _get_cached("rascore_booster", _load_rascore_impl)
 
 
 def _calculate_sa_score(smiles):
@@ -286,7 +305,7 @@ def _calculate_syba_score(smiles):
 
 
 def _get_rascore_model_path() -> Path:
-    """Get path to RAScore model file."""
+    """Get path to RAScore model file (native xgboost JSON format)."""
     molscore_path = (
         Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
     )
@@ -297,92 +316,20 @@ def _get_rascore_model_path() -> Path:
         / "models"
         / "RAScore"
         / "XGB_chembl_ecfp_counts"
-        / "model.pkl"
+        / "model.json"
     )
 
 
-def _find_rascore_conda_env(config: dict[str, Any] | None) -> str | None:
-    """Find rascore conda environment path.
-
-    Args:
-        config: Configuration dict that may contain 'rascore_conda_prefix'
-
-    Returns:
-        Path to conda environment or None if not found
-    """
-    if config and isinstance(config, dict):
-        prefix = config.get("rascore_conda_prefix")
-        if prefix and Path(prefix).exists():
-            return prefix
-
-    common_locations = [
-        Path.home() / "miniconda3" / "envs" / "rascore-env",
-        Path.home() / "anaconda3" / "envs" / "rascore-env",
-        Path.home() / "conda" / "envs" / "rascore-env",
-        Path("/opt/conda/envs/rascore-env"),
-    ]
-    for location in common_locations:
-        if location.exists():
-            return str(location)
-    return None
-
-
-_RASCORE_SCRIPT_TEMPLATE = """import pickle as pkl
-import numpy as np
-from rdkit import Chem
-from rdkit.Chem import AllChem
-
-def get_ecfp6_counts(smiles, nBits=2048):
+def _get_ecfp6_counts(smiles: str, n_bits: int = 2048) -> np.ndarray | None:
+    """Compute ECFP6 count fingerprint for a SMILES string."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
     fp = AllChem.GetMorganFingerprint(mol, 3, useFeatures=False, useCounts=True)
-    arr = np.zeros((nBits,), dtype=np.int32)
+    arr = np.zeros((n_bits,), dtype=np.int32)
     for idx, v in fp.GetNonzeroElements().items():
-        arr[idx % nBits] += v
+        arr[idx % n_bits] += v
     return arr
-
-with open('{model_path}', 'rb') as f:
-    clf = pkl.load(f)
-
-with open('{smiles_file}', 'r') as f:
-    smiles_list = [line.strip() for line in f]
-
-for smiles in smiles_list:
-    fp = get_ecfp6_counts(smiles)
-    if fp is None:
-        print('nan')
-    else:
-        try:
-            prob = clf.predict_proba(np.array([fp]))[0, 1]
-            print(prob)
-        except Exception:
-            print('nan')
-"""
-
-
-def _parse_rascore_output(stdout: str, expected_count: int) -> list:
-    """Parse RAScore subprocess output into list of scores.
-
-    Args:
-        stdout: Standard output from RAScore script
-        expected_count: Expected number of scores
-
-    Returns:
-        List of scores (floats or np.nan)
-    """
-    scores = []
-    for line in stdout.strip().split("\n"):
-        try:
-            score = float(line.strip())
-            scores.append(score if not np.isnan(score) else np.nan)
-        except ValueError:
-            scores.append(np.nan)
-
-    if len(scores) != expected_count:
-        logger.warning("Expected %d scores but got %d", expected_count, len(scores))
-        return [np.nan] * expected_count
-    return scores
 
 
 def _calculate_ra_scores_batch(
@@ -392,66 +339,40 @@ def _calculate_ra_scores_batch(
 
     Args:
         smiles_list: List of SMILES strings
-        config: Configuration dict (can contain 'rascore_conda_prefix' for manual override)
+        config: Not used, kept for API compatibility
 
     Returns:
         List of RA scores (0-1, higher is better), with np.nan for failed calculations
     """
+    import xgboost as xgb
+
     nan_list = [np.nan] * len(smiles_list)
 
-    if not _load_rascore():
+    booster = _load_rascore()
+    if not booster:
         return nan_list
 
-    conda_prefix = _find_rascore_conda_env(config)
-    if not conda_prefix:
-        logger.warning("Could not find rascore-env. RA scores will be set to np.nan")
+    fps = []
+    valid_indices = []
+    for i, smi in enumerate(smiles_list):
+        fp = _get_ecfp6_counts(smi)
+        if fp is not None:
+            fps.append(fp)
+            valid_indices.append(i)
+
+    if not fps:
         return nan_list
 
-    model_path = _get_rascore_model_path()
-    if not model_path.exists():
-        logger.warning("RAScore model not found at %s", model_path)
-        return nan_list
-
-    python_exec = Path(conda_prefix) / "bin" / "python"
-    if not python_exec.exists():
-        logger.warning("Python not found in rascore-env: %s", python_exec)
-        return nan_list
-
-    smiles_file = None
-    temp_script = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".smi", delete=False) as f:
-            smiles_file = f.name
-            for smi in smiles_list:
-                f.write(f"{smi}\n")
-
-        script_content = _RASCORE_SCRIPT_TEMPLATE.format(
-            model_path=model_path, smiles_file=smiles_file
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            temp_script = f.name
-            f.write(script_content)
-
-        result = subprocess.run(
-            [str(python_exec), temp_script], capture_output=True, text=True, timeout=300
-        )
-
-        if result.returncode != 0:
-            logger.debug("RA score batch calculation failed: %s", result.stderr)
-            return nan_list
-
-        return _parse_rascore_output(result.stdout, len(smiles_list))
-
+        dmatrix = xgb.DMatrix(np.array(fps))
+        probs = booster.predict(dmatrix)
+        scores = [np.nan] * len(smiles_list)
+        for idx, prob in zip(valid_indices, probs):
+            scores[idx] = float(prob)
+        return scores
     except Exception as e:
         logger.debug("Failed to calculate RA scores in batch: %s", e)
         return nan_list
-    finally:
-        for path in [temp_script, smiles_file]:
-            if path:
-                try:
-                    Path(path).unlink()
-                except OSError:
-                    pass
 
 
 def calculate_synthesis_scores(df, folder_to_save=None, config=None):
@@ -459,8 +380,8 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
 
     Args:
         df: DataFrame with 'smiles' column
-        folder_to_save: Optional folder to save RA score outputs
-        config: Optional config dict (can contain 'rascore_conda_prefix' for manual override)
+        folder_to_save: Optional folder to save outputs
+        config: Optional config dict
 
     Returns:
         DataFrame with added columns: sa_score, syba_score, ra_score

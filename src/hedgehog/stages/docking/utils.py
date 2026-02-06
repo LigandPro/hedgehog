@@ -102,6 +102,194 @@ def _resolve_autobox_path(autobox_ligand, project_root):
     return None
 
 
+def _pdb_atom_coordinates(pdb_path: Path) -> list[tuple[float, float, float]]:
+    """Extract atom coordinates from a PDB file (ATOM/HETATM records only)."""
+    coords: list[tuple[float, float, float]] = []
+    try:
+        for line in pdb_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if not (line.startswith("ATOM") or line.startswith("HETATM")):
+                continue
+            try:
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+            except Exception:
+                continue
+            coords.append((x, y, z))
+    except OSError:
+        return []
+    return coords
+
+
+def _sdf_center(sdf_path: Path) -> tuple[float, float, float] | None:
+    """Compute center of the first conformer in an SDF file (mean of atom positions)."""
+    try:
+        from rdkit import Chem
+    except Exception:
+        return None
+
+    suppl = Chem.SDMolSupplier(str(sdf_path))
+    mol = next((m for m in suppl if m is not None), None)
+    if mol is None or mol.GetNumConformers() == 0:
+        return None
+    conf = mol.GetConformer()
+    n = mol.GetNumAtoms()
+    sx = sy = sz = 0.0
+    for i in range(n):
+        p = conf.GetAtomPosition(i)
+        sx += float(p.x)
+        sy += float(p.y)
+        sz += float(p.z)
+    return (sx / n, sy / n, sz / n)
+
+
+def _min_distance_to_point(
+    coords: list[tuple[float, float, float]], point: tuple[float, float, float]
+) -> float | None:
+    """Compute the minimum Euclidean distance from coords to a point."""
+    if not coords:
+        return None
+    px, py, pz = point
+    best = None
+    for x, y, z in coords:
+        dx = x - px
+        dy = y - py
+        dz = z - pz
+        d2 = dx * dx + dy * dy + dz * dz
+        if best is None or d2 < best:
+            best = d2
+    return (best or 0.0) ** 0.5
+
+
+def _warn_if_autobox_far_from_receptor(cfg: dict, tool_name: str) -> None:
+    """Warn if autobox reference ligand seems far away from the receptor coordinates.
+
+    This typically indicates a mismatched coordinate frame between receptor PDB
+    and autobox ligand (e.g., different reference, different prepared structure),
+    resulting in docking running in the wrong location.
+    """
+    try:
+        receptor_raw = cfg.get("receptor_pdb")
+        if not receptor_raw:
+            return
+
+        receptor_path = _resolve_receptor_path(receptor_raw)
+        if receptor_path is None:
+            return
+
+        tool_cfg = cfg.get(f"{tool_name}_config", {}) or {}
+        autobox_ligand = tool_cfg.get("autobox_ligand") or cfg.get("autobox_ligand")
+        if not autobox_ligand:
+            return
+
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        autobox_path = _resolve_autobox_path(str(autobox_ligand), project_root)
+        if autobox_path is None:
+            return
+
+        center = _sdf_center(Path(autobox_path))
+        if center is None:
+            return
+
+        protein_coords = _pdb_atom_coordinates(Path(receptor_path))
+        min_dist = _min_distance_to_point(protein_coords, center)
+        if min_dist is None:
+            return
+
+        warn_threshold = float(tool_cfg.get("autobox_receptor_distance_warn", 10.0))
+        if min_dist > warn_threshold:
+            logger.warning(
+                "%s: Autobox reference ligand appears far from receptor (min dist %.2f A). "
+                "This may indicate a wrong/mismatched autobox_ligand or receptor coordinate frame.",
+                tool_name.upper(),
+                min_dist,
+            )
+    except Exception:
+        # Never fail docking due to a warning-only heuristic.
+        return
+
+
+def _count_box_warnings(log_path: Path) -> dict[str, int]:
+    """Count GNINA/Vina 'outside box' warnings in a docking log."""
+    import re
+
+    patterns = ("outside box", "not within box")
+    counts = {"lines": 0, "unique_molecules": 0}
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return counts
+
+    mol_ids: set[str] = set()
+    for line in text.splitlines():
+        low = line.lower()
+        if not any(p in low for p in patterns):
+            continue
+        counts["lines"] += 1
+        m = re.match(r"^([^|]+?)\s*\|", line)
+        if m:
+            mol_id = m.group(1)
+            if mol_id:
+                mol_ids.add(mol_id.strip())
+    counts["unique_molecules"] = len(mol_ids)
+    return counts
+
+
+def _gnina_zero_affinity_count(output_sdf: Path) -> tuple[int, int]:
+    """Count how many poses have minimizedAffinity == 0.0 in GNINA SDF output."""
+    try:
+        from rdkit import Chem
+    except Exception:
+        return (0, 0)
+
+    total = 0
+    zero = 0
+    suppl = Chem.SDMolSupplier(str(output_sdf))
+    for mol in suppl:
+        if mol is None:
+            continue
+        total += 1
+        if mol.HasProp("minimizedAffinity"):
+            try:
+                if float(mol.GetProp("minimizedAffinity")) == 0.0:
+                    zero += 1
+            except Exception:
+                continue
+    return (zero, total)
+
+
+def _emit_post_docking_warnings(
+    tool_name: str,
+    log_path: Path | None,
+    output_sdf: Path | None = None,
+) -> None:
+    """Emit warnings about common docking failure modes based on tool logs/outputs."""
+    try:
+        if log_path and log_path.exists():
+            counts = _count_box_warnings(log_path)
+            if counts["lines"] > 0:
+                logger.warning(
+                    "%s log contains %d box warning lines across %d molecules. "
+                    "This often indicates ligands started outside the search box or a misconfigured box.",
+                    tool_name.upper(),
+                    counts["lines"],
+                    counts["unique_molecules"],
+                )
+
+        if tool_name.lower() == "gnina" and output_sdf and output_sdf.exists():
+            zero, total = _gnina_zero_affinity_count(output_sdf)
+            if total > 0 and zero > 0:
+                logger.warning(
+                    "GNINA output has minimizedAffinity == 0.0 for %d/%d poses. "
+                    "If many, docking may have effectively failed (e.g., wrong box / no contacts).",
+                    zero,
+                    total,
+                )
+    except Exception:
+        # Warning-only logic must never fail docking.
+        return
+
+
 def _create_docking_config_file(
     cfg, ligands_dir, receptor, ligands_path, output_sdf, config_path, tool_name
 ):
@@ -184,6 +372,97 @@ def _create_docking_config_file(
 
     logger.debug("Created %s config file: %s", tool_name.upper(), config_path)
     return config_path
+
+
+def _create_per_molecule_configs(cfg, ligands_dir, receptor, molecule_files, tool_name):
+    """Create per-molecule docking config files.
+
+    Args:
+        cfg: Configuration dictionary
+        ligands_dir: Base directory for docking
+        receptor: Path to receptor file
+        molecule_files: List of paths to individual molecule SDF files
+        tool_name: 'smina' or 'gnina'
+
+    Returns:
+        List of tuples (mol_id, config_path, output_path)
+    """
+    configs_dir = ligands_dir / "_workdir" / "configs"
+    results_dir = ligands_dir / "_workdir" / tool_name / "results"
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    tool_config = cfg.get(f"{tool_name}_config", {})
+
+    # Resolve common settings once
+    receptor_abs = _resolve_path(receptor, ligands_dir)
+
+    center = tool_config.get("center") or cfg.get("center")
+    size = tool_config.get("size") or cfg.get("size")
+
+    autobox_ligand = tool_config.get("autobox_ligand")
+    autobox_path = None
+    if autobox_ligand:
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
+
+    skip_keys = {"bin", "center", "size"}
+    if tool_name == "gnina":
+        skip_keys.update({"env_path", "ld_library_path", "activate", "output_dir"})
+
+    config_entries = []
+
+    for mol_file in molecule_files:
+        mol_id = mol_file.stem
+        config_path = configs_dir / f"{tool_name}_{mol_id}.ini"
+        output_sdf = results_dir / f"{mol_id}_out.sdf"
+
+        lines = [
+            f"receptor = {receptor_abs}",
+            f"ligand = {mol_file.resolve()}",
+            f"out = {output_sdf.resolve()}",
+        ]
+
+        if center and isinstance(center, (list, tuple)) and len(center) >= 3:
+            lines.extend(
+                [
+                    f"center_x = {center[0]}",
+                    f"center_y = {center[1]}",
+                    f"center_z = {center[2]}",
+                ]
+            )
+
+        if size and isinstance(size, (list, tuple)) and len(size) >= 3:
+            lines.extend(
+                [
+                    f"size_x = {size[0]}",
+                    f"size_y = {size[1]}",
+                    f"size_z = {size[2]}",
+                ]
+            )
+
+        if autobox_path:
+            lines.append(f"autobox_ligand = {autobox_path}")
+
+        for key, value in tool_config.items():
+            if value is None or key in skip_keys or key == "autobox_ligand":
+                continue
+            if isinstance(value, (list, tuple)):
+                lines.append(f"{key} = [{', '.join(str(v) for v in value)}]")
+            elif isinstance(value, bool):
+                lines.append(f"{key} = {str(value).lower()}")
+            else:
+                lines.append(f"{key} = {value}")
+
+        with open(config_path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+
+        config_entries.append((mol_id, config_path, output_sdf))
+
+    logger.info(
+        "Created %d per-molecule config files in %s", len(config_entries), configs_dir
+    )
+    return config_entries
 
 
 def _create_smina_config_file(
@@ -369,8 +648,9 @@ def _create_smina_script(
     preparation_cmd=None,
     prepared_output_relative=None,
 ):
-    """Create SMINA run script."""
-    script_path = ligands_dir / "run_smina.sh"
+    """Create SMINA run script (legacy single-batch mode)."""
+    script_path = ligands_dir / "_workdir" / "run_smina.sh"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(script_path, "w") as f:
         f.write("#!/usr/bin/env bash\n")
         f.write("set -eo pipefail\n")
@@ -382,6 +662,96 @@ def _create_smina_script(
             _write_ligand_prep_bash(f, preparation_cmd, prepared_output_relative)
 
         _write_docking_command_bash(f, ligands_dir, smina_bin, config_file, "smina")
+
+    os.chmod(script_path, 0o755)
+    return script_path
+
+
+def _create_smina_per_molecule_script(
+    ligands_dir,
+    smina_bin,
+    protein_prep_cmd,
+):
+    """Create SMINA run script with per-molecule processing and error handling.
+
+    This script processes each molecule individually, allowing:
+    - Individual molecule failures without stopping the entire run
+    - Detailed per-molecule logging
+    - Easy retry of failed molecules
+    """
+    script_path = ligands_dir / "_workdir" / "run_smina.sh"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    configs_dir = ligands_dir / "_workdir" / "configs"
+    logs_dir = ligands_dir / "_workdir" / "smina" / "logs"
+
+    with open(script_path, "w") as f:
+        f.write("#!/usr/bin/env bash\n")
+        f.write("set -o pipefail\n\n")
+
+        if protein_prep_cmd:
+            _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, "smina")
+
+        f.write(f"cd {ligands_dir}\n")
+        f.write(f'mkdir -p "{logs_dir}"\n\n')
+
+        f.write("# Per-molecule docking with error handling\n")
+        f.write("FAILED=()\n")
+        f.write("SUCCESS=0\n")
+        f.write("TOTAL=0\n\n")
+
+        f.write(f'for config in "{configs_dir}"/smina_*.ini; do\n')
+        f.write('    [ -e "$config" ] || continue\n')
+        f.write("    mol_id=$(basename \"$config\" .ini | sed 's/smina_//')\n")
+        f.write("    TOTAL=$((TOTAL + 1))\n")
+        f.write('    echo "[$TOTAL] Processing $mol_id..."\n\n')
+
+        f.write(
+            f'    if {smina_bin} --config "$config" 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
+        )
+        f.write('        echo "  $mol_id: SUCCESS"\n')
+        f.write("        SUCCESS=$((SUCCESS + 1))\n")
+        f.write("    else\n")
+        f.write("        EXIT_CODE=$?\n")
+        f.write('        echo "  $mol_id: FAILED (exit $EXIT_CODE)"\n')
+        f.write('        FAILED+=("$mol_id")\n')
+        f.write("        if [ $EXIT_CODE -eq 143 ]; then\n")
+        f.write(
+            '            echo "    -> SIGTERM detected (timeout/memory limit/killed)"\n'
+        )
+        f.write("        fi\n")
+        f.write("    fi\n")
+        f.write("done\n\n")
+
+        f.write("# Report summary\n")
+        f.write('echo ""\n')
+        f.write('echo "========================================"\n')
+        f.write('echo "SMINA Docking Summary"\n')
+        f.write('echo "========================================"\n')
+        f.write('echo "Total molecules: $TOTAL"\n')
+        f.write('echo "Successful: $SUCCESS"\n')
+        f.write('echo "Failed: ${#FAILED[@]}"\n\n')
+
+        f.write("if [ ${#FAILED[@]} -gt 0 ]; then\n")
+        f.write('    echo ""\n')
+        f.write('    echo "Failed molecules:"\n')
+        f.write('    printf "  %s\\n" "${FAILED[@]}"\n')
+        f.write(
+            f'    printf "%s\\n" "${{FAILED[@]}}" > "{ligands_dir}/smina/failed_molecules.txt"\n'
+        )
+        f.write("fi\n\n")
+
+        f.write("# Exit with success if at least one molecule succeeded\n")
+        f.write("if [ $SUCCESS -gt 0 ]; then\n")
+        f.write('    echo ""\n')
+        f.write(
+            '    echo "Docking completed with $SUCCESS/$TOTAL molecules successful"\n'
+        )
+        f.write("    exit 0\n")
+        f.write("else\n")
+        f.write('    echo ""\n')
+        f.write('    echo "ERROR: All molecules failed docking"\n')
+        f.write("    exit 1\n")
+        f.write("fi\n")
 
     os.chmod(script_path, 0o755)
     return script_path
@@ -411,7 +781,8 @@ def _prepare_protein_for_docking(receptor_pdb, ligands_dir, protein_preparation_
         )
         return receptor_pdb, None
 
-    prepared_output_path = ligands_dir / "protein_prepared.pdb"
+    prepared_output_path = ligands_dir / "_workdir" / "protein_prepared.pdb"
+    prepared_output_path.parent.mkdir(parents=True, exist_ok=True)
 
     receptor_absolute = str(receptor_path.resolve())
     output_absolute = str(prepared_output_path.resolve())
@@ -461,7 +832,7 @@ def _prepare_ligands_for_docking(
         else:
             input_format = "-icsv"
 
-        prepared_output_path = ligands_dir / f"prepared_for_{tool_name}.sdf"
+        prepared_output_path = ligands_dir / "_workdir" / f"prepared_for_{tool_name}.sdf"
         prepared_output_path.parent.mkdir(parents=True, exist_ok=True)
         prepared_output_relative = str(prepared_output_path.relative_to(ligands_dir))
 
@@ -470,6 +841,97 @@ def _prepare_ligands_for_docking(
     else:
         ligands_path, _ = _convert_with_rdkit(ligands_csv, ligands_dir)
         return ligands_path, None
+
+
+def _split_sdf_to_molecules(sdf_path: Path, molecules_dir: Path) -> list[Path]:
+    """Split a multi-molecule SDF into individual molecule SDF files.
+
+    Args:
+        sdf_path: Path to input SDF file with multiple molecules
+        molecules_dir: Directory to write individual molecule SDFs
+
+    Returns:
+        List of paths to individual molecule SDF files
+    """
+    try:
+        from rdkit import Chem
+    except ImportError as err:
+        raise RuntimeError("RDKit not available for SDF splitting") from err
+
+    molecules_dir.mkdir(parents=True, exist_ok=True)
+    molecule_files = []
+
+    suppl = Chem.SDMolSupplier(str(sdf_path))
+    for mol in suppl:
+        if mol is None:
+            continue
+
+        mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
+        if not mol_name:
+            mol_name = f"mol_{len(molecule_files):05d}"
+
+        # Sanitize molecule name for filesystem
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in mol_name)
+        mol_path = molecules_dir / f"{safe_name}.sdf"
+
+        writer = Chem.SDWriter(str(mol_path))
+        writer.write(mol)
+        writer.close()
+
+        molecule_files.append(mol_path)
+
+    logger.info(
+        "Split SDF into %d individual molecule files in %s",
+        len(molecule_files),
+        molecules_dir,
+    )
+    return molecule_files
+
+
+def _aggregate_docking_results(results_dir: Path, output_sdf: Path) -> int:
+    """Aggregate per-molecule docking results into a single SDF file.
+
+    Args:
+        results_dir: Directory containing per-molecule result SDFs (*_out.sdf)
+        output_sdf: Path to write aggregated output SDF
+
+    Returns:
+        Number of molecules successfully aggregated
+    """
+    try:
+        from rdkit import Chem
+    except ImportError as err:
+        raise RuntimeError("RDKit not available for result aggregation") from err
+
+    output_sdf.parent.mkdir(parents=True, exist_ok=True)
+
+    result_files = sorted(results_dir.glob("*_out.sdf"))
+    if not result_files:
+        logger.warning("No result files found in %s", results_dir)
+        return 0
+
+    writer = Chem.SDWriter(str(output_sdf))
+    count = 0
+
+    for result_file in result_files:
+        try:
+            suppl = Chem.SDMolSupplier(str(result_file))
+            for mol in suppl:
+                if mol is not None:
+                    writer.write(mol)
+                    count += 1
+        except Exception as e:
+            logger.warning("Failed to read result file %s: %s", result_file, e)
+            continue
+
+    writer.close()
+    logger.info(
+        "Aggregated %d poses from %d result files into %s",
+        count,
+        len(result_files),
+        output_sdf,
+    )
+    return count
 
 
 def _convert_with_rdkit(ligands_csv, ligands_dir):
@@ -481,7 +943,8 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     except ImportError as err:
         raise RuntimeError("RDKit not available for ligand conversion") from err
 
-    sdf_path = ligands_dir / "ligands_prepared.sdf"
+    sdf_path = ligands_dir / "_workdir" / "ligands_prepared.sdf"
+    sdf_path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(ligands_csv)
     smiles_series = df["smiles"]
     name_series = df["name"]
@@ -613,8 +1076,9 @@ def _create_gnina_script(
     protein_preparation_cmd,
     receptor,
 ):
-    """Create GNINA run script."""
-    script_path = ligands_dir / "run_gnina.sh"
+    """Create GNINA run script (legacy single-batch mode)."""
+    script_path = ligands_dir / "_workdir" / "run_gnina.sh"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(script_path, "w") as f:
         f.write("#!/usr/bin/env bash\n")
         f.write("set -eo pipefail\n")
@@ -636,6 +1100,110 @@ def _create_gnina_script(
             _write_receptor_check_bash(f, receptor)
 
         _write_docking_command_bash(f, ligands_dir, gnina_bin, config_file, "gnina")
+
+    os.chmod(script_path, 0o755)
+    return script_path
+
+
+def _create_gnina_per_molecule_script(
+    ligands_dir,
+    gnina_bin,
+    activate_cmd,
+    ld_library_path,
+    protein_preparation_cmd,
+    receptor,
+):
+    """Create GNINA run script with per-molecule processing and error handling.
+
+    This script processes each molecule individually, allowing:
+    - Individual molecule failures without stopping the entire run
+    - Detailed per-molecule logging
+    - Easy retry of failed molecules
+    """
+    script_path = ligands_dir / "_workdir" / "run_gnina.sh"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    configs_dir = ligands_dir / "_workdir" / "configs"
+    logs_dir = ligands_dir / "_workdir" / "gnina" / "logs"
+
+    with open(script_path, "w") as f:
+        f.write("#!/usr/bin/env bash\n")
+        f.write("set -o pipefail\n\n")
+
+        if activate_cmd:
+            f.write(f"{activate_cmd}\n")
+            if ld_library_path:
+                f.write(
+                    f'export LD_LIBRARY_PATH="{ld_library_path}:$LD_LIBRARY_PATH"\n'
+                )
+            f.write("\n")
+
+        if protein_preparation_cmd:
+            _write_protein_prep_bash(f, protein_preparation_cmd, ligands_dir, "gnina")
+
+        if receptor:
+            _write_receptor_check_bash(f, receptor)
+
+        f.write(f"cd {ligands_dir}\n")
+        f.write(f'mkdir -p "{logs_dir}"\n\n')
+
+        f.write("# Per-molecule docking with error handling\n")
+        f.write("FAILED=()\n")
+        f.write("SUCCESS=0\n")
+        f.write("TOTAL=0\n\n")
+
+        f.write(f'for config in "{configs_dir}"/gnina_*.ini; do\n')
+        f.write('    [ -e "$config" ] || continue\n')
+        f.write("    mol_id=$(basename \"$config\" .ini | sed 's/gnina_//')\n")
+        f.write("    TOTAL=$((TOTAL + 1))\n")
+        f.write('    echo "[$TOTAL] Processing $mol_id..."\n\n')
+
+        f.write(
+            f'    if {gnina_bin} --config "$config" 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
+        )
+        f.write('        echo "  $mol_id: SUCCESS"\n')
+        f.write("        SUCCESS=$((SUCCESS + 1))\n")
+        f.write("    else\n")
+        f.write("        EXIT_CODE=$?\n")
+        f.write('        echo "  $mol_id: FAILED (exit $EXIT_CODE)"\n')
+        f.write('        FAILED+=("$mol_id")\n')
+        f.write("        if [ $EXIT_CODE -eq 143 ]; then\n")
+        f.write(
+            '            echo "    -> SIGTERM detected (timeout/memory limit/killed)"\n'
+        )
+        f.write("        fi\n")
+        f.write("    fi\n")
+        f.write("done\n\n")
+
+        f.write("# Report summary\n")
+        f.write('echo ""\n')
+        f.write('echo "========================================"\n')
+        f.write('echo "GNINA Docking Summary"\n')
+        f.write('echo "========================================"\n')
+        f.write('echo "Total molecules: $TOTAL"\n')
+        f.write('echo "Successful: $SUCCESS"\n')
+        f.write('echo "Failed: ${#FAILED[@]}"\n\n')
+
+        f.write("if [ ${#FAILED[@]} -gt 0 ]; then\n")
+        f.write('    echo ""\n')
+        f.write('    echo "Failed molecules:"\n')
+        f.write('    printf "  %s\\n" "${FAILED[@]}"\n')
+        f.write(
+            f'    printf "%s\\n" "${{FAILED[@]}}" > "{ligands_dir}/gnina/failed_molecules.txt"\n'
+        )
+        f.write("fi\n\n")
+
+        f.write("# Exit with success if at least one molecule succeeded\n")
+        f.write("if [ $SUCCESS -gt 0 ]; then\n")
+        f.write('    echo ""\n')
+        f.write(
+            '    echo "Docking completed with $SUCCESS/$TOTAL molecules successful"\n'
+        )
+        f.write("    exit 0\n")
+        f.write("else\n")
+        f.write('    echo ""\n')
+        f.write('    echo "ERROR: All molecules failed docking"\n')
+        f.write("    exit 1\n")
+        f.write("fi\n")
 
     os.chmod(script_path, 0o755)
     return script_path
@@ -769,7 +1337,7 @@ def _save_job_metadata(
             tool: {
                 "name": tool,
                 "job_id": job_id,
-                "script": str(ligands_dir / f"run_{tool}.sh"),
+                "script": str(ligands_dir / "_workdir" / f"run_{tool}.sh"),
             }
             for tool, job_id in job_ids.items()
         },
@@ -823,25 +1391,81 @@ def _run_docking_script(script_path: Path, working_dir, log_path, background):
         logger.info("Started %s in background. Log: %s", script_path.name, log_path)
         return {"status": "started_background", "log_path": str(log_path)}
     else:
-        with open(log_path, "wb") as logf:
-            subprocess.run(
-                ["./" + script_path.name],
-                check=True,
-                stdout=logf,
-                stderr=logf,
-                cwd=str(working_dir),
+        _DOCKING_TIMEOUT = 7200  # 2 hours
+        try:
+            with open(log_path, "wb") as logf:
+                subprocess.run(
+                    ["./" + script_path.name],
+                    check=True,
+                    stdout=logf,
+                    stderr=logf,
+                    cwd=str(working_dir),
+                    timeout=_DOCKING_TIMEOUT,
+                )
+            logger.info(
+                "%s completed successfully. Log: %s", script_path.name, log_path
             )
-        logger.info("%s completed successfully. Log: %s", script_path.name, log_path)
-        return {"status": "completed", "log_path": str(log_path)}
+            return {"status": "completed", "log_path": str(log_path)}
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "%s timed out after %d seconds. See log: %s",
+                script_path.name,
+                _DOCKING_TIMEOUT,
+                log_path,
+            )
+            return {
+                "status": "failed",
+                "log_path": str(log_path),
+                "exit_code": -1,
+            }
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 143:
+                logger.error(
+                    "%s terminated by SIGTERM (exit 143) - likely timeout, memory limit, or killed by system. "
+                    "Check system logs and consider reducing batch size or using per-molecule mode.",
+                    script_path.name,
+                )
+            elif e.returncode == 137:
+                logger.error(
+                    "%s killed by SIGKILL (exit 137) - likely OOM killer. "
+                    "Consider reducing batch size or using per-molecule mode.",
+                    script_path.name,
+                )
+            else:
+                logger.error(
+                    "%s failed with exit code %d. See log: %s",
+                    script_path.name,
+                    e.returncode,
+                    log_path,
+                )
+            return {
+                "status": "failed",
+                "log_path": str(log_path),
+                "exit_code": e.returncode,
+            }
 
 
 def _run_smina(ligands_dir, background, job_id):
     """Run SMINA docking."""
-    script_path = ligands_dir / "run_smina.sh"
-    log_path = ligands_dir / "smina_run.log"
-    status = _run_docking_script(script_path, ligands_dir, log_path, background)
+    workdir = ligands_dir / "_workdir"
+    script_path = workdir / "run_smina.sh"
+    log_path = workdir / "smina_run.log"
+    status = _run_docking_script(script_path, workdir, log_path, background)
     if job_id:
         status["job_id"] = job_id
+
+    # Aggregate per-molecule results if they exist
+    results_dir = workdir / "smina" / "results"
+    output_sdf = ligands_dir / "smina" / "smina_out.sdf"
+
+    if not background and results_dir.exists():
+        try:
+            count = _aggregate_docking_results(results_dir, output_sdf)
+            status["aggregated_molecules"] = count
+            logger.info("Aggregated %d SMINA docking results", count)
+        except Exception as e:
+            logger.warning("Failed to aggregate SMINA results: %s", e)
+
     smina_out_dir = ligands_dir / "smina_results"
     status["results_dir"] = str(smina_out_dir) if smina_out_dir.exists() else None
     return status
@@ -849,11 +1473,24 @@ def _run_smina(ligands_dir, background, job_id):
 
 def _run_gnina(ligands_dir, output_sdf, background, job_id):
     """Run GNINA docking."""
-    script_path = ligands_dir / "run_gnina.sh"
-    log_path = ligands_dir / "gnina_run.log"
-    status = _run_docking_script(script_path, ligands_dir, log_path, background)
+    workdir = ligands_dir / "_workdir"
+    script_path = workdir / "run_gnina.sh"
+    log_path = workdir / "gnina_run.log"
+    status = _run_docking_script(script_path, workdir, log_path, background)
     if job_id:
         status["job_id"] = job_id
+
+    # Aggregate per-molecule results if they exist
+    results_dir = workdir / "gnina" / "results"
+
+    if not background and results_dir.exists():
+        try:
+            count = _aggregate_docking_results(results_dir, output_sdf)
+            status["aggregated_molecules"] = count
+            logger.info("Aggregated %d GNINA docking results", count)
+        except Exception as e:
+            logger.warning("Failed to aggregate GNINA results: %s", e)
+
     status["output"] = str(output_sdf)
     status["log"] = str(log_path)
     return status
@@ -907,9 +1544,14 @@ def _prepare_receptor_if_needed(
 
 
 def _setup_smina(
-    cfg, ligands_dir, ligands_csv, protein_preparation_tool, base_folder=None
+    cfg,
+    ligands_dir,
+    ligands_csv,
+    protein_preparation_tool,
+    base_folder=None,
+    ligand_preparation_tool=None,
 ):
-    """Setup SMINA docking configuration and script."""
+    """Setup SMINA docking configuration and script with per-molecule processing."""
     try:
         if protein_preparation_tool is None:
             _prepare_receptor_if_needed(cfg, ligands_dir, None, base_folder)
@@ -923,7 +1565,6 @@ def _setup_smina(
         smina_config = cfg.get("smina_config", {})
         smina_bin = smina_config.get("bin") or cfg.get("smina_bin", "smina")
 
-        ligand_preparation_tool = cfg.get("ligand_preparation_tool")
         ligands_path, prep_cmd = _prepare_ligands_for_docking(
             ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name="smina"
         )
@@ -932,7 +1573,36 @@ def _setup_smina(
         smina_output_dir.mkdir(parents=True, exist_ok=True)
         output_sdf = smina_output_dir / "smina_out.sdf"
 
-        config_file = ligands_dir / "smina_config.ini"
+        # Check if per-molecule mode is enabled (default: True)
+        per_molecule_mode = cfg.get("per_molecule_docking", True)
+
+        if per_molecule_mode and Path(ligands_path).exists():
+            # Split SDF into per-molecule files
+            molecules_dir = ligands_dir / "_workdir" / "molecules"
+            molecule_files = _split_sdf_to_molecules(Path(ligands_path), molecules_dir)
+
+            if molecule_files:
+                # Create per-molecule configs
+                _create_per_molecule_configs(
+                    cfg, ligands_dir, receptor, molecule_files, "smina"
+                )
+
+                # Create per-molecule script
+                script_path = _create_smina_per_molecule_script(
+                    ligands_dir,
+                    smina_bin,
+                    protein_prep_cmd,
+                )
+                logger.info(
+                    "SMINA per-molecule configuration prepared for %d molecules",
+                    len(molecule_files),
+                )
+                return script_path
+            else:
+                logger.warning("No molecules found in SDF, falling back to batch mode")
+
+        # Fallback to legacy batch mode
+        config_file = ligands_dir / "_workdir" / "smina_config.ini"
         _create_smina_config_file(
             cfg, ligands_dir, receptor, ligands_path, config_file, output_sdf
         )
@@ -946,7 +1616,7 @@ def _setup_smina(
             prep_cmd,
             prepared_output_relative,
         )
-        logger.info("SMINA configuration prepared")
+        logger.info("SMINA batch configuration prepared")
         return script_path
     except Exception as e:
         logger.error("Failed to setup SMINA: %s", e)
@@ -964,7 +1634,7 @@ def _setup_gnina(
     ligand_preparation_tool,
     protein_preparation_tool,
 ):
-    """Setup GNINA docking configuration and script."""
+    """Setup GNINA docking configuration and script with per-molecule processing."""
     try:
         original_receptor = cfg.get("receptor_pdb")
         if not original_receptor:
@@ -1008,7 +1678,39 @@ def _setup_gnina(
         gnina_bin = gnina_config.get("bin") or cfg.get("gnina_bin", "gnina")
         activate_cmd, ld_library_path = _get_gnina_environment(cfg, base_folder)
 
-        config_file = ligands_dir / "gnina_config.ini"
+        # Check if per-molecule mode is enabled (default: True)
+        per_molecule_mode = cfg.get("per_molecule_docking", True)
+
+        if per_molecule_mode and Path(ligands_path).exists():
+            # Split SDF into per-molecule files
+            molecules_dir = ligands_dir / "_workdir" / "molecules"
+            molecule_files = _split_sdf_to_molecules(Path(ligands_path), molecules_dir)
+
+            if molecule_files:
+                # Create per-molecule configs
+                _create_per_molecule_configs(
+                    cfg, ligands_dir, receptor, molecule_files, "gnina"
+                )
+
+                # Create per-molecule script
+                script_path = _create_gnina_per_molecule_script(
+                    ligands_dir,
+                    gnina_bin,
+                    activate_cmd,
+                    ld_library_path,
+                    protein_prep_cmd,
+                    receptor,
+                )
+                logger.info(
+                    "GNINA per-molecule configuration prepared for %d molecules",
+                    len(molecule_files),
+                )
+                return script_path
+            else:
+                logger.warning("No molecules found in SDF, falling back to batch mode")
+
+        # Fallback to legacy batch mode
+        config_file = ligands_dir / "_workdir" / "gnina_config.ini"
         _create_gnina_config_file(
             cfg, ligands_dir, receptor, ligands_path, output_sdf, config_file
         )
@@ -1025,7 +1727,7 @@ def _setup_gnina(
             protein_prep_cmd,
             receptor,
         )
-        logger.info("GNINA configuration prepared")
+        logger.info("GNINA batch configuration prepared")
         return script_path
     except Exception as e:
         logger.error("Failed to setup GNINA: %s", e)
@@ -1067,6 +1769,12 @@ def run_docking(config):
     tools_list = _parse_tools_config(cfg)
     logger.info("Docking tools configured: %s", tools_list)
 
+    # Heuristic warnings about common configuration issues.
+    if "gnina" in tools_list:
+        _warn_if_autobox_far_from_receptor(cfg, "gnina")
+    if "smina" in tools_list:
+        _warn_if_autobox_far_from_receptor(cfg, "smina")
+
     prepared_receptor_path = None
     if protein_preparation_tool:
         _prepare_receptor_if_needed(
@@ -1083,12 +1791,14 @@ def run_docking(config):
                     try:
                         import time
 
+                        _PROTEIN_PREP_TIMEOUT = 600  # 10 minutes
                         result = subprocess.run(
                             prep_cmd,
                             shell=True,
                             capture_output=True,
                             text=True,
                             cwd=str(ligands_dir),
+                            timeout=_PROTEIN_PREP_TIMEOUT,
                         )
                         if result.returncode != 0:
                             logger.error(
@@ -1146,7 +1856,14 @@ def run_docking(config):
     overall_job_id = _generate_job_id("dock")
 
     if "smina" in tools_list:
-        script = _setup_smina(cfg, ligands_dir, ligands_csv, None, base_folder)
+        script = _setup_smina(
+            cfg,
+            ligands_dir,
+            ligands_csv,
+            None,
+            base_folder,
+            ligand_preparation_tool=ligand_preparation_tool,
+        )
         if script:
             scripts_prepared.append(str(script))
             job_ids["smina"] = _generate_job_id("smina")
@@ -1198,6 +1915,9 @@ def run_docking(config):
         if "smina" in job_ids:
             logger.info("Running SMINA docking")
             run_status["smina"] = _run_smina(ligands_dir, background, job_ids["smina"])
+            if not background and run_status["smina"].get("status") == "completed":
+                log_path = ligands_dir / "_workdir" / "smina_run.log"
+                _emit_post_docking_warnings("smina", log_path)
 
         if "gnina" in job_ids:
             logger.info("Running GNINA docking")
@@ -1207,6 +1927,11 @@ def run_docking(config):
                 run_status["gnina"] = _run_gnina(
                     ligands_dir, output_sdf, background, job_ids["gnina"]
                 )
+                if not background and run_status["gnina"].get("status") == "completed":
+                    log_path = ligands_dir / "_workdir" / "gnina_run.log"
+                    _emit_post_docking_warnings(
+                        "gnina", log_path, output_sdf=output_sdf
+                    )
             except Exception as e:
                 logger.error("GNINA execution failed: %s", e)
                 run_status["gnina"] = {"status": "failed", "error": str(e)}
@@ -1242,5 +1967,21 @@ def run_docking(config):
             else:
                 logger.error("All docking tools failed")
                 return False
+
+    # If docking wasn't executed automatically, still emit warnings based on any
+    # existing logs/outputs in the run folder. This makes reruns/debugging cheaper.
+    if not auto_run:
+        try:
+            if "smina" in tools_list:
+                _emit_post_docking_warnings("smina", ligands_dir / "_workdir" / "smina_run.log")
+            if "gnina" in tools_list:
+                gnina_dir = _get_gnina_output_directory(cfg, base_folder)
+                _emit_post_docking_warnings(
+                    "gnina",
+                    ligands_dir / "_workdir" / "gnina_run.log",
+                    output_sdf=gnina_dir / "gnina_out.sdf",
+                )
+        except Exception:
+            pass
 
     return True
