@@ -632,9 +632,7 @@ def _write_docking_command_bash(f, ligands_dir, docking_bin, config_file, tool_n
         config_rel = config_file.relative_to(ligands_dir)
     except ValueError:
         config_rel = config_file.name
-    f.write(
-        f'echo "Starting {tool_name.upper()} docking with config: {config_rel}"\n'
-    )
+    f.write(f'echo "Starting {tool_name.upper()} docking with config: {config_rel}"\n')
     f.write(f"{docking_bin} --config {config_rel}\n")
     f.write("if [ $? -eq 0 ]; then\n")
     f.write(f'  echo "{tool_name.upper()} docking completed successfully"\n')
@@ -836,7 +834,9 @@ def _prepare_ligands_for_docking(
         else:
             input_format = "-icsv"
 
-        prepared_output_path = ligands_dir / "_workdir" / f"prepared_for_{tool_name}.sdf"
+        prepared_output_path = (
+            ligands_dir / "_workdir" / f"prepared_for_{tool_name}.sdf"
+        )
         prepared_output_path.parent.mkdir(parents=True, exist_ok=True)
         prepared_output_abs = str(prepared_output_path.resolve())
 
@@ -1985,7 +1985,9 @@ def run_docking(config):
     if not auto_run:
         try:
             if "smina" in tools_list:
-                _emit_post_docking_warnings("smina", ligands_dir / "_workdir" / "smina_run.log")
+                _emit_post_docking_warnings(
+                    "smina", ligands_dir / "_workdir" / "smina_run.log"
+                )
             if "gnina" in tools_list:
                 gnina_dir = _get_gnina_output_directory(cfg, base_folder)
                 _emit_post_docking_warnings(

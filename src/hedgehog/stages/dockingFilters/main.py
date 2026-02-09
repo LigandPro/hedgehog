@@ -357,7 +357,10 @@ def docking_filters_main(config: dict[str, Any]) -> pd.DataFrame | None:
             index=filtered_df.index,
         )
         filtered_df["smiles"] = (
-            filtered_df["source_mol_idx"].astype(str).map(smiles_lookup).fillna(fallback_smiles)
+            filtered_df["source_mol_idx"]
+            .astype(str)
+            .map(smiles_lookup)
+            .fillna(fallback_smiles)
         )
 
         # For downstream pipeline stages, mol_idx should refer to the original molecule id
@@ -368,21 +371,15 @@ def docking_filters_main(config: dict[str, Any]) -> pd.DataFrame | None:
         # Save all passing poses to CSV (pose-level detail)
         all_poses_path = output_dir / "filtered_poses.csv"
         filtered_df.to_csv(all_poses_path, index=False)
-        logger.info(
-            f"Saved {len(filtered_df)} filtered poses to {all_poses_path}"
-        )
+        logger.info(f"Saved {len(filtered_df)} filtered poses to {all_poses_path}")
 
         # Deduplicate to unique molecules for downstream stages.
         # Keep the best pose per molecule (lowest minimizedAffinity).
         aff_col = "gnina_minimizedAffinity"
         if aff_col in filtered_df.columns:
             filtered_df = filtered_df.sort_values(aff_col, ascending=True)
-        dedup_df = filtered_df.drop_duplicates(
-            subset=["mol_idx"], keep="first"
-        )
-        dedup_df[["smiles", "model_name", "mol_idx"]].to_csv(
-            filtered_path, index=False
-        )
+        dedup_df = filtered_df.drop_duplicates(subset=["mol_idx"], keep="first")
+        dedup_df[["smiles", "model_name", "mol_idx"]].to_csv(filtered_path, index=False)
         logger.info(
             f"Saved {len(dedup_df)} unique molecules to {filtered_path} "
             f"(from {len(filtered_df)} poses)"

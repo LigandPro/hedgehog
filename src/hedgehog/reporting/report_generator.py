@@ -1629,16 +1629,20 @@ class ReportGenerator:
             ),
             # Structural filters
             "filters_pre_counts": (
-                STAGE_DIRS["struct_filters_pre"] + "/plots/molecule_counts_comparison.png"
+                STAGE_DIRS["struct_filters_pre"]
+                + "/plots/molecule_counts_comparison.png"
             ),
             "filters_pre_ratios": (
-                STAGE_DIRS["struct_filters_pre"] + "/plots/restriction_ratios_comparison.png"
+                STAGE_DIRS["struct_filters_pre"]
+                + "/plots/restriction_ratios_comparison.png"
             ),
             "filters_post_counts": (
-                STAGE_DIRS["struct_filters_post"] + "/plots/molecule_counts_comparison.png"
+                STAGE_DIRS["struct_filters_post"]
+                + "/plots/molecule_counts_comparison.png"
             ),
             "filters_post_ratios": (
-                STAGE_DIRS["struct_filters_post"] + "/plots/restriction_ratios_comparison.png"
+                STAGE_DIRS["struct_filters_post"]
+                + "/plots/restriction_ratios_comparison.png"
             ),
         }
 
@@ -1807,15 +1811,11 @@ class ReportGenerator:
         # Get all descriptor names present in both datasets
         initial_descs = set()
         for record in initial_raw:
-            initial_descs.update(
-                k for k in record if k != "model_name"
-            )
+            initial_descs.update(k for k in record if k != "model_name")
 
         final_descs = set()
         for record in final_raw:
-            final_descs.update(
-                k for k in record if k != "model_name"
-            )
+            final_descs.update(k for k in record if k != "model_name")
 
         common_descs = sorted(initial_descs & final_descs)
         if not common_descs:
@@ -1823,12 +1823,8 @@ class ReportGenerator:
 
         comparison = {}
         for desc in common_descs:
-            init_vals = [
-                r[desc] for r in initial_raw if r.get(desc) is not None
-            ]
-            final_vals = [
-                r[desc] for r in final_raw if r.get(desc) is not None
-            ]
+            init_vals = [r[desc] for r in initial_raw if r.get(desc) is not None]
+            final_vals = [r[desc] for r in final_raw if r.get(desc) is not None]
             if init_vals and final_vals:
                 comparison[desc] = {
                     "initial_values": init_vals,
@@ -1864,16 +1860,12 @@ class ReportGenerator:
             return {}
 
         # Detect pass_* columns (individual filters), excluding aggregate 'pass'
-        pass_cols = [
-            c for c in df.columns if c.startswith("pass_") and c != "pass"
-        ]
+        pass_cols = [c for c in df.columns if c.startswith("pass_") and c != "pass"]
 
         total_poses = len(df)
         passed_poses = int(df["pass"].sum()) if "pass" in df.columns else 0
         pass_rate = (
-            round(100.0 * passed_poses / total_poses, 1)
-            if total_poses > 0
-            else 0.0
+            round(100.0 * passed_poses / total_poses, 1) if total_poses > 0 else 0.0
         )
 
         # Unique molecules that passed
@@ -1904,9 +1896,7 @@ class ReportGenerator:
                 per_filter[filter_name] = {
                     "passed": passed,
                     "total": total,
-                    "pass_rate": round(100.0 * passed / total, 1)
-                    if total > 0
-                    else 0.0,
+                    "pass_rate": round(100.0 * passed / total, 1) if total > 0 else 0.0,
                 }
 
         # Numeric metric distributions for histograms
@@ -1932,9 +1922,7 @@ class ReportGenerator:
                 model_df = df[df["model_name"] == model]
                 m_total = len(model_df)
                 m_passed = (
-                    int(model_df["pass"].sum())
-                    if "pass" in model_df.columns
-                    else 0
+                    int(model_df["pass"].sum()) if "pass" in model_df.columns else 0
                 )
                 by_model[str(model)] = {
                     "total": m_total,
@@ -1952,9 +1940,7 @@ class ReportGenerator:
                 if pq.get("max_clashes") is not None:
                     thresholds["clashes"] = {"max": pq["max_clashes"]}
                 if pq.get("max_strain_energy") is not None:
-                    thresholds["strain_energy"] = {
-                        "max": pq["max_strain_energy"]
-                    }
+                    thresholds["strain_energy"] = {"max": pq["max_strain_energy"]}
             cd = dock_filt_config.get("conformer_deviation", {})
             if isinstance(cd, dict):
                 if cd.get("max_rmsd_to_conformer") is not None:

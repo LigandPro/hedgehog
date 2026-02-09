@@ -2065,8 +2065,7 @@ def plot_docking_filters_by_model_bar(
             y=pass_rates,
             marker_color=colors,
             text=[
-                f"{r:.1f}%<br>({p}/{t})"
-                for r, p, t in zip(pass_rates, passed, total)
+                f"{r:.1f}%<br>({p}/{t})" for r, p, t in zip(pass_rates, passed, total)
             ],
             textposition="outside",
         )

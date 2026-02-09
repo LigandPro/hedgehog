@@ -618,7 +618,9 @@ class MolecularAnalysisPipeline:
     def _run_pre_descriptors_filters(self) -> tuple[bool, bool]:
         """Run pre-descriptors structural filters stage."""
         return self._run_stage(
-            STAGE_STRUCT_INI_FILTERS, self.stage_runner.run_structural_filters, DIR_STRUCT_FILTERS_PRE
+            STAGE_STRUCT_INI_FILTERS,
+            self.stage_runner.run_structural_filters,
+            DIR_STRUCT_FILTERS_PRE,
         )
 
     def _run_descriptors(self, data) -> tuple[bool, bool]:
@@ -644,7 +646,9 @@ class MolecularAnalysisPipeline:
                         e,
                     )
 
-        return self._run_stage(STAGE_DESCRIPTORS, self.stage_runner.run_descriptors, descriptors_input)
+        return self._run_stage(
+            STAGE_DESCRIPTORS, self.stage_runner.run_descriptors, descriptors_input
+        )
 
     def _run_post_descriptors_filters(self) -> tuple[bool, bool]:
         """Run post-descriptors structural filters stage."""
@@ -699,7 +703,9 @@ class MolecularAnalysisPipeline:
 
     def _run_docking_filters(self) -> tuple[bool, bool]:
         """Run docking filters stage."""
-        return self._run_stage(STAGE_DOCKING_FILTERS, self.stage_runner.run_docking_filters)
+        return self._run_stage(
+            STAGE_DOCKING_FILTERS, self.stage_runner.run_docking_filters
+        )
 
     def _run_final_descriptors(self) -> tuple[bool, bool]:
         """Run final descriptors calculation stage."""
@@ -1012,7 +1018,10 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
             except Exception:
                 has_smina = has_gnina = True  # Show both as fallback
 
-    lines = ["|   +-- ligands.csv                Prepared ligands", "|   +-- job_meta.json              Job metadata"]
+    lines = [
+        "|   +-- ligands.csv                Prepared ligands",
+        "|   +-- job_meta.json              Job metadata",
+    ]
     if has_smina:
         lines.append("|   +-- smina/")
         lines.append("|   |   +-- smina_out.sdf          Aggregated SMINA results")
@@ -1025,9 +1034,13 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
     lines.append("|       +-- molecules/             Per-molecule SDF files")
     lines.append("|       +-- configs/               Per-molecule docking configs")
     if has_smina:
-        lines.append("|       +-- smina/                 SMINA per-molecule results & logs")
+        lines.append(
+            "|       +-- smina/                 SMINA per-molecule results & logs"
+        )
     if has_gnina:
-        lines.append("|       +-- gnina/                 GNINA per-molecule results & logs")
+        lines.append(
+            "|       +-- gnina/                 GNINA per-molecule results & logs"
+        )
 
     # Batch scripts and config files present in _workdir
     workdir = docking_dir / "_workdir"
@@ -1152,7 +1165,9 @@ def _generate_structure_readme(
         for stage in stages:
             if stage.name in enabled_stages:
                 stage_sections.append(
-                    _build_stage_tree_section(stage.name, stage.directory, base_path, config)
+                    _build_stage_tree_section(
+                        stage.name, stage.directory, base_path, config
+                    )
                 )
         stages_content = "".join(stage_sections)
 

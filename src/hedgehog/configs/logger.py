@@ -13,7 +13,9 @@ from rich.logging import RichHandler
 
 # Pattern to strip Rich markup tags like [#B29EEE], [bold], [/bold], etc.
 # Excludes standard log levels: [INFO], [WARNING], [ERROR], [DEBUG], [CRITICAL]
-_RICH_MARKUP_RE = re.compile(r"\[/?(?!INFO\]|WARNING\]|ERROR\]|DEBUG\]|CRITICAL\])[^\]]+\]")
+_RICH_MARKUP_RE = re.compile(
+    r"\[/?(?!INFO\]|WARNING\]|ERROR\]|DEBUG\]|CRITICAL\])[^\]]+\]"
+)
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config.yml"
 

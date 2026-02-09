@@ -181,9 +181,7 @@ class TestParametrizedDescriptors:
 
     def test_get_descriptor_stats_final(self, report_gen, base_path):
         """Should read from final descriptors directory."""
-        desc_dir = (
-            base_path / "stages" / "07_descriptors_final" / "metrics"
-        )
+        desc_dir = base_path / "stages" / "07_descriptors_final" / "metrics"
         desc_dir.mkdir(parents=True, exist_ok=True)
 
         df = pd.DataFrame(
