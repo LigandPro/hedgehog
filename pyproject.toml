@@ -111,5 +111,10 @@ exclude_lines = [
     "raise NotImplementedError",
 ]
 
+[tool.uv]
+# posecheck 1.3.1 hard-pins pandas==2.0.0 which lacks wheels for Python 3.12+
+# and fails to build from source (missing pkg_resources). Override to >=2.2.0.
+override-dependencies = ["pandas>=2.2.0"]
+
 [tool.uv.sources]
 syba = { path = "modules/syba", editable = true }
