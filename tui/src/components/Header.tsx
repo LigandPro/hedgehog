@@ -55,6 +55,7 @@ const STAGE_NAMES: Record<string, string> = {
   struct_filters: 'Filters',
   synthesis: 'Synthesis',
   docking: 'Docking',
+  docking_filters: 'Docking Filters',
 };
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸'];

@@ -419,7 +419,7 @@
                         type: 'sankey',
                         arrangement: 'snap',
                         node: {
-                            pad: 20,
+                            pad: 40,
                             thickness: 20,
                             line: { color: 'rgba(0,0,0,0.1)', width: 0.5 },
                             label: data.labels,
@@ -440,9 +440,9 @@
                     };
 
                     var layout = {
-                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 10 },
                         height: 420,
-                        margin: { l: 20, r: 20, t: data.is_comparison ? 50 : 30, b: 20 },
+                        margin: { l: 5, r: 5, t: data.is_comparison ? 50 : 30, b: 20 },
                         paper_bgcolor: 'white',
                         annotations: []
                     };
@@ -1165,7 +1165,7 @@
                 <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(239, 68, 68, 0.9); vertical-align: middle; margin-right: 6px;"></span>Filter Threshold</span>
                 <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.3); vertical-align: middle; margin-right: 6px; border: 1px solid #d1d5db;"></span>Out of Range</span>
             </div>
-            <div id="descriptor-histograms-container" class="plot-container" style="min-height: 600px;">
+            <div id="descriptor-histograms-container" class="plot-container">
                 <!-- Will be populated by JavaScript -->
             </div>
 
@@ -1387,13 +1387,15 @@
 
                     // Build layout with subplot titles anchored to axis domains
                     var annotations = [];
+                    var totalHeight = model === '__compare__' ? 260 * nRows : 240 * nRows;
+                    var topMargin = model === '__compare__' ? 60 : 40;
                     var layout = {
-                        height: 240 * nRows,
-                        margin: { l: 50, r: 30, t: 40, b: 50 },
+                        height: totalHeight,
+                        margin: { l: 50, r: 30, t: topMargin, b: 50 },
                         paper_bgcolor: 'white', plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
                         showlegend: (model === '__compare__'),
-                        legend: { orientation: 'h', y: 1.02, x: 0.5, xanchor: 'center' },
+                        legend: { orientation: 'h', y: 1.06, x: 0.5, xanchor: 'center', font: { size: 10 } },
                         shapes: shapes,
                         barmode: 'overlay',
                         grid: { rows: nRows, columns: nCols, pattern: 'independent', roworder: 'top to bottom', xgap: 0.1, ygap: 0.22 }
@@ -1941,6 +1943,451 @@
                 <div class="plot-container">{{ plots.docking_smina_affinity_box | safe }}</div>
                 {% endif %}
             </div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <!-- Docking Filters Analysis (Stage 06) -->
+        {% if data.docking_filters_detailed and data.docking_filters_detailed.per_filter %}
+        <section>
+            <h2>Docking Filters</h2>
+
+            <!-- Model toggle -->
+            {% if data.available_models and data.docking_filters_detailed.by_model %}
+            <div class="view-toggle" id="docking-filters-toggle">
+                <button class="active" onclick="selectDockingFiltersModel('all', this)">All Models</button>
+                {% for model in data.available_models %}
+                <button onclick="selectDockingFiltersModel('{{ model }}', this)">{{ model }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Metric cards -->
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value" id="df-total-poses">{{ data.docking_filters_detailed.total_poses }}</div>
+                    <div class="metric-label">Total Poses</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="df-passed-poses">{{ data.docking_filters_detailed.passed_poses }}</div>
+                    <div class="metric-label">Passed Poses</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="df-pass-rate">{{ data.docking_filters_detailed.pass_rate }}%</div>
+                    <div class="metric-label">Pass Rate</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="df-unique-mols">{{ data.docking_filters_detailed.unique_molecules_passed }}</div>
+                    <div class="metric-label">Unique Molecules</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="font-size: 1.1rem;">{{ data.docking_filters_detailed.aggregation_mode }}</div>
+                    <div class="metric-label">Aggregation Mode</div>
+                </div>
+            </div>
+
+            <!-- Per-filter pass/fail bar chart -->
+            {% if plots.docking_filters_pass_fail %}
+            <h3 style="margin-top: 24px; margin-bottom: 12px;">Per-Filter Results</h3>
+            <div class="plot-container">{{ plots.docking_filters_pass_fail | safe }}</div>
+            {% endif %}
+
+            <!-- Numeric metric histograms -->
+            {% if plots.docking_filters_metric_hists %}
+            <h3 style="margin-top: 24px; margin-bottom: 12px;">Metric Distributions</h3>
+            <div style="display: flex; justify-content: flex-start; gap: 24px; margin-bottom: 12px; font-size: 12px; color: #4b5563;">
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(239, 68, 68, 0.9); vertical-align: middle; margin-right: 6px;"></span>Filter Threshold</span>
+            </div>
+            <div class="plot-container">{{ plots.docking_filters_metric_hists | safe }}</div>
+            {% endif %}
+
+            <!-- By-model pass rate chart -->
+            {% if plots.docking_filters_by_model %}
+            <h3 style="margin-top: 24px; margin-bottom: 12px;">Pass Rate by Model</h3>
+            <div class="plot-container">{{ plots.docking_filters_by_model | safe }}</div>
+            {% endif %}
+
+            <script>
+                var dockingFiltersData = {{ plots.docking_filters_data | safe if plots.docking_filters_data else '{}' }};
+                var currentDockingFiltersModel = 'all';
+
+                function selectDockingFiltersModel(model, btn) {
+                    currentDockingFiltersModel = model;
+                    var toggle = document.getElementById('docking-filters-toggle');
+                    if (toggle) {
+                        var buttons = toggle.querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                    }
+                    updateDockingFiltersMetrics();
+                }
+
+                function updateDockingFiltersMetrics() {
+                    var model = currentDockingFiltersModel;
+                    var data = dockingFiltersData[model];
+                    if (!data) return;
+
+                    if (model === 'all') {
+                        var el;
+                        el = document.getElementById('df-total-poses');
+                        if (el) el.textContent = data.total_poses || 0;
+                        el = document.getElementById('df-passed-poses');
+                        if (el) el.textContent = data.passed_poses || 0;
+                        el = document.getElementById('df-pass-rate');
+                        if (el) el.textContent = (data.pass_rate || 0) + '%';
+                        el = document.getElementById('df-unique-mols');
+                        if (el) el.textContent = data.unique_molecules_passed || 0;
+                    } else {
+                        var el;
+                        el = document.getElementById('df-total-poses');
+                        if (el) el.textContent = data.total || 0;
+                        el = document.getElementById('df-passed-poses');
+                        if (el) el.textContent = data.passed || 0;
+                        el = document.getElementById('df-pass-rate');
+                        if (el) el.textContent = (data.pass_rate || 0) + '%';
+                        el = document.getElementById('df-unique-mols');
+                        if (el) el.textContent = '-';
+                    }
+                }
+            </script>
+        </section>
+        {% endif %}
+
+        <!-- Final Descriptors Analysis (Stage 07) -->
+        {% if data.descriptors_final_detailed and data.descriptors_final_detailed.raw_data %}
+        <section>
+            <h2>Final Descriptors</h2>
+
+            <!-- Model toggle -->
+            {% if data.available_models and plots.final_descriptors_data %}
+            <div class="view-toggle" id="final-descriptor-model-toggle">
+                <button class="active" onclick="selectFinalDescriptorModel('all', this)">All Models</button>
+                <button onclick="selectFinalDescriptorModel('__compare__', this)">Compare</button>
+                {% for model in data.available_models %}
+                <button onclick="selectFinalDescriptorModel('{{ model }}', this)">{{ model }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Metric cards -->
+            {% if data.descriptors_final.summary %}
+            <div class="metrics-grid">
+                {% for desc_name, desc_stats in data.descriptors_final.summary.items() %}
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.2f"|format(desc_stats.mean) }}</div>
+                    <div class="metric-label">{{ desc_name }} (mean)</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Initial vs Final comparison histograms -->
+            {% if plots.descriptors_comparison_data %}
+            <h3 style="margin-top: 24px; margin-bottom: 12px;">Initial vs Final Descriptor Comparison</h3>
+            <div style="display: flex; justify-content: flex-start; gap: 24px; margin-bottom: 12px; font-size: 12px; color: #4b5563;">
+                <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.6); vertical-align: middle; margin-right: 6px; border: 1px solid #9ca3af;"></span>Initial</span>
+                <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(139, 92, 246, 0.7); vertical-align: middle; margin-right: 6px; border: 1px solid #7c3aed;"></span>Final</span>
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(156, 163, 175, 0.9); vertical-align: middle; margin-right: 6px;"></span>Initial Mean</span>
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(109, 40, 217, 0.9); vertical-align: middle; margin-right: 6px;"></span>Final Mean</span>
+            </div>
+            <div id="descriptors-comparison-container" class="plot-container"></div>
+
+            <script>
+                var descriptorsComparisonData = {{ plots.descriptors_comparison_data | safe }};
+
+                function drawDescriptorsComparison() {
+                    var container = document.getElementById('descriptors-comparison-container');
+                    if (!container || !descriptorsComparisonData || !descriptorsComparisonData.descriptors) return;
+
+                    var descs = descriptorsComparisonData.descriptors;
+                    var compData = descriptorsComparisonData.data;
+                    if (!descs.length) return;
+
+                    var readableNames = {
+                        'MolWt': 'Molecular Weight', 'LogP': 'LogP', 'cLogP': 'cLogP',
+                        'TPSA': 'TPSA', 'NumHDonors': 'H-Bond Donors', 'NumHAcceptors': 'H-Bond Acceptors',
+                        'QED': 'QED Score', 'Fsp3': 'Fsp³ Fraction', 'n_atoms': 'Total Atoms',
+                        'n_heavy_atoms': 'Heavy Atoms', 'n_rings': 'Ring Count', 'n_aroma_rings': 'Aromatic Rings',
+                        'n_rot_bonds': 'Rotatable Bonds'
+                    };
+
+                    var nCols = 3;
+                    var nRows = Math.ceil(descs.length / nCols);
+                    var traces = [];
+                    var shapes = [];
+                    var annotations = [];
+
+                    for (var i = 0; i < descs.length; i++) {
+                        var desc = descs[i];
+                        var d = compData[desc];
+                        if (!d) continue;
+
+                        var axisNum = i + 1;
+
+                        // Initial distribution (gray)
+                        traces.push({
+                            type: 'histogram', x: d.initial_values,
+                            name: 'Initial', legendgroup: 'initial', showlegend: (i === 0),
+                            opacity: 0.5, nbinsx: 40,
+                            marker: { color: 'rgba(156, 163, 175, 0.6)', line: { color: 'rgba(107, 114, 128, 0.8)', width: 1 } },
+                            xaxis: 'x' + axisNum, yaxis: 'y' + axisNum
+                        });
+
+                        // Final distribution (purple)
+                        traces.push({
+                            type: 'histogram', x: d.final_values,
+                            name: 'Final', legendgroup: 'final', showlegend: (i === 0),
+                            opacity: 0.6, nbinsx: 40,
+                            marker: { color: 'rgba(139, 92, 246, 0.7)', line: { color: 'rgba(109, 40, 217, 0.9)', width: 1 } },
+                            xaxis: 'x' + axisNum, yaxis: 'y' + axisNum
+                        });
+
+                        // Initial mean line
+                        shapes.push({
+                            type: 'line', xref: 'x' + axisNum, yref: 'y' + axisNum + ' domain',
+                            x0: d.mean_initial, x1: d.mean_initial, y0: 0, y1: 1,
+                            line: { color: 'rgba(156, 163, 175, 0.9)', width: 2 }
+                        });
+
+                        // Final mean line
+                        shapes.push({
+                            type: 'line', xref: 'x' + axisNum, yref: 'y' + axisNum + ' domain',
+                            x0: d.mean_final, x1: d.mean_final, y0: 0, y1: 1,
+                            line: { color: 'rgba(109, 40, 217, 0.9)', width: 2 }
+                        });
+
+                        // Title annotation
+                        var displayName = readableNames[desc] || desc;
+                        var xAxisName = i === 0 ? 'x' : ('x' + axisNum);
+                        var yAxisName = i === 0 ? 'y' : ('y' + axisNum);
+                        annotations.push({
+                            text: '<b>' + displayName + '</b>',
+                            font: { size: 12, color: '#1f2937' },
+                            showarrow: false,
+                            xref: xAxisName + ' domain', yref: yAxisName + ' domain',
+                            x: 0.5, y: 1.02, xanchor: 'center', yanchor: 'bottom'
+                        });
+                    }
+
+                    var layout = {
+                        height: 240 * nRows,
+                        margin: { l: 50, r: 30, t: 60, b: 50 },
+                        paper_bgcolor: 'white', plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        showlegend: true,
+                        legend: { orientation: 'h', y: 1.06, x: 0.5, xanchor: 'center', font: { size: 10 } },
+                        shapes: shapes,
+                        barmode: 'overlay',
+                        grid: { rows: nRows, columns: nCols, pattern: 'independent', roworder: 'top to bottom', xgap: 0.1, ygap: 0.22 },
+                        annotations: annotations
+                    };
+
+                    for (var i = 0; i < descs.length; i++) {
+                        var axisNum = i + 1;
+                        layout['xaxis' + axisNum] = { showgrid: false, zeroline: false, tickfont: { size: 10 } };
+                        layout['yaxis' + axisNum] = { showgrid: true, gridcolor: '#e5e7eb', zeroline: false, showticklabels: false };
+                    }
+
+                    Plotly.newPlot(container, traces, layout, { displayModeBar: true });
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (document.getElementById('descriptors-comparison-container')) {
+                        drawDescriptorsComparison();
+                    }
+                });
+            </script>
+            {% endif %}
+
+            <!-- Final descriptor histograms (reuse JS pattern) -->
+            {% if plots.final_descriptors_data %}
+            <h3 style="margin-top: 24px; margin-bottom: 12px;">Final Descriptor Distributions</h3>
+            <div style="display: flex; justify-content: flex-start; gap: 24px; margin-bottom: 12px; font-size: 12px; color: #4b5563;">
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(109, 40, 217, 0.9); vertical-align: middle; margin-right: 6px;"></span>Mean</span>
+                <span><span style="display: inline-block; width: 20px; height: 0; border-top: 3px dashed rgba(34, 197, 94, 0.9); vertical-align: middle; margin-right: 6px;"></span>Median</span>
+                <span><span style="display: inline-block; width: 20px; height: 3px; background: rgba(239, 68, 68, 0.9); vertical-align: middle; margin-right: 6px;"></span>Filter Threshold</span>
+                <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.3); vertical-align: middle; margin-right: 6px; border: 1px solid #d1d5db;"></span>Out of Range</span>
+            </div>
+            <div id="final-descriptor-histograms-container" class="plot-container"></div>
+
+            <script>
+                var finalDescriptorsData = {{ plots.final_descriptors_data | safe }};
+                var currentFinalDescriptorModel = 'all';
+
+                function selectFinalDescriptorModel(model, btn) {
+                    currentFinalDescriptorModel = model;
+                    var buttons = document.getElementById('final-descriptor-model-toggle').querySelectorAll('button');
+                    buttons.forEach(function(b) { b.className = ''; });
+                    btn.className = 'active';
+                    updateFinalDescriptorPlots();
+                }
+
+                function updateFinalDescriptorPlots() {
+                    var container = document.getElementById('final-descriptor-histograms-container');
+                    if (!container || !finalDescriptorsData || !finalDescriptorsData.descriptors) {
+                        if (container) container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No descriptor data available</p>';
+                        return;
+                    }
+
+                    var model = currentFinalDescriptorModel;
+                    var descriptors = finalDescriptorsData.descriptors || [];
+                    var thresholds = finalDescriptorsData.thresholds || {};
+
+                    var readableNames = {
+                        'MolWt': 'Molecular Weight', 'LogP': 'LogP', 'cLogP': 'cLogP',
+                        'TPSA': 'TPSA', 'NumHDonors': 'H-Bond Donors', 'NumHAcceptors': 'H-Bond Acceptors',
+                        'QED': 'QED Score', 'Fsp3': 'Fsp³ Fraction', 'n_atoms': 'Total Atoms',
+                        'n_heavy_atoms': 'Heavy Atoms', 'n_rings': 'Ring Count', 'n_aroma_rings': 'Aromatic Rings',
+                        'n_rot_bonds': 'Rotatable Bonds', 'n_rigid_bonds': 'Rigid Bonds',
+                        'SW': 'Solubility (SW)', 'n_N_atoms': 'Nitrogen Atoms'
+                    };
+
+                    if (!descriptors.length) {
+                        container.innerHTML = '<p style="text-align:center;color:#6b7280;padding:48px;">No descriptor data available</p>';
+                        return;
+                    }
+
+                    var nCols = 3;
+                    var nRows = Math.ceil(descriptors.length / nCols);
+                    var traces = [];
+                    var shapes = [];
+
+                    var modelColors = [
+                        'rgba(139, 92, 246, 0.8)', 'rgba(59, 130, 246, 0.8)', 'rgba(34, 197, 94, 0.8)',
+                        'rgba(249, 115, 22, 0.8)', 'rgba(236, 72, 153, 0.8)', 'rgba(20, 184, 166, 0.8)'
+                    ];
+                    var modelLineColors = [
+                        'rgba(109, 40, 217, 1)', 'rgba(37, 99, 235, 1)', 'rgba(22, 163, 74, 1)',
+                        'rgba(234, 88, 12, 1)', 'rgba(219, 39, 119, 1)', 'rgba(13, 148, 136, 1)'
+                    ];
+
+                    for (var i = 0; i < descriptors.length; i++) {
+                        var desc = descriptors[i];
+                        var descThresholds = thresholds[desc] || {};
+
+                        if (model === '__compare__') {
+                            var models = finalDescriptorsData.models || [];
+                            for (var j = 0; j < models.length; j++) {
+                                var modelData = finalDescriptorsData.by_model && finalDescriptorsData.by_model[models[j]] && finalDescriptorsData.by_model[models[j]][desc];
+                                if (modelData && modelData.values && modelData.values.length > 0) {
+                                    traces.push({
+                                        type: 'violin', x: modelData.values, y0: 0,
+                                        name: models[j], orientation: 'h', side: 'positive', width: 1.8, points: false,
+                                        line: { color: modelLineColors[j % modelLineColors.length], width: 2 },
+                                        fillcolor: modelColors[j % modelColors.length],
+                                        xaxis: 'x' + (i + 1), yaxis: 'y' + (i + 1),
+                                        showlegend: (i === 0), legendgroup: models[j],
+                                        scalemode: 'width', spanmode: 'hard'
+                                    });
+                                }
+                            }
+                        } else {
+                            var data = model === 'all'
+                                ? (finalDescriptorsData.all && finalDescriptorsData.all[desc])
+                                : (finalDescriptorsData.by_model && finalDescriptorsData.by_model[model] && finalDescriptorsData.by_model[model][desc]);
+
+                            if (data && data.values && data.values.length > 0) {
+                                traces.push({
+                                    type: 'histogram', x: data.values, name: desc, nbinsx: 50,
+                                    marker: { color: 'rgba(139, 92, 246, 0.7)', line: { color: 'rgba(109, 40, 217, 0.9)', width: 1 } },
+                                    xaxis: 'x' + (i + 1), yaxis: 'y' + (i + 1), showlegend: false
+                                });
+
+                                // Mean line
+                                shapes.push({
+                                    type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                    x0: data.mean, x1: data.mean, y0: 0, y1: 1,
+                                    line: { color: 'rgba(109, 40, 217, 0.9)', width: 2 }
+                                });
+                                // Median line
+                                if (data.median !== undefined) {
+                                    shapes.push({
+                                        type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: data.median, x1: data.median, y0: 0, y1: 1,
+                                        line: { color: 'rgba(34, 197, 94, 0.9)', width: 2, dash: 'dash' }
+                                    });
+                                }
+                                // Threshold lines
+                                if (descThresholds.min !== undefined) {
+                                    shapes.push({
+                                        type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: descThresholds.min, x1: descThresholds.min, y0: 0, y1: 1,
+                                        line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                                    });
+                                }
+                                if (descThresholds.max !== undefined) {
+                                    shapes.push({
+                                        type: 'line', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: descThresholds.max, x1: descThresholds.max, y0: 0, y1: 1,
+                                        line: { color: 'rgba(239, 68, 68, 0.9)', width: 2 }
+                                    });
+                                }
+                                // Gray shading
+                                var xMin = data.min, xMax = data.max;
+                                if (descThresholds.min !== undefined && descThresholds.min > xMin) {
+                                    shapes.push({
+                                        type: 'rect', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: xMin - (xMax - xMin) * 0.1, x1: descThresholds.min, y0: 0, y1: 1,
+                                        fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                                    });
+                                }
+                                if (descThresholds.max !== undefined && descThresholds.max < xMax) {
+                                    shapes.push({
+                                        type: 'rect', xref: 'x' + (i + 1), yref: 'y' + (i + 1) + ' domain',
+                                        x0: descThresholds.max, x1: xMax + (xMax - xMin) * 0.1, y0: 0, y1: 1,
+                                        fillcolor: 'rgba(156, 163, 175, 0.3)', line: { width: 0 }, layer: 'below'
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    var annotations = [];
+                    var totalHeight = model === '__compare__' ? 260 * nRows : 240 * nRows;
+                    var topMargin = model === '__compare__' ? 60 : 40;
+                    var layout = {
+                        height: totalHeight,
+                        margin: { l: 50, r: 30, t: topMargin, b: 50 },
+                        paper_bgcolor: 'white', plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
+                        showlegend: (model === '__compare__'),
+                        legend: { orientation: 'h', y: 1.06, x: 0.5, xanchor: 'center', font: { size: 10 } },
+                        shapes: shapes, barmode: 'overlay',
+                        grid: { rows: nRows, columns: nCols, pattern: 'independent', roworder: 'top to bottom', xgap: 0.1, ygap: 0.22 }
+                    };
+
+                    for (var i = 0; i < descriptors.length; i++) {
+                        var axisNum = i + 1;
+                        var displayName = readableNames[descriptors[i]] || descriptors[i];
+                        var xAxisName = i === 0 ? 'x' : ('x' + axisNum);
+                        var yAxisName = i === 0 ? 'y' : ('y' + axisNum);
+                        annotations.push({
+                            text: '<b>' + displayName + '</b>',
+                            font: { size: 12, color: '#1f2937' },
+                            showarrow: false,
+                            xref: xAxisName + ' domain', yref: yAxisName + ' domain',
+                            x: 0.5, y: 1.02, xanchor: 'center', yanchor: 'bottom'
+                        });
+                        layout['xaxis' + axisNum] = { showgrid: false, zeroline: false, tickfont: { size: 10 } };
+                        layout['yaxis' + axisNum] = { showgrid: true, gridcolor: '#e5e7eb', zeroline: false, showticklabels: false };
+                    }
+
+                    layout.annotations = annotations;
+                    Plotly.newPlot(container, traces, layout, { displayModeBar: true });
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (document.getElementById('final-descriptor-histograms-container')) {
+                        updateFinalDescriptorPlots();
+                    }
+                });
+            </script>
+            {% endif %}
+
+            <!-- Summary table by model -->
+            {% if plots.final_descriptors_table %}
+            <h3 style="margin-top: 30px; margin-bottom: 15px;">Mean Values by Model</h3>
+            {{ plots.final_descriptors_table | safe }}
             {% endif %}
         </section>
         {% endif %}

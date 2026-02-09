@@ -7,7 +7,7 @@ MODEL_NAME_COLUMN = "model_name"
 MOL_IDX_COLUMN = "mol_idx"
 DEFAULT_MODEL_NAME = "single"
 
-RUN_CONFIGS_DIR = "run_configs"
+RUN_CONFIGS_DIR = "configs"
 MODEL_INDEX_MAP_FILE = "model_index_map.json"
 
 MOL_IDX_FORMAT = "LP-{:04d}-{:05d}"

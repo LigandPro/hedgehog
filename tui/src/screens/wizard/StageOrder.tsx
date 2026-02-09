@@ -10,6 +10,7 @@ const STAGE_NAMES: Record<string, string> = {
   struct_filters: 'Struct Filters',
   synthesis: 'Synthesis',
   docking: 'Docking',
+  docking_filters: 'Docking Filters',
 };
 
 export function StageOrder(): React.ReactElement {
@@ -50,6 +51,8 @@ export function StageOrder(): React.ReactElement {
       setScreen('wizardConfigSynthesis');
     } else if (firstStage === 'docking') {
       setScreen('wizardConfigDocking');
+    } else if (firstStage === 'docking_filters') {
+      setScreen('wizardConfigDockingFilters');
     } else {
       setScreen('wizardReview');
     }

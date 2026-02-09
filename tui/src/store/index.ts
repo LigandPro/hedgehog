@@ -7,6 +7,7 @@ import type {
   SynthesisConfig,
   RetrosynthesisConfig,
   DockingConfig,
+  DockingFiltersConfig,
   StageInfo,
   LogEntry,
   StageStatus,
@@ -26,6 +27,7 @@ interface Configs {
   synthesis: SynthesisConfig | null;
   retrosynthesis: RetrosynthesisConfig | null;
   docking: DockingConfig | null;
+  docking_filters: DockingFiltersConfig | null;
 }
 
 // Global pipeline progress for header display
@@ -158,6 +160,7 @@ const initialStages: Record<string, StageInfo> = {
   struct_filters: { name: 'struct_filters', displayName: 'Struct Filters', status: 'pending', progress: 0 },
   synthesis: { name: 'synthesis', displayName: 'Synthesis', status: 'pending', progress: 0 },
   docking: { name: 'docking', displayName: 'Docking', status: 'pending', progress: 0 },
+  docking_filters: { name: 'docking_filters', displayName: 'Docking Filters', status: 'pending', progress: 0 },
 };
 
 const initialPipelineProgress: PipelineProgress = {
@@ -168,7 +171,7 @@ const initialPipelineProgress: PipelineProgress = {
   latestMessage: '',
 };
 
-const WIZARD_STAGES = ['descriptors', 'struct_filters', 'synthesis', 'docking'];
+const WIZARD_STAGES = ['descriptors', 'struct_filters', 'synthesis', 'docking', 'docking_filters'];
 
 const initialWizardState: WizardState = {
   currentStep: 'stage-selection',
@@ -227,6 +230,16 @@ const initialWizardState: WizardState = {
         num_modes: 9,
       },
     },
+    docking_filters: {
+      enabled: true,
+      order: 4,
+      quickParams: {
+        aggregation_mode: 'all',
+        max_clashes: 2,
+        min_hbonds: 0,
+        max_rmsd_to_conformer: 3.0,
+      },
+    },
   },
   dependencies: {
     runFiltersBeforeDescriptors: true,
@@ -244,6 +257,7 @@ export const useStore = create<AppState>((set, get) => ({
     synthesis: null,
     retrosynthesis: null,
     docking: null,
+    docking_filters: null,
   },
   configDirty: {},
   isRunning: false,

@@ -7,6 +7,7 @@ import pandas as pd
 
 from hedgehog.stages.synthesis.utils import (
     _build_score_filter_mask,
+    _calculate_ra_scores_batch,
     _calculate_sa_score,
     _calculate_syba_score,
     apply_synthesis_score_filters,
@@ -407,3 +408,40 @@ class TestSynthesisScoreCalculations:
         # Score can be NaN if SYBA not available
         if not np.isnan(score):
             assert isinstance(score, (int, float))
+
+
+class TestCalculateRaScores:
+    """Tests for RA score batch calculation."""
+
+    def test_valid_smiles(self):
+        """RA scores for known synthesizable molecules should be high."""
+        scores = _calculate_ra_scores_batch(["c1ccccc1", "CCO"])
+        assert len(scores) == 2
+        for s in scores:
+            assert not np.isnan(s)
+            assert 0 <= s <= 1
+
+    def test_invalid_smiles_returns_nan(self):
+        """Invalid SMILES should get NaN score."""
+        scores = _calculate_ra_scores_batch(["invalid_smiles"])
+        assert len(scores) == 1
+        assert np.isnan(scores[0])
+
+    def test_mixed_valid_invalid(self):
+        """Batch with valid and invalid SMILES."""
+        scores = _calculate_ra_scores_batch(["c1ccccc1", "not_a_molecule", "CCO"])
+        assert len(scores) == 3
+        assert not np.isnan(scores[0])
+        assert np.isnan(scores[1])
+        assert not np.isnan(scores[2])
+
+    def test_empty_list(self):
+        """Empty input should return empty list."""
+        scores = _calculate_ra_scores_batch([])
+        assert scores == []
+
+    def test_simple_molecule_high_score(self):
+        """Simple drug-like molecules should have high RA scores."""
+        scores = _calculate_ra_scores_batch(["CC(=O)Oc1ccccc1C(O)=O"])  # aspirin
+        assert len(scores) == 1
+        assert scores[0] > 0.9

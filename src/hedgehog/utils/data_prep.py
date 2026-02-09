@@ -15,7 +15,7 @@ SUPPORTED_EXTENSIONS = ["csv", "tsv", "txt"]
 MODE_SINGLE = "single_comparison"
 MODE_MULTI = "multi_comparison"
 
-RUN_CONFIGS_DIR = "run_configs"
+RUN_CONFIGS_DIR = "configs"
 RUN_MODELS_MAPPING_FILE = "run_models_mapping.csv"
 MODEL_INDEX_MAP_FILE = "model_index_map.json"
 

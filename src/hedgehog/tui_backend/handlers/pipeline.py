@@ -223,7 +223,8 @@ class PipelineHandler:
     def _cleanup_completed_jobs(self) -> None:
         """Remove oldest completed jobs when exceeding the limit."""
         completed = [
-            jid for jid, job in self.jobs.items()
+            jid
+            for jid, job in self.jobs.items()
             if not job._thread or not job._thread.is_alive()
         ]
         excess = len(completed) - _MAX_COMPLETED_JOBS

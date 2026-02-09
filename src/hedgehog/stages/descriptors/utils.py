@@ -979,7 +979,8 @@ def draw_filtered_mols(df, folder_to_save, config):
         col_lower = col.lower()
         canonical = _DESCRIPTOR_KEY_MAP.get(col_lower, col).lower()
         relevant_keys = [
-            k for k in borders
+            k
+            for k in borders
             if k.endswith(("_min", "_max"))
             and k.rsplit("_", 1)[0].lower() in (col_lower, canonical)
         ]

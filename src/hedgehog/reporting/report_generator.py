@@ -157,6 +157,11 @@ class ReportGenerator:
             "retrosynthesis": self._get_retrosynthesis_detailed(),
             "docking": self._get_docking_stats(),
             "docking_detailed": self._get_docking_detailed(),
+            "docking_filters_detailed": self._get_docking_filters_detailed(),
+            "descriptors_final": self._get_descriptor_stats("descriptors_final"),
+            "descriptors_final_detailed": self._get_descriptors_detailed(
+                "descriptors_final"
+            ),
             "existing_plots": self._get_existing_plots(),
             "config": self._get_config_summary(),
         }
@@ -545,9 +550,15 @@ class ReportGenerator:
 
         return losses
 
-    def _get_descriptor_stats(self) -> dict[str, Any]:
-        """Get descriptor statistics."""
-        desc_dir = self.base_path / STAGE_DIRS["descriptors_initial"]
+    def _get_descriptor_stats(
+        self, stage_key: str = "descriptors_initial"
+    ) -> dict[str, Any]:
+        """Get descriptor statistics.
+
+        Args:
+            stage_key: Stage key from STAGE_DIRS (default: descriptors_initial)
+        """
+        desc_dir = self.base_path / STAGE_DIRS[stage_key]
 
         # Try multiple possible locations
         paths_to_try = [
@@ -896,15 +907,20 @@ class ReportGenerator:
     # DETAILED DATA COLLECTION METHODS
     # =========================================================================
 
-    def _get_descriptors_detailed(self) -> dict[str, Any]:
+    def _get_descriptors_detailed(
+        self, stage_key: str = "descriptors_initial"
+    ) -> dict[str, Any]:
         """Get detailed descriptor data for enhanced visualization.
 
         Reads ALL numeric columns from the CSV file, not just predefined ones.
 
+        Args:
+            stage_key: Stage key from STAGE_DIRS (default: descriptors_initial)
+
         Returns:
             Dictionary with raw_data, summary_by_model, and key_descriptors
         """
-        desc_dir = self.base_path / STAGE_DIRS["descriptors_initial"]
+        desc_dir = self.base_path / STAGE_DIRS[stage_key]
 
         paths_to_try = [
             desc_dir / "metrics" / "descriptors_all.csv",
@@ -1613,16 +1629,20 @@ class ReportGenerator:
             ),
             # Structural filters
             "filters_pre_counts": (
-                STAGE_DIRS["struct_filters_pre"] + "/plots/molecule_counts_comparison.png"
+                STAGE_DIRS["struct_filters_pre"]
+                + "/plots/molecule_counts_comparison.png"
             ),
             "filters_pre_ratios": (
-                STAGE_DIRS["struct_filters_pre"] + "/plots/restriction_ratios_comparison.png"
+                STAGE_DIRS["struct_filters_pre"]
+                + "/plots/restriction_ratios_comparison.png"
             ),
             "filters_post_counts": (
-                STAGE_DIRS["struct_filters_post"] + "/plots/molecule_counts_comparison.png"
+                STAGE_DIRS["struct_filters_post"]
+                + "/plots/molecule_counts_comparison.png"
             ),
             "filters_post_ratios": (
-                STAGE_DIRS["struct_filters_post"] + "/plots/restriction_ratios_comparison.png"
+                STAGE_DIRS["struct_filters_post"]
+                + "/plots/restriction_ratios_comparison.png"
             ),
         }
 
@@ -1768,6 +1788,187 @@ class ReportGenerator:
                 }
 
         return result
+
+    def _build_descriptor_comparison_data(
+        self,
+        initial_detailed: dict[str, Any],
+        final_detailed: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build comparison data between initial and final descriptors.
+
+        Args:
+            initial_detailed: Detailed data from initial descriptors stage
+            final_detailed: Detailed data from final descriptors stage
+
+        Returns:
+            Dictionary with per-descriptor initial/final value arrays and stats
+        """
+        initial_raw = initial_detailed.get("raw_data", [])
+        final_raw = final_detailed.get("raw_data", [])
+        if not initial_raw or not final_raw:
+            return {}
+
+        # Get all descriptor names present in both datasets
+        initial_descs = set()
+        for record in initial_raw:
+            initial_descs.update(k for k in record if k != "model_name")
+
+        final_descs = set()
+        for record in final_raw:
+            final_descs.update(k for k in record if k != "model_name")
+
+        common_descs = sorted(initial_descs & final_descs)
+        if not common_descs:
+            return {}
+
+        comparison = {}
+        for desc in common_descs:
+            init_vals = [r[desc] for r in initial_raw if r.get(desc) is not None]
+            final_vals = [r[desc] for r in final_raw if r.get(desc) is not None]
+            if init_vals and final_vals:
+                comparison[desc] = {
+                    "initial_values": init_vals,
+                    "final_values": final_vals,
+                    "mean_initial": statistics.mean(init_vals),
+                    "mean_final": statistics.mean(final_vals),
+                }
+
+        return {"descriptors": list(comparison.keys()), "data": comparison}
+
+    def _get_docking_filters_detailed(self) -> dict[str, Any]:
+        """Get detailed docking filters data for report visualization.
+
+        Reads metrics.csv and filtered_molecules.csv from the docking filters
+        stage directory. Dynamically detects enabled filters from pass_* columns.
+
+        Returns:
+            Dictionary with total/passed/failed counts, per-filter stats,
+            numeric metric distributions, and per-model breakdown.
+        """
+        df_dir = self.base_path / STAGE_DIRS["docking_filters"]
+        metrics_path = df_dir / "metrics.csv"
+
+        if not metrics_path.exists():
+            return {}
+
+        try:
+            df = pd.read_csv(metrics_path)
+        except Exception:
+            return {}
+
+        if df.empty:
+            return {}
+
+        # Detect pass_* columns (individual filters), excluding aggregate 'pass'
+        pass_cols = [c for c in df.columns if c.startswith("pass_") and c != "pass"]
+
+        total_poses = len(df)
+        passed_poses = int(df["pass"].sum()) if "pass" in df.columns else 0
+        pass_rate = (
+            round(100.0 * passed_poses / total_poses, 1) if total_poses > 0 else 0.0
+        )
+
+        # Unique molecules that passed
+        filtered_path = df_dir / "filtered_molecules.csv"
+        unique_molecules_passed = 0
+        if filtered_path.exists():
+            try:
+                fdf = pd.read_csv(filtered_path)
+                unique_molecules_passed = len(fdf)
+            except Exception:
+                pass
+
+        # Read aggregation mode from pipeline config
+        aggregation_mode = "all"
+        dock_filt_config = self.config.get("docking_filters", {})
+        if isinstance(dock_filt_config, dict):
+            agg = dock_filt_config.get("aggregation", {})
+            if isinstance(agg, dict):
+                aggregation_mode = agg.get("mode", "all")
+
+        # Per-filter pass/fail stats
+        per_filter = {}
+        for col in pass_cols:
+            filter_name = col.replace("pass_", "")
+            if col in df.columns:
+                total = int(df[col].notna().sum())
+                passed = int(df[col].sum())
+                per_filter[filter_name] = {
+                    "passed": passed,
+                    "total": total,
+                    "pass_rate": round(100.0 * passed / total, 1) if total > 0 else 0.0,
+                }
+
+        # Numeric metric distributions for histograms
+        metric_columns = [
+            "clashes",
+            "strain_energy",
+            "min_conformer_rmsd",
+            "shape_score",
+            "n_hbonds",
+            "frac_atoms_outside_box",
+        ]
+        numeric_metrics = {}
+        for col in metric_columns:
+            if col in df.columns:
+                values = df[col].dropna().tolist()
+                if values:
+                    numeric_metrics[col] = values
+
+        # Per-model breakdown
+        by_model = {}
+        if "model_name" in df.columns:
+            for model in df["model_name"].dropna().unique():
+                model_df = df[df["model_name"] == model]
+                m_total = len(model_df)
+                m_passed = (
+                    int(model_df["pass"].sum()) if "pass" in model_df.columns else 0
+                )
+                by_model[str(model)] = {
+                    "total": m_total,
+                    "passed": m_passed,
+                    "pass_rate": round(100.0 * m_passed / m_total, 1)
+                    if m_total > 0
+                    else 0.0,
+                }
+
+        # Extract thresholds from config for display
+        thresholds = {}
+        if isinstance(dock_filt_config, dict):
+            pq = dock_filt_config.get("pose_quality", {})
+            if isinstance(pq, dict):
+                if pq.get("max_clashes") is not None:
+                    thresholds["clashes"] = {"max": pq["max_clashes"]}
+                if pq.get("max_strain_energy") is not None:
+                    thresholds["strain_energy"] = {"max": pq["max_strain_energy"]}
+            cd = dock_filt_config.get("conformer_deviation", {})
+            if isinstance(cd, dict):
+                if cd.get("max_rmsd_to_conformer") is not None:
+                    thresholds["min_conformer_rmsd"] = {
+                        "max": cd["max_rmsd_to_conformer"]
+                    }
+            sb = dock_filt_config.get("search_box", {})
+            if isinstance(sb, dict):
+                if sb.get("max_outside_fraction") is not None:
+                    thresholds["frac_atoms_outside_box"] = {
+                        "max": sb["max_outside_fraction"]
+                    }
+            ss = dock_filt_config.get("shepherd_score", {})
+            if isinstance(ss, dict):
+                if ss.get("min_shape_score") is not None:
+                    thresholds["shape_score"] = {"min": ss["min_shape_score"]}
+
+        return {
+            "total_poses": total_poses,
+            "passed_poses": passed_poses,
+            "pass_rate": pass_rate,
+            "unique_molecules_passed": unique_molecules_passed,
+            "aggregation_mode": aggregation_mode,
+            "per_filter": per_filter,
+            "numeric_metrics": numeric_metrics,
+            "thresholds": thresholds,
+            "by_model": by_model,
+        }
 
     def _get_config_summary(self) -> dict[str, Any]:
         """Get configuration summary."""
@@ -2056,6 +2257,59 @@ class ReportGenerator:
                         "data": by_model,
                     }
                 plot_htmls[f"docking_{tool}_data"] = json.dumps(docking_tool_data)
+
+        # =====================================================================
+        # Docking Filters (Stage 06)
+        # =====================================================================
+        df_detailed = data.get("docking_filters_detailed", {})
+        if df_detailed.get("per_filter"):
+            plot_htmls["docking_filters_pass_fail"] = (
+                plots.plot_docking_filters_pass_fail_bar(df_detailed["per_filter"])
+            )
+        if df_detailed.get("numeric_metrics"):
+            plot_htmls["docking_filters_metric_hists"] = (
+                plots.plot_docking_filters_metric_histograms(
+                    df_detailed["numeric_metrics"],
+                    df_detailed.get("thresholds", {}),
+                )
+            )
+        if df_detailed.get("by_model"):
+            plot_htmls["docking_filters_by_model"] = (
+                plots.plot_docking_filters_by_model_bar(df_detailed["by_model"])
+            )
+
+            # Build JSON data for JS model toggle
+            df_by_model_js = {"all": df_detailed}
+            for model, model_data in df_detailed["by_model"].items():
+                df_by_model_js[model] = model_data
+            plot_htmls["docking_filters_data"] = json.dumps(df_by_model_js)
+
+        # =====================================================================
+        # Final Descriptors (Stage 07)
+        # =====================================================================
+        final_desc_detailed = data.get("descriptors_final_detailed", {})
+        if final_desc_detailed.get("raw_data"):
+            final_desc_js = self._build_descriptors_js_data(
+                final_desc_detailed, available_models
+            )
+            plot_htmls["final_descriptors_data"] = json.dumps(final_desc_js)
+
+            if final_desc_detailed.get("summary_by_model"):
+                plot_htmls["final_descriptors_table"] = (
+                    plots.plot_descriptors_summary_table(
+                        final_desc_detailed["summary_by_model"]
+                    )
+                )
+
+        # Build initial vs final descriptor comparison data
+        initial_desc = data.get("descriptors_detailed", {})
+        final_desc = data.get("descriptors_final_detailed", {})
+        if initial_desc.get("raw_data") and final_desc.get("raw_data"):
+            comparison = self._build_descriptor_comparison_data(
+                initial_desc, final_desc
+            )
+            if comparison:
+                plot_htmls["descriptors_comparison_data"] = json.dumps(comparison)
 
         return plot_htmls
 

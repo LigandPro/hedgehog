@@ -7,5 +7,6 @@ export {
   WizardConfigFilters,
   WizardConfigSynthesis,
   WizardConfigDocking,
+  WizardConfigDockingFilters,
 } from './QuickConfig.js';
 export { ReviewRun } from './ReviewRun.js';

@@ -17,6 +17,7 @@ export type Screen =
   | 'wizardConfigFilters'
   | 'wizardConfigSynthesis'
   | 'wizardConfigDocking'
+  | 'wizardConfigDockingFilters'
   | 'wizardReview';
 
 // Screen shortcut definition
@@ -66,6 +67,7 @@ export interface MainConfig {
   config_structFilters: string;
   config_synthesis: string;
   config_docking: string;
+  config_docking_filters: string;
 }
 
 export interface DescriptorBorder {
@@ -176,6 +178,49 @@ export interface DockingConfig {
   run_in_background: boolean;
   smina_config: DockingToolConfig;
   gnina_config: DockingToolConfig;
+}
+
+export interface DockingFiltersConfig {
+  run: boolean;
+  run_after_docking?: boolean;
+  input_sdf?: string | null;
+  receptor_pdb?: string | null;
+  pose_quality?: {
+    enabled?: boolean;
+    max_clashes?: number;
+    max_strain_energy?: number;
+    strain_forcefield?: string;
+    clash_tolerance?: number;
+  };
+  interactions?: {
+    enabled?: boolean;
+    reference_ligand?: string | null;
+    min_hbonds?: number;
+    required_residues?: string[];
+    forbidden_residues?: string[];
+    interaction_types?: string[];
+    similarity_threshold?: number;
+  };
+  shepherd_score?: {
+    enabled?: boolean;
+    reference_ligand?: string | null;
+    min_shape_score?: number;
+    alpha?: number;
+    align_before_scoring?: boolean;
+  };
+  conformer_deviation?: {
+    enabled?: boolean;
+    num_conformers?: number;
+    conformer_method?: string;
+    max_rmsd_to_conformer?: number;
+    random_seed?: number;
+    optimize_conformers?: boolean;
+  };
+  aggregation?: {
+    mode?: 'all' | 'any';
+    save_metrics?: boolean;
+    save_failed?: boolean;
+  };
 }
 
 // Pipeline types

@@ -18,7 +18,7 @@ def main(data, config, subfolder):
     Args:
         data: DataFrame with molecules (must have 'smiles' column)
         config: Configuration file
-        subfolder: Optional subfolder for output (e.g., 'stages/01_descriptors_initial' or 'stages/06_descriptors_final')
+        subfolder: Optional subfolder for output (e.g., 'stages/01_descriptors_initial' or 'stages/07_descriptors_final')
     """
     if data is None or len(data) == 0:
         logger.warning("No molecules provided for descriptor calculation. Skipping.")

@@ -89,48 +89,40 @@ class TestGetUniqueResultsFolder:
     """Tests for _get_unique_results_folder function."""
 
     def test_empty_folder(self, tmp_path):
-        """If target folder is empty, return it unchanged."""
+        """If no numbered folders exist, return base_1."""
         result = _get_unique_results_folder(tmp_path / "results")
-        assert result == tmp_path / "results"
+        assert result == tmp_path / "results_1"
 
     def test_nonexistent_folder(self, tmp_path):
-        """If target folder doesn't exist, return it unchanged."""
+        """If parent folder doesn't exist, return base_1."""
         result = _get_unique_results_folder(tmp_path / "new_results")
-        assert result == tmp_path / "new_results"
+        assert result == tmp_path / "new_results_1"
 
     def test_folder_exists_with_content(self, tmp_path):
-        """If folder exists with content, return incremented name."""
+        """If folder exists with content but no numbered folders, return _1."""
         results = tmp_path / "results"
         results.mkdir()
         (results / "file.txt").touch()
 
         result = _get_unique_results_folder(results)
-        assert (
-            "results1" in str(result) or "results_1" in str(result) or result != results
-        )
+        assert result == tmp_path / "results_1"
 
     def test_multiple_existing_folders(self, tmp_path):
         """If multiple numbered folders exist, return next available."""
-        results = tmp_path / "results"
-        results.mkdir()
-        (results / "file.txt").touch()
+        # Create results_1 and results_2
+        (tmp_path / "results_1").mkdir()
+        (tmp_path / "results_2").mkdir()
 
-        results1 = tmp_path / "results1"
-        results1.mkdir()
-        (results1 / "file.txt").touch()
-
-        result = _get_unique_results_folder(results)
-        assert result not in [results, results1]
+        result = _get_unique_results_folder(tmp_path / "results")
+        assert result == tmp_path / "results_3"
 
     def test_folder_already_numbered(self, tmp_path):
-        """If folder is already numbered, increment from that number."""
-        results5 = tmp_path / "results5"
-        results5.mkdir()
-        (results5 / "file.txt").touch()
+        """Sequential numbering continues from highest existing number."""
+        # Create results_5
+        (tmp_path / "results_5").mkdir()
 
-        result = _get_unique_results_folder(results5)
-        # Should be results6 or similar
-        assert "6" in str(result) or result != results5
+        result = _get_unique_results_folder(tmp_path / "results")
+        assert result == tmp_path / "results_6"
 
 
 class TestValidateInputPath:

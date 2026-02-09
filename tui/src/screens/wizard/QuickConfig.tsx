@@ -22,7 +22,7 @@ interface ParamDef {
 interface StageConfigDef {
   stageName: string;
   displayName: string;
-  configType: 'descriptors' | 'filters' | 'synthesis' | 'docking';
+  configType: 'descriptors' | 'filters' | 'synthesis' | 'docking' | 'docking_filters';
   params: ParamDef[];
 }
 
@@ -71,6 +71,18 @@ const DOCKING_PARAMS: ParamDef[] = [
   { key: 'energy_range', label: 'Energy Range', type: 'number', configPath: ['smina_config'], description: 'Max energy diff from best (kcal/mol)' },
 ];
 
+const DOCKING_FILTERS_PARAMS: ParamDef[] = [
+  { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable docking filters' },
+  { key: 'enabled', label: 'Pose Quality', type: 'boolean', configPath: ['pose_quality'], description: 'PoseCheck: clashes and strain filters' },
+  { key: 'max_clashes', label: 'Max Clashes', type: 'number', configPath: ['pose_quality'], description: 'Maximum allowed steric clashes' },
+  { key: 'enabled', label: 'Interactions', type: 'boolean', configPath: ['interactions'], description: 'ProLIF: interaction-based filtering' },
+  { key: 'min_hbonds', label: 'Min H-Bonds', type: 'number', configPath: ['interactions'], description: 'Minimum required hydrogen bonds' },
+  { key: 'enabled', label: 'Conformer Deviation', type: 'boolean', configPath: ['conformer_deviation'], description: 'Reject poses far from plausible conformers' },
+  { key: 'max_rmsd_to_conformer', label: 'Max RMSD', type: 'number', configPath: ['conformer_deviation'], description: 'Max RMSD to nearest conformer (Å)' },
+  { key: 'mode', label: 'Aggregation Mode', type: 'select', options: ['all', 'any'], configPath: ['aggregation'], description: 'all=pass all enabled filters, any=pass at least one' },
+  { key: 'save_failed', label: 'Save Failed', type: 'boolean', configPath: ['aggregation'], description: 'Save failed molecules CSV' },
+];
+
 const STAGE_CONFIGS: Record<string, StageConfigDef> = {
   descriptors: {
     stageName: 'descriptors',
@@ -95,6 +107,12 @@ const STAGE_CONFIGS: Record<string, StageConfigDef> = {
     displayName: 'Docking',
     configType: 'docking',
     params: DOCKING_PARAMS,
+  },
+  docking_filters: {
+    stageName: 'docking_filters',
+    displayName: 'Docking Filters',
+    configType: 'docking_filters',
+    params: DOCKING_FILTERS_PARAMS,
   },
 };
 
@@ -478,6 +496,10 @@ export function WizardConfigSynthesis(): React.ReactElement {
 
 export function WizardConfigDocking(): React.ReactElement {
   return <QuickConfig stageName="docking" />;
+}
+
+export function WizardConfigDockingFilters(): React.ReactElement {
+  return <QuickConfig stageName="docking_filters" />;
 }
 
 export default QuickConfig;

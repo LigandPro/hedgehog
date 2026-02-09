@@ -3,8 +3,10 @@
 import pandas as pd
 
 from hedgehog.stages.docking.utils import (
+    _aggregate_docking_results,
     _find_latest_input_source,
     _prepare_ligands_dataframe,
+    _split_sdf_to_molecules,
 )
 
 
@@ -256,3 +258,151 @@ class TestLigandNaming:
         assert "smiles" in result.columns
         assert "model_name" in result.columns
         assert "mol_idx" in result.columns
+
+
+class TestPerMoleculeArchitecture:
+    """Tests for per-molecule SDF splitting and aggregation."""
+
+    def test_split_sdf_to_molecules(self, tmp_path):
+        """Should split multi-molecule SDF into individual files."""
+        from rdkit import Chem
+
+        # Create a multi-molecule SDF
+        sdf_path = tmp_path / "multi.sdf"
+        writer = Chem.SDWriter(str(sdf_path))
+
+        mol1 = Chem.MolFromSmiles("CCO")
+        mol1.SetProp("_Name", "ethanol")
+        writer.write(mol1)
+
+        mol2 = Chem.MolFromSmiles("c1ccccc1")
+        mol2.SetProp("_Name", "benzene")
+        writer.write(mol2)
+
+        mol3 = Chem.MolFromSmiles("CC")
+        mol3.SetProp("_Name", "ethane")
+        writer.write(mol3)
+
+        writer.close()
+
+        # Split the SDF
+        molecules_dir = tmp_path / "molecules"
+        result = _split_sdf_to_molecules(sdf_path, molecules_dir)
+
+        assert len(result) == 3
+        assert molecules_dir.exists()
+        assert (molecules_dir / "ethanol.sdf").exists()
+        assert (molecules_dir / "benzene.sdf").exists()
+        assert (molecules_dir / "ethane.sdf").exists()
+
+    def test_split_sdf_with_unnamed_molecules(self, tmp_path):
+        """Should handle molecules without names."""
+        from rdkit import Chem
+
+        sdf_path = tmp_path / "unnamed.sdf"
+        writer = Chem.SDWriter(str(sdf_path))
+
+        mol1 = Chem.MolFromSmiles("CCO")
+        # No name set
+        writer.write(mol1)
+
+        mol2 = Chem.MolFromSmiles("CC")
+        writer.write(mol2)
+
+        writer.close()
+
+        molecules_dir = tmp_path / "molecules"
+        result = _split_sdf_to_molecules(sdf_path, molecules_dir)
+
+        assert len(result) == 2
+        # Should use default naming
+        assert any("mol_" in str(f) for f in result)
+
+    def test_aggregate_docking_results(self, tmp_path):
+        """Should aggregate per-molecule results into single SDF."""
+        from rdkit import Chem
+
+        # Create per-molecule result files
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+
+        mol1 = Chem.MolFromSmiles("CCO")
+        mol1.SetProp("_Name", "mol1")
+        mol1.SetProp("score", "-5.2")
+        writer1 = Chem.SDWriter(str(results_dir / "mol1_out.sdf"))
+        writer1.write(mol1)
+        writer1.close()
+
+        mol2 = Chem.MolFromSmiles("c1ccccc1")
+        mol2.SetProp("_Name", "mol2")
+        mol2.SetProp("score", "-6.1")
+        writer2 = Chem.SDWriter(str(results_dir / "mol2_out.sdf"))
+        writer2.write(mol2)
+        writer2.close()
+
+        # Aggregate results
+        output_sdf = tmp_path / "aggregated.sdf"
+        count = _aggregate_docking_results(results_dir, output_sdf)
+
+        assert count == 2
+        assert output_sdf.exists()
+
+        # Verify aggregated content
+        suppl = Chem.SDMolSupplier(str(output_sdf))
+        mols = [m for m in suppl if m is not None]
+        assert len(mols) == 2
+
+    def test_aggregate_empty_results_dir(self, tmp_path):
+        """Should handle empty results directory gracefully."""
+        results_dir = tmp_path / "empty_results"
+        results_dir.mkdir()
+
+        output_sdf = tmp_path / "output.sdf"
+        count = _aggregate_docking_results(results_dir, output_sdf)
+
+        assert count == 0
+
+    def test_aggregate_with_invalid_files(self, tmp_path):
+        """Should skip invalid SDF files during aggregation."""
+        from rdkit import Chem
+
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+
+        # Valid molecule
+        mol1 = Chem.MolFromSmiles("CCO")
+        mol1.SetProp("_Name", "valid")
+        writer = Chem.SDWriter(str(results_dir / "valid_out.sdf"))
+        writer.write(mol1)
+        writer.close()
+
+        # Invalid file (empty)
+        (results_dir / "invalid_out.sdf").write_text("")
+
+        output_sdf = tmp_path / "output.sdf"
+        count = _aggregate_docking_results(results_dir, output_sdf)
+
+        # Should have 1 valid molecule
+        assert count == 1
+
+    def test_split_sdf_sanitizes_names(self, tmp_path):
+        """Should sanitize molecule names with special characters."""
+        from rdkit import Chem
+
+        sdf_path = tmp_path / "special.sdf"
+        writer = Chem.SDWriter(str(sdf_path))
+
+        mol = Chem.MolFromSmiles("CCO")
+        mol.SetProp("_Name", "mol/with:special*chars")
+        writer.write(mol)
+        writer.close()
+
+        molecules_dir = tmp_path / "molecules"
+        result = _split_sdf_to_molecules(sdf_path, molecules_dir)
+
+        assert len(result) == 1
+        # Name should be sanitized (no special chars)
+        filename = result[0].name
+        assert "/" not in filename
+        assert ":" not in filename
+        assert "*" not in filename

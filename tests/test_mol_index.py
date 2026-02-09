@@ -136,7 +136,7 @@ class TestAssignMolIdx:
 
         assign_mol_idx(df, tmp_path)
 
-        map_file = tmp_path / "run_configs" / "model_index_map.json"
+        map_file = tmp_path / "configs" / "model_index_map.json"
         assert map_file.exists()
 
     def test_does_not_modify_input(self, tmp_path):

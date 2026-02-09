@@ -82,7 +82,11 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
         logger.debug("Command: %s", cmd)
 
         subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, check=True,
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=True,
             timeout=_RETROSYNTHESIS_TIMEOUT,
         )
 
@@ -90,7 +94,8 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
         return True
     except subprocess.TimeoutExpired:
         logger.error(
-            "Retrosynthesis analysis timed out after %d seconds", _RETROSYNTHESIS_TIMEOUT
+            "Retrosynthesis analysis timed out after %d seconds",
+            _RETROSYNTHESIS_TIMEOUT,
         )
         return False
     except subprocess.CalledProcessError as e:
@@ -189,9 +194,7 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
                 merged.loc[idx, "search_time"] = match["search_time"]
     else:
         # Positional fallback when SMILES column is unavailable
-        logger.warning(
-            "No SMILES column found for merge; using positional matching"
-        )
+        logger.warning("No SMILES column found for merge; using positional matching")
         for idx, row in retrosynth_df_copy.iterrows():
             if idx < len(merged):
                 merged.loc[idx, "solved"] = row.get("solved", 0)

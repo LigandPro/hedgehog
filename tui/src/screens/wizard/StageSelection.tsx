@@ -10,6 +10,7 @@ const STAGES = [
   { key: 'struct_filters', name: 'Struct Filters', description: 'Apply structural filters', configScreen: 'wizardConfigFilters' as Screen },
   { key: 'synthesis', name: 'Synthesis', description: 'Score synthesizability', configScreen: 'wizardConfigSynthesis' as Screen },
   { key: 'docking', name: 'Docking', description: 'Run molecular docking', configScreen: 'wizardConfigDocking' as Screen },
+  { key: 'docking_filters', name: 'Docking Filters', description: 'Filter docking poses and interactions', configScreen: 'wizardConfigDockingFilters' as Screen },
 ];
 
 export function StageSelection(): React.ReactElement {

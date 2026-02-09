@@ -628,10 +628,12 @@ def _write_receptor_check_bash(f, receptor):
 def _write_docking_command_bash(f, ligands_dir, docking_bin, config_file, tool_name):
     """Write docking command bash code to script file."""
     f.write(f"cd {ligands_dir}\n")
-    f.write(
-        f'echo "Starting {tool_name.upper()} docking with config: {config_file.name}"\n'
-    )
-    f.write(f"{docking_bin} --config {config_file.name}\n")
+    try:
+        config_rel = config_file.relative_to(ligands_dir)
+    except ValueError:
+        config_rel = config_file.name
+    f.write(f'echo "Starting {tool_name.upper()} docking with config: {config_rel}"\n')
+    f.write(f"{docking_bin} --config {config_rel}\n")
     f.write("if [ $? -eq 0 ]; then\n")
     f.write(f'  echo "{tool_name.upper()} docking completed successfully"\n')
     f.write("else\n")
@@ -832,11 +834,14 @@ def _prepare_ligands_for_docking(
         else:
             input_format = "-icsv"
 
-        prepared_output_path = ligands_dir / "_workdir" / f"prepared_for_{tool_name}.sdf"
+        prepared_output_path = (
+            ligands_dir / "_workdir" / f"prepared_for_{tool_name}.sdf"
+        )
         prepared_output_path.parent.mkdir(parents=True, exist_ok=True)
-        prepared_output_relative = str(prepared_output_path.relative_to(ligands_dir))
+        prepared_output_abs = str(prepared_output_path.resolve())
 
-        cmd_line = f"{ligand_preparation_tool} {input_format} {ligands_val} -osd {prepared_output_relative}"
+        ligands_abs = str((ligands_dir / ligands_val).resolve())
+        cmd_line = f"{ligand_preparation_tool} {input_format} {ligands_abs} -osd {prepared_output_abs}"
         return str(prepared_output_path.resolve()), cmd_line
     else:
         ligands_path, _ = _convert_with_rdkit(ligands_csv, ligands_dir)
@@ -987,9 +992,16 @@ def _get_gnina_environment(cfg, base_folder):
 
     gnina_activate = cfg.get("gnina_activate")
     if not gnina_activate and env_path:
-        conda_sh = cfg.get(
-            "conda_sh", os.path.expanduser("~/miniconda3/etc/profile.d/conda.sh")
-        )
+        conda_sh = cfg.get("conda_sh")
+        if not conda_sh:
+            # Auto-detect conda.sh from common installation paths
+            for candidate in ("miniforge", "miniconda3", "mambaforge", "anaconda3"):
+                path = Path(os.path.expanduser(f"~/{candidate}/etc/profile.d/conda.sh"))
+                if path.exists():
+                    conda_sh = str(path)
+                    break
+            if not conda_sh:
+                conda_sh = os.path.expanduser("~/miniconda3/etc/profile.d/conda.sh")
         gnina_activate = f"source {conda_sh} && conda activate {env_path}"
 
     ld_library_path = cfg.get("gnina_ld_library_path")
@@ -1973,7 +1985,9 @@ def run_docking(config):
     if not auto_run:
         try:
             if "smina" in tools_list:
-                _emit_post_docking_warnings("smina", ligands_dir / "_workdir" / "smina_run.log")
+                _emit_post_docking_warnings(
+                    "smina", ligands_dir / "_workdir" / "smina_run.log"
+                )
             if "gnina" in tools_list:
                 gnina_dir = _get_gnina_output_directory(cfg, base_folder)
                 _emit_post_docking_warnings(

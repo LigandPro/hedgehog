@@ -118,6 +118,19 @@ class TestDataChecker:
 
         assert checker.check_stage_data(DIR_SYNTHESIS) is False
 
+    def test_stage_has_molecules_header_only_csv(self, tmp_path):
+        """Header-only stage CSV should be treated as having zero molecules."""
+        synthesis_dir = tmp_path / "stages" / "04_synthesis"
+        synthesis_dir.mkdir(parents=True)
+        output_file = synthesis_dir / "filtered_molecules.csv"
+        output_file.write_text("smiles,model_name,mol_idx\n")
+
+        config = {"folder_to_save": str(tmp_path)}
+        checker = DataChecker(config)
+
+        assert checker.check_stage_data(DIR_SYNTHESIS) is True
+        assert checker.stage_has_molecules(DIR_SYNTHESIS) is False
+
     def test_check_stage_data_legacy_structure(self, tmp_path):
         """Check stage data for legacy directory structure."""
         legacy_dir = tmp_path / "Synthesis"

@@ -12,6 +12,7 @@ const STAGE_NAMES: Record<string, string> = {
   struct_filters: 'Struct Filters',
   synthesis: 'Synthesis',
   docking: 'Docking',
+  docking_filters: 'Docking Filters',
 };
 
 interface StageSummary {
@@ -70,6 +71,9 @@ export function ReviewRun(): React.ReactElement {
         case 'docking':
           summary = `Tool: ${params.tools} | Exhaust: ${params.exhaustiveness} | Modes: ${params.num_modes}`;
           break;
+        case 'docking_filters':
+          summary = `Mode: ${params.aggregation_mode} | Clashes≤${params.max_clashes} | H-bonds≥${params.min_hbonds} | RMSD≤${params.max_rmsd_to_conformer}`;
+          break;
         default:
           summary = 'Configured';
       }
@@ -93,6 +97,7 @@ export function ReviewRun(): React.ReactElement {
     if (stageName === 'struct_filters') return 'wizardConfigFilters';
     if (stageName === 'synthesis') return 'wizardConfigSynthesis';
     if (stageName === 'docking') return 'wizardConfigDocking';
+    if (stageName === 'docking_filters') return 'wizardConfigDockingFilters';
     return 'wizardReview';
   };
 

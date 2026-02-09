@@ -25,6 +25,7 @@ const SCREEN_BREADCRUMBS: Record<Screen, string[]> = {
   wizardConfigFilters: ['Home', 'Wizard', 'Filters'],
   wizardConfigSynthesis: ['Home', 'Wizard', 'Synthesis'],
   wizardConfigDocking: ['Home', 'Wizard', 'Docking'],
+  wizardConfigDockingFilters: ['Home', 'Wizard', 'Docking Filters'],
   wizardReview: ['Home', 'Wizard', 'Review'],
 };
 

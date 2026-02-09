@@ -13,6 +13,7 @@ const STAGE_NAMES: Record<string, string> = {
   struct_filters: 'Struct Filters',
   synthesis: 'Synthesis',
   docking: 'Docking',
+  docking_filters: 'Docking Filters',
 };
 
 // Overall progress display with current stage bar
