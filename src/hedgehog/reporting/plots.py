@@ -11,6 +11,15 @@ from plotly.subplots import make_subplots
 # Default color palette for models
 MODEL_COLORS = px.colors.qualitative.Set2
 
+# Shorter labels for Sankey nodes to prevent overlap
+_SANKEY_SHORT_LABELS = {
+    "Pre-Filters": "Pre-Filt.",
+    "Post-Filters": "Post-Filt.",
+    "Descriptors": "Descript.",
+    "Docking Filters": "Dock. Filt.",
+    "Final Descriptors": "Final Desc.",
+}
+
 
 def plot_funnel(funnel_data: list[dict[str, Any]]) -> str:
     """Create a horizontal pipeline funnel chart showing molecule counts at each stage.
@@ -73,9 +82,12 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     stages = [d["stage"] for d in funnel_data]
     counts = [d["count"] for d in funnel_data]
 
+    # Use shorter labels to prevent overlap in dense diagrams
+    short_stages = [_SANKEY_SHORT_LABELS.get(s, s) for s in stages]
+
     # Build Sankey nodes and links
     # Nodes: stage names + "Lost at <stage>" for each transition
-    labels = list(stages)
+    labels = list(short_stages)
     node_colors = []
 
     # Colors for main flow stages (soft purple palette)
@@ -90,7 +102,7 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     for i in range(len(stages) - 1):
         lost_count = counts[i] - counts[i + 1]
         if lost_count > 0:
-            lost_label = f"Lost ({stages[i + 1]})"
+            lost_label = f"Lost ({short_stages[i + 1]})"
             labels.append(lost_label)
             node_colors.append(lost_color)
             lost_nodes.append(
@@ -128,7 +140,6 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
 
     # Calculate node positions
     n_stages = len(stages)
-    n_lost = len(lost_nodes)
 
     # X positions: stages evenly spaced
     x_positions = []
@@ -169,7 +180,7 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
             go.Sankey(
                 arrangement="snap",
                 node={
-                    "pad": 20,
+                    "pad": 40,
                     "thickness": 20,
                     "line": {"color": "black", "width": 0.5},
                     "label": labels,
@@ -195,9 +206,9 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     )
 
     fig.update_layout(
-        font={"size": 12},
+        font={"size": 10},
         height=450,
-        margin={"l": 20, "r": 20, "t": 20, "b": 20},
+        margin={"l": 5, "r": 5, "t": 20, "b": 20},
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)
@@ -221,7 +232,8 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
     stages = [d["stage"] for d in funnel_data]
     counts = [d["count"] for d in funnel_data]
 
-    labels = list(stages)
+    short_stages = [_SANKEY_SHORT_LABELS.get(s, s) for s in stages]
+    labels = list(short_stages)
     node_colors = []
 
     stage_color = "rgba(139, 92, 246, 0.85)"
@@ -234,7 +246,7 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
     for i in range(len(stages) - 1):
         lost_count = counts[i] - counts[i + 1]
         if lost_count > 0:
-            lost_label = f"Lost ({stages[i + 1]})"
+            lost_label = f"Lost ({short_stages[i + 1]})"
             labels.append(lost_label)
             node_colors.append(lost_color)
             lost_nodes.append(
@@ -341,15 +353,16 @@ def plot_sankey_compare_json(
         return {}
 
     stages = [d["stage"] for d in first_model_data]
+    short_stages = [_SANKEY_SHORT_LABELS.get(s, s) for s in stages]
     n_stages = len(stages)
 
     # Nodes: stages + lost nodes for each stage transition
-    labels = list(stages)
+    labels = list(short_stages)
     node_colors = ["rgba(107, 114, 128, 0.7)"] * n_stages  # Gray for stage nodes
 
     # Add "Lost" nodes
     for i in range(n_stages - 1):
-        labels.append(f"Lost ({stages[i + 1]})")
+        labels.append(f"Lost ({short_stages[i + 1]})")
         node_colors.append("rgba(107, 114, 128, 0.3)")
 
     # Calculate positions
@@ -504,8 +517,20 @@ def plot_model_stacked_losses(model_stats: list[dict[str, Any]]) -> str:
         return _empty_plot("No model loss data available")
 
     models = [m["model_name"] for m in model_stats]
-    stages = ["descriptors", "struct_filters", "synthesis", "docking"]
-    stage_labels = ["Descriptors", "Structural Filters", "Synthesis", "Docking"]
+    stages = [
+        "descriptors",
+        "struct_filters",
+        "synthesis",
+        "docking",
+        "docking_filters",
+    ]
+    stage_labels = [
+        "Descriptors",
+        "Structural Filters",
+        "Synthesis",
+        "Docking",
+        "Docking Filters",
+    ]
 
     fig = go.Figure()
 
@@ -1136,6 +1161,31 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
     if not models:
         return "<p>No descriptor summary available</p>"
 
+    # Readable display names for descriptors
+    readable_names = {
+        "MolWt": "MolWt",
+        "LogP": "LogP",
+        "cLogP": "cLogP",
+        "TPSA": "TPSA",
+        "NumHDonors": "HBD",
+        "NumHAcceptors": "HBA",
+        "QED": "QED",
+        "Fsp3": "Fsp3",
+        "n_atoms": "Atoms",
+        "n_heavy_atoms": "Heavy",
+        "n_het_atoms": "Het",
+        "n_rings": "Rings",
+        "n_aroma_rings": "AroRings",
+        "n_rot_bonds": "RotBonds",
+        "n_rigid_bonds": "RigBonds",
+        "SW": "SW",
+        "n_N_atoms": "N atoms",
+        "fN_atoms": "fN",
+        "n_fused_aromatic_rings": "FusedAro",
+        "charged_mol": "Charged",
+        "ring_size": "RingSize",
+    }
+
     # Get all descriptors
     all_descs = set()
     for model_data in summary.values():
@@ -1153,7 +1203,9 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
         ]
         rows.append(f"<tr><td><strong>{model}</strong></td>{''.join(cells)}</tr>")
 
-    header = "<th>Model</th>" + "".join(f"<th>{d}</th>" for d in descriptors)
+    header = "<th>Model</th>" + "".join(
+        f"<th title='{d}'>{readable_names.get(d, d)}</th>" for d in descriptors
+    )
 
     return f"""
     <div style="overflow-x: auto; max-width: 100%;">
@@ -1400,13 +1452,18 @@ def _plot_synthesis_score_histogram(
     )
     fig.update_layout(
         yaxis_title="Count",
-        height=350,
+        height=300,
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",
+        margin={"l": 45, "r": 10, "t": 30, "b": 40},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return fig.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        config={"responsive": True},
+    )
 
 
 def plot_synthesis_sa_histogram(scores: list[float]) -> str:
@@ -1646,19 +1703,21 @@ def plot_docking_top_molecules(
             orientation="h",
             marker_color=colors,
             text=[f"{s:.2f}" for s in scores],
-            textposition="outside",
+            textposition="inside",
+            textfont={"color": "white", "size": 11},
+            insidetextanchor="end",
         )
     )
 
     fig.update_layout(
         title=f"Top {top_n} Molecules by Binding Affinity",
         xaxis_title="Binding Affinity (kcal/mol)",
-        height=max(300, 35 * len(labels)),
-        yaxis={"categoryorder": "total descending"},
+        height=max(300, 40 * len(labels)),
+        yaxis={"categoryorder": "total descending", "automargin": True},
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin={"l": 150},
+        margin={"l": 10, "r": 20},
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)
@@ -1699,7 +1758,6 @@ def plot_docking_affinity_box(
             )
 
     fig.update_layout(
-        title="Binding Affinity by Model",
         yaxis_title="Binding Affinity (kcal/mol)",
         height=400,
         showlegend=False,
@@ -1811,6 +1869,217 @@ def plot_retrosynthesis_steps_histogram(steps: list[int]) -> str:
         plot_bgcolor="white",
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         xaxis={"dtick": 1},
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+# =============================================================================
+# DOCKING FILTERS (Stage 06) - Plots
+# =============================================================================
+
+
+def plot_docking_filters_pass_fail_bar(
+    per_filter: dict[str, dict[str, Any]],
+) -> str:
+    """Create horizontal stacked bar chart showing passed/failed per filter.
+
+    Args:
+        per_filter: Dict mapping filter_name -> {passed, total, pass_rate}
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not per_filter:
+        return _empty_plot("No docking filter data available")
+
+    filter_names = list(per_filter.keys())
+    passed = [per_filter[f]["passed"] for f in filter_names]
+    failed = [per_filter[f]["total"] - per_filter[f]["passed"] for f in filter_names]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            name="Passed",
+            y=filter_names,
+            x=passed,
+            orientation="h",
+            marker_color="rgba(34, 197, 94, 0.8)",
+            text=[f"{per_filter[f]['pass_rate']:.0f}%" for f in filter_names],
+            textposition="inside",
+        )
+    )
+
+    fig.add_trace(
+        go.Bar(
+            name="Failed",
+            y=filter_names,
+            x=failed,
+            orientation="h",
+            marker_color="rgba(239, 68, 68, 0.7)",
+        )
+    )
+
+    fig.update_layout(
+        barmode="stack",
+        height=max(250, 50 * len(filter_names)),
+        margin={"l": 140, "r": 30, "t": 30, "b": 40},
+        xaxis_title="Poses",
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_docking_filters_metric_histograms(
+    numeric_metrics: dict[str, list[float]],
+    thresholds: dict[str, dict[str, float]] | None = None,
+) -> str:
+    """Create grid of histograms for docking filter numeric metrics.
+
+    Args:
+        numeric_metrics: Dict mapping metric name -> list of values
+        thresholds: Optional dict mapping metric -> {min/max threshold}
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not numeric_metrics:
+        return _empty_plot("No numeric metrics available")
+
+    thresholds = thresholds or {}
+
+    display_names = {
+        "clashes": "Steric Clashes",
+        "strain_energy": "Strain Energy (kcal/mol)",
+        "min_conformer_rmsd": "Min Conformer RMSD (Å)",
+        "shape_score": "Shape Score",
+        "n_hbonds": "H-Bonds",
+        "frac_atoms_outside_box": "Fraction Outside Box",
+    }
+
+    metrics_to_plot = [
+        m for m in display_names if m in numeric_metrics and numeric_metrics[m]
+    ]
+    if not metrics_to_plot:
+        return _empty_plot("No numeric metrics available")
+
+    n = len(metrics_to_plot)
+    n_cols = min(2, n)
+    n_rows = (n + n_cols - 1) // n_cols
+
+    fig = make_subplots(
+        rows=n_rows,
+        cols=n_cols,
+        subplot_titles=[display_names.get(m, m) for m in metrics_to_plot],
+        vertical_spacing=0.18,
+        horizontal_spacing=0.12,
+    )
+
+    for i, metric in enumerate(metrics_to_plot):
+        row = i // n_cols + 1
+        col = i % n_cols + 1
+        values = numeric_metrics[metric]
+
+        fig.add_trace(
+            go.Histogram(
+                x=values,
+                nbinsx=30,
+                marker_color="rgba(139, 92, 246, 0.75)",
+                marker_line_color="rgba(109, 40, 217, 1)",
+                marker_line_width=1,
+                showlegend=False,
+            ),
+            row=row,
+            col=col,
+        )
+
+        # Add threshold line if configured
+        thresh = thresholds.get(metric, {})
+        if "max" in thresh:
+            fig.add_vline(
+                x=thresh["max"],
+                line_color="rgba(239, 68, 68, 0.9)",
+                line_width=2,
+                row=row,
+                col=col,
+            )
+        if "min" in thresh:
+            fig.add_vline(
+                x=thresh["min"],
+                line_color="rgba(239, 68, 68, 0.9)",
+                line_width=2,
+                row=row,
+                col=col,
+            )
+
+    fig.update_layout(
+        height=300 * n_rows,
+        margin={"l": 50, "r": 30, "t": 40, "b": 40},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        showlegend=False,
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_docking_filters_by_model_bar(
+    by_model: dict[str, dict[str, Any]],
+) -> str:
+    """Create bar chart showing pass rate per model for docking filters.
+
+    Args:
+        by_model: Dict mapping model_name -> {total, passed, pass_rate}
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not by_model:
+        return _empty_plot("No per-model docking filter data available")
+
+    models = sorted(by_model.keys())
+    pass_rates = [by_model[m]["pass_rate"] for m in models]
+    passed = [by_model[m]["passed"] for m in models]
+    total = [by_model[m]["total"] for m in models]
+
+    n = len(models)
+    colors = [PURPLE_PALETTE[i % len(PURPLE_PALETTE)] for i in range(n)]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=models,
+            y=pass_rates,
+            marker_color=colors,
+            text=[
+                f"{r:.1f}%<br>({p}/{t})"
+                for r, p, t in zip(pass_rates, passed, total)
+            ],
+            textposition="outside",
+        )
+    )
+
+    fig.update_layout(
+        yaxis_title="Pass Rate (%)",
+        yaxis_range=[0, min(110, max(pass_rates) * 1.2) if pass_rates else 100],
+        height=350,
+        margin={"l": 50, "r": 30, "t": 30, "b": 80},
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)

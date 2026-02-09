@@ -1,11 +1,11 @@
 run: true
-tools: both
+tools: gnina  # Options: gnina, smina, both
 receptor_pdb: data/test/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
 smina_config:
   bin: /mnt/ligandpro/soft/docking/smina/smina
-  autobox_ligand: ../../data/test/05C_from_7EW9.sdf
+  autobox_ligand: data/test/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
@@ -18,4 +18,4 @@ gnina_config:
   autobox_add: 4
   cpu: 32
   seed: 42
-  output_dir: Docking/gnina_results
+

@@ -1,8 +1,8 @@
-generated_mols_path: /home/nikolenko/work/Projects/hedgehog-tui/data/test/generated_mols.csv
+generated_mols_path: data/test/moses_1000.csv
 target_mols_path: data/test/target_mols.csv
-folder_to_save: results/test
+folder_to_save: results/run
 n_jobs: 62
-sample_size: 10000
+sample_size: 1000
 batch_size: 512
 save_sampled_mols: true
 pains_file_path: data/wehi_pains.csv
@@ -13,3 +13,4 @@ config_descriptors: src/hedgehog/configs/config_descriptors.yml
 config_structFilters: src/hedgehog/configs/config_structFilters.yml
 config_synthesis: src/hedgehog/configs/config_synthesis.yml
 config_docking: src/hedgehog/configs/config_docking.yml
+config_docking_filters: src/hedgehog/configs/config_docking_filters.yml

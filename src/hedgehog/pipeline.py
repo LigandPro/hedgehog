@@ -20,7 +20,6 @@ DIR_INPUT = "input"
 DIR_STAGES = "stages"
 DIR_OUTPUT = "output"
 DIR_CONFIGS = "configs"
-DIR_LOGS = "logs"
 
 # Stage subdirectories
 DIR_DESCRIPTORS_INITIAL = "stages/01_descriptors_initial"
@@ -579,8 +578,18 @@ class MolecularAnalysisPipeline:
         )
         return self._finalize_pipeline(data, success_count, total_enabled)
 
-    def _run_stage(self, stage_name: str, runner_func, *args) -> tuple[bool, bool]:
-        """Run a pipeline stage with standard logging. Returns (completed, early_exit)."""
+    def _run_stage(
+        self, stage_name: str, runner_func, *args, on_failure=None
+    ) -> tuple[bool, bool]:
+        """Run a pipeline stage with standard logging. Returns (completed, early_exit).
+
+        Args:
+            stage_name: Name of the stage to run.
+            runner_func: Callable that performs the stage work. Must return bool.
+            *args: Positional arguments passed to runner_func.
+            on_failure: Optional callback invoked when runner_func returns False.
+                Must return (completed, early_exit) tuple.
+        """
         stage = self._stage_by_name[stage_name]
         if not stage.enabled:
             return False, False
@@ -599,7 +608,12 @@ class MolecularAnalysisPipeline:
         elapsed = time.perf_counter() - start_time
         self.stage_timings[stage.name] = elapsed
         logger.info("Stage %s completed in %.1f seconds", stage.name, elapsed)
-        return completed, False
+
+        if completed:
+            return True, False
+        if on_failure:
+            return on_failure()
+        return False, False
 
     def _run_pre_descriptors_filters(self) -> tuple[bool, bool]:
         """Run pre-descriptors structural filters stage."""
@@ -634,44 +648,25 @@ class MolecularAnalysisPipeline:
 
     def _run_post_descriptors_filters(self) -> tuple[bool, bool]:
         """Run post-descriptors structural filters stage."""
-        stage = self._stage_by_name[STAGE_STRUCT_FILTERS]
-        if not stage.enabled:
-            return False, False
 
-        # Call progress callback if provided
-        if self.progress_callback:
-            enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = (
-                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
-            )
-            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
+        def _on_failure():
+            logger.info("No molecules left after descriptors; ending pipeline early.")
+            return False, True
 
-        _log_stage_header(self._STAGE_LABELS[stage.name])
-        if self.stage_runner.run_structural_filters(DIR_STRUCT_FILTERS_POST):
-            return True, False
-
-        logger.info("No molecules left after descriptors; ending pipeline early.")
-        return False, True
+        return self._run_stage(
+            STAGE_STRUCT_FILTERS,
+            self.stage_runner.run_structural_filters,
+            DIR_STRUCT_FILTERS_POST,
+            on_failure=_on_failure,
+        )
 
     def _run_synthesis(self) -> tuple[bool, bool]:
         """Run synthesis analysis stage."""
-        stage = self._stage_by_name[STAGE_SYNTHESIS]
-        if not stage.enabled:
-            return False, False
-
-        # Call progress callback if provided
-        if self.progress_callback:
-            enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = (
-                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
-            )
-            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
-
-        _log_stage_header(self._STAGE_LABELS[stage.name])
-        if self.stage_runner.run_synthesis():
-            return True, False
-
-        return self._handle_synthesis_failure()
+        return self._run_stage(
+            STAGE_SYNTHESIS,
+            self.stage_runner.run_synthesis,
+            on_failure=self._handle_synthesis_failure,
+        )
 
     def _handle_synthesis_failure(self) -> tuple[bool, bool]:
         """Handle synthesis stage failure. Returns (completed, early_exit)."""
@@ -708,34 +703,24 @@ class MolecularAnalysisPipeline:
 
     def _run_final_descriptors(self) -> tuple[bool, bool]:
         """Run final descriptors calculation stage."""
-        stage = self._stage_by_name[STAGE_FINAL_DESCRIPTORS]
-        if not stage.enabled:
-            return False, False
 
-        # Call progress callback if provided
-        if self.progress_callback:
-            enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = (
-                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+        def _run_final_desc():
+            final_data = self.get_latest_data(
+                skip_descriptors=True, fallback_on_empty=False
             )
-            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
+            if final_data is None:
+                logger.info("No data source found for final descriptors (skipping)")
+                return False
+            if len(final_data) == 0:
+                logger.info(
+                    "No molecules from previous steps; skipping final descriptors"
+                )
+                return False
+            return self.stage_runner.run_descriptors(
+                final_data, subfolder=DIR_FINAL_DESCRIPTORS
+            )
 
-        _log_stage_header(self._STAGE_LABELS[stage.name])
-        final_data = self.get_latest_data(
-            skip_descriptors=True, fallback_on_empty=False
-        )
-
-        if final_data is None:
-            logger.info("No data source found for final descriptors (skipping)")
-            return False, False
-        if len(final_data) == 0:
-            logger.info("No molecules from previous steps; skipping final descriptors")
-            return False, False
-
-        completed = self.stage_runner.run_descriptors(
-            final_data, subfolder=DIR_FINAL_DESCRIPTORS
-        )
-        return completed, False
+        return self._run_stage(STAGE_FINAL_DESCRIPTORS, _run_final_desc)
 
     def _finalize_pipeline(self, data, success_count: int, total_enabled: int) -> bool:
         """Finalize pipeline execution with summary and output."""
@@ -750,7 +735,12 @@ class MolecularAnalysisPipeline:
         self._log_molecule_summary(initial_count, final_count)
         self._save_final_output(final_data, final_count)
         _generate_structure_readme(
-            self.data_checker.base_path, self.stages, initial_count, final_count
+            self.data_checker.base_path,
+            self.stages,
+            initial_count,
+            final_count,
+            stage_timings=self.stage_timings,
+            config=self.config,
         )
         self._generate_html_report(initial_count, final_count)
 
@@ -829,14 +819,16 @@ class MolecularAnalysisPipeline:
         )
         final_output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        id_cols = ["smiles", "model_name", "mol_idx"]
+
         if final_data is None or len(final_data) == 0:
             # Always create the file so downstream tooling can rely on its presence.
-            pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]).to_csv(
-                final_output_path, index=False
-            )
+            pd.DataFrame(columns=id_cols).to_csv(final_output_path, index=False)
             logger.info("Saved 0 final molecules to %s", final_output_path)
             return
-        final_data.to_csv(final_output_path, index=False)
+
+        cols = [c for c in id_cols if c in final_data.columns]
+        final_data[cols].to_csv(final_output_path, index=False)
         logger.info("Saved %d final molecules to %s", final_count, final_output_path)
 
     def _log_pipeline_summary(self) -> None:
@@ -925,94 +917,224 @@ def _save_config_snapshot(config: dict) -> None:
         logger.warning("Config snapshot failed: %s", snapshot_err)
 
 
-# Stage directory structure templates for README generation
-_README_STAGE_SECTIONS = {
-    STAGE_STRUCT_INI_FILTERS: """\
-|   +-- 02_structural_filters_pre/      Pre-descriptors structural filters
-|   |   +-- {filter_name}/             Per-filter results
-|   |   |   +-- metrics.csv
-|   |   |   +-- extended.csv
-|   |   |   +-- filtered_molecules.csv
-|   |   +-- filtered_molecules.csv     Combined passed molecules
-|   |   +-- failed_molecules.csv       Combined failed molecules
-|   |   +-- plots/
-|   |       +-- molecule_counts_comparison.png
-|   |       +-- restriction_ratios_comparison.png
-|
-""",
-    STAGE_DESCRIPTORS: """\
-|   +-- 01_descriptors_initial/         Physicochemical descriptors
-|   |   +-- metrics/
-|   |   |   +-- descriptors_all.csv    All computed descriptors
-|   |   |   +-- skipped_molecules.csv  Failed to parse
-|   |   +-- filtered/
-|   |   |   +-- filtered_molecules.csv Passed descriptor thresholds
-|   |   |   +-- failed_molecules.csv   Failed descriptor thresholds
-|   |   |   +-- descriptors_passed.csv Detailed metrics (passed)
-|   |   |   +-- descriptors_failed.csv Detailed metrics (failed)
-|   |   |   +-- pass_flags.csv         Pass/fail flags per descriptor
-|   |   +-- plots/
-|   |       +-- descriptors_distribution.png
-|
-""",
-    STAGE_STRUCT_FILTERS: """\
-|   +-- 03_structural_filters_post/     Post-descriptors structural filters
-|   |   +-- {filter_name}/             Per-filter results (bredt, common_alerts, lilly, etc.)
-|   |   |   +-- metrics.csv
-|   |   |   +-- extended.csv
-|   |   |   +-- filtered_molecules.csv
-|   |   +-- filtered_molecules.csv     Combined passed molecules
-|   |   +-- failed_molecules.csv       Combined failed molecules
-|   |   +-- plots/
-|   |       +-- molecule_counts_comparison.png
-|   |       +-- restriction_ratios_comparison.png
-|
-""",
-    STAGE_SYNTHESIS: """\
-|   +-- 04_synthesis/                   Retrosynthesis analysis
-|   |   +-- synthesis_scores.csv       SA Score, RA Score, SYBA
-|   |   +-- synthesis_extended.csv     With retrosynthesis results
-|   |   +-- filtered_molecules.csv     Synthesizable molecules
-|   |   +-- input_smiles.smi           Input for AiZynthFinder
-|   |   +-- retrosynthesis_results.json
-|
-""",
-    STAGE_DOCKING: """\
-|   +-- 05_docking/                     Molecular docking
-|   |   +-- ligands.csv                Prepared ligands
-|   |   +-- job_meta.json              Job metadata
-|   |   +-- smina/
-|   |   |   +-- smina_out.sdf          Aggregated SMINA results
-|   |   +-- gnina/
-|   |   |   +-- gnina_out.sdf          Aggregated GNINA results
-|   |   +-- _workdir/                  Intermediate files
-|   |       +-- molecules/             Per-molecule SDF files
-|   |       +-- configs/               Per-molecule docking configs
-|   |       +-- smina/                 SMINA per-molecule results & logs
-|   |       +-- gnina/                 GNINA per-molecule results & logs
-|   |       +-- run_smina.sh           SMINA run script
-|   |       +-- run_gnina.sh           GNINA run script
-|
-""",
-    STAGE_DOCKING_FILTERS: """\
-|   +-- 06_docking_filters/             Post-docking pose and interaction filters
-|   |   +-- metrics.csv                 Per-pose filter metrics and pass flags
-|   |   +-- filtered_molecules.csv      Passed poses with extracted identifiers
-|   |   +-- filtered_poses.sdf          Filtered poses (SDF)
-|
-""",
-    STAGE_FINAL_DESCRIPTORS: """\
-|   +-- 07_descriptors_final/           Final descriptor calculation
-|       +-- metrics/
-|       +-- filtered/
-|       +-- plots/
-|
-""",
+# Stage descriptions for README generation
+_STAGE_DESCRIPTIONS = {
+    STAGE_STRUCT_INI_FILTERS: "Pre-descriptors structural filters",
+    STAGE_DESCRIPTORS: "Physicochemical descriptors",
+    STAGE_STRUCT_FILTERS: "Post-descriptors structural filters",
+    STAGE_SYNTHESIS: "Retrosynthesis analysis",
+    STAGE_DOCKING: "Molecular docking",
+    STAGE_DOCKING_FILTERS: "Post-docking pose & interaction filters",
+    STAGE_FINAL_DESCRIPTORS: "Final descriptor calculation",
+}
+
+# Directory-level tree templates per stage (static parts)
+_STAGE_TREE_TEMPLATES: dict[str, list[str]] = {
+    STAGE_STRUCT_INI_FILTERS: [
+        "|   +-- {filter_name}/             Per-filter results",
+        "|   |   +-- metrics.csv",
+        "|   |   +-- extended.csv",
+        "|   |   +-- filtered_molecules.csv",
+        "|   +-- filtered_molecules.csv     Combined passed molecules",
+        "|   +-- failed_molecules.csv       Combined failed molecules",
+        "|   +-- plots/",
+        "|       +-- molecule_counts_comparison.png",
+        "|       +-- restriction_ratios_comparison.png",
+    ],
+    STAGE_DESCRIPTORS: [
+        "|   +-- metrics/",
+        "|   |   +-- descriptors_all.csv    All computed descriptors",
+        "|   |   +-- skipped_molecules.csv  Failed to parse",
+        "|   +-- filtered/",
+        "|   |   +-- filtered_molecules.csv Passed descriptor thresholds",
+        "|   |   +-- failed_molecules.csv   Failed descriptor thresholds",
+        "|   |   +-- descriptors_passed.csv Detailed metrics (passed)",
+        "|   |   +-- descriptors_failed.csv Detailed metrics (failed)",
+        "|   |   +-- pass_flags.csv         Pass/fail flags per descriptor",
+        "|   +-- plots/",
+        "|       +-- descriptors_distribution.png",
+    ],
+    STAGE_STRUCT_FILTERS: [
+        "|   +-- {filter_name}/             Per-filter results",
+        "|   |   +-- metrics.csv",
+        "|   |   +-- extended.csv",
+        "|   |   +-- filtered_molecules.csv",
+        "|   +-- filtered_molecules.csv     Combined passed molecules",
+        "|   +-- failed_molecules.csv       Combined failed molecules",
+        "|   +-- plots/",
+        "|       +-- molecule_counts_comparison.png",
+        "|       +-- restriction_ratios_comparison.png",
+    ],
+    STAGE_SYNTHESIS: [
+        "|   +-- synthesis_scores.csv       SA Score, RA Score, SYBA",
+        "|   +-- synthesis_extended.csv     With retrosynthesis results",
+        "|   +-- filtered_molecules.csv     Synthesizable molecules",
+        "|   +-- input_smiles.smi           Input for AiZynthFinder",
+        "|   +-- retrosynthesis_results.json",
+    ],
+    STAGE_DOCKING_FILTERS: [
+        "|   +-- metrics.csv                Per-pose filter metrics and pass flags",
+        "|   +-- filtered_molecules.csv     Unique molecules (best pose per molecule)",
+        "|   +-- filtered_poses.csv         All passing poses with full metrics",
+        "|   +-- filtered_poses.sdf         Filtered poses (SDF, all passing poses)",
+    ],
+    STAGE_FINAL_DESCRIPTORS: [
+        "|   +-- metrics/",
+        "|   |   +-- descriptors_all.csv    All computed descriptors",
+        "|   |   +-- skipped_molecules.csv  Failed to parse",
+        "|   +-- filtered/",
+        "|   |   +-- filtered_molecules.csv Passed descriptor thresholds",
+        "|   |   +-- failed_molecules.csv   Failed descriptor thresholds",
+        "|   |   +-- descriptors_passed.csv Detailed metrics (passed)",
+        "|   |   +-- descriptors_failed.csv Detailed metrics (failed)",
+        "|   |   +-- pass_flags.csv         Pass/fail flags per descriptor",
+        "|   +-- plots/",
+        "|       +-- descriptors_distribution.png",
+    ],
 }
 
 
+def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
+    """Build docking stage directory tree based on actual tools used."""
+    docking_dir = base_path / DIR_DOCKING
+    has_smina = (docking_dir / "smina").is_dir()
+    has_gnina = (docking_dir / "gnina").is_dir()
+
+    # Fall back to config if directories don't exist yet
+    if not has_smina and not has_gnina and config:
+        docking_cfg_path = config.get(CONFIG_DOCKING)
+        if docking_cfg_path:
+            try:
+                docking_cfg = load_config(docking_cfg_path)
+                tools = docking_cfg.get(CONFIG_TOOLS, "")
+                has_smina = tools in (DOCKING_TOOL_SMINA, DOCKING_TOOL_BOTH)
+                has_gnina = tools in (DOCKING_TOOL_GNINA, DOCKING_TOOL_BOTH)
+            except Exception:
+                has_smina = has_gnina = True  # Show both as fallback
+
+    lines = ["|   +-- ligands.csv                Prepared ligands", "|   +-- job_meta.json              Job metadata"]
+    if has_smina:
+        lines.append("|   +-- smina/")
+        lines.append("|   |   +-- smina_out.sdf          Aggregated SMINA results")
+    if has_gnina:
+        lines.append("|   +-- gnina/")
+        lines.append("|   |   +-- gnina_out.sdf          Aggregated GNINA results")
+
+    # _workdir subtree
+    lines.append("|   +-- _workdir/                  Intermediate files")
+    lines.append("|       +-- molecules/             Per-molecule SDF files")
+    lines.append("|       +-- configs/               Per-molecule docking configs")
+    if has_smina:
+        lines.append("|       +-- smina/                 SMINA per-molecule results & logs")
+    if has_gnina:
+        lines.append("|       +-- gnina/                 GNINA per-molecule results & logs")
+
+    # Batch scripts and config files present in _workdir
+    workdir = docking_dir / "_workdir"
+    if workdir.is_dir():
+        for name in sorted(workdir.iterdir()):
+            if name.is_file() and name.suffix in (".sh", ".ini"):
+                lines.append(f"|       +-- {name.name}")
+    else:
+        # Infer from tools
+        if has_smina:
+            lines.append("|       +-- run_smina.sh           SMINA run script")
+        if has_gnina:
+            lines.append("|       +-- gnina_config.ini        GNINA configuration")
+            lines.append("|       +-- run_gnina.sh           GNINA run script")
+
+    return lines
+
+
+def _count_stage_molecules(base_path: Path, stage_dir: str) -> int | None:
+    """Count molecules in a stage's filtered_molecules.csv.
+
+    Returns the row count (excluding header), or None if the file is missing.
+    """
+    csv_path = base_path / stage_dir / "filtered" / FILE_FILTERED_MOLECULES
+    if not csv_path.exists():
+        csv_path = base_path / stage_dir / FILE_FILTERED_MOLECULES
+    if not csv_path.exists():
+        return None
+    try:
+        # Count lines minus header for speed (avoid pandas overhead)
+        with open(csv_path) as f:
+            return max(sum(1 for _ in f) - 1, 0)
+    except Exception:
+        return None
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds into a human-readable duration string."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {int(secs)}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minutes)}m"
+
+
+def _build_stage_tree_section(
+    stage_name: str, stage_dir: str, base_path: Path, config: dict | None
+) -> str:
+    """Build a single stage's tree block for the README."""
+    desc = _STAGE_DESCRIPTIONS.get(stage_name, "")
+    dir_basename = stage_dir.split("/", 1)[1] if "/" in stage_dir else stage_dir
+    header = f"|   +-- {dir_basename + '/':38s}{desc}"
+
+    if stage_name == STAGE_DOCKING:
+        body_lines = _build_docking_tree(base_path, config)
+    else:
+        body_lines = list(_STAGE_TREE_TEMPLATES.get(stage_name, []))
+
+    lines = [header] + body_lines + ["|"]
+    return "\n".join(lines) + "\n"
+
+
+def _build_pipeline_flow_table(
+    base_path: Path,
+    stages: list[PipelineStage],
+    initial_count: int,
+    stage_timings: dict[str, float] | None,
+) -> str:
+    """Build a markdown table showing molecule counts and timings per stage."""
+    stage_timings = stage_timings or {}
+
+    rows: list[tuple[str, str, str]] = []
+    rows.append(("Input", str(initial_count), ""))
+
+    for stage in stages:
+        if not stage.enabled:
+            continue
+        label = _STAGE_DESCRIPTIONS.get(stage.name, stage.name)
+        count = _count_stage_molecules(base_path, stage.directory)
+        count_str = str(count) if count is not None else "-"
+        timing = stage_timings.get(stage.name)
+        time_str = _format_duration(timing) if timing is not None else ""
+        rows.append((label, count_str, time_str))
+
+    # Calculate column widths
+    col0_w = max(len(r[0]) for r in rows)
+    col1_w = max(len(r[1]) for r in rows)
+    col2_w = max((len(r[2]) for r in rows), default=0)
+
+    header = f"| {'Stage':<{col0_w}} | {'Molecules':>{col1_w}} | {'Time':>{col2_w}} |"
+    sep = f"|{'-' * (col0_w + 2)}|{'-' * (col1_w + 2)}|{'-' * (col2_w + 2)}|"
+    body = "\n".join(
+        f"| {r[0]:<{col0_w}} | {r[1]:>{col1_w}} | {r[2]:>{col2_w}} |" for r in rows
+    )
+
+    return f"{header}\n{sep}\n{body}"
+
+
 def _generate_structure_readme(
-    base_path: Path, stages: list[PipelineStage], initial_count: int, final_count: int
+    base_path: Path,
+    stages: list[PipelineStage],
+    initial_count: int,
+    final_count: int,
+    stage_timings: dict[str, float] | None = None,
+    config: dict | None = None,
 ) -> None:
     """Generate README.md documenting the output structure for this run."""
     try:
@@ -1025,24 +1147,40 @@ def _generate_structure_readme(
             f"{100 * final_count / initial_count:.2f}%" if initial_count > 0 else "N/A"
         )
 
-        # Build stage sections
+        # Build stage tree sections dynamically
         stage_sections = []
-        for stage_name, section in _README_STAGE_SECTIONS.items():
-            if stage_name in enabled_stages:
-                stage_sections.append(section)
-
+        for stage in stages:
+            if stage.name in enabled_stages:
+                stage_sections.append(
+                    _build_stage_tree_section(stage.name, stage.directory, base_path, config)
+                )
         stages_content = "".join(stage_sections)
 
-        # Build stage execution summary
+        # Build pipeline flow table
+        flow_table = _build_pipeline_flow_table(
+            base_path, stages, initial_count, stage_timings
+        )
+
+        # Build stage execution summary with timings
+        stage_timings = stage_timings or {}
         stage_summary_lines = []
         for stage in stages:
-            status = (
-                "COMPLETED"
-                if stage.completed
-                else ("FAILED" if stage.enabled else "DISABLED")
-            )
-            stage_summary_lines.append(f"- {stage.name}: {status}")
+            if stage.completed:
+                status = "COMPLETED"
+            elif stage.enabled:
+                status = "FAILED"
+            else:
+                status = "DISABLED"
+            timing = stage_timings.get(stage.name)
+            if timing is not None:
+                stage_summary_lines.append(
+                    f"- **{stage.name}**: {status} ({_format_duration(timing)})"
+                )
+            else:
+                stage_summary_lines.append(f"- **{stage.name}**: {status}")
         stage_summary = "\n".join(stage_summary_lines)
+
+        total_time = sum(stage_timings.values()) if stage_timings else None
 
         content = f"""\
 # HEDGEHOG Pipeline Output
@@ -1056,6 +1194,11 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 - Retention rate: {retention}
 - Stages enabled: {enabled_count}
 - Stages completed: {completed_count}
+{f"- Total pipeline time: {_format_duration(total_time)}" if total_time else ""}
+
+## Pipeline Flow
+
+{flow_table}
 
 ## Directory Structure
 
@@ -1074,15 +1217,12 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 +-- configs/                            Configuration snapshots & runtime config
 |   +-- master_config_resolved.yml
 |   +-- config_*.yml
-|   +-- model_index_map.json
+|   +-- run_models_mapping.csv
 |
-+-- logs/                               Pipeline logs
-    +-- pipeline_*.log
++-- run_YYYYMMDD_HHMMSS.log             Pipeline log file
 ```
 
 ## File Naming Conventions
-
-### Standard Output Files
 
 - `filtered_molecules.csv` - Molecules that passed filters
 - `failed_molecules.csv` - Molecules that failed filters
@@ -1090,32 +1230,9 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 - `metrics.csv` - Summary statistics
 - `extended.csv` - Detailed results with all columns
 
-### Column Structure
-
-All CSV files use consistent column ordering:
-1. `smiles` - SMILES string
-2. `model_name` - Model/source identifier
-3. `mol_idx` - Molecule index
-4. Additional columns (stage-specific)
-
 ## Stage Execution Summary
 
 {stage_summary}
-
-## Notes
-
-- This structure follows the new HEDGEHOG hierarchical organization
-- Legacy flat structure is no longer used for new runs
-- All paths use snake_case naming convention
-- Stage numbering (01, 02, 03...) indicates execution order
-
-## Related Documentation
-
-See project repository for full documentation on:
-- Configuration options
-- Stage-specific parameters
-- File format specifications
-- Pipeline API reference
 """
 
         with open(readme_path, "w") as f:
@@ -1140,9 +1257,6 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
     incomplete_marker = folder / FILE_RUN_INCOMPLETE
 
     try:
-        # Ensure a per-run log file is created inside folder_to_save.
-        LoggerSingleton().configure_log_directory(folder / "logs")
-
         # Drop a marker so that interrupted runs are detectable.
         folder.mkdir(parents=True, exist_ok=True)
         incomplete_marker.write_text(

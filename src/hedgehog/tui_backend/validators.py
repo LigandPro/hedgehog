@@ -96,3 +96,32 @@ class ConfigValidator:
         valid_tools = {"both", "smina", "gnina"}
         if tools not in valid_tools:
             result["errors"].append(f"tools must be one of: {', '.join(valid_tools)}")
+
+    @staticmethod
+    def _validate_docking_filters(data: dict[str, Any], result: dict[str, Any]) -> None:
+        """Validate docking filters configuration."""
+        if not data.get("run", False):
+            return
+
+        aggregation = data.get("aggregation", {}) or {}
+        mode = aggregation.get("mode", "all")
+        if mode not in {"all", "any"}:
+            result["errors"].append("aggregation.mode must be 'all' or 'any'")
+
+        pose_quality = data.get("pose_quality", {}) or {}
+        max_clashes = pose_quality.get("max_clashes")
+        if max_clashes is not None and (
+            not isinstance(max_clashes, int) or max_clashes < 0
+        ):
+            result["errors"].append(
+                "pose_quality.max_clashes must be a non-negative integer"
+            )
+
+        conformer_dev = data.get("conformer_deviation", {}) or {}
+        max_rmsd = conformer_dev.get("max_rmsd_to_conformer")
+        if max_rmsd is not None and (
+            not isinstance(max_rmsd, (int, float)) or max_rmsd < 0
+        ):
+            result["errors"].append(
+                "conformer_deviation.max_rmsd_to_conformer must be a non-negative number"
+            )

@@ -26,6 +26,7 @@ import {
   WizardConfigFilters,
   WizardConfigSynthesis,
   WizardConfigDocking,
+  WizardConfigDockingFilters,
   ReviewRun,
 } from './screens/wizard/index.js';
 
@@ -54,6 +55,7 @@ export const BACK_MAP: Record<Screen, Screen | null> = {
   wizardConfigFilters: 'wizardStageSelection',
   wizardConfigSynthesis: 'wizardStageSelection',
   wizardConfigDocking: 'wizardStageSelection',
+  wizardConfigDockingFilters: 'wizardStageSelection',
   wizardReview: 'wizardStageSelection',
 };
 
@@ -77,6 +79,7 @@ export const SCREEN_TITLES: Record<Screen, string> = {
   wizardConfigFilters: 'Pipeline Wizard',
   wizardConfigSynthesis: 'Pipeline Wizard',
   wizardConfigDocking: 'Pipeline Wizard',
+  wizardConfigDockingFilters: 'Pipeline Wizard',
   wizardReview: 'Pipeline Wizard',
 };
 
@@ -186,6 +189,12 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
     { key: 's', label: 'Save' },
     { key: '←/→', label: 'Prev/Next' },
   ],
+  wizardConfigDockingFilters: [
+    { key: '↑↓', label: 'Navigate' },
+    { key: 'Enter', label: 'Edit' },
+    { key: 's', label: 'Save' },
+    { key: '←/→', label: 'Prev/Next' },
+  ],
   wizardReview: [
     { key: '↑↓', label: 'Navigate' },
     { key: 'e', label: 'Edit stage' },
@@ -234,6 +243,8 @@ function ScreenRouter({ screen }: { screen: Screen }): React.ReactElement {
         return <WizardConfigSynthesis />;
       case 'wizardConfigDocking':
         return <WizardConfigDocking />;
+      case 'wizardConfigDockingFilters':
+        return <WizardConfigDockingFilters />;
       case 'wizardReview':
         return <ReviewRun />;
       default:
