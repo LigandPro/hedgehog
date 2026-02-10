@@ -1,0 +1,109 @@
+---
+title: Descriptors
+---
+
+# Descriptors
+
+The descriptors stage computes physicochemical descriptors for each molecule using RDKit (including an optional MCE-18 complexity score) and can filter molecules whose descriptor values fall outside configurable threshold ranges.
+
+This stage runs twice in the pipeline: once as Stage 1 (initial filtering) and once as the final stage (recompute descriptors on the surviving molecule set). Filtering behavior is controlled by `filter_data` in `config_descriptors.yml` and applies to both runs unless you disable it.
+
+## Descriptor Reference
+
+### Molecular Properties
+
+| Descriptor | Config Key | Description | Default Min | Default Max |
+|-----------|------------|-------------|-------------|-------------|
+| Allowed Characters | `allowed_chars` | Set of allowed atom types in SMILES | C,N,S,O,F,Cl,Br,H | -- |
+| Number of Atoms | `n_atoms` | Total atom count including hydrogens | 10 | 100 |
+| Heavy Atoms | `n_heavy_atoms` | Non-hydrogen atom count | 10 | 50 |
+| Heteroatoms | `n_het_atoms` | Count of non-carbon, non-hydrogen atoms | 2 | 15 |
+| Nitrogen Atoms | `n_N_atoms` | Count of nitrogen atoms | 0 | 12 |
+| Nitrogen Fraction | `fN_atoms` | Fraction of atoms that are nitrogen | 0 | 1 |
+
+### Chemical Features
+
+| Descriptor | Config Key | Description | Default Min | Default Max |
+|-----------|------------|-------------|-------------|-------------|
+| Neutral Molecule (deprecated name: `charged_mol`) | `charged_mol` | Boolean flag where `true` means *neutral* molecule (kept for backwards compatibility) | -- | `charged_mol_allowed: true` |
+| Molecular Weight | `molWt` | Daltons | 200 | 500 |
+| logP | `logP` | Octanol-water partition coefficient (Wildman-Crippen) | -0.4 | 5.6 |
+| clogP | `clogP` | Calculated logP | -100 | 100 |
+| Sw | `sw` | Water solubility estimate | -100 | 100 |
+
+### Structural
+
+| Descriptor | Config Key | Description | Default Min | Default Max |
+|-----------|------------|-------------|-------------|-------------|
+| Ring Size | `ring_size` | List of all ring sizes (each must fall within min--max) | 3 | 12 |
+| Number of Rings | `n_rings` | Total ring count | 0 | 6 |
+| Aromatic Rings | `n_aroma_rings` | Count of aromatic rings | 0 | 5 |
+| Fused Aromatic Rings | `n_fused_aromatic_rings` | Count of fused aromatic ring systems | 0 | 2 |
+| Rigid Bonds | `n_rigid_bonds` | Non-rotatable bonds | 0 | 30 |
+| Rotatable Bonds | `n_rot_bonds` | Freely rotatable bonds | 2 | 8 |
+| H-Bond Donors | `hbd` | Hydrogen bond donor count | 0 | 5 |
+| H-Bond Acceptors | `hba` | Hydrogen bond acceptor count | 0 | 10 |
+| Fraction sp3 | `fsp3` | Fraction of sp3-hybridized carbons | 0.15 | 0.8 |
+| TPSA | `tpsa` | Topological Polar Surface Area (A^2) | 0 | 140 |
+
+### Drug-likeness
+
+| Descriptor | Config Key | Description | Default Min | Default Max |
+|-----------|------------|-------------|-------------|-------------|
+| QED | `qed` | Quantitative Estimation of Drug-likeness (0--1) | 0.3 | 1 |
+| MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 20 | -- |
+
+## How Threshold Filtering Works
+
+Each descriptor has a `_min` and `_max` threshold defined in `config_descriptors.yml`. A molecule passes the descriptor filter only if **all** of its descriptor values fall within their respective `[min, max]` ranges.
+
+```yaml
+# Example: only keep molecules with MW 200-500 and logP -0.4 to 5.6
+borders:
+  molWt_min: 200
+  molWt_max: 500
+  logP_min: -0.4
+  logP_max: 5.6
+```
+
+Molecules that fail any single descriptor threshold are written to `failed_molecules.csv` with detailed per-descriptor pass/fail flags in `pass_flags.csv`.
+
+## Configuration
+
+The full configuration lives in `config_descriptors.yml`:
+
+```yaml
+run: true           # Enable/disable this stage
+batch_size: 1000    # Molecules processed per batch
+filter_data: true   # Apply threshold filtering (false = compute only)
+borders:
+  # ... threshold values for each descriptor
+```
+
+Set `filter_data: false` to compute descriptors without filtering, which is useful for analysis-only runs.
+
+## Output Files
+
+| File | Description |
+|------|-------------|
+| `metrics/descriptors_all.csv` | All computed descriptor values for every molecule |
+| `metrics/skipped_molecules.csv` | Molecules that failed SMILES parsing |
+| `filtered/filtered_molecules.csv` | Molecules passing all descriptor thresholds |
+| `filtered/failed_molecules.csv` | Molecules failing one or more thresholds |
+| `filtered/descriptors_passed.csv` | Detailed descriptor values for passed molecules |
+| `filtered/descriptors_failed.csv` | Detailed descriptor values for failed molecules |
+| `filtered/pass_flags.csv` | Per-descriptor pass/fail boolean flags |
+| `plots/descriptors_distribution.png` | Distribution plots for all descriptors |
+
+## Usage
+
+```bash
+# Run descriptors as part of the full pipeline
+uv run hedgehog run
+
+# Run descriptors stage only
+uv run hedgehog run --stage descriptors
+
+# Short alias
+uv run hedge run --stage descriptors
+```

@@ -1,0 +1,140 @@
+---
+title: Structural Filters
+---
+
+# Structural Filters
+
+The structural filters stage applies medicinal chemistry rules and structural alert databases to remove molecules with undesirable substructures, excessive complexity, or known toxicophores. This stage can run in two positions in the pipeline:
+
+- **Pre-descriptors** (Stage 1'): optional early filtering before descriptor computation, controlled by `run_before_descriptors: true`
+- **Post-descriptors** (Stage 2): the standard position, running after descriptor-based filtering
+
+## Filter Reference
+
+### Database-Based Filters
+
+| Filter | Config Key | What It Detects | Why It Matters |
+|--------|-----------|----------------|----------------|
+| Common Structural Alerts | `calculate_common_alerts` | Matches against curated SMARTS databases (Dundee, BMS, Glaxo, PAINS, etc.) | Flags reactive, toxic, or assay-interfering substructures from 20+ published rule sets |
+| NIBR | `calculate_NIBR` | Novartis In-house structural filters | Catches chemotypes with poor developability based on Novartis medicinal chemistry experience |
+| Lilly Demerits | `calculate_lilly` | Eli Lilly Medchem Rules with demerit scoring | Assigns numeric demerit scores; molecules exceeding thresholds are rejected |
+
+### Rule-Based Filters
+
+| Filter | Config Key | What It Detects | Why It Matters |
+|--------|-----------|----------------|----------------|
+| Bredt Rule | `calculate_bredt` | Violations of Bredt's rule at bridgehead positions | Bridgehead double bonds in small bicyclic systems are synthetically impossible |
+| Molecular Complexity | `calculate_molcomplexity` | Overly complex molecular graphs | Excessively complex molecules are difficult to synthesize and often have poor ADME |
+| Molecular Graph Stats | `calculate_molgraph_stats` | Graph-theoretic severity metrics (severities 1--11) | Detects topological anomalies like unusual ring systems or chain branching |
+
+### Medchem Functional Filters
+
+These five filters use the `medchem.functional` API:
+
+| Filter | Config Key | What It Detects | Default | Key Parameters |
+|--------|-----------|----------------|---------|----------------|
+| Protecting Groups | `calculate_protecting_groups` | Common protecting groups (Boc, Fmoc, Cbz, etc.) | On | -- |
+| Ring Infraction | `calculate_ring_infraction` | Strained ring systems and infractions | On | `ring_infraction_hetcycle_min_size: 4` |
+| Stereo Centers | `calculate_stereo_center` | Excessive or undefined stereocenters | On | `stereo_max_centers: 4`, `stereo_max_undefined: 2` |
+| Halogenicity | `calculate_halogenicity` | Excessive halogen content | On | `halogenicity_thresh_F: 6`, `halogenicity_thresh_Br: 3`, `halogenicity_thresh_Cl: 3` |
+| Symmetry | `calculate_symmetry` | Highly symmetric molecules | **Off** | `symmetry_threshold: 0.8` |
+
+The symmetry filter is disabled by default because many approved drugs are symmetric (e.g., ibuprofen, metformin). Enable it only if your project specifically requires asymmetric scaffolds.
+
+## Pre-Descriptor vs. Post-Descriptor Filtering
+
+When `run_before_descriptors: true` is set in the structural filters config, the pipeline runs structural filters **before** computing descriptors. This is useful when:
+
+- Your input set is very large and you want to reduce it before the more expensive descriptor computation
+- You want to ensure that obviously problematic molecules never enter the descriptor stage
+
+The pre-descriptor run and post-descriptor run use the same configuration file but write to different output directories (`02_structural_filters_pre/` and `03_structural_filters_post/`).
+
+## Common Alerts Configuration
+
+The common alerts filter is the most configurable. It uses a curated CSV database of SMARTS patterns organized by rule set:
+
+```yaml
+calculate_common_alerts: true
+include_rulesets:
+  - Dundee
+  - BMS
+  - Glaxo
+  - PAINS
+  - Toxicophore
+  - SureChEMBL
+  # ... up to 20+ rule sets
+
+exclude_descriptions:
+  Dundee:
+    - Aliphatic long chain
+    - isolated alkene
+    - triple bond
+  Toxicophore:
+    - acetylene_alkyne
+    - imidazole
+    # ... fine-grained exclusions per rule set
+```
+
+The `exclude_descriptions` section lets you whitelist specific alerts within a rule set. For example, if your target requires an imidazole moiety, you can exclude the Toxicophore imidazole alert while keeping all other toxicophore rules active.
+
+## Configuration
+
+Full configuration in `config_structFilters.yml`:
+
+```yaml
+run: true
+run_before_descriptors: true
+filter_data: true
+
+# Database-based filters
+calculate_common_alerts: true
+calculate_NIBR: true
+calculate_lilly: true
+nibr_scheduler: threads
+lilly_scheduler: threads
+
+# Rule-based filters
+calculate_bredt: true
+calculate_molgraph_stats: true
+calculate_molcomplexity: true
+
+# Medchem functional filters
+calculate_protecting_groups: true
+calculate_ring_infraction: true
+ring_infraction_hetcycle_min_size: 4
+calculate_stereo_center: true
+stereo_max_centers: 4
+stereo_max_undefined: 2
+calculate_halogenicity: true
+halogenicity_thresh_F: 6
+halogenicity_thresh_Br: 3
+halogenicity_thresh_Cl: 3
+calculate_symmetry: false
+symmetry_threshold: 0.8
+```
+
+## Output Files
+
+| File | Description |
+|------|-------------|
+| `{filter_name}/metrics.csv` | Per-filter summary statistics |
+| `{filter_name}/extended.csv` | Detailed per-molecule results for each filter |
+| `{filter_name}/filtered_molecules.csv` | Molecules passing each individual filter |
+| `filtered_molecules.csv` | Molecules passing **all** enabled filters |
+| `failed_molecules.csv` | Molecules failing any filter |
+| `plots/molecule_counts_comparison.png` | Bar chart comparing molecule counts across filters |
+| `plots/restriction_ratios_comparison.png` | Restriction ratio comparison across filters |
+
+## Usage
+
+```bash
+# Run structural filters as part of the full pipeline
+uv run hedgehog run
+
+# Run structural filters stage only
+uv run hedgehog run --stage struct_filters
+
+# Short alias
+uv run hedge run --stage struct_filters
+```

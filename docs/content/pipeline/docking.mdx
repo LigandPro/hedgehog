@@ -1,0 +1,168 @@
+---
+title: Docking
+---
+
+# Docking
+
+The docking stage prepares ligands and runs molecular docking simulations against a target protein structure. HEDGEHOG supports two docking engines (SMINA and GNINA) and two ligand preparation methods.
+
+## Docking Engines
+
+| Feature | SMINA | GNINA |
+|---------|-------|-------|
+| Scoring | Empirical (Vina-based) | CNN-based + empirical |
+| Speed | Fast | Slower (GPU-accelerated) |
+| Output scores | `minimizedAffinity` | `minimizedAffinity`, `CNNscore`, `CNNaffinity` |
+| GPU support | No | Yes (CUDA) |
+| Output format | SDF | SDF |
+| Best for | Large-scale virtual screening | Accurate pose prediction |
+
+SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA extends SMINA with convolutional neural network (CNN) scoring functions trained on protein-ligand complexes from the PDB.
+
+Select the tool in the docking config:
+
+```yaml
+tools: gnina    # Options: gnina, smina, both
+```
+
+When `tools: both`, the pipeline runs both engines sequentially and stores results in separate subdirectories.
+
+## Ligand Preparation
+
+Docking requires 3D molecular structures in SDF format. HEDGEHOG supports two preparation methods:
+
+### RDKit (Default)
+
+When no external ligand preparation tool is configured, the pipeline uses built-in RDKit conversion:
+
+1. Parse SMILES with `Chem.MolFromSmiles()`
+2. Add explicit hydrogens with `Chem.AddHs()`
+3. Generate 3D coordinates with `AllChem.EmbedMolecule()` (ETKDG method)
+4. Optimize geometry with `AllChem.UFFOptimizeMolecule()` (UFF force field)
+
+This produces reasonable starting geometries but does not handle tautomer enumeration or stereoisomer expansion.
+
+### Schrodinger LigPrep (Optional)
+
+For production-quality ligand preparation, configure an external tool path in `config.yml`:
+
+```yaml
+ligand_preparation_tool: /path/to/ligprep
+```
+
+LigPrep provides:
+- Tautomer enumeration
+- Stereoisomer expansion
+- Ionization state prediction at physiological pH
+- Optimized 3D geometry with OPLS force field
+
+The pipeline auto-detects the input format (CSV or SMI) and calls the tool accordingly.
+
+## Protein Preparation
+
+The receptor PDB file is specified in the docking config:
+
+```yaml
+receptor_pdb: data/test/7EW9_apo.pdb
+```
+
+For best results, prepare the receptor with tools like Schrodinger PrepWizard or PDB2PQR before docking. Key steps include:
+- Removing water molecules and co-crystallized ligands
+- Adding hydrogens at physiological pH
+- Optimizing hydrogen-bond networks
+- Minimizing heavy-atom positions (restrained)
+
+## Autobox Configuration
+
+The docking search box defines the 3D region where the docking engine places ligand poses. HEDGEHOG determines the box from a reference ligand:
+
+```yaml
+gnina_config:
+  autobox_ligand: data/test/05C_from_7EW9.sdf   # Reference ligand SDF
+  autobox_add: 4                                  # Padding in Angstroms
+```
+
+The search box is computed as the bounding box of the reference ligand's atoms, expanded by `autobox_add` Angstroms in each direction.
+
+**Important**: The reference ligand SDF must be in the same coordinate frame as the receptor PDB. If using an apo (unbound) structure, you may need to superimpose the reference ligand from a holo (bound) structure onto the apo receptor coordinates.
+
+## Configuration
+
+Full configuration in `config_docking.yml`:
+
+```yaml
+run: true
+tools: gnina                              # gnina, smina, or both
+receptor_pdb: data/test/7EW9_apo.pdb
+auto_run: true                            # Execute scripts after generation
+run_in_background: false
+
+smina_config:
+  bin: smina                              # Binary name or path
+  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_add: 4
+  cpu: 32
+  seed: 42
+  exhaustiveness: 8                       # Search thoroughness
+  num_modes: 9                            # Max poses per molecule
+
+gnina_config:
+  bin: gnina
+  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_add: 4
+  cpu: 32
+  seed: 42
+```
+
+Set `auto_run: false` to generate docking scripts without executing them. This is useful for running docking on a cluster or GPU node separately.
+
+## Batch Docking Workflow
+
+The docking stage processes molecules individually:
+
+1. Each molecule is written to a separate SDF file in `_workdir/molecules/`
+2. Per-molecule docking config files are generated in `_workdir/configs/`
+3. Batch shell scripts (`run_gnina.sh`, `run_smina.sh`) are generated
+4. If `auto_run: true`, scripts are executed automatically
+5. Per-molecule results are collected in `_workdir/gnina/` or `_workdir/smina/`
+6. Results are aggregated into `gnina/gnina_out.sdf` or `smina/smina_out.sdf`
+
+## Output Structure
+
+```
+stages/05_docking/
++-- ligands.csv                Prepared ligands
++-- job_meta.json              Job metadata
++-- gnina/
+|   +-- gnina_out.sdf          Aggregated GNINA results
++-- smina/
+|   +-- smina_out.sdf          Aggregated SMINA results
++-- _workdir/
+    +-- molecules/             Per-molecule SDF files
+    +-- configs/               Per-molecule docking configs
+    +-- gnina/                 GNINA per-molecule results & logs
+    +-- smina/                 SMINA per-molecule results & logs
+    +-- run_gnina.sh
+    +-- run_smina.sh
+```
+
+## Usage
+
+```bash
+# Run docking as part of the full pipeline
+uv run hedgehog run
+
+# Run docking stage only
+uv run hedgehog run --stage docking
+
+# Short alias
+uv run hedge run --stage docking
+```
+
+To run the generated scripts manually (e.g., on a GPU node):
+
+```bash
+cd results/stages/05_docking/_workdir
+./run_gnina.sh
+./run_smina.sh
+```

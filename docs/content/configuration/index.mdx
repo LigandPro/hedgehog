@@ -1,0 +1,109 @@
+---
+title: Configuration Overview
+---
+
+# Configuration Overview
+
+Hedgehog uses a hierarchical YAML configuration system. A single **main config file** (`config.yml`) controls global settings and references separate per-stage config files. Each pipeline stage reads its own configuration independently, making it easy to tune individual stages without touching the rest.
+
+## Config File Hierarchy
+
+```
+config.yml                  (main — global settings + paths to stage configs)
+  ├── config_descriptors.yml       (molecular descriptor calculation)
+  ├── config_structFilters.yml     (structural / medchem filters)
+  ├── config_synthesis.yml         (retrosynthesis scoring)
+  ├── config_docking.yml           (molecular docking — SMINA / GNINA)
+  ├── config_docking_filters.yml   (post-docking pose filters)
+  └── config_moleval.yml           (generative metrics & reporting)
+```
+
+## How Configs Are Loaded
+
+The CLI resolves the default config path relative to the installed package:
+
+```python
+DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.yml")
+```
+
+There is no CLI flag to override the config path at runtime. To use a custom configuration, edit the YAML files inside the installed package directory or modify the default config paths before running the pipeline.
+
+Each stage config path in `config.yml` is treated as a **relative path from the working directory** (the directory you run the command from) or as an **absolute path**. For example:
+
+```yaml
+# Relative — resolved from cwd
+config_descriptors: src/hedgehog/configs/config_descriptors.yml
+
+# Absolute — used as-is
+config_descriptors: /opt/hedgehog/configs/config_descriptors.yml
+```
+
+## Overriding Parameters
+
+There are two ways to customise the pipeline:
+
+1. **Edit the YAML files directly.** Copy the default configs to your project directory and modify the values.
+
+2. **Edit the main config that the CLI actually loads.** The CLI currently always loads its default `config.yml` from the installed package (there is no `--config` flag), and it does not merge/overlay multiple config files.
+
+For example, to run only descriptors and skip all other stages:
+
+```yaml
+# my_config.yml
+generated_mols_path: data/my_molecules.csv
+target_mols_path: data/my_targets.csv
+folder_to_save: results/my_run
+n_jobs: 8
+sample_size: 500
+config_descriptors: configs/config_descriptors.yml
+config_structFilters: configs/config_structFilters.yml
+config_synthesis: configs/config_synthesis.yml
+config_docking: configs/config_docking.yml
+config_docking_filters: configs/config_docking_filters.yml
+config_moleval: configs/config_moleval.yml
+```
+
+To use a custom configuration today:
+
+- In a **source checkout**, edit `src/hedgehog/configs/config.yml` and point the `config_*` keys to your copied stage configs.
+- In an **installed package**, edit the installed `hedgehog/configs/config.yml` (or reinstall after updating the source).
+
+Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. The same `run` flag is available in every stage config.
+
+## Config Files at a Glance
+
+| File | Purpose |
+|------|---------|
+| `config.yml` | Global paths, parallelism, sample size, and references to all stage configs |
+| `config_descriptors.yml` | Descriptor borders, filtering flags, plotting options |
+| `config_structFilters.yml` | Structural alerts, medchem filters (Bredt, NIBR, Lilly, etc.) |
+| `config_synthesis.yml` | Retrosynthesis toggle, SA/SYBA/RA score thresholds |
+| `config_docking.yml` | Docking tool selection (GNINA/SMINA), receptor, autobox settings |
+| `config_docking_filters.yml` | Post-docking filters: search box, pose quality, interactions, shape, conformer deviation |
+| `config_moleval.yml` | Generative evaluation metrics: diversity, scaffolds, drug-likeness compliance |
+
+## Main Config Structure
+
+Below is the full default `config.yml`:
+
+```yaml
+generated_mols_path: data/test/moses_1000.csv
+target_mols_path: data/test/target_mols.csv
+folder_to_save: results/run
+n_jobs: 62
+sample_size: 1000
+batch_size: 512
+save_sampled_mols: true
+pains_file_path: data/wehi_pains.csv
+mcf_file_path: data/mcf.csv
+ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
+protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+config_descriptors: src/hedgehog/configs/config_descriptors.yml
+config_structFilters: src/hedgehog/configs/config_structFilters.yml
+config_synthesis: src/hedgehog/configs/config_synthesis.yml
+config_docking: src/hedgehog/configs/config_docking.yml
+config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+config_moleval: src/hedgehog/configs/config_moleval.yml
+```
+
+For a complete description of every parameter, see the [Parameter Reference](/configuration/reference).

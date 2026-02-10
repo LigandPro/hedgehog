@@ -1,0 +1,161 @@
+---
+title: CLI Reference
+---
+
+# CLI Reference
+
+HEDGEHOG provides a Typer-based command-line interface. The primary command is `hedgehog`, with `hedge` available as a short alias. Both are interchangeable.
+
+```bash
+uv run hedgehog --help
+uv run hedge --help
+```
+
+## Commands
+
+| Command   | Description                                           |
+|-----------|-------------------------------------------------------|
+| `run`     | Run the molecular analysis pipeline                   |
+| `report`  | Regenerate the HTML report from an existing run       |
+| `info`    | Display pipeline information and available stages     |
+| `version` | Display version information                           |
+| `tui`     | Launch the interactive TUI (Terminal User Interface)   |
+
+## `hedgehog run`
+
+The main command that executes the evaluation pipeline. By default, it runs all enabled stages using the configuration at `src/hedgehog/configs/config.yml`.
+
+```bash
+uv run hedgehog run [OPTIONS]
+```
+
+### Options
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--mols` | `-m` | `TEXT` | `None` | Path or glob pattern to generated SMILES files. Overrides the `generated_mols_path` value in config. |
+| `--stage` | `-s` | `STAGE` | `None` | Run only a specific pipeline stage. When used without `--mols`, molecules are read from config. Case-insensitive. |
+| `--reuse` | | `FLAG` | `False` | Force reuse of the existing results folder instead of creating a new one. |
+| `--force-new` | | `FLAG` | `False` | Force creation of a new results folder even when rerunning a single stage. |
+
+The `--reuse` and `--force-new` flags are mutually exclusive. Using both will produce an error.
+
+### Available Stages
+
+The `--stage` option accepts one of the following values:
+
+| Stage | Description |
+|-------|-------------|
+| `descriptors` | Compute 22 physicochemical descriptors per molecule |
+| `struct_filters` | Apply structural filters (Lilly, NIBR, PAINS, etc.) |
+| `synthesis` | Evaluate synthetic accessibility using retrosynthesis (AiZynthFinder) and other metrics |
+| `docking` | Calculate docking scores with SMINA/GNINA |
+| `docking_filters` | Filter docking poses by quality and interactions |
+| `final_descriptors` | Recompute descriptors on the final filtered set |
+
+### Folder Behavior
+
+The output folder strategy depends on what you are running:
+
+- **Full pipeline** — a new numbered folder (`results/run_N/`) is created automatically.
+- **Single stage rerun** (`--stage` without `--mols`) — the existing folder is reused so the stage output is updated in place.
+- **Single stage with new molecules** (`--stage` + `--mols`) — a new folder is created since the input changed.
+- **`--reuse`** — always reuses the configured folder, regardless of what exists.
+- **`--force-new`** — always creates a new numbered folder, regardless of context.
+
+### Examples
+
+```bash
+# Run the full pipeline with default config
+uv run hedgehog run
+
+# Run with a custom molecule set
+uv run hedgehog run --mols data/my_molecules.csv
+
+# Run with a glob pattern
+uv run hedgehog run --mols "data/generated/*.csv"
+
+# Run only the docking stage
+uv run hedge run --stage docking
+
+# Run a specific stage with custom molecules
+uv run hedge run --stage descriptors --mols data/candidates.csv
+
+# Rerun into the same results folder
+uv run hedge run --reuse
+
+# Force a fresh results folder for a stage rerun
+uv run hedge run --stage synthesis --force-new
+```
+
+## `hedgehog report`
+
+Regenerates the HTML report from an existing pipeline run directory without re-running any pipeline stages. Useful when report templates or plotting logic have been updated.
+
+```bash
+uv run hedgehog report <RESULTS_DIR>
+```
+
+### Arguments
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `RESULTS_DIR` | `TEXT` | Yes | Path to an existing pipeline results directory (e.g., `results/run_10`). |
+
+The command loads the saved configuration from `configs/master_config_resolved.yml` inside the results directory and regenerates `report.html`.
+
+### Examples
+
+```bash
+# Regenerate report for a specific run
+uv run hedgehog report results/run_10
+
+# Using the short alias
+uv run hedge report results/run_5
+```
+
+## `hedgehog info`
+
+Displays a table of all available pipeline stages with their descriptions. Useful for checking stage names before using `--stage`.
+
+```bash
+uv run hedgehog info
+```
+
+## `hedgehog version`
+
+Prints the current HEDGEHOG version and project tagline.
+
+```bash
+uv run hedgehog version
+```
+
+## `hedgehog tui`
+
+Launches the interactive Terminal User Interface for visual pipeline configuration and management. Requires Node.js to be installed. If the TUI has not been built yet, it will automatically run `npm install` and `npm run build` on first launch.
+
+```bash
+uv run hedgehog tui
+```
+
+The TUI can also be launched directly via the shell script:
+
+```bash
+./run-tui.sh
+```
+
+## Alias
+
+`hedge` is a short alias for `hedgehog`. All commands work identically with either name:
+
+```bash
+uv run hedge run --stage docking
+uv run hedgehog run --stage docking
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Pipeline completed successfully |
+| `1`  | Pipeline completed with failures, conflicting flags (`--reuse` + `--force-new`), TUI directory not found, or Node.js not available |
