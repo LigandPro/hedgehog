@@ -49,6 +49,7 @@ target-version = "py310"
 src = ["src"]
 extend-exclude = [
     "modules",
+    "src/hedgehog/vendor/**",
 ]
 lint.select = [
     "E",  # pycodestyle errors

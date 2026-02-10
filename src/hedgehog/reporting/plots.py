@@ -13,11 +13,10 @@ MODEL_COLORS = px.colors.qualitative.Set2
 
 # Shorter labels for Sankey nodes to prevent overlap
 _SANKEY_SHORT_LABELS = {
-    "Pre-Filters": "Pre-Filt.",
-    "Post-Filters": "Post-Filt.",
+    "Pre-Desc Filters": "Pre-Desc Filt.",
+    "Structural Filters": "Struct. Filt.",
     "Descriptors": "Descript.",
     "Docking Filters": "Dock. Filt.",
-    "Final Descriptors": "Final Desc.",
 }
 
 
@@ -98,6 +97,7 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
         node_colors.append(stage_color)
 
     # Add "Lost" nodes for each transition
+    # Lost molecules branch FROM the filtering stage (i+1), not from the previous stage
     lost_nodes = []
     for i in range(len(stages) - 1):
         lost_count = counts[i] - counts[i + 1]
@@ -107,10 +107,9 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
             node_colors.append(lost_color)
             lost_nodes.append(
                 {
-                    "from_idx": i,
+                    "filter_idx": i + 1,
                     "to_idx": len(labels) - 1,
                     "count": lost_count,
-                    "from_stage": stages[i],
                     "at_stage": stages[i + 1],
                 }
             )
@@ -124,41 +123,19 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     main_flow_color = "rgba(139, 92, 246, 0.35)"  # Soft purple
     lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
 
-    # Main flow links (between consecutive stages)
+    # Main flow links: full input count flows INTO the next stage
     for i in range(len(stages) - 1):
         sources.append(i)
         targets.append(i + 1)
-        values.append(counts[i + 1])
+        values.append(counts[i])
         link_colors.append(main_flow_color)
 
-    # Lost flow links
+    # Lost flow links: branch FROM the filtering stage
     for lost in lost_nodes:
-        sources.append(lost["from_idx"])
+        sources.append(lost["filter_idx"])
         targets.append(lost["to_idx"])
         values.append(lost["count"])
         link_colors.append(lost_flow_color)
-
-    # Calculate node positions
-    n_stages = len(stages)
-
-    # X positions: stages evenly spaced
-    x_positions = []
-    for i in range(n_stages):
-        x_positions.append(i / max(n_stages - 1, 1))
-
-    # Lost nodes positioned at the same x as target stage, but lower y
-    for lost in lost_nodes:
-        # Position lost node at the same x as the "at_stage" (target stage)
-        target_idx = lost["from_idx"] + 1
-        x_positions.append(target_idx / max(n_stages - 1, 1))
-
-    # Y positions: main stages at top, lost nodes at bottom
-    y_positions = []
-    for _ in range(n_stages):
-        y_positions.append(0.3)  # Main flow at top
-
-    for _ in lost_nodes:
-        y_positions.append(0.7)  # Lost nodes below (closer to main)
 
     # Hover text
     customdata = []
@@ -178,15 +155,13 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     fig = go.Figure(
         data=[
             go.Sankey(
-                arrangement="snap",
+                arrangement="freeform",
                 node={
-                    "pad": 40,
+                    "pad": 30,
                     "thickness": 20,
-                    "line": {"color": "black", "width": 0.5},
+                    "line": {"color": "rgba(0,0,0,0.15)", "width": 0.5},
                     "label": labels,
                     "color": node_colors,
-                    "x": x_positions,
-                    "y": y_positions,
                     "customdata": customdata,
                     "hovertemplate": "%{customdata}<extra></extra>",
                 },
@@ -251,7 +226,7 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
             node_colors.append(lost_color)
             lost_nodes.append(
                 {
-                    "from_idx": i,
+                    "filter_idx": i + 1,
                     "to_idx": len(labels) - 1,
                     "count": lost_count,
                 }
@@ -265,31 +240,23 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
     main_flow_color = "rgba(139, 92, 246, 0.35)"
     lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
 
+    # Full input count flows INTO the next stage
     for i in range(len(stages) - 1):
         sources.append(i)
         targets.append(i + 1)
-        values.append(counts[i + 1])
+        values.append(counts[i])
         link_colors.append(main_flow_color)
 
+    # Lost molecules branch FROM the filtering stage
     for lost in lost_nodes:
-        sources.append(lost["from_idx"])
+        sources.append(lost["filter_idx"])
         targets.append(lost["to_idx"])
         values.append(lost["count"])
         link_colors.append(lost_flow_color)
 
-    n_stages = len(stages)
-    x_positions = [i / max(n_stages - 1, 1) for i in range(n_stages)]
-    for lost in lost_nodes:
-        target_idx = lost["from_idx"] + 1
-        x_positions.append(target_idx / max(n_stages - 1, 1))
-
-    y_positions = [0.3] * n_stages + [0.7] * len(lost_nodes)
-
     return {
         "labels": labels,
         "node_colors": node_colors,
-        "x_positions": x_positions,
-        "y_positions": y_positions,
         "sources": sources,
         "targets": targets,
         "values": values,
@@ -365,15 +332,6 @@ def plot_sankey_compare_json(
         labels.append(f"Lost ({short_stages[i + 1]})")
         node_colors.append("rgba(107, 114, 128, 0.3)")
 
-    # Calculate positions
-    x_positions = [i / max(n_stages - 1, 1) for i in range(n_stages)]
-    y_positions = [0.3] * n_stages
-
-    # Lost nodes at bottom (closer to main flow)
-    for i in range(n_stages - 1):
-        x_positions.append((i + 1) / max(n_stages - 1, 1))
-        y_positions.append(0.7)
-
     sources = []
     targets = []
     values = []
@@ -388,21 +346,21 @@ def plot_sankey_compare_json(
         counts = [d["count"] for d in model_funnel]
         color_idx = model_idx % len(model_colors_light)
 
-        # Main flow links
+        # Main flow links: full input count flows INTO the next stage
         for i in range(len(counts) - 1):
-            if counts[i + 1] > 0:
+            if counts[i] > 0:
                 sources.append(i)
                 targets.append(i + 1)
-                values.append(counts[i + 1])
+                values.append(counts[i])
                 link_colors.append(model_colors_light[color_idx])
                 link_labels.append(model)
 
-        # Lost flow links
+        # Lost flow links: branch FROM the filtering stage (i+1)
         for i in range(len(counts) - 1):
             lost = counts[i] - counts[i + 1]
             if lost > 0:
                 lost_node_idx = n_stages + i
-                sources.append(i)
+                sources.append(i + 1)
                 targets.append(lost_node_idx)
                 values.append(lost)
                 link_colors.append(lost_colors[color_idx])
@@ -411,8 +369,6 @@ def plot_sankey_compare_json(
     return {
         "labels": labels,
         "node_colors": node_colors,
-        "x_positions": x_positions,
-        "y_positions": y_positions,
         "sources": sources,
         "targets": targets,
         "values": values,
@@ -2079,6 +2035,215 @@ def plot_docking_filters_by_model_bar(
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         paper_bgcolor="white",
         plot_bgcolor="white",
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+# =========================================================================
+# MolEval Generative Metrics
+# =========================================================================
+
+
+def plot_rules_compliance_lines(
+    by_stage: dict[str, dict[str, float]],
+    stages: list[str],
+    metric_names: list[str],
+) -> str:
+    """Create a line chart of compliance/match rates across pipeline stages.
+
+    Reusable for both rules compliance and chemical group match rates.
+
+    Args:
+        by_stage: Mapping of stage name -> {metric: rate}.
+        stages: Ordered list of stage names.
+        metric_names: Ordered list of metric/rule/group names.
+
+    Returns:
+        HTML string of the plotly figure.
+    """
+    if not by_stage or not stages or not metric_names:
+        return _empty_plot("No compliance data available")
+
+    line_colors = [
+        "rgba(34, 197, 94, 1)",  # Green
+        "rgba(59, 130, 246, 1)",  # Blue
+        "rgba(249, 115, 22, 1)",  # Orange
+        "rgba(168, 85, 247, 1)",  # Purple
+        "rgba(236, 72, 153, 1)",  # Pink
+        "rgba(20, 184, 166, 1)",  # Teal
+        "rgba(234, 179, 8, 1)",  # Yellow
+        "rgba(239, 68, 68, 1)",  # Red
+    ]
+
+    fig = go.Figure()
+
+    for i, metric in enumerate(metric_names):
+        values = [by_stage.get(s, {}).get(metric) for s in stages]
+        fig.add_trace(
+            go.Scatter(
+                x=stages,
+                y=values,
+                mode="lines+markers",
+                name=metric,
+                line={"color": line_colors[i % len(line_colors)], "width": 2.5},
+                marker={"size": 8},
+                connectgaps=True,
+            )
+        )
+
+    fig.update_layout(
+        yaxis_title="Pass Rate",
+        yaxis_range=[0, 1.05],
+        yaxis_tickformat=".0%",
+        height=380,
+        margin={"l": 50, "r": 30, "t": 20, "b": 60},
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+        xaxis={"showgrid": False},
+        yaxis={"showgrid": True, "gridcolor": "#e5e7eb"},
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_moleval_heatmap(
+    by_stage: dict[str, dict[str, float]],
+    stages: list[str],
+    metrics: list[str],
+) -> str:
+    """Create a heatmap of MolEval metrics across pipeline stages.
+
+    Rows are metrics, columns are pipeline stages. Values are metric scores.
+
+    Args:
+        by_stage: Mapping of stage name -> metric dict.
+        stages: Ordered list of stage names.
+        metrics: Ordered list of metric names.
+
+    Returns:
+        HTML string of the plotly figure.
+    """
+    if not by_stage or not stages or not metrics:
+        return _empty_plot("No MolEval metrics data available")
+
+    z = []
+    for metric in metrics:
+        row = [by_stage.get(stage, {}).get(metric) for stage in stages]
+        z.append(row)
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=stages,
+            y=metrics,
+            colorscale=[
+                [0, "rgba(237, 233, 254, 1)"],
+                [0.5, "rgba(167, 139, 250, 1)"],
+                [1, "rgba(109, 40, 217, 1)"],
+            ],
+            text=[[f"{v:.3f}" if v is not None else "" for v in row] for row in z],
+            texttemplate="%{text}",
+            textfont={"size": 11},
+            hovertemplate=(
+                "Stage: %{x}<br>Metric: %{y}<br>Value: %{z:.4f}<extra></extra>"
+            ),
+            colorbar={"title": "Score", "thickness": 15},
+        )
+    )
+
+    fig.update_layout(
+        height=max(300, 40 * len(metrics) + 80),
+        margin={"l": 120, "r": 30, "t": 20, "b": 60},
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        xaxis={"side": "bottom"},
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_moleval_stage_lines(
+    by_stage: dict[str, dict[str, float]],
+    stages: list[str],
+) -> str:
+    """Create a line chart of key MolEval metrics across pipeline stages.
+
+    Shows how diversity, uniqueness, and filter passage evolve through the
+    filtering funnel.
+
+    Args:
+        by_stage: Mapping of stage name -> metric dict.
+        stages: Ordered list of stage names.
+
+    Returns:
+        HTML string of the plotly figure.
+    """
+    if not by_stage or not stages:
+        return _empty_plot("No MolEval metrics data available")
+
+    # Collect all metric names present in data (show everything the heatmap shows)
+    all_metric_names: set[str] = set()
+    for stage_data in by_stage.values():
+        all_metric_names.update(stage_data.keys())
+    available = sorted(all_metric_names)
+
+    if not available:
+        return _empty_plot("No MolEval metrics data available")
+
+    line_colors = [
+        "rgba(139, 92, 246, 1)",  # Purple 500
+        "rgba(109, 40, 217, 1)",  # Purple 700
+        "rgba(196, 181, 253, 1)",  # Purple 300
+        "rgba(124, 58, 237, 1)",  # Purple 600
+        "rgba(167, 139, 250, 1)",  # Purple 400
+        "rgba(76, 29, 149, 1)",  # Purple 900
+        "rgba(221, 214, 254, 1)",  # Purple 200
+        "rgba(91, 33, 182, 1)",  # Purple 800
+    ]
+
+    fig = go.Figure()
+
+    for i, metric in enumerate(available):
+        values = [by_stage.get(s, {}).get(metric) for s in stages]
+        fig.add_trace(
+            go.Scatter(
+                x=stages,
+                y=values,
+                mode="lines+markers",
+                name=metric,
+                line={"color": line_colors[i % len(line_colors)], "width": 2.5},
+                marker={"size": 8},
+                connectgaps=True,
+            )
+        )
+
+    fig.update_layout(
+        yaxis_title="Score",
+        yaxis_range=[0, 1.05],
+        height=380,
+        margin={"l": 50, "r": 30, "t": 20, "b": 60},
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+        xaxis={"showgrid": False},
+        yaxis={"showgrid": True, "gridcolor": "#e5e7eb"},
     )
 
     return fig.to_html(full_html=False, include_plotlyjs=False)

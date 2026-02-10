@@ -6,12 +6,20 @@
 
 Comprehensive benchmark pipeline for evaluating generative models in molecular design.
 
-### 5-Stage Filtering Pipeline:
-1) Physicochemical Descriptors: 22 descriptors ([descriptors folder](src/hedgehog/stages/descriptors/))
-2) Structural Filters: 6 structural criteria with ~2500 SMARTS patterns ([structural filters folder](src/hedgehog/stages/structFilters/))
-3) Synthesis evaluation ([synthesis folder](src/hedgehog/stages/synthesis/))
-4) Docking: able to calculate docking score with smina and/or GNINA docking tools ([docking folder](src/hedgehog/stages/docking/))
-5) Medicinal Chemists evaluation: calculate 4 medichinal chemists evaluation criteria (*in development*)
+### Pipeline Stages:
+
+Each stage takes the output of the previous one, progressively filtering the molecule set:
+
+1) **Molecular Descriptors**: 22 physicochemical descriptors (logP, HBD/HBA, TPSA, QED, etc.) → molecules outside thresholds are removed ([descriptors folder](src/hedgehog/stages/descriptors/))
+2) **Structural Filters**: 6 criteria with ~2500 SMARTS patterns (PAINS, Glaxo, NIBR, Bredt, etc.) → flagged molecules are removed ([structural filters folder](src/hedgehog/stages/structFilters/))
+3) **Synthesis Evaluation**: SA score, SYBA score, AiZynthFinder retrosynthesis → unsynthesizable molecules are removed ([synthesis folder](src/hedgehog/stages/synthesis/))
+4) **Molecular Docking**: SMINA and/or GNINA → binding affinity scoring ([docking folder](src/hedgehog/stages/docking/))
+5) **Docking Filters**: post-docking pose quality filtering → poor binders are removed
+6) **Final Descriptors**: recalculation on the filtered set
+
+Optional: **Pre-descriptors Structural Filters** can run before step 1 for early elimination of obviously problematic molecules.
+
+Post-pipeline analysis: MolEval generative metrics, drug-likeness compliance, chemical group presence
 
 ## Setup & Run
 

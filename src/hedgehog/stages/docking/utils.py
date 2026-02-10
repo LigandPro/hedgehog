@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import uuid
 from datetime import datetime
@@ -10,6 +11,32 @@ import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.utils.input_paths import find_latest_input_source
+
+
+def _resolve_docking_binary(config_path: str, tool_name: str) -> str:
+    """Resolve a docking binary path from config or PATH.
+
+    Args:
+        config_path: Path from config (absolute path or bare tool name).
+        tool_name: Tool name for PATH lookup (e.g. 'smina', 'gnina').
+
+    Returns:
+        Resolved absolute path to the binary.
+
+    Raises:
+        FileNotFoundError: If the binary cannot be found.
+    """
+    if os.path.isabs(config_path) and os.path.isfile(config_path):
+        return config_path
+
+    found = shutil.which(tool_name)
+    if found:
+        return found
+
+    raise FileNotFoundError(
+        f"Docking binary '{tool_name}' not found. "
+        f"Provide absolute path in config or ensure it's on PATH."
+    )
 
 
 def _find_latest_input_source(base_folder):
@@ -1575,7 +1602,8 @@ def _setup_smina(
             return None
 
         smina_config = cfg.get("smina_config", {})
-        smina_bin = smina_config.get("bin") or cfg.get("smina_bin", "smina")
+        smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin", "smina")
+        smina_bin = _resolve_docking_binary(smina_bin_cfg, "smina")
 
         ligands_path, prep_cmd = _prepare_ligands_for_docking(
             ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name="smina"
@@ -1687,7 +1715,8 @@ def _setup_gnina(
         output_sdf = gnina_dir / "gnina_out.sdf"
 
         gnina_config = cfg.get("gnina_config", {})
-        gnina_bin = gnina_config.get("bin") or cfg.get("gnina_bin", "gnina")
+        gnina_bin_cfg = gnina_config.get("bin") or cfg.get("gnina_bin", "gnina")
+        gnina_bin = _resolve_docking_binary(gnina_bin_cfg, "gnina")
         activate_cmd, ld_library_path = _get_gnina_environment(cfg, base_folder)
 
         # Check if per-molecule mode is enabled (default: True)

@@ -1,0 +1,27 @@
+run: true
+n_jobs: 4
+device: cpu  # cpu or cuda:0
+max_molecules: 2000  # subsample for O(N^2) metrics if N exceeds this
+
+# Metric groups
+validity: false     # Always 1.0 after RDKit parsing, not informative
+uniqueness: false   # Always 1.0 after dedup, not informative
+internal_diversity: true  # IntDiv1, IntDiv2
+se_diversity: true        # Sphere exclusion diversity
+scaffold_diversity: true  # ScaffDiv, ScaffUniqueness
+functional_groups: true   # FG diversity ratio
+ring_systems: true        # RS diversity ratio
+filters: true             # MCF + PAINS passage rate
+
+# Drug-likeness compliance (% passing each rule set per stage)
+rules_compliance: true
+rules_sets:
+  - rule_of_five
+  - rule_of_veber
+  - rule_of_generative_design
+
+# Chemical group match rates (% containing drug-relevant scaffolds per stage)
+chemical_groups: true
+chemical_group_names:
+  - rings_in_drugs
+  - privileged_scaffolds

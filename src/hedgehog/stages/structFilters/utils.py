@@ -409,6 +409,11 @@ def filter_function_applier(filter_name):
         "NIBR": apply_nibr_filter,
         "bredt": apply_bredt_filter,
         "lilly": apply_lilly_filter,
+        "protecting_groups": apply_protecting_groups,
+        "ring_infraction": apply_ring_infraction,
+        "stereo_center": apply_stereo_center,
+        "halogenicity": apply_halogenicity,
+        "symmetry": apply_symmetry,
     }
     if filter_name not in filters:
         raise ValueError(f"Filter {filter_name} not found")
@@ -554,6 +559,91 @@ def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Bredt filter...")
     out = mc.functional.bredt_filter(
         mols=mols,
+        n_jobs=-1,
+        progress=False,
+        return_idx=False,
+    )
+    results = pd.DataFrame({"mol": mols, "pass": out})
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols)
+    return results
+
+
+def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
+    logger.info("Calculating Protecting Groups filter...")
+    out = mc.functional.protecting_groups_filter(
+        mols=mols,
+        n_jobs=-1,
+        progress=False,
+        return_idx=False,
+    )
+    results = pd.DataFrame({"mol": mols, "pass": out})
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols)
+    return results
+
+
+def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
+    logger.info("Calculating Ring Infraction filter...")
+    config_sf = load_config(config["config_structFilters"])
+    min_size = config_sf.get("ring_infraction_hetcycle_min_size", 4)
+    out = mc.functional.ring_infraction_filter(
+        mols=mols,
+        hetcycle_min_size=min_size,
+        n_jobs=-1,
+        progress=False,
+        return_idx=False,
+    )
+    results = pd.DataFrame({"mol": mols, "pass": out})
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols)
+    return results
+
+
+def apply_stereo_center(config, mols, smiles_modelName_mols=None):
+    logger.info("Calculating Stereo Center filter...")
+    config_sf = load_config(config["config_structFilters"])
+    max_centers = config_sf.get("stereo_max_centers", 4)
+    max_undefined = config_sf.get("stereo_max_undefined", 2)
+    out = mc.functional.num_stereo_center_filter(
+        mols=mols,
+        max_stereo_centers=max_centers,
+        max_undefined_stereo_centers=max_undefined,
+        n_jobs=-1,
+        progress=False,
+        return_idx=False,
+    )
+    results = pd.DataFrame({"mol": mols, "pass": out})
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols)
+    return results
+
+
+def apply_halogenicity(config, mols, smiles_modelName_mols=None):
+    logger.info("Calculating Halogenicity filter...")
+    config_sf = load_config(config["config_structFilters"])
+    out = mc.functional.halogenicity_filter(
+        mols=mols,
+        thresh_F=config_sf.get("halogenicity_thresh_F", 6),
+        thresh_Br=config_sf.get("halogenicity_thresh_Br", 3),
+        thresh_Cl=config_sf.get("halogenicity_thresh_Cl", 3),
+        n_jobs=-1,
+        progress=False,
+        return_idx=False,
+    )
+    results = pd.DataFrame({"mol": mols, "pass": out})
+    if smiles_modelName_mols is not None:
+        results = add_model_name_col(results, smiles_modelName_mols)
+    return results
+
+
+def apply_symmetry(config, mols, smiles_modelName_mols=None):
+    logger.info("Calculating Symmetry filter...")
+    config_sf = load_config(config["config_structFilters"])
+    threshold = config_sf.get("symmetry_threshold", 0.8)
+    out = mc.functional.symmetry_filter(
+        mols=mols,
+        symmetry_threshold=threshold,
         n_jobs=-1,
         progress=False,
         return_idx=False,
@@ -852,7 +942,14 @@ def get_basic_stats(
             res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
         return common_postprocessing_statistics(filter_results, res_df, stat, extend)
 
-    if filter_name == "bredt":
+    if filter_name in (
+        "bredt",
+        "protecting_groups",
+        "ring_infraction",
+        "stereo_center",
+        "halogenicity",
+        "symmetry",
+    ):
         res_df = _create_base_stats_df(model_name, num_mol)
         res_df["banned_ratio"] = 1 - filter_results["pass"].mean()
         return common_postprocessing_statistics(filter_results, res_df, stat, extend)

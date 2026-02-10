@@ -4,12 +4,14 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from hedgehog.stages.synthesis.utils import (
     _build_score_filter_mask,
     _calculate_ra_scores_batch,
     _calculate_sa_score,
     _calculate_syba_score,
+    _get_rascore_model_path,
     apply_synthesis_score_filters,
     get_input_path,
     merge_retrosynthesis_results,
@@ -410,6 +412,10 @@ class TestSynthesisScoreCalculations:
             assert isinstance(score, (int, float))
 
 
+@pytest.mark.skipif(
+    not _get_rascore_model_path().exists(),
+    reason="RAScore model not available",
+)
 class TestCalculateRaScores:
     """Tests for RA score batch calculation."""
 
