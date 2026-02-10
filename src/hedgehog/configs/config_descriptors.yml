@@ -27,9 +27,9 @@ borders:
   molWt_max: 500
   logP_min: -0.4
   logP_max: 5.6
-  clogP_min: -100
+  clogP_min: -100  # Effectively disabled; typical drug-like range: -5 to 10
   clogP_max: 100
-  sw_min: -100
+  sw_min: -100  # Effectively disabled; typical logSw range: -12 to 2
   sw_max: 100
   ring_size_min: 3
   ring_size_max: 12
@@ -49,6 +49,7 @@ borders:
   hba_max: 10
   fsp3_min: 0.15
   fsp3_max: 0.8
+  mce18_min: 20
   tpsa_min: 0
   tpsa_max: 140
   qed_min: 0.3
@@ -74,6 +75,7 @@ filtered_cols_to_plot:
 - hbd
 - hba
 - fsp3
+- mce18
 - tpsa
 - qed
 discrete_features_to_plot:
@@ -108,7 +110,7 @@ renamer:
   molWt: Molecular Weight
   logP: logP
   clogP: clogP
-  sw: Sw
+  sw: Water Solubility (Sw)
   ring_size: Size of rings
   n_rings: Number of rings
   n_aroma_rings: Number of aromatic rings
@@ -118,5 +120,6 @@ renamer:
   hbd: Hydrogen Bond Donors
   hba: Hydrogen Bond Acceptors
   fsp3: Fraction of SP3
+  mce18: MCE-18 Complexity
   tpsa: TPSA
   qed: QED

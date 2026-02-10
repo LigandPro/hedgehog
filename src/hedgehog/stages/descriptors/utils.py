@@ -12,6 +12,7 @@ from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.structFilters.utils import process_path
+from hedgehog.utils.mce18 import compute_mce18
 
 # Canonical mapping for descriptor keys (lowercase -> canonical case)
 # Used to prevent confusion between similar names like logP and clogP
@@ -24,6 +25,7 @@ _DESCRIPTOR_KEY_MAP = {
     "hba": "hba",
     "qed": "qed",
     "fsp3": "fsp3",
+    "mce18": "mce18",
     "sw": "sw",
     "n_atoms": "n_atoms",
     "n_heavy_atoms": "n_heavy_atoms",
@@ -197,6 +199,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         "hbd": Lipinski.NumHDonors(mol_n),
         "hba": Lipinski.NumHAcceptors(mol_n),
         "fsp3": rdMolDescriptors.CalcFractionCSP3(mol_n),
+        "mce18": compute_mce18(mol_n),
         "tpsa": rdMolDescriptors.CalcTPSA(mol_n),
         "qed": QED.qed(mol_n),
     }

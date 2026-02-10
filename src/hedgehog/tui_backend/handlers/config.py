@@ -32,7 +32,7 @@ class ConfigHandler:
     def _find_project_root(self) -> Path:
         """Find project root by looking for pyproject.toml."""
         current = Path.cwd()
-        for parent in [current] + list(current.parents):
+        for parent in [current, *current.parents]:
             if (parent / "pyproject.toml").exists():
                 return parent
         return current
@@ -119,6 +119,10 @@ class ConfigHandler:
     def save_config(self, config_type: str, data: dict[str, Any]) -> bool:
         """Save data to a config file."""
         config_path = self._get_config_path(config_type)
+
+        validation = ConfigValidator.validate(config_type, data)
+        if not validation["valid"]:
+            raise ValueError(f"Invalid config: {'; '.join(validation['errors'])}")
 
         # Backup existing config
         if config_path.exists():

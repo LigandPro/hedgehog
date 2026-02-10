@@ -47,7 +47,7 @@ const DESCRIPTOR_NAMES: Record<string, string> = {
   'molWt': 'Molecular Weight',
   'logP': 'logP',
   'clogP': 'clogP',
-  'sw': 'Sw',
+  'sw': 'Water Solubility (Sw)',
   'ring_size': 'Ring Size',
   'n_rings': 'Number of Rings',
   'n_aroma_rings': 'Aromatic Rings',

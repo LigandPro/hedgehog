@@ -21,7 +21,7 @@ search_box:
 pose_quality:
   enabled: true
   max_clashes: 2  # Maximum allowed steric clashes (0 = strict)
-  max_strain_energy: 50.0  # Maximum ligand strain energy in kcal/mol (relaxed from 10.0)
+  max_strain_energy: 50.0  # Maximum ligand strain energy in kcal/mol (relaxed from 10.0; typical: 4-10)
   strain_forcefield: "UFF"  # UFF, MMFF94s, or MMFF94s_noEstat
   clash_tolerance: 0.5  # Angstrom tolerance for VdW overlap detection
 
