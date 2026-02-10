@@ -13,6 +13,7 @@ MODEL_COLORS = px.colors.qualitative.Set2
 
 # Shorter labels for Sankey nodes to prevent overlap
 _SANKEY_SHORT_LABELS = {
+    "Pre-Desc Filters": "Pre-Desc Filt.",
     "Structural Filters": "Struct. Filt.",
     "Descriptors": "Descript.",
     "Docking Filters": "Dock. Filt.",
@@ -96,6 +97,7 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
         node_colors.append(stage_color)
 
     # Add "Lost" nodes for each transition
+    # Lost molecules branch FROM the filtering stage (i+1), not from the previous stage
     lost_nodes = []
     for i in range(len(stages) - 1):
         lost_count = counts[i] - counts[i + 1]
@@ -105,10 +107,9 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
             node_colors.append(lost_color)
             lost_nodes.append(
                 {
-                    "from_idx": i,
+                    "filter_idx": i + 1,
                     "to_idx": len(labels) - 1,
                     "count": lost_count,
-                    "from_stage": stages[i],
                     "at_stage": stages[i + 1],
                 }
             )
@@ -122,41 +123,19 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     main_flow_color = "rgba(139, 92, 246, 0.35)"  # Soft purple
     lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
 
-    # Main flow links (between consecutive stages)
+    # Main flow links: full input count flows INTO the next stage
     for i in range(len(stages) - 1):
         sources.append(i)
         targets.append(i + 1)
-        values.append(counts[i + 1])
+        values.append(counts[i])
         link_colors.append(main_flow_color)
 
-    # Lost flow links
+    # Lost flow links: branch FROM the filtering stage
     for lost in lost_nodes:
-        sources.append(lost["from_idx"])
+        sources.append(lost["filter_idx"])
         targets.append(lost["to_idx"])
         values.append(lost["count"])
         link_colors.append(lost_flow_color)
-
-    # Calculate node positions
-    n_stages = len(stages)
-
-    # X positions: stages evenly spaced
-    x_positions = []
-    for i in range(n_stages):
-        x_positions.append(i / max(n_stages - 1, 1))
-
-    # Lost nodes positioned at the same x as target stage, but lower y
-    for lost in lost_nodes:
-        # Position lost node at the same x as the "at_stage" (target stage)
-        target_idx = lost["from_idx"] + 1
-        x_positions.append(target_idx / max(n_stages - 1, 1))
-
-    # Y positions: main stages at top, lost nodes at bottom
-    y_positions = []
-    for _ in range(n_stages):
-        y_positions.append(0.3)  # Main flow at top
-
-    for _ in lost_nodes:
-        y_positions.append(0.7)  # Lost nodes below (closer to main)
 
     # Hover text
     customdata = []
@@ -176,15 +155,13 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     fig = go.Figure(
         data=[
             go.Sankey(
-                arrangement="snap",
+                arrangement="freeform",
                 node={
-                    "pad": 40,
+                    "pad": 30,
                     "thickness": 20,
-                    "line": {"color": "black", "width": 0.5},
+                    "line": {"color": "rgba(0,0,0,0.15)", "width": 0.5},
                     "label": labels,
                     "color": node_colors,
-                    "x": x_positions,
-                    "y": y_positions,
                     "customdata": customdata,
                     "hovertemplate": "%{customdata}<extra></extra>",
                 },
@@ -249,7 +226,7 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
             node_colors.append(lost_color)
             lost_nodes.append(
                 {
-                    "from_idx": i,
+                    "filter_idx": i + 1,
                     "to_idx": len(labels) - 1,
                     "count": lost_count,
                 }
@@ -263,31 +240,23 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
     main_flow_color = "rgba(139, 92, 246, 0.35)"
     lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
 
+    # Full input count flows INTO the next stage
     for i in range(len(stages) - 1):
         sources.append(i)
         targets.append(i + 1)
-        values.append(counts[i + 1])
+        values.append(counts[i])
         link_colors.append(main_flow_color)
 
+    # Lost molecules branch FROM the filtering stage
     for lost in lost_nodes:
-        sources.append(lost["from_idx"])
+        sources.append(lost["filter_idx"])
         targets.append(lost["to_idx"])
         values.append(lost["count"])
         link_colors.append(lost_flow_color)
 
-    n_stages = len(stages)
-    x_positions = [i / max(n_stages - 1, 1) for i in range(n_stages)]
-    for lost in lost_nodes:
-        target_idx = lost["from_idx"] + 1
-        x_positions.append(target_idx / max(n_stages - 1, 1))
-
-    y_positions = [0.3] * n_stages + [0.7] * len(lost_nodes)
-
     return {
         "labels": labels,
         "node_colors": node_colors,
-        "x_positions": x_positions,
-        "y_positions": y_positions,
         "sources": sources,
         "targets": targets,
         "values": values,
@@ -363,15 +332,6 @@ def plot_sankey_compare_json(
         labels.append(f"Lost ({short_stages[i + 1]})")
         node_colors.append("rgba(107, 114, 128, 0.3)")
 
-    # Calculate positions
-    x_positions = [i / max(n_stages - 1, 1) for i in range(n_stages)]
-    y_positions = [0.3] * n_stages
-
-    # Lost nodes at bottom (closer to main flow)
-    for i in range(n_stages - 1):
-        x_positions.append((i + 1) / max(n_stages - 1, 1))
-        y_positions.append(0.7)
-
     sources = []
     targets = []
     values = []
@@ -386,21 +346,21 @@ def plot_sankey_compare_json(
         counts = [d["count"] for d in model_funnel]
         color_idx = model_idx % len(model_colors_light)
 
-        # Main flow links
+        # Main flow links: full input count flows INTO the next stage
         for i in range(len(counts) - 1):
-            if counts[i + 1] > 0:
+            if counts[i] > 0:
                 sources.append(i)
                 targets.append(i + 1)
-                values.append(counts[i + 1])
+                values.append(counts[i])
                 link_colors.append(model_colors_light[color_idx])
                 link_labels.append(model)
 
-        # Lost flow links
+        # Lost flow links: branch FROM the filtering stage (i+1)
         for i in range(len(counts) - 1):
             lost = counts[i] - counts[i + 1]
             if lost > 0:
                 lost_node_idx = n_stages + i
-                sources.append(i)
+                sources.append(i + 1)
                 targets.append(lost_node_idx)
                 values.append(lost)
                 link_colors.append(lost_colors[color_idx])
@@ -409,8 +369,6 @@ def plot_sankey_compare_json(
     return {
         "labels": labels,
         "node_colors": node_colors,
-        "x_positions": x_positions,
-        "y_positions": y_positions,
         "sources": sources,
         "targets": targets,
         "values": values,

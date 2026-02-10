@@ -319,13 +319,19 @@ class ReportGenerator:
         }
 
     def _get_funnel_data(self) -> list[dict[str, Any]]:
-        """Get molecule funnel data through pipeline stages."""
+        """Get molecule funnel data through pipeline filtering stages.
+
+        Only includes stages that actually filter molecules:
+        Descriptors, Structural Filters, Synthesis, Docking Filters.
+        Starts from the raw initial count.
+        """
         funnel = [{"stage": "Initial", "count": self.initial_count}]
 
-        # Pipeline order: Structural Filters → Descriptors → Synthesis → Docking Filters
+        # Only filtering stages — skip preprocessing, docking (scoring only),
+        # and final descriptors (recalculation only)
         stage_order = [
-            ("struct_filters_pre", "Structural Filters"),
             ("descriptors_initial", "Descriptors"),
+            ("struct_filters_post", "Structural Filters"),
             ("synthesis", "Synthesis"),
             ("docking_filters", "Docking Filters"),
         ]
@@ -334,10 +340,6 @@ class ReportGenerator:
             count = self._get_stage_output_count(stage_key)
             if count is not None:
                 funnel.append({"stage": display_name, "count": count})
-
-        # Add final count if different from last stage
-        if funnel and funnel[-1]["count"] != self.final_count:
-            funnel.append({"stage": "Final", "count": self.final_count})
 
         return funnel
 
@@ -465,8 +467,8 @@ class ReportGenerator:
         funnel = [{"stage": "Initial", "count": initial_count}]
 
         stage_order = [
-            ("struct_filters_pre", "Structural Filters"),
             ("descriptors_initial", "Descriptors"),
+            ("struct_filters_post", "Structural Filters"),
             ("synthesis", "Synthesis"),
             ("docking_filters", "Docking Filters"),
         ]

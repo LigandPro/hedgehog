@@ -417,15 +417,13 @@
 
                     var trace = {
                         type: 'sankey',
-                        arrangement: 'snap',
+                        arrangement: 'freeform',
                         node: {
-                            pad: 40,
+                            pad: 30,
                             thickness: 20,
-                            line: { color: 'rgba(0,0,0,0.1)', width: 0.5 },
+                            line: { color: 'rgba(0,0,0,0.15)', width: 0.5 },
                             label: data.labels,
-                            color: data.node_colors,
-                            x: data.x_positions,
-                            y: data.y_positions
+                            color: data.node_colors
                         },
                         link: {
                             source: data.sources,

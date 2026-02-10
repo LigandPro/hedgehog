@@ -487,6 +487,124 @@ def run(
 
 
 @app.command()
+def report(
+    results_dir: str = typer.Argument(
+        ...,
+        help="Path to existing pipeline results directory (e.g., results/run_10)",
+    ),
+) -> None:
+    """
+    Regenerate the HTML report from an existing pipeline run directory.
+
+    This command re-generates the report without re-running any pipeline stages.
+    Useful when report templates or plotting logic have been updated.
+
+    Examples
+    --------
+    \b
+    uv run hedgehog report results/run_10
+    """
+    import yaml
+
+    from hedgehog.reporting.report_generator import ReportGenerator
+
+    _display_banner()
+
+    results_path = Path(results_dir).resolve()
+    if not results_path.exists():
+        console.print(
+            f"[red]Error:[/red] Results directory does not exist: {results_path}"
+        )
+        raise typer.Exit(code=1)
+
+    stages_path = results_path / "stages"
+    if not stages_path.exists():
+        console.print(
+            f"[red]Error:[/red] No stages/ subdirectory found in {results_path}"
+        )
+        raise typer.Exit(code=1)
+
+    # Load config from resolved master config
+    config_path = results_path / "configs" / "master_config_resolved.yml"
+    if config_path.exists():
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+    else:
+        config = {}
+
+    config["folder_to_save"] = str(results_path)
+
+    # Point sub-config keys to actual files in the run's configs directory
+    sub_config_keys = [
+        "config_descriptors",
+        "config_structFilters",
+        "config_synthesis",
+        "config_docking",
+        "config_docking_filters",
+        "config_moleval",
+    ]
+    configs_dir = results_path / "configs"
+    for key in sub_config_keys:
+        candidate = configs_dir / f"{key}.yml"
+        if candidate.exists():
+            config[key] = str(candidate)
+
+    # Determine initial molecule count
+    initial_count = 0
+    sampled_path = results_path / "input" / "sampled_molecules.csv"
+    if sampled_path.exists():
+        try:
+            initial_count = len(pd.read_csv(sampled_path))
+        except Exception:
+            pass
+    if initial_count == 0:
+        # Try first stage input CSV as fallback
+        for stage_dir in sorted(stages_path.iterdir()):
+            if stage_dir.is_dir():
+                for csv_file in stage_dir.glob("*.csv"):
+                    try:
+                        initial_count = len(pd.read_csv(csv_file))
+                        break
+                    except Exception:
+                        continue
+            if initial_count > 0:
+                break
+
+    # Determine final molecule count
+    final_count = 0
+    final_path = results_path / "output" / "final_molecules.csv"
+    if final_path.exists():
+        try:
+            final_count = len(pd.read_csv(final_path))
+        except Exception:
+            pass
+
+    logger.info(
+        "Regenerating report for [bold]%s[/bold] (initial=%d, final=%d molecules)",
+        results_path,
+        initial_count,
+        final_count,
+    )
+
+    try:
+        report_gen = ReportGenerator(
+            base_path=results_path,
+            stages=[],
+            config=config,
+            initial_count=initial_count,
+            final_count=final_count,
+        )
+        report_path = report_gen.generate()
+        logger.info("[bold green]Report generated:[/bold green] %s", report_path)
+        console.print(
+            f"\n[bold #B29EEE]Report saved to:[/bold #B29EEE] {report_path}\n"
+        )
+    except Exception as e:
+        console.print(f"[red]Error generating report:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
 def info() -> None:
     """Display pipeline information and available stages."""
     table = Table(
