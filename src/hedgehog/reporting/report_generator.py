@@ -1,6 +1,7 @@
 """Report generator for HEDGEHOG pipeline results."""
 
 import base64
+import html as html_lib
 import json
 import logging
 import statistics
@@ -167,8 +168,6 @@ class ReportGenerator:
             ),
             "existing_plots": self._get_existing_plots(),
             "moleval": self._get_moleval_metrics(),
-            "rules_compliance": self._get_rules_compliance(),
-            "chemical_groups": self._get_chemical_groups(),
             "config": self._get_config_summary(),
         }
 
@@ -2078,54 +2077,6 @@ class ReportGenerator:
             logger.debug("MolEval metrics computation failed: %s", e)
             return {}
 
-    def _get_rules_compliance(self) -> dict[str, Any]:
-        """Compute drug-likeness rule compliance rates across pipeline stages.
-
-        Returns:
-            Dictionary with 'by_stage', 'stages', 'rules' keys, or empty dict.
-        """
-        moleval_config = self._load_moleval_config()
-        if not moleval_config:
-            return {}
-
-        stage_smiles = self._collect_stage_smiles()
-        if not stage_smiles:
-            return {}
-
-        try:
-            return moleval_metrics.compute_rules_compliance(
-                stage_smiles,
-                moleval_config,
-                seed=moleval_config.get("seed", 42),
-            )
-        except Exception as e:
-            logger.debug("Rules compliance computation failed: %s", e)
-            return {}
-
-    def _get_chemical_groups(self) -> dict[str, Any]:
-        """Compute chemical group match rates across pipeline stages.
-
-        Returns:
-            Dictionary with 'by_stage', 'stages', 'groups' keys, or empty dict.
-        """
-        moleval_config = self._load_moleval_config()
-        if not moleval_config:
-            return {}
-
-        stage_smiles = self._collect_stage_smiles()
-        if not stage_smiles:
-            return {}
-
-        try:
-            return moleval_metrics.compute_group_match_rates(
-                stage_smiles,
-                moleval_config,
-                seed=moleval_config.get("seed", 42),
-            )
-        except Exception as e:
-            logger.debug("Chemical groups computation failed: %s", e)
-            return {}
-
     def _load_stage_config(self, config_key: str) -> dict[str, Any]:
         """Load a stage YAML config by its key in the pipeline config.
 
@@ -2258,7 +2209,7 @@ class ReportGenerator:
             "stages_enabled": stages_enabled,
         }
 
-    def _generate_plots(self, data: dict[str, Any]) -> dict[str, str]:
+    def _generate_plots(self, data: dict[str, Any]) -> dict[str, Any]:
         """Generate all visualization plots.
 
         Args:
@@ -2289,7 +2240,7 @@ class ReportGenerator:
                 funnel_by_model, available_models
             )
 
-        plot_htmls["sankey_data"] = json.dumps(sankey_by_model)
+        plot_htmls["sankey_data"] = sankey_by_model
 
         # Stage summary
         plot_htmls["stage_summary"] = plots.plot_stage_summary(data.get("stages", []))
@@ -2463,7 +2414,7 @@ class ReportGenerator:
                     "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
                     "data": by_model,
                 }
-            plot_htmls["synthesis_data"] = json.dumps(synthesis_data)
+            plot_htmls["synthesis_data"] = synthesis_data
 
         # Generate JSON data for JavaScript descriptors visualization
         desc_detailed = data.get("descriptors_detailed", {})
@@ -2472,14 +2423,14 @@ class ReportGenerator:
             descriptors_data = self._build_descriptors_js_data(
                 desc_detailed, available_models
             )
-            plot_htmls["descriptors_data"] = json.dumps(descriptors_data)
+            plot_htmls["descriptors_data"] = descriptors_data
 
         # Generate JSON data for JavaScript filters visualization
         filters_detailed = data.get("filters_detailed", {})
         if available_models:
             filters_js_data = self._build_filters_js_data(available_models)
             if filters_js_data.get("filter_data"):
-                plot_htmls["filters_data"] = json.dumps(filters_js_data)
+                plot_htmls["filters_data"] = filters_js_data
 
         # Generate JSON data for JavaScript model filtering (Docking)
         for tool in ["gnina", "smina"]:
@@ -2511,7 +2462,7 @@ class ReportGenerator:
                         "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
                         "data": by_model,
                     }
-                plot_htmls[f"docking_{tool}_data"] = json.dumps(docking_tool_data)
+                plot_htmls[f"docking_{tool}_data"] = docking_tool_data
 
         # =====================================================================
         # Docking Filters (Stage 06)
@@ -2537,25 +2488,11 @@ class ReportGenerator:
             df_by_model_js = {"all": df_detailed}
             for model, model_data in df_detailed["by_model"].items():
                 df_by_model_js[model] = model_data
-            plot_htmls["docking_filters_data"] = json.dumps(df_by_model_js)
+            plot_htmls["docking_filters_data"] = df_by_model_js
 
         # =====================================================================
         # Final Descriptors (Stage 07)
         # =====================================================================
-        final_desc_detailed = data.get("descriptors_final_detailed", {})
-        if final_desc_detailed.get("raw_data"):
-            final_desc_js = self._build_descriptors_js_data(
-                final_desc_detailed, available_models
-            )
-            plot_htmls["final_descriptors_data"] = json.dumps(final_desc_js)
-
-            if final_desc_detailed.get("summary_by_model"):
-                plot_htmls["final_descriptors_table"] = (
-                    plots.plot_descriptors_summary_table(
-                        final_desc_detailed["summary_by_model"]
-                    )
-                )
-
         # Build initial vs final descriptor comparison data
         initial_desc = data.get("descriptors_detailed", {})
         final_desc = data.get("descriptors_final_detailed", {})
@@ -2564,7 +2501,7 @@ class ReportGenerator:
                 initial_desc, final_desc
             )
             if comparison:
-                plot_htmls["descriptors_comparison_data"] = json.dumps(comparison)
+                plot_htmls["descriptors_comparison_data"] = comparison
 
         # Synthesis thresholds from config
         synth_config = self._load_stage_config("config_synthesis")
@@ -2584,45 +2521,11 @@ class ReportGenerator:
                 if entry:
                     thresholds[score_key] = entry
             if thresholds:
-                plot_htmls["synthesis_thresholds"] = json.dumps(thresholds)
-
-        # =====================================================================
-        # MolEval Generative Metrics
-        # =====================================================================
-        moleval_data = data.get("moleval", {})
-        if moleval_data.get("by_stage"):
-            plot_htmls["moleval_lines"] = plots.plot_moleval_stage_lines(
-                moleval_data["by_stage"],
-                moleval_data["stages"],
-            )
-            plot_htmls["moleval_heatmap"] = plots.plot_moleval_heatmap(
-                moleval_data["by_stage"],
-                moleval_data["stages"],
-                moleval_data["metrics"],
-            )
-
-        # =====================================================================
-        # Drug-likeness Compliance
-        # =====================================================================
-        rules_data = data.get("rules_compliance", {})
-        if rules_data.get("by_stage"):
-            plot_htmls["rules_compliance_lines"] = plots.plot_rules_compliance_lines(
-                rules_data["by_stage"],
-                rules_data["stages"],
-                rules_data["rules"],
-            )
-
-        groups_data = data.get("chemical_groups", {})
-        if groups_data.get("by_stage"):
-            plot_htmls["chemical_groups_lines"] = plots.plot_rules_compliance_lines(
-                groups_data["by_stage"],
-                groups_data["stages"],
-                groups_data["groups"],
-            )
+                plot_htmls["synthesis_thresholds"] = thresholds
 
         return plot_htmls
 
-    def _render_template(self, data: dict[str, Any], plot_htmls: dict[str, str]) -> str:
+    def _render_template(self, data: dict[str, Any], plot_htmls: dict[str, Any]) -> str:
         """Render the HTML template with data and plots.
 
         Args:
@@ -2657,10 +2560,13 @@ class ReportGenerator:
         Returns:
             HTML string with option elements
         """
-        return "".join(f'<option value="{m}">{m}</option>' for m in models)
+        return "".join(
+            f'<option value="{html_lib.escape(str(m), quote=True)}">{html_lib.escape(str(m))}</option>'
+            for m in models
+        )
 
     def _render_inline_template(
-        self, data: dict[str, Any], plot_htmls: dict[str, str]
+        self, data: dict[str, Any], plot_htmls: dict[str, Any]
     ) -> str:
         """Render report using inline template (fallback).
 
@@ -2674,6 +2580,12 @@ class ReportGenerator:
         summary = data.get("summary", {})
         metadata = data.get("metadata", {})
 
+        def _json_for_script(obj: Any) -> str:
+            # Prevent breaking out of <script> context.
+            return json.dumps(obj).replace("</", "<\\/")
+
+        sankey_data_json = _json_for_script(plot_htmls.get("sankey_data") or {})
+
         # Build stage status HTML
         stage_rows = ""
         for status in summary.get("stage_statuses", []):
@@ -2683,10 +2595,12 @@ class ReportGenerator:
                 if status["completed"]
                 else ("#e74c3c" if status["enabled"] else "#95a5a6")
             )
+            stage_name = html_lib.escape(str(status.get("name", "")))
+            stage_status = html_lib.escape(str(status.get("status", "")).upper())
             stage_rows += f"""
             <tr>
-                <td>{status["name"]}</td>
-                <td style="color: {color}; font-weight: bold;">{icon} {status["status"].upper()}</td>
+                <td>{stage_name}</td>
+                <td style="color: {color}; font-weight: bold;">{icon} {stage_status}</td>
             </tr>
             """
 
@@ -2694,9 +2608,10 @@ class ReportGenerator:
         desc_summary = data.get("descriptors", {}).get("summary", {})
         desc_rows = ""
         for desc, stats in desc_summary.items():
+            desc_name = html_lib.escape(str(desc))
             desc_rows += f"""
             <tr>
-                <td>{desc}</td>
+                <td>{desc_name}</td>
                 <td>{stats["mean"]:.2f}</td>
                 <td>{stats["std"]:.2f}</td>
                 <td>{stats["min"]:.2f}</td>
@@ -2915,7 +2830,7 @@ class ReportGenerator:
             <div id="sankey-container" class="plot-container">{plot_htmls.get("sankey", "")}</div>
             <div id="funnel-container" class="plot-container" style="display: none;">{plot_htmls.get("funnel", "")}</div>
             <script>
-                var sankeyDataByModel = {plot_htmls.get("sankey_data", "{{}}")};
+                var sankeyDataByModel = {sankey_data_json};
 
                 function showView(view) {{
                     document.getElementById('sankey-container').style.display = view === 'sankey' ? 'block' : 'none';

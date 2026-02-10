@@ -419,7 +419,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
             const value = getValue(param);
 
             return (
-              <Box key={param.key} flexDirection="column">
+              <Box key={`${param.key}-${actualIndex}`} flexDirection="column">
                 <Box>
                   <Text color={isFocused ? 'cyan' : 'gray'}>
                     {isFocused ? '▸ ' : '  '}

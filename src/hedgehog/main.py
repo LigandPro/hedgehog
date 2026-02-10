@@ -116,15 +116,29 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
         prepared_output = folder_to_save / f"prepared_{input_path_obj.stem}.csv"
 
         df = pd.read_csv(input_path_obj)
+        # Normalize common column variants to match prepare_input_data expectations.
+        lower_cols = {c.lower(): c for c in df.columns}
+        smiles_col = lower_cols.get("smiles")
+        if not smiles_col:
+            log.debug("RDKit preprocessing: missing SMILES column in %s", input_path)
+            return None
+        if smiles_col != "smiles":
+            df = df.rename(columns={smiles_col: "smiles"})
+
+        model_col = lower_cols.get("model_name") or lower_cols.get("name")
+        if model_col:
+            if model_col != "model_name":
+                df = df.rename(columns={model_col: "model_name"})
+        else:
+            df["model_name"] = input_path_obj.stem
+
         cleaned_data = []
 
         for _, row in df.iterrows():
             canonical_smi = _canonicalize_smiles(str(row["smiles"]))
             if canonical_smi is None:
                 continue
-            row_data = {"smiles": canonical_smi}
-            if "model_name" in row:
-                row_data["model_name"] = row["model_name"]
+            row_data = {"smiles": canonical_smi, "model_name": row["model_name"]}
             cleaned_data.append(row_data)
 
         if not cleaned_data:

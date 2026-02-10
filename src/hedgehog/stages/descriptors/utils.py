@@ -1,5 +1,6 @@
 import ast
 import json
+import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -318,6 +319,17 @@ def _apply_column_filter(df, col, borders):
     """
     min_border, max_border = _get_border_values(col, borders)
 
+    # Normalize common YAML/string sentinels (e.g., "inf") for numeric comparisons.
+    def _normalize_border_value(val):
+        if val is None:
+            return None
+        if isinstance(val, str) and val.lower() == "inf":
+            return math.inf
+        return val
+
+    min_border = _normalize_border_value(min_border)
+    max_border = _normalize_border_value(max_border)
+
     if col == "chars":
         allowed_chars = borders["allowed_chars"]
         return df[col].apply(
@@ -328,6 +340,11 @@ def _apply_column_filter(df, col, borders):
         )
 
     if col == "ring_size":
+        # Missing bounds mean "no bound" on that side.
+        if min_border is None:
+            min_border = -math.inf
+        if max_border is None:
+            max_border = math.inf
         return df[col].apply(
             lambda x: all(
                 min_border <= float(ring_size) <= max_border
@@ -343,9 +360,17 @@ def _apply_column_filter(df, col, borders):
             return pd.Series(True, index=df.index)
         return df[col] == True  # noqa: E712
 
-    if col == "syba_score" and max_border == "inf":
+    # Generic numeric range filter.
+    #
+    # Allow one-sided bounds:
+    # - only min -> value >= min
+    # - only max -> value <= max
+    if min_border is None and max_border is None:
+        return pd.Series(True, index=df.index)
+    if min_border is None:
+        return df[col] <= max_border
+    if max_border is None or max_border == math.inf:
         return df[col] >= min_border
-
     return (df[col] >= min_border) & (df[col] <= max_border)
 
 

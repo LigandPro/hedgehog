@@ -1,6 +1,5 @@
 """Tests for MCE-18 (Molecular Complexity Estimation) descriptor."""
 
-import pytest
 from rdkit import Chem
 
 from hedgehog.utils.mce18 import (

@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -514,13 +515,19 @@ def _extract_pdb_output_from_cmd(cmd, ligands_dir):
     """Extract PDB output file paths from a protein preparation command.
 
     Args:
-        cmd: Protein preparation command string
+        cmd: Protein preparation command (list of args or string)
         ligands_dir: Directory for docking files
 
     Returns:
         Tuple of (output_filename, absolute_path) or (None, None) if not found
     """
-    parts = cmd.split()
+    if not cmd:
+        return None, None
+    if isinstance(cmd, (list, tuple)):
+        parts = [str(p) for p in cmd]
+    else:
+        # Best effort: handle quoted paths in legacy string commands.
+        parts = shlex.split(str(cmd))
     for part in reversed(parts):
         if ".pdb" in part:
             if part.startswith("/"):
@@ -536,11 +543,16 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
 
     Args:
         f: File handle to write to
-        protein_prep_cmd: Protein preparation command string
+        protein_prep_cmd: Protein preparation command (list of args or string)
         ligands_dir: Directory for docking files
         tool_name: 'smina' or 'gnina' for log messages
     """
     f.write(f"cd {ligands_dir}\n")
+
+    if isinstance(protein_prep_cmd, (list, tuple)):
+        protein_prep_cmd_str = " ".join(shlex.quote(str(p)) for p in protein_prep_cmd)
+    else:
+        protein_prep_cmd_str = str(protein_prep_cmd)
 
     protein_output_file, protein_output_abs_path = _extract_pdb_output_from_cmd(
         protein_prep_cmd, ligands_dir
@@ -552,7 +564,7 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
 
     tool_label = f" for {tool_name.upper()}" if tool_name == "gnina" else ""
     f.write(f'echo "Running protein preparation{tool_label}..."\n')
-    f.write(f"{protein_prep_cmd} || PREP_EXIT_CODE=$?\n")
+    f.write(f"{protein_prep_cmd_str} || PREP_EXIT_CODE=$?\n")
     f.write('if [ ! -z "$PREP_EXIT_CODE" ]; then\n')
     f.write(
         '  echo "WARNING: Protein preparation command exited with code $PREP_EXIT_CODE"\n'
@@ -815,10 +827,14 @@ def _prepare_protein_for_docking(receptor_pdb, ligands_dir, protein_preparation_
 
     receptor_absolute = str(receptor_path.resolve())
     output_absolute = str(prepared_output_path.resolve())
-    cmd_line = f"cd {ligands_dir} && {protein_preparation_tool} {receptor_absolute} {output_absolute}"
+    cmd_args = [protein_preparation_tool, receptor_absolute, output_absolute]
 
-    logger.info("Protein preprocessing will be performed: %s", cmd_line)
-    return str(prepared_output_path.resolve()), cmd_line
+    logger.info(
+        "Protein preprocessing will be performed in %s: %s",
+        ligands_dir,
+        " ".join(shlex.quote(str(p)) for p in cmd_args),
+    )
+    return str(prepared_output_path.resolve()), cmd_args
 
 
 def _prepare_ligands_for_docking(
@@ -1835,7 +1851,7 @@ def run_docking(config):
                         _PROTEIN_PREP_TIMEOUT = 600  # 10 minutes
                         result = subprocess.run(
                             prep_cmd,
-                            shell=True,
+                            shell=False,
                             capture_output=True,
                             text=True,
                             cwd=str(ligands_dir),

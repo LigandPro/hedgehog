@@ -260,6 +260,7 @@ export function App(): React.ReactElement {
   useApp();
   const screen = useStore((state) => state.screen);
   const setBackendReady = useStore((state) => state.setBackendReady);
+  const isBackendReady = useStore((state) => state.isBackendReady);
   const setJobHistory = useStore((state) => state.setJobHistory);
   const globalError = useStore((state) => state.globalError);
   const setGlobalError = useStore((state) => state.setGlobalError);
@@ -268,6 +269,14 @@ export function App(): React.ReactElement {
   const showHelp = useStore((state) => state.showHelp);
   const setShowHelp = useStore((state) => state.setShowHelp);
   const confirmDialog = useStore((state) => state.confirmDialog);
+  const setRunning = useStore((state) => state.setRunning);
+  const updateStage = useStore((state) => state.updateStage);
+  const updatePipelineProgress = useStore((state) => state.updatePipelineProgress);
+  const addLog = useStore((state) => state.addLog);
+  const updateJobInHistory = useStore((state) => state.updateJobInHistory);
+  const showToast = useStore((state) => state.showToast);
+  const setSelectedJob = useStore((state) => state.setSelectedJob);
+  const setScreen = useStore((state) => state.setScreen);
 
   // Initialize Python backend
   useEffect(() => {
@@ -298,6 +307,123 @@ export function App(): React.ReactElement {
       destroyBridge();
     };
   }, []);
+
+  // Global notification handler so pipeline can run in background across screens.
+  useEffect(() => {
+    if (!isBackendReady) return;
+    const bridge = getBridge();
+    const unsubscribe = bridge.onNotification((method, params) => {
+      const state = useStore.getState();
+      const stageOrder = state.wizard.stageOrder;
+      const selectedStages = stageOrder.filter((s) => state.wizard.selectedStages.includes(s));
+
+      if (method === 'progress') {
+        const { stage, current, total, message } = params as any;
+        const progress = total > 0 ? Math.round((current / total) * 100) : 0;
+        updateStage(stage, {
+          progress,
+          status: progress === 100 ? 'completed' : 'running',
+          message,
+        });
+        const stageIndex = selectedStages.indexOf(stage) + 1;
+        updatePipelineProgress({
+          currentStage: stage,
+          stageIndex: stageIndex > 0 ? stageIndex : 0,
+          totalStages: selectedStages.length,
+          stageProgress: progress,
+          latestMessage: message,
+        });
+        return;
+      }
+
+      if (method === 'log') {
+        if (!debugMode) return;
+        addLog({
+          timestamp: new Date(),
+          level: (params as any).level || 'info',
+          message: (params as any).message,
+        });
+        return;
+      }
+
+      if (method === 'stage_start') {
+        const stage = (params as any).stage;
+        updateStage(stage, { status: 'running', progress: 0 });
+        const stageIndex = selectedStages.indexOf(stage) + 1;
+        updatePipelineProgress({
+          currentStage: stage,
+          stageIndex: stageIndex > 0 ? stageIndex : 0,
+          totalStages: selectedStages.length,
+          stageProgress: 0,
+        });
+        return;
+      }
+
+      if (method === 'stage_complete') {
+        updateStage((params as any).stage, { status: 'completed', progress: 100 });
+        return;
+      }
+
+      if (method === 'stage_error') {
+        updateStage((params as any).stage, { status: 'error', message: (params as any).message });
+        return;
+      }
+
+      if (method === 'complete') {
+        setRunning(false);
+        const currentJobId = state.currentJobId;
+        if (currentJobId) {
+          setSelectedJob(currentJobId);
+        }
+        showToast('success', 'Pipeline completed');
+        if (currentJobId) {
+          const results = (params as any).results || {};
+          updateJobInHistory(currentJobId, {
+            status: 'completed',
+            endTime: new Date().toISOString(),
+            results: {
+              moleculesProcessed: results.molecules_processed || 0,
+            },
+          });
+          bridge.updateJob(currentJobId, 'completed', {
+            moleculesProcessed: results.molecules_processed || 0,
+          });
+        }
+        if (state.screen === 'pipelineRunner') {
+          setScreen('results');
+        }
+        return;
+      }
+
+      if (method === 'error') {
+        const message = (params as any).message;
+        showToast('error', message);
+        setRunning(false);
+        const currentJobId = state.currentJobId;
+        if (currentJobId) {
+          updateJobInHistory(currentJobId, {
+            status: 'error',
+            endTime: new Date().toISOString(),
+            error: message,
+          });
+          bridge.updateJob(currentJobId, 'error', undefined, message);
+        }
+      }
+    });
+
+    return unsubscribe;
+  }, [
+    addLog,
+    debugMode,
+    isBackendReady,
+    setRunning,
+    setScreen,
+    setSelectedJob,
+    showToast,
+    updateJobInHistory,
+    updatePipelineProgress,
+    updateStage,
+  ]);
 
   // Global keyboard shortcuts (Matcha pattern)
   useInput((input, key) => {

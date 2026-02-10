@@ -1,4 +1,4 @@
-import React, { useEffect, memo, useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
@@ -108,8 +108,6 @@ export function PipelineRunner(): React.ReactElement {
   const isRunning = useStore((state) => state.isRunning);
   const currentJobId = useStore((state) => state.currentJobId);
   const setRunning = useStore((state) => state.setRunning);
-  const updateStage = useStore((state) => state.updateStage);
-  const updatePipelineProgress = useStore((state) => state.updatePipelineProgress);
   const addLog = useStore((state) => state.addLog);
   const isBackendReady = useStore((state) => state.isBackendReady);
   const config = useStore((state) => state.configs.main);
@@ -118,98 +116,12 @@ export function PipelineRunner(): React.ReactElement {
   const showToast = useStore((state) => state.showToast);
   const wizardStageOrder = useStore((state) => state.wizard.stageOrder);
   const wizardSelectedStages = useStore((state) => state.wizard.selectedStages);
-  const setSelectedJob = useStore((state) => state.setSelectedJob);
-  const debugMode = useStore((state) => state.debugMode);
 
   const { width: terminalWidth } = useTerminalSize();
 
   const selectedStages = useMemo(() => (
     wizardStageOrder.filter((stage) => wizardSelectedStages.includes(stage))
   ), [wizardStageOrder, wizardSelectedStages]);
-
-  // Setup notification handler
-  useEffect(() => {
-    const bridge = getBridge();
-    const unsubscribe = bridge.onNotification((method, params) => {
-      if (method === 'progress') {
-        const { stage, current, total, message } = params as any;
-        const progress = total > 0 ? Math.round((current / total) * 100) : 0;
-        updateStage(stage, {
-          progress,
-          status: progress === 100 ? 'completed' : 'running',
-          message,
-        });
-        // Update global pipeline progress for Header
-        const stageIndex = selectedStages.indexOf(stage) + 1;
-        updatePipelineProgress({
-          currentStage: stage,
-          stageIndex,
-          totalStages: selectedStages.length,
-          stageProgress: progress,
-        });
-      } else if (method === 'log') {
-        if (debugMode) {
-          addLog({
-            timestamp: new Date(),
-            level: (params as any).level || 'info',
-            message: (params as any).message,
-          });
-        }
-      } else if (method === 'stage_start') {
-        const stage = (params as any).stage;
-        updateStage(stage, { status: 'running', progress: 0 });
-        const stageIndex = selectedStages.indexOf(stage) + 1;
-        updatePipelineProgress({
-          currentStage: stage,
-          stageIndex,
-          totalStages: selectedStages.length,
-          stageProgress: 0,
-        });
-      } else if (method === 'stage_complete') {
-        updateStage((params as any).stage, { status: 'completed', progress: 100 });
-      } else if (method === 'stage_error') {
-        updateStage((params as any).stage, { status: 'error', message: (params as any).message });
-      } else if (method === 'complete') {
-        setRunning(false);
-        if (currentJobId) {
-          setSelectedJob(currentJobId);
-        }
-        addLog({
-          timestamp: new Date(),
-          level: 'info',
-          message: 'Pipeline completed successfully!',
-        });
-        // Update job in history
-        if (currentJobId) {
-          const results = (params as any).results || {};
-          updateJobInHistory(currentJobId, {
-            status: 'completed',
-            endTime: new Date().toISOString(),
-            results: {
-              moleculesProcessed: results.molecules_processed || 0,
-            },
-          });
-          bridge.updateJob(currentJobId, 'completed', {
-            moleculesProcessed: results.molecules_processed || 0,
-          });
-        }
-        setScreen('results');
-      } else if (method === 'error') {
-        showToast('error', (params as any).message);
-        setRunning(false);
-        if (currentJobId) {
-          updateJobInHistory(currentJobId, {
-            status: 'error',
-            endTime: new Date().toISOString(),
-            error: (params as any).message,
-          });
-          bridge.updateJob(currentJobId, 'error', undefined, (params as any).message);
-        }
-      }
-    });
-
-    return unsubscribe;
-  }, [currentJobId, debugMode, selectedStages]);
 
   const doCancelPipeline = async () => {
     if (!currentJobId) return;

@@ -73,7 +73,17 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
     output_abs = output_json_file.resolve()
     config_abs = config_file.resolve()
 
-    cmd = f"cd {aizynthfinder_dir} && uv run aizynthcli --config {config_abs} --smiles {input_abs} --output {output_abs}"
+    cmd = [
+        "uv",
+        "run",
+        "aizynthcli",
+        "--config",
+        str(config_abs),
+        "--smiles",
+        str(input_abs),
+        "--output",
+        str(output_abs),
+    ]
 
     _RETROSYNTHESIS_TIMEOUT = 3600  # 1 hour
 
@@ -83,11 +93,12 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
 
         subprocess.run(
             cmd,
-            shell=True,
+            shell=False,
             capture_output=True,
             text=True,
             check=True,
             timeout=_RETROSYNTHESIS_TIMEOUT,
+            cwd=str(aizynthfinder_dir),
         )
 
         logger.info("Retrosynthesis analysis completed successfully")
