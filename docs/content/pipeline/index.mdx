@@ -1,0 +1,104 @@
+---
+title: Pipeline Overview
+---
+
+# Pipeline Overview
+
+HEDGEHOG implements a sequential molecular filtering pipeline that progressively narrows a large set of generated molecules down to high-quality drug candidates. Each stage applies domain-specific filters, and only molecules that pass all enabled stages reach the final output.
+
+## Pipeline Stages
+
+| # | Stage | Purpose | Typical Retention |
+|---|-------|---------|-------------------|
+| 1' | Pre-descriptors Structural Filters | Optional early removal of structurally problematic molecules before computing descriptors | 70--90% |
+| 1 | Molecular Descriptors | Compute 22 physicochemical descriptors and filter by threshold ranges | 40--70% |
+| 2 | Post-descriptors Structural Filters | Apply medicinal chemistry alerts, complexity checks, and structural rules | 50--80% |
+| 3 | Synthesis Analysis | Evaluate synthetic accessibility (SA Score, SYBA, RA Score) and retrosynthesis feasibility | 30--60% |
+| 4 | Molecular Docking | Dock surviving molecules into the target protein binding site | ~100% (scoring, not filtering) |
+| 5 | Docking Filters | Filter docked poses by search-box containment, clashes, interactions, and conformer deviation | 20--50% |
+| 6' | Final Descriptors | Recompute descriptors on the final molecule set for reporting | 100% (no filtering) |
+
+Retention rates are approximate and depend heavily on the input molecule set and configuration thresholds.
+
+## Data Flow
+
+```
+input/sampled_molecules.csv
+        |
+        v
+ [Stage 1': Pre-descriptor Structural Filters]  (optional)
+        |
+        v
+ [Stage 1: Descriptors]
+        |  filtered_molecules.csv
+        v
+ [Stage 2: Post-descriptor Structural Filters]
+        |  filtered_molecules.csv
+        v
+ [Stage 3: Synthesis Analysis]
+        |  filtered_molecules.csv
+        v
+ [Stage 4: Molecular Docking]
+        |  gnina_out.sdf / smina_out.sdf
+        v
+ [Stage 5: Docking Filters]
+        |  filtered_molecules.csv
+        v
+ [Stage 6': Final Descriptors]
+        |
+        v
+ output/final_molecules.csv
+```
+
+Every stage reads `filtered_molecules.csv` from the previous stage and writes its own `filtered_molecules.csv`. This convention enables the pipeline to resume from any intermediate point.
+
+## Sequential Filtering Approach
+
+The pipeline is designed as a funnel: cheap, fast filters run first (descriptors, structural alerts), and expensive operations (docking, retrosynthesis) run later on a smaller molecule set. This ordering minimizes computational cost while maximizing coverage.
+
+Key design decisions:
+
+- **Early exit**: if a stage produces zero passing molecules, the pipeline terminates early rather than running subsequent stages on an empty set.
+- **Single-stage mode**: any stage can be run independently with `--stage <name>`, which is useful for debugging or re-running a single step.
+- **Provenance**: all configuration files are snapshotted into a `configs/` directory at the start of each run, and a `RUN_INFO.md` is generated at completion.
+
+## Stage Configuration
+
+Each stage has its own YAML configuration file referenced from the master `config.yml`:
+
+```yaml
+config_descriptors: src/hedgehog/configs/config_descriptors.yml
+config_structFilters: src/hedgehog/configs/config_structFilters.yml
+config_synthesis: src/hedgehog/configs/config_synthesis.yml
+config_docking: src/hedgehog/configs/config_docking.yml
+config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+```
+
+Every stage config includes a `run: true/false` flag that controls whether it executes. See the [Configuration Reference](/configuration/reference) for full details.
+
+## Output Structure
+
+Each pipeline run creates a timestamped results directory with the following layout:
+
+```
+results/run_N/
++-- input/
+|   +-- sampled_molecules.csv
++-- stages/
+|   +-- 01_descriptors_initial/
+|   +-- 02_structural_filters_pre/
+|   +-- 03_structural_filters_post/
+|   +-- 04_synthesis/
+|   +-- 05_docking/
+|   +-- 06_docking_filters/
+|   +-- 07_descriptors_final/
++-- output/
+|   +-- final_molecules.csv
++-- configs/
+|   +-- master_config_resolved.yml
+|   +-- config_*.yml
++-- report.html
++-- report_data.json
++-- RUN_INFO.md
++-- run_YYYYMMDD_HHMMSS.log
+```

@@ -71,6 +71,7 @@ export class PythonBridge {
   private isReady = false;
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
+  private readyReject: ((err: Error) => void) | null = null;
   private throttler = new NotificationThrottler(300);
 
   constructor(
@@ -87,8 +88,9 @@ export class PythonBridge {
     logger.info(`Starting Python backend in ${this.cwd}...`);
     logger.info(`Command: ${this.command} ${this.args.join(' ')}`);
 
-    this.readyPromise = new Promise((resolve) => {
+    this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve;
+      this.readyReject = reject;
     });
 
     this.process = spawn(this.command, this.args, {
@@ -119,16 +121,28 @@ export class PythonBridge {
       if (str.includes('HEDGEHOG_TUI_READY')) {
         this.isReady = true;
         this.readyResolve?.();
+        this.readyResolve = null;
+        this.readyReject = null;
       }
     });
 
     this.process.on('error', (error) => {
       logger.error('Python process error:', error);
+      if (!this.isReady) {
+        this.readyReject?.(error instanceof Error ? error : new Error(String(error)));
+        this.readyResolve = null;
+        this.readyReject = null;
+      }
       this.cleanup();
     });
 
     this.process.on('exit', (code, signal) => {
       logger.info('Python process exited:', code, signal);
+      if (!this.isReady) {
+        this.readyReject?.(new Error(`Backend exited before ready (code=${code}, signal=${signal})`));
+        this.readyResolve = null;
+        this.readyReject = null;
+      }
       this.cleanup();
     });
 
@@ -150,9 +164,13 @@ export class PythonBridge {
   private cleanup(): void {
     this.throttler.clear();
     this.throttler.setHandler(null);
+    this.rpcClient?.cancelPending();
     this.process = null;
     this.rpcClient = null;
     this.isReady = false;
+    this.readyPromise = null;
+    this.readyResolve = null;
+    this.readyReject = null;
   }
 
   stop(): void {

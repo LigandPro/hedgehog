@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..validators import ConfigValidator
+from .files import _validate_path
 
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
@@ -18,6 +19,7 @@ class ValidationHandler:
     def validate_input_file(self, path: str) -> dict[str, Any]:
         """Validate that an input file exists and is readable."""
         file_path = Path(path).expanduser().resolve()
+        _validate_path(file_path)
 
         result = {
             "valid": False,
@@ -55,6 +57,7 @@ class ValidationHandler:
     def validate_receptor_pdb(self, path: str) -> dict[str, Any]:
         """Validate a receptor PDB file for docking."""
         file_path = Path(path).expanduser().resolve()
+        _validate_path(file_path)
 
         result = {
             "valid": False,
@@ -109,6 +112,7 @@ class ValidationHandler:
     def validate_output_directory(self, path: str) -> dict[str, Any]:
         """Validate output directory."""
         dir_path = Path(path).expanduser().resolve()
+        _validate_path(dir_path)
 
         result = {
             "valid": False,

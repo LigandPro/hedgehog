@@ -124,14 +124,6 @@ export function ReviewRun(): React.ReactElement {
 
       addJobToHistory(jobRecord);
 
-      await bridge.addJob(
-        jobId,
-        null,
-        config?.generated_mols_path || '',
-        config?.folder_to_save || '',
-        selectedStagesInOrder
-      );
-
       updatePipelineProgress({
         currentStage: selectedStagesInOrder[0],
         stageIndex: 1,
@@ -143,6 +135,19 @@ export function ReviewRun(): React.ReactElement {
       setRunning(true, jobId);
       showToast('info', 'Pipeline started');
       setScreen('pipelineRunner');
+
+      // Best-effort persistence to backend history (pipeline is already running).
+      try {
+        await bridge.addJob(
+          jobId,
+          null,
+          config?.generated_mols_path || '',
+          config?.folder_to_save || '',
+          selectedStagesInOrder
+        );
+      } catch (err) {
+        showToast('warning', `Failed to save job history: ${err}`);
+      }
     } catch (err) {
       showToast('error', `Failed to start: ${err}`);
       setStarting(false);

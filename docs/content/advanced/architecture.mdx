@@ -1,0 +1,332 @@
+---
+title: Architecture
+---
+
+# Architecture
+
+This page describes the internal architecture of HEDGEHOG: how the pipeline is orchestrated, how configuration flows through the system, and how to extend the pipeline with new stages.
+
+## High-Level Overview
+
+HEDGEHOG is a sequential molecular analysis pipeline that filters drug candidates through progressively stricter stages. The architecture follows a linear data flow:
+
+```
+Input CSV
+  → Descriptors (physicochemical properties)
+    → Structural Filters (PAINS, Lilly, NIBR, medchem)
+      → Synthesis (retrosynthesis feasibility)
+        → Docking (binding affinity scoring)
+          → Docking Filters (pose quality)
+            → Final Descriptors (recalculation on survivors)
+              → HTML Report
+```
+
+Each stage reads molecules from the previous stage's output CSV, applies its filters, and writes a `filtered_molecules.csv` containing molecules that passed. Stages can be independently enabled or disabled via YAML configuration files.
+
+## Directory Structure
+
+```
+src/hedgehog/
+├── main.py                  # CLI entry point (Typer app)
+├── pipeline.py              # Pipeline orchestration
+├── configs/
+│   ├── config.yml           # Master configuration
+│   ├── config_descriptors.yml
+│   ├── config_structFilters.yml
+│   ├── config_synthesis.yml
+│   ├── config_docking.yml
+│   ├── config_docking_filters.yml
+│   ├── config_moleval.yml
+│   └── logger.py            # LoggerSingleton, load_config()
+├── stages/
+│   ├── descriptors/         # Stage 1: physicochemical descriptors
+│   ├── structFilters/       # Stage 2: structural filters
+│   ├── synthesis/           # Stage 3: retrosynthesis analysis
+│   ├── docking/             # Stage 4: molecular docking
+│   └── dockingFilters/      # Stage 5: docking pose filters
+├── reporting/
+│   ├── report_generator.py  # HTML report generation (Jinja2)
+│   ├── plots.py             # Matplotlib/Plotly visualizations
+│   └── moleval_metrics.py   # MolEval generative quality metrics
+├── tui_backend/
+│   ├── server.py            # JSON-RPC server (stdio)
+│   ├── validators.py        # Configuration validation
+│   └── handlers/            # RPC method handlers
+├── utils/                   # Shared utilities
+└── vendor/
+    └── moleval/             # Vendored MolEval from MolScore v1.9.5
+```
+
+## Key Classes
+
+### MolecularAnalysisPipeline
+
+Defined in `src/hedgehog/pipeline.py`. This is the central orchestrator that executes stages in sequence, tracks completion status, and handles early-exit conditions (e.g., when all molecules are filtered out mid-pipeline).
+
+```python
+class MolecularAnalysisPipeline:
+    _STAGE_DEFINITIONS = [
+        (STAGE_STRUCT_INI_FILTERS, CONFIG_STRUCT_FILTERS, DIR_BEFORE_DESCRIPTORS),
+        (STAGE_DESCRIPTORS, CONFIG_DESCRIPTORS, DIR_DESCRIPTORS),
+        (STAGE_STRUCT_FILTERS, CONFIG_STRUCT_FILTERS, DIR_STRUCT_FILTERS),
+        (STAGE_SYNTHESIS, CONFIG_SYNTHESIS, DIR_SYNTHESIS),
+        (STAGE_DOCKING, CONFIG_DOCKING, DIR_DOCKING),
+        (STAGE_DOCKING_FILTERS, CONFIG_DOCKING_FILTERS, DIR_DOCKING_FILTERS),
+        (STAGE_FINAL_DESCRIPTORS, CONFIG_DESCRIPTORS, DIR_FINAL_DESCRIPTORS),
+    ]
+```
+
+Each tuple defines `(stage_name, config_key, output_directory)`. On initialization, the pipeline creates `PipelineStage` objects from these definitions and builds a `_stage_by_name` dictionary for O(1) lookup.
+
+Key methods:
+
+- `run_pipeline(data)` — executes all enabled stages, returns `True` if no enabled stages failed (disabled and legitimately skipped stages are not counted as failures).
+- `_run_stage(stage_name, runner_func, ...)` — generic stage runner with timing, logging, and failure callback support.
+- `_stage_is_failed(stage)` — determines whether a non-completed stage should be reported as a failure or as a legitimate skip (e.g., when upstream data is empty).
+- `get_latest_data()` — loads the most recent stage output, with fallback to earlier stages if the latest is empty.
+
+### PipelineStageRunner
+
+Also in `pipeline.py`. Encapsulates the execution logic for each individual stage. Each `run_*` method loads the stage-specific YAML config, checks if the stage is enabled, calls the stage's `main()` function, and validates the output.
+
+```python
+class PipelineStageRunner:
+    DATA_SOURCE_PRIORITY = [
+        DIR_DOCKING_FILTERS,
+        DIR_SYNTHESIS,
+        DIR_STRUCT_FILTERS_POST,
+        DIR_DESCRIPTORS_INITIAL,
+        DIR_STRUCT_FILTERS_PRE,
+    ]
+```
+
+The priority list determines which stage's output is preferred when looking for the most recent data — later stages take precedence.
+
+### ReportGenerator
+
+Defined in `src/hedgehog/reporting/report_generator.py`. Uses Jinja2 templates to produce a self-contained HTML report with embedded plots and data tables. The report includes:
+
+- Pipeline summary (molecule counts, retention rates, stage timings)
+- Per-stage descriptor distributions
+- Structural filter breakdowns
+- Synthesis score distributions
+- Docking score analysis
+- MolEval generative quality metrics
+- Drug-likeness compliance charts
+- Chemical group presence rates
+
+### LoggerSingleton
+
+Defined in `src/hedgehog/configs/logger.py`. A thread-safe singleton that provides both Rich console output (with color and markup) and plain-text file logging.
+
+```python
+class LoggerSingleton:
+    _instance: LoggerSingleton | None = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:          # Double-checked locking
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+```
+
+The singleton pattern ensures all modules share the same logger instance. The file handler is attached lazily via `configure_log_directory()` so that CLI overrides to the output folder are respected.
+
+The module also exports `load_config()`, a YAML loader used throughout the codebase to read stage configuration files.
+
+## Stage Definitions System
+
+Stages are defined declaratively in `MolecularAnalysisPipeline._STAGE_DEFINITIONS` as a list of `(name, config_key, directory)` tuples. This avoids magic indices and makes stage ordering explicit.
+
+At initialization:
+
+1. Each tuple is converted to a `PipelineStage` object.
+2. A `_stage_by_name` dictionary is built for direct lookup.
+3. Each stage's YAML config is loaded to determine its `enabled` status.
+4. If a single-stage override is active (via `--stage` CLI flag), only that stage is enabled.
+
+```python
+# Stage lookup example
+stage = self._stage_by_name["synthesis"]
+if stage.enabled and not stage.completed:
+    # handle failure
+```
+
+## Configuration System
+
+Configuration uses a hierarchical YAML structure. The master config (`config.yml`) references per-stage config files:
+
+```yaml
+# config.yml (master)
+generated_mols_path: data/test/moses_1000.csv
+folder_to_save: results/run
+n_jobs: 62
+sample_size: 1000
+
+# Stage config file references
+config_descriptors: src/hedgehog/configs/config_descriptors.yml
+config_structFilters: src/hedgehog/configs/config_structFilters.yml
+config_synthesis: src/hedgehog/configs/config_synthesis.yml
+config_docking: src/hedgehog/configs/config_docking.yml
+config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+config_moleval: src/hedgehog/configs/config_moleval.yml
+```
+
+Each stage config contains a `run: true/false` flag that controls whether the stage executes. Stage-specific parameters (thresholds, tool paths, filter flags) are defined in the respective config file.
+
+The `load_config()` function in `logger.py` reads any YAML file and returns a dictionary:
+
+```python
+from hedgehog.configs.logger import load_config
+
+config = load_config("src/hedgehog/configs/config_synthesis.yml")
+if config.get("run", False):
+    # stage is enabled
+```
+
+At pipeline start, all config files are snapshotted into the output directory under `configs/` for provenance.
+
+## TUI Backend
+
+The TUI (Text User Interface) is a Node.js application (in `tui/`) that communicates with a Python backend over stdio using JSON-RPC 2.0.
+
+### Communication Protocol
+
+The backend (`src/hedgehog/tui_backend/server.py`) defines a `JsonRpcServer` that reads JSON-RPC requests from stdin and writes responses to stdout:
+
+```python
+class JsonRpcServer:
+    def run(self):
+        self._running = True
+        sys.stderr.write("HEDGEHOG_TUI_READY\n")  # Signal ready
+        sys.stderr.flush()
+        for line in sys.stdin:
+            if not self._running:
+                break
+            request = json.loads(line.strip())
+            threading.Thread(target=self.handle_request, args=(request,), daemon=True).start()
+```
+
+The Node.js frontend spawns the Python backend as a child process and communicates via the process's stdin/stdout streams. No network ports are used in production.
+
+### RPC Handlers
+
+Methods are organized into handler modules:
+
+| Handler | Methods | Purpose |
+|---|---|---|
+| `ConfigHandler` | `load_config`, `save_config`, `validate_config` | Read/write YAML configs |
+| `FilesHandler` | `list_files`, `list_directory`, `count_molecules` | File system browsing |
+| `PipelineHandler` | `start_pipeline`, `get_progress`, `cancel_pipeline` | Pipeline execution |
+| `ValidationHandler` | `validate_input_file`, `validate_receptor_pdb`, `validate_output_directory`, `validate_config_data` | Input & config validation |
+| `HistoryHandler` | `get_job_history`, `add_job`, `update_job`, `delete_job` | Run history tracking |
+
+### Configuration Validation
+
+The `ConfigValidator` class in `validators.py` provides type-specific validation for each config section (main, descriptors, filters, synthesis, docking, docking_filters). Validation runs before saving configs through the TUI.
+
+## Pipeline Data Flow
+
+Each stage follows the same contract:
+
+1. Read input molecules from the previous stage's `filtered_molecules.csv`.
+2. Apply stage-specific processing (descriptor calculation, filtering, scoring).
+3. Write `filtered_molecules.csv` containing molecules that passed.
+4. Optionally write additional outputs (plots, detailed metrics, extended CSVs).
+
+The `DataChecker` class verifies stage outputs exist and contain data rows. The `PipelineStageRunner` uses a priority-ordered list to find the most recent stage with available data:
+
+```
+Docking Filters → Synthesis → Struct Filters (post) → Descriptors → Struct Filters (pre)
+```
+
+When a stage produces zero output molecules, the pipeline can either exit early (for critical stages like structural filters) or continue (for non-critical stages like synthesis).
+
+## Adding a New Pipeline Stage
+
+To add a new stage to the pipeline:
+
+### 1. Create the stage module
+
+Create a new directory under `src/hedgehog/stages/`:
+
+```
+src/hedgehog/stages/myStage/
+├── __init__.py
+├── main.py       # Entry point: main(config) or main(config, stage_dir)
+└── utils.py      # Stage logic
+```
+
+The `main.py` should accept the pipeline config dictionary and write its output to the appropriate stage directory.
+
+### 2. Add a configuration file
+
+Create `src/hedgehog/configs/config_myStage.yml`:
+
+```yaml
+run: true
+# Stage-specific parameters
+my_threshold: 0.5
+```
+
+Add the reference to the master config:
+
+```yaml
+# In config.yml
+config_myStage: src/hedgehog/configs/config_myStage.yml
+```
+
+### 3. Register the stage in the pipeline
+
+In `pipeline.py`, add constants and register the stage:
+
+```python
+# Add stage name and config key constants
+STAGE_MY_STAGE = "my_stage"
+CONFIG_MY_STAGE = "config_myStage"
+DIR_MY_STAGE = "stages/08_my_stage"
+
+# Add to _STAGE_DEFINITIONS in MolecularAnalysisPipeline
+_STAGE_DEFINITIONS = [
+    # ... existing stages ...
+    (STAGE_MY_STAGE, CONFIG_MY_STAGE, DIR_MY_STAGE),
+]
+```
+
+### 4. Add a runner method
+
+In `PipelineStageRunner`, add a method that loads the config, checks the `run` flag, calls your stage's entry point, and returns a boolean:
+
+```python
+def run_my_stage(self) -> bool:
+    try:
+        config_my_stage = load_config(self.config[CONFIG_MY_STAGE])
+        if not config_my_stage.get("run", False):
+            logger.info("My stage disabled in config")
+            return False
+        my_stage_main(self.config)
+        return True
+    except Exception as e:
+        logger.error("Error running my stage: %s", e)
+        return False
+```
+
+### 5. Wire it into the pipeline execution
+
+In `MolecularAnalysisPipeline`, add a `_run_my_stage` method and include it in the `run_pipeline()` stage results list:
+
+```python
+def _run_my_stage(self) -> tuple[bool, bool]:
+    return self._run_stage(STAGE_MY_STAGE, self.stage_runner.run_my_stage)
+```
+
+### 6. Update supporting systems
+
+- Add the stage to `_STAGE_LABELS` for log output.
+- Add the stage to `_STAGE_DESCRIPTIONS` for RUN_INFO.md generation.
+- Add a tree template to `_STAGE_TREE_TEMPLATES` if the stage has structured output.
+- Update the `DataChecker._STAGE_OUTPUT_PATHS` mapping.
+- Add the stage to `DATA_SOURCE_PRIORITY` if later stages should use its output.
+- Add report sections in `report_generator.py` if the stage produces visualizable data.

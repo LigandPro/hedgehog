@@ -1,6 +1,7 @@
 """Job history handler for TUI backend."""
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,6 +16,7 @@ class HistoryHandler:
     def __init__(self, server: "JsonRpcServer"):
         self.server = server
         self.history_file = Path.home() / ".hedgehog" / "job_history.json"
+        self._lock = threading.Lock()
         self._ensure_history_dir()
 
     def _ensure_history_dir(self):
@@ -36,8 +38,9 @@ class HistoryHandler:
 
     def get_job_history(self, limit: int = 50) -> list[dict]:
         """Get job history."""
-        history = self._load_history()
-        return history[:limit]
+        with self._lock:
+            history = self._load_history()
+            return history[:limit]
 
     def add_job(
         self,
@@ -48,28 +51,29 @@ class HistoryHandler:
         stages: list[str] | None = None,
     ) -> dict:
         """Add a new job to history."""
-        history = self._load_history()
+        with self._lock:
+            history = self._load_history()
 
-        job = {
-            "id": job_id,
-            "name": name or f"Job {job_id}",
-            "startTime": datetime.now().isoformat(),
-            "endTime": None,
-            "status": "running",
-            "config": {
-                "inputPath": input_path,
-                "outputPath": output_path,
-                "stages": stages or [],
-            },
-            "results": None,
-            "error": None,
-        }
+            job = {
+                "id": job_id,
+                "name": name or f"Job {job_id}",
+                "startTime": datetime.now().isoformat(),
+                "endTime": None,
+                "status": "running",
+                "config": {
+                    "inputPath": input_path,
+                    "outputPath": output_path,
+                    "stages": stages or [],
+                },
+                "results": None,
+                "error": None,
+            }
 
-        history.insert(0, job)
-        history = history[:100]  # Keep last 100 jobs
-        self._save_history(history)
+            history.insert(0, job)
+            history = history[:100]  # Keep last 100 jobs
+            self._save_history(history)
 
-        return job
+            return job
 
     def update_job(
         self,
@@ -79,33 +83,35 @@ class HistoryHandler:
         error: str | None = None,
     ) -> dict | None:
         """Update a job in history."""
-        history = self._load_history()
+        with self._lock:
+            history = self._load_history()
 
-        for job in history:
-            if job["id"] == job_id:
-                if status:
-                    job["status"] = status
-                    if status in ("completed", "cancelled", "error"):
-                        job["endTime"] = datetime.now().isoformat()
-                if results:
-                    job["results"] = results
-                if error:
-                    job["error"] = error
+            for job in history:
+                if job["id"] == job_id:
+                    if status is not None:
+                        job["status"] = status
+                        if status in ("completed", "cancelled", "error"):
+                            job["endTime"] = datetime.now().isoformat()
+                    if results is not None:
+                        job["results"] = results
+                    if error is not None:
+                        job["error"] = error
 
-                self._save_history(history)
-                return job
+                    self._save_history(history)
+                    return job
 
-        return None
+            return None
 
     def delete_job(self, job_id: str) -> bool:
         """Delete a job from history."""
-        history = self._load_history()
-        original_len = len(history)
+        with self._lock:
+            history = self._load_history()
+            original_len = len(history)
 
-        history = [j for j in history if j["id"] != job_id]
+            history = [j for j in history if j["id"] != job_id]
 
-        if len(history) < original_len:
-            self._save_history(history)
-            return True
+            if len(history) < original_len:
+                self._save_history(history)
+                return True
 
-        return False
+            return False

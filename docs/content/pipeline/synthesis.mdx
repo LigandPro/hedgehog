@@ -1,0 +1,95 @@
+---
+title: Synthesis
+---
+
+# Synthesis
+
+The synthesis stage evaluates whether generated molecules can be practically synthesized. It computes three independent accessibility scores and optionally runs full retrosynthetic route analysis using AiZynthFinder.
+
+## Scoring Methods
+
+### SA Score (Synthetic Accessibility Score)
+
+- **Range**: 1--10 (lower is better)
+- **Method**: RDKit Contrib SA Score calculator (`RDConfig.RDContribDir/SA_Score`)
+- **How it works**: Combines fragment contributions (from a frequency analysis of molecules in PubChem) with a complexity penalty. Molecules built from common fragments score low; molecules requiring unusual substructures score high.
+- **Default threshold**: 0--4.5
+
+### SYBA Score (SYnthetic Bayesian Accessibility)
+
+- **Range**: unbounded (higher is better; typically -100 to +300)
+- **Method**: SYBA package
+- **How it works**: A Bayesian classifier trained on easily synthesizable molecules (from the ZINC database) vs. hard-to-synthesize molecules. Positive scores indicate likely synthesizability.
+- **Default threshold**: 0--inf (no upper bound)
+
+### RA Score (Retrosynthetic Accessibility Score)
+
+- **Range**: 0--1 (higher is better)
+- **Method**: XGBoost model trained on ECFP6 count fingerprints (from MolScore RAScore)
+- **How it works**: An XGBoost classifier trained on the output of a retrosynthesis tool. Predicts the probability that a retrosynthesis planner can find a valid route to the molecule. Faster than running actual retrosynthesis but less precise.
+- **Default threshold**: 0.5--1
+
+## AiZynthFinder Retrosynthesis
+
+When `run_retrosynthesis: true`, the pipeline runs AiZynthFinder to search for actual retrosynthetic routes:
+
+1. Input SMILES are written to `input_smiles.smi`
+2. AiZynthFinder performs tree search using its neural expansion policy
+3. Routes are analyzed for feasibility (are all starting materials commercially available?)
+4. Results are saved to `retrosynthesis_results.json`
+
+If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept. This is the strictest synthesis filter but also the most computationally expensive.
+
+Setting `run_retrosynthesis: false` skips AiZynthFinder entirely and only computes the three scores above, which is significantly faster.
+
+## Configuration
+
+Full configuration in `config_synthesis.yml`:
+
+```yaml
+run: true
+run_retrosynthesis: true     # Run AiZynthFinder route search
+filter_solved_only: true     # Keep only molecules with found routes
+
+# Score thresholds
+sa_score_min: 0
+sa_score_max: 4.5
+syba_score_min: 0
+syba_score_max: inf
+ra_score_min: 0.5
+ra_score_max: 1
+```
+
+## Filtering Logic
+
+A molecule passes the synthesis stage if **all** of the following hold:
+
+1. SA Score is within `[sa_score_min, sa_score_max]`
+2. SYBA Score is within `[syba_score_min, syba_score_max]`
+3. RA Score is within `[ra_score_min, ra_score_max]`
+4. If `filter_solved_only: true` and `run_retrosynthesis: true`: AiZynthFinder found at least one valid route
+
+## Output Files
+
+| File | Description |
+|------|-------------|
+| `synthesis_scores.csv` | SA Score, RA Score, and SYBA Score for all input molecules |
+| `synthesis_extended.csv` | Scores combined with retrosynthesis results (when retrosynthesis is enabled) |
+| `filtered_molecules.csv` | Molecules passing all synthesis filters |
+| `input_smiles.smi` | SMILES input file generated for AiZynthFinder |
+| `retrosynthesis_results.json` | Raw AiZynthFinder output with route trees |
+
+## Usage
+
+```bash
+# Run synthesis as part of the full pipeline
+uv run hedgehog run
+
+# Run synthesis stage only
+uv run hedgehog run --stage synthesis
+
+# Short alias
+uv run hedge run --stage synthesis
+```
+
+To run a fast scores-only pass (no retrosynthesis), set `run_retrosynthesis: false` in the config. This is useful for quick screening when AiZynthFinder is not installed or when you want rapid turnaround.

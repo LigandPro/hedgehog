@@ -1,7 +1,7 @@
 run: true
 run_retrosynthesis: true
 filter_solved_only: true
-sa_score_min: 0
+sa_score_min: 1  # SA score scale is 1-10 (1 = easy to synthesize)
 sa_score_max: 4.5
 syba_score_min: 0
 syba_score_max: inf

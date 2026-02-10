@@ -1,0 +1,179 @@
+---
+title: Docking Filters
+---
+
+# Docking Filters
+
+The docking filters stage applies a cascade of quality checks to docked poses, removing those with steric clashes, implausible geometries, or missing key interactions. It then deduplicates poses to produce a list of unique molecules for downstream processing.
+
+## Filter Cascade
+
+Filters are applied in order from cheapest to most expensive. When the aggregation mode is `all` (default), the search-box filter can short-circuit evaluation: poses that fail it skip all subsequent filters.
+
+### Filter 0: Search-Box Containment
+
+Verifies that the docked pose lies within the configured docking search box. This catches poses that drifted outside the binding site during optimization.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `true` | Enable/disable this filter |
+| `max_outside_fraction` | `0.0` | Maximum fraction of atoms allowed outside the box (0.0 = all atoms must be inside) |
+| `short_circuit` | `true` | Skip heavy filters for failed poses (only in `all` mode) |
+
+The search box is resolved from the docking configuration: either explicit `center`/`size` coordinates, or computed from `autobox_ligand` + `autobox_add` (the same reference ligand used for docking).
+
+### Filter 1: Pose Quality (PoseCheck)
+
+Uses [PoseCheck](https://github.com/cch1999/posecheck) to detect steric clashes between the ligand and protein, and to measure ligand strain energy.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `true` | Enable/disable this filter |
+| `max_clashes` | `2` | Maximum allowed steric clashes (0 = strict) |
+| `max_strain_energy` | `50.0` | Maximum ligand strain energy in kcal/mol |
+| `strain_forcefield` | `UFF` | Force field for strain calculation (UFF, MMFF94s, or MMFF94s_noEstat) |
+| `clash_tolerance` | `0.5` | Angstrom tolerance for VdW overlap detection |
+
+Clashes indicate that the ligand overlaps with protein atoms in a physically impossible way. High strain energy means the ligand is in an energetically unfavorable conformation.
+
+### Filter 2: Interaction Analysis (ProLIF)
+
+Uses [ProLIF](https://prolif.readthedocs.io/) to compute a protein-ligand interaction fingerprint and check for required/forbidden contacts.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `true` | Enable/disable this filter |
+| `min_hbonds` | `0` | Minimum hydrogen bonds required |
+| `required_residues` | `[]` | Residues that must have at least one interaction (e.g., `["ASP:123"]`) |
+| `forbidden_residues` | `[]` | Residues that must NOT have any interaction |
+| `interaction_types` | `[HBDonor, HBAcceptor, Hydrophobic, VdWContact]` | Interaction types to detect |
+| `similarity_threshold` | `0.0` | Tanimoto similarity to reference interaction fingerprint (0 = disabled) |
+
+This filter is especially useful when you know the binding mode should involve specific residues (e.g., a catalytic aspartate) or should avoid certain contacts (e.g., a cysteine that causes covalent binding).
+
+### Filter 3: Shepherd-Score (3D Shape Similarity)
+
+Compares the 3D molecular shape of each pose to a reference ligand using Gaussian overlap Tanimoto.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `false` | Disabled by default (requires reference ligand) |
+| `reference_ligand` | `null` | Path to reference ligand SDF |
+| `min_shape_score` | `0.5` | Minimum shape Tanimoto score |
+| `alpha` | `0.81` | Gaussian width parameter |
+
+This filter is disabled by default because it requires a known reference ligand for comparison. Enable it when you have a co-crystallized ligand or known active compound and want to ensure poses adopt a similar shape.
+
+### Filter 4: Conformer Deviation
+
+Checks if the docked pose is geometrically plausible by generating multiple low-energy conformers and measuring the RMSD between the docked pose and the closest conformer.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `true` | Enable/disable this filter |
+| `num_conformers` | `50` | Number of conformers to generate |
+| `conformer_method` | `ETKDGv3` | Conformer generation method (ETKDG, ETKDGv2, ETKDGv3) |
+| `max_rmsd_to_conformer` | `3.0` | Maximum RMSD in Angstroms to closest conformer |
+| `random_seed` | `42` | Seed for reproducible conformer generation |
+
+A high minimum RMSD indicates that the docking engine placed the ligand in a conformation that is energetically unlikely for the molecule to adopt in solution. This catches docking artifacts where the scoring function found a favorable protein-ligand interaction at the cost of internal strain.
+
+## Aggregation
+
+The aggregation mode controls how per-filter results are combined:
+
+```yaml
+aggregation:
+  mode: "all"         # "all" = pass every filter, "any" = pass at least one
+  save_metrics: true   # Save detailed per-pose metrics CSV
+  save_failed: false   # Save molecules that failed filtering
+```
+
+- **`all`** (default): a pose must pass every enabled filter. This is the conservative approach for drug discovery campaigns.
+- **`any`**: a pose passes if it passes at least one filter. Useful for exploratory analysis.
+
+## Deduplication
+
+Docking typically produces multiple poses per molecule (e.g., `num_modes: 9`). After filtering, the pipeline deduplicates to unique molecules:
+
+1. All passing poses are saved to `filtered_poses.csv` (full pose-level detail)
+2. Poses are sorted by `minimizedAffinity` (best affinity first)
+3. For each unique `mol_idx`, only the best-scoring pose is kept
+4. Deduplicated molecules are saved to `filtered_molecules.csv`
+
+SMILES for the output are taken from the original `ligands.csv` (2D SMILES) rather than regenerated from 3D coordinates, which preserves the original stereochemistry encoding.
+
+## Configuration
+
+Full configuration in `config_docking_filters.yml`:
+
+```yaml
+run: true
+run_after_docking: true
+
+input_sdf: null       # null = auto-detect from docking output
+receptor_pdb: null    # null = use receptor from docking config
+
+search_box:
+  enabled: true
+  max_outside_fraction: 0.0
+  short_circuit: true
+
+pose_quality:
+  enabled: true
+  max_clashes: 2
+  max_strain_energy: 50.0
+  strain_forcefield: "UFF"
+  clash_tolerance: 0.5
+
+interactions:
+  enabled: true
+  min_hbonds: 0
+  required_residues: []
+  forbidden_residues: []
+  interaction_types:
+    - HBDonor
+    - HBAcceptor
+    - Hydrophobic
+    - VdWContact
+
+shepherd_score:
+  enabled: false
+  reference_ligand: null
+  min_shape_score: 0.5
+  alpha: 0.81
+
+conformer_deviation:
+  enabled: true
+  num_conformers: 50
+  conformer_method: "ETKDGv3"
+  max_rmsd_to_conformer: 3.0
+  random_seed: 42
+
+aggregation:
+  mode: "all"
+  save_metrics: true
+  save_failed: false
+```
+
+## Output Files
+
+| File | Description |
+|------|-------------|
+| `metrics.csv` | Per-pose filter metrics and pass/fail flags for every filter |
+| `filtered_molecules.csv` | Unique molecules (best pose per molecule) passing all filters |
+| `filtered_poses.csv` | All passing poses with full metrics (before deduplication) |
+| `filtered_poses.sdf` | 3D structures of all passing poses in SDF format |
+
+## Usage
+
+```bash
+# Run docking filters as part of the full pipeline
+uv run hedgehog run
+
+# Run docking filters stage only (requires docking output to exist)
+uv run hedgehog run --stage docking_filters
+
+# Short alias
+uv run hedge run --stage docking_filters
+```

@@ -1,9 +1,12 @@
 """Pipeline execution handler for TUI backend."""
 
+import tempfile
 import threading
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import yaml
 
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
@@ -12,7 +15,7 @@ if TYPE_CHECKING:
 def _find_project_root() -> Path:
     """Find project root by looking for pyproject.toml."""
     current = Path.cwd()
-    for parent in [current] + list(current.parents):
+    for parent in [current, *current.parents]:
         if (parent / "pyproject.toml").exists():
             return parent
     return current
@@ -30,6 +33,15 @@ class PipelineJob:
         "docking": "docking",
         "docking_filters": "docking_filters",
         "final_descriptors": "descriptors",
+    }
+
+    # Map TUI stage names to the config keys whose "run" flag they control
+    TUI_STAGE_CONFIG_KEYS = {
+        "descriptors": ["config_descriptors"],
+        "struct_filters": ["config_structFilters"],
+        "synthesis": ["config_synthesis"],
+        "docking": ["config_docking"],
+        "docking_filters": ["config_docking_filters"],
     }
 
     def __init__(self, job_id: str, stages: list[str], server: "JsonRpcServer"):
@@ -55,159 +67,126 @@ class PipelineJob:
         """Map internal stage name to TUI stage name."""
         return self.STAGE_NAME_MAP.get(internal_name, internal_name)
 
+    def _notify(self, method: str, params: dict) -> None:
+        """Send a notification via the server."""
+        self.server.send_notification(method, params)
+
+    def _log(self, level: str, message: str) -> None:
+        """Send a log notification."""
+        self._notify("log", {"level": level, "message": message})
+
+    def _disable_unrequested_stages(self, config_dict: dict) -> None:
+        """Disable pipeline stages not requested by the TUI user.
+
+        For each sub-config whose TUI stage is not in self.stages, load the
+        YAML, set ``run: false``, write to a temp file, and update config_dict
+        to point to it so that the pipeline picks up the override.
+        """
+        # Collect all config keys that should remain enabled
+        enabled_keys: set[str] = set()
+        for tui_stage in self.stages:
+            for key in self.TUI_STAGE_CONFIG_KEYS.get(tui_stage, []):
+                enabled_keys.add(key)
+
+        for tui_stage, cfg_keys in self.TUI_STAGE_CONFIG_KEYS.items():
+            if tui_stage in self.stages:
+                continue
+            for cfg_key in cfg_keys:
+                if cfg_key in enabled_keys:
+                    # Another requested TUI stage shares this config key
+                    continue
+                cfg_path = config_dict.get(cfg_key)
+                if not cfg_path:
+                    continue
+                try:
+                    with open(cfg_path) as f:
+                        sub_cfg = yaml.safe_load(f) or {}
+                    sub_cfg["run"] = False
+                    tmp = tempfile.NamedTemporaryFile(
+                        mode="w", suffix=".yml", delete=False
+                    )
+                    yaml.safe_dump(sub_cfg, tmp)
+                    tmp.close()
+                    config_dict[cfg_key] = tmp.name
+                except Exception:
+                    pass  # Best-effort; pipeline will use original config
+
+    def _emit_stage_transition(self, tui_stage: str) -> None:
+        """Emit stage_complete/stage_start notifications on stage change."""
+        if self.previous_stage and self.previous_stage != tui_stage:
+            self._notify("stage_complete", {"stage": self.previous_stage})
+            self._log("info", f"Stage completed: {self.previous_stage}")
+
+        if self.current_stage != tui_stage:
+            self._notify("stage_start", {"stage": tui_stage})
+            self._log("info", f"Starting stage: {tui_stage}")
+
+        self.previous_stage = tui_stage
+        self.current_stage = tui_stage
+
+    def _progress_callback(self, stage: str, current: int, total: int) -> None:
+        """Pipeline progress callback; raises InterruptedError on cancel."""
+        if self.cancelled:
+            raise InterruptedError("Pipeline cancelled")
+
+        tui_stage = self._map_stage_name(stage)
+        self._emit_stage_transition(tui_stage)
+
+        progress_pct = int((current / total) * 100) if total > 0 else 0
+        self.progress[tui_stage] = progress_pct
+        self._notify(
+            "progress",
+            {
+                "stage": tui_stage,
+                "current": progress_pct,
+                "total": 100,
+                "message": f"Running stage {current}/{total}: {tui_stage}",
+            },
+        )
+
     def _run(self):
         """Execute the pipeline."""
         try:
-            # Import hedgehog modules
             from hedgehog.configs.logger import load_config, logger
             from hedgehog.pipeline import calculate_metrics
             from hedgehog.utils.data_prep import prepare_input_data
             from hedgehog.utils.mol_index import assign_mol_idx
 
-            # Load config
             config_path = _find_project_root() / "src/hedgehog/configs/config.yml"
             config_dict = load_config(str(config_path))
+            self._disable_unrequested_stages(config_dict)
 
-            # Set up progress callback for real pipeline
-            def progress_callback(stage: str, current: int, total: int):
-                if self.cancelled:
-                    raise InterruptedError("Pipeline cancelled")
-
-                # Map stage name
-                tui_stage = self._map_stage_name(stage)
-
-                # If stage changed, send stage_complete for previous and stage_start for new
-                if self.previous_stage and self.previous_stage != tui_stage:
-                    prev_tui_stage = self._map_stage_name(self.previous_stage)
-                    self.server.send_notification(
-                        "stage_complete",
-                        {
-                            "stage": prev_tui_stage,
-                        },
-                    )
-                    self.server.send_notification(
-                        "log",
-                        {
-                            "level": "info",
-                            "message": f"Stage completed: {prev_tui_stage}",
-                        },
-                    )
-
-                if self.current_stage != tui_stage:
-                    self.server.send_notification(
-                        "stage_start",
-                        {
-                            "stage": tui_stage,
-                        },
-                    )
-                    self.server.send_notification(
-                        "log",
-                        {
-                            "level": "info",
-                            "message": f"Starting stage: {tui_stage}",
-                        },
-                    )
-
-                self.previous_stage = stage
-                self.current_stage = tui_stage
-
-                # Send progress update - use percentage within stage context
-                # Since we don't have fine-grained progress, use current/total as rough indicator
-                progress_pct = int((current / total) * 100) if total > 0 else 0
-                self.server.send_notification(
-                    "progress",
-                    {
-                        "stage": tui_stage,
-                        "current": progress_pct,
-                        "total": 100,
-                        "message": f"Running stage {current}/{total}: {tui_stage}",
-                    },
-                )
-
-            # Prepare data
-            self.server.send_notification(
-                "log",
-                {
-                    "level": "info",
-                    "message": "Preparing input data...",
-                },
-            )
-
+            self._log("info", "Preparing input data...")
             data = prepare_input_data(config_dict, logger)
 
             if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
                 folder_to_save = Path(config_dict.get("folder_to_save", "results"))
                 data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
 
-            self.server.send_notification(
-                "log",
-                {
-                    "level": "info",
-                    "message": f"Loaded {len(data)} molecules",
-                },
-            )
+            self._log("info", f"Loaded {len(data)} molecules")
+            self._log("info", "Starting pipeline execution...")
 
-            # Run actual pipeline with progress callback
-            self.server.send_notification(
-                "log",
-                {
-                    "level": "info",
-                    "message": "Starting pipeline execution...",
-                },
-            )
+            success = calculate_metrics(data, config_dict, self._progress_callback)
 
-            success = calculate_metrics(data, config_dict, progress_callback)
-
-            # Mark last stage as complete
             if self.current_stage and not self.cancelled:
-                self.server.send_notification(
-                    "stage_complete",
-                    {
-                        "stage": self.current_stage,
-                    },
-                )
-                self.server.send_notification(
-                    "log",
-                    {
-                        "level": "info",
-                        "message": f"Stage completed: {self.current_stage}",
-                    },
-                )
+                self._notify("stage_complete", {"stage": self.current_stage})
+                self._log("info", f"Stage completed: {self.current_stage}")
 
             if not self.cancelled:
-                self.server.send_notification(
+                self._notify(
                     "complete",
                     {
                         "job_id": self.job_id,
                         "success": success,
-                        "results": {
-                            "molecules_processed": len(data),
-                        },
+                        "results": {"molecules_processed": len(data)},
                     },
                 )
 
         except InterruptedError:
-            self.server.send_notification(
-                "log",
-                {
-                    "level": "warn",
-                    "message": "Pipeline was cancelled",
-                },
-            )
+            self._log("warn", "Pipeline was cancelled")
         except Exception as e:
-            self.server.send_notification(
-                "error",
-                {
-                    "message": str(e),
-                },
-            )
-            self.server.send_notification(
-                "log",
-                {
-                    "level": "error",
-                    "message": f"Pipeline error: {e}",
-                },
-            )
+            self._notify("error", {"message": str(e)})
+            self._log("error", f"Pipeline error: {e}")
 
 
 _MAX_COMPLETED_JOBS = 50
@@ -219,34 +198,37 @@ class PipelineHandler:
     def __init__(self, server: "JsonRpcServer"):
         self.server = server
         self.jobs: dict[str, PipelineJob] = {}
+        self._lock = threading.Lock()
 
     def _cleanup_completed_jobs(self) -> None:
         """Remove oldest completed jobs when exceeding the limit."""
-        completed = [
-            jid
-            for jid, job in self.jobs.items()
-            if not job._thread or not job._thread.is_alive()
-        ]
-        excess = len(completed) - _MAX_COMPLETED_JOBS
-        if excess > 0:
-            for jid in completed[:excess]:
-                del self.jobs[jid]
+        with self._lock:
+            completed = [
+                jid
+                for jid, job in self.jobs.items()
+                if not job._thread or not job._thread.is_alive()
+            ]
+            excess = len(completed) - _MAX_COMPLETED_JOBS
+            if excess > 0:
+                for jid in completed[:excess]:
+                    del self.jobs[jid]
 
     def start_pipeline(self, stages: list[str]) -> str:
         """Start a new pipeline run."""
         self._cleanup_completed_jobs()
         job_id = str(uuid.uuid4())[:8]
         job = PipelineJob(job_id, stages, self.server)
-        self.jobs[job_id] = job
+        with self._lock:
+            self.jobs[job_id] = job
         job.start()
         return job_id
 
     def get_progress(self, job_id: str) -> dict[str, Any]:
         """Get progress of a running pipeline."""
-        if job_id not in self.jobs:
-            raise ValueError(f"Job not found: {job_id}")
-
-        job = self.jobs[job_id]
+        with self._lock:
+            if job_id not in self.jobs:
+                raise ValueError(f"Job not found: {job_id}")
+            job = self.jobs[job_id]
         return {
             "job_id": job_id,
             "stages": job.stages,
@@ -257,8 +239,9 @@ class PipelineHandler:
 
     def cancel_pipeline(self, job_id: str) -> bool:
         """Cancel a running pipeline."""
-        if job_id not in self.jobs:
-            raise ValueError(f"Job not found: {job_id}")
-
-        self.jobs[job_id].cancel()
+        with self._lock:
+            if job_id not in self.jobs:
+                raise ValueError(f"Job not found: {job_id}")
+            job = self.jobs[job_id]
+        job.cancel()
         return True

@@ -1,5 +1,6 @@
 import ast
 import json
+import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -12,6 +13,7 @@ from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.structFilters.utils import process_path
+from hedgehog.utils.mce18 import compute_mce18
 
 # Canonical mapping for descriptor keys (lowercase -> canonical case)
 # Used to prevent confusion between similar names like logP and clogP
@@ -24,6 +26,7 @@ _DESCRIPTOR_KEY_MAP = {
     "hba": "hba",
     "qed": "qed",
     "fsp3": "fsp3",
+    "mce18": "mce18",
     "sw": "sw",
     "n_atoms": "n_atoms",
     "n_heavy_atoms": "n_heavy_atoms",
@@ -197,6 +200,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         "hbd": Lipinski.NumHDonors(mol_n),
         "hba": Lipinski.NumHAcceptors(mol_n),
         "fsp3": rdMolDescriptors.CalcFractionCSP3(mol_n),
+        "mce18": compute_mce18(mol_n),
         "tpsa": rdMolDescriptors.CalcTPSA(mol_n),
         "qed": QED.qed(mol_n),
     }
@@ -315,6 +319,17 @@ def _apply_column_filter(df, col, borders):
     """
     min_border, max_border = _get_border_values(col, borders)
 
+    # Normalize common YAML/string sentinels (e.g., "inf") for numeric comparisons.
+    def _normalize_border_value(val):
+        if val is None:
+            return None
+        if isinstance(val, str) and val.lower() == "inf":
+            return math.inf
+        return val
+
+    min_border = _normalize_border_value(min_border)
+    max_border = _normalize_border_value(max_border)
+
     if col == "chars":
         allowed_chars = borders["allowed_chars"]
         return df[col].apply(
@@ -325,6 +340,11 @@ def _apply_column_filter(df, col, borders):
         )
 
     if col == "ring_size":
+        # Missing bounds mean "no bound" on that side.
+        if min_border is None:
+            min_border = -math.inf
+        if max_border is None:
+            max_border = math.inf
         return df[col].apply(
             lambda x: all(
                 min_border <= float(ring_size) <= max_border
@@ -340,9 +360,17 @@ def _apply_column_filter(df, col, borders):
             return pd.Series(True, index=df.index)
         return df[col] == True  # noqa: E712
 
-    if col == "syba_score" and max_border == "inf":
+    # Generic numeric range filter.
+    #
+    # Allow one-sided bounds:
+    # - only min -> value >= min
+    # - only max -> value <= max
+    if min_border is None and max_border is None:
+        return pd.Series(True, index=df.index)
+    if min_border is None:
+        return df[col] <= max_border
+    if max_border is None or max_border == math.inf:
         return df[col] >= min_border
-
     return (df[col] >= min_border) & (df[col] <= max_border)
 
 

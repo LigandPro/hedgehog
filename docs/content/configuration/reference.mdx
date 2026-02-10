@@ -1,0 +1,713 @@
+---
+title: Parameter Reference
+---
+
+# Parameter Reference
+
+Complete reference for every parameter in Hedgehog's YAML configuration files. Each section shows the parameter table followed by the full default YAML.
+
+---
+
+## config.yml
+
+The main configuration file. Controls input/output paths, parallelism, and references to all stage-specific configs.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `generated_mols_path` | string | `data/test/moses_1000.csv` | Path to the CSV file containing generated molecules (must have a SMILES column) |
+| `target_mols_path` | string | `data/test/target_mols.csv` | Path to the CSV file containing target/reference molecules |
+| `folder_to_save` | string | `results/run` | Output directory where all pipeline results are saved |
+| `n_jobs` | int | `62` | Number of parallel workers for CPU-bound tasks |
+| `sample_size` | int | `1000` | Number of molecules to sample from the input file (0 or negative = use all) |
+| `batch_size` | int | `512` | Batch size for descriptor computation and other batched operations |
+| `save_sampled_mols` | bool | `true` | Whether to save the sampled molecule subset to disk |
+| `pains_file_path` | string | `data/wehi_pains.csv` | Path to the PAINS filter definitions file |
+| `mcf_file_path` | string | `data/mcf.csv` | Path to the MCF (medicinal chemistry filters) definitions file |
+| `ligand_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger LigPrep binary for ligand preparation |
+| `protein_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger PrepWizard binary for protein preparation |
+| `config_descriptors` | string | `src/hedgehog/configs/config_descriptors.yml` | Path to the descriptors stage config |
+| `config_structFilters` | string | `src/hedgehog/configs/config_structFilters.yml` | Path to the structural filters stage config |
+| `config_synthesis` | string | `src/hedgehog/configs/config_synthesis.yml` | Path to the synthesis stage config |
+| `config_docking` | string | `src/hedgehog/configs/config_docking.yml` | Path to the docking stage config |
+| `config_docking_filters` | string | `src/hedgehog/configs/config_docking_filters.yml` | Path to the docking filters stage config |
+| `config_moleval` | string | `src/hedgehog/configs/config_moleval.yml` | Path to the MolEval reporting config |
+
+### Default YAML
+
+```yaml
+generated_mols_path: data/test/moses_1000.csv
+target_mols_path: data/test/target_mols.csv
+folder_to_save: results/run
+n_jobs: 62
+sample_size: 1000
+batch_size: 512
+save_sampled_mols: true
+pains_file_path: data/wehi_pains.csv
+mcf_file_path: data/mcf.csv
+ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
+protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+config_descriptors: src/hedgehog/configs/config_descriptors.yml
+config_structFilters: src/hedgehog/configs/config_structFilters.yml
+config_synthesis: src/hedgehog/configs/config_synthesis.yml
+config_docking: src/hedgehog/configs/config_docking.yml
+config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+config_moleval: src/hedgehog/configs/config_moleval.yml
+```
+
+---
+
+## config_descriptors.yml
+
+Controls molecular descriptor calculation, filtering borders, and plotting options.
+
+### General Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable the descriptors stage |
+| `batch_size` | int | `1000` | Batch size for descriptor computation |
+| `filter_data` | bool | `true` | Whether to apply border-based filtering after descriptor calculation |
+
+### Border Parameters (`borders`)
+
+These define the acceptable range for each molecular descriptor. Molecules outside these ranges are filtered out when `filter_data` is `true`.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `allowed_chars` | list[string] | `[C, N, S, O, F, Cl, Br, H]` | Allowed chemical elements in molecules |
+| `n_atoms_min` / `n_atoms_max` | int | `10` / `100` | Total atom count range |
+| `n_heavy_atoms_min` / `n_heavy_atoms_max` | int | `10` / `50` | Heavy (non-hydrogen) atom count range |
+| `n_het_atoms_min` / `n_het_atoms_max` | int | `2` / `15` | Heteroatom count range |
+| `n_N_atoms_min` / `n_N_atoms_max` | int | `0` / `12` | Nitrogen atom count range |
+| `fN_atoms_min` / `fN_atoms_max` | float | `0` / `1` | Fraction of nitrogen atoms range |
+| `charged_mol_allowed` | bool | `true` | Whether charged molecules are allowed |
+| `filter_charged_mol` | bool | `false` | Whether to filter out charged molecules |
+| `molWt_min` / `molWt_max` | float | `200` / `500` | Molecular weight range (Da) |
+| `logP_min` / `logP_max` | float | `-0.4` / `5.6` | Crippen logP range |
+| `clogP_min` / `clogP_max` | float | `-100` / `100` | Calculated logP range |
+| `sw_min` / `sw_max` | float | `-100` / `100` | Sw (water solubility estimate) range |
+| `ring_size_min` / `ring_size_max` | int | `3` / `12` | Individual ring size range |
+| `n_rings_min` / `n_rings_max` | int | `0` / `6` | Total ring count range |
+| `n_aroma_rings_min` / `n_aroma_rings_max` | int | `0` / `5` | Aromatic ring count range |
+| `n_fused_aromatic_rings_min` / `n_fused_aromatic_rings_max` | int | `0` / `2` | Fused aromatic ring count range |
+| `n_rigid_bonds_min` / `n_rigid_bonds_max` | int | `0` / `30` | Rigid bond count range |
+| `n_rot_bonds_min` / `n_rot_bonds_max` | int | `2` / `8` | Rotatable bond count range |
+| `hbd_min` / `hbd_max` | int | `0` / `5` | Hydrogen bond donor count range |
+| `hba_min` / `hba_max` | int | `0` / `10` | Hydrogen bond acceptor count range |
+| `fsp3_min` / `fsp3_max` | float | `0.15` / `0.8` | Fraction of sp3 carbons range |
+| `tpsa_min` / `tpsa_max` | float | `0` / `140` | Topological polar surface area range (A^2) |
+| `qed_min` / `qed_max` | float | `0.3` / `1` | Quantitative estimate of drug-likeness range |
+
+### Plotting Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `filtered_cols_to_plot` | list[string] | _(see YAML below)_ | Descriptor columns to include in filtered distribution plots |
+| `discrete_features_to_plot` | list[string] | _(see YAML below)_ | Columns treated as discrete (bar charts instead of KDE) |
+| `not_to_smooth_plot_by_sides` | list[string] | _(see YAML below)_ | Columns where KDE side-smoothing is disabled |
+| `renamer` | dict[string, string] | _(see YAML below)_ | Display names for descriptors in plot labels |
+
+### Default YAML
+
+```yaml
+run: true
+batch_size: 1000
+filter_data: true
+borders:
+  allowed_chars:
+  - C
+  - N
+  - S
+  - O
+  - F
+  - Cl
+  - Br
+  - H
+  n_atoms_min: 10
+  n_atoms_max: 100
+  n_heavy_atoms_min: 10
+  n_heavy_atoms_max: 50
+  n_het_atoms_min: 2
+  n_het_atoms_max: 15
+  n_N_atoms_min: 0
+  n_N_atoms_max: 12
+  fN_atoms_min: 0
+  fN_atoms_max: 1
+  charged_mol_allowed: true
+  filter_charged_mol: false
+  molWt_min: 200
+  molWt_max: 500
+  logP_min: -0.4
+  logP_max: 5.6
+  clogP_min: -100
+  clogP_max: 100
+  sw_min: -100
+  sw_max: 100
+  ring_size_min: 3
+  ring_size_max: 12
+  n_rings_min: 0
+  n_rings_max: 6
+  n_aroma_rings_min: 0
+  n_aroma_rings_max: 5
+  n_fused_aromatic_rings_min: 0
+  n_fused_aromatic_rings_max: 2
+  n_rigid_bonds_min: 0
+  n_rigid_bonds_max: 30
+  n_rot_bonds_min: 2
+  n_rot_bonds_max: 8
+  hbd_min: 0
+  hbd_max: 5
+  hba_min: 0
+  hba_max: 10
+  fsp3_min: 0.15
+  fsp3_max: 0.8
+  tpsa_min: 0
+  tpsa_max: 140
+  qed_min: 0.3
+  qed_max: 1
+filtered_cols_to_plot:
+- chars
+- n_atoms
+- n_heavy_atoms
+- n_het_atoms
+- n_N_atoms
+- fN_atoms
+- charged_mol
+- molWt
+- logP
+- clogP
+- sw
+- ring_size
+- n_rings
+- n_aroma_rings
+- n_fused_aromatic_rings
+- n_rigid_bonds
+- n_rot_bonds
+- hbd
+- hba
+- fsp3
+- tpsa
+- qed
+discrete_features_to_plot:
+- chars
+- n_het_atoms
+- n_N_atoms
+- charged_mol
+- ring_size
+- n_rings
+- n_aroma_rings
+- n_fused_aromatic_rings
+- n_rigid_bonds
+- n_rot_bonds
+- hbd
+- hba
+not_to_smooth_plot_by_sides:
+- n_atoms
+- n_heavy_atoms
+- fN_atoms
+- molWt
+- fsp3
+- tpsa
+- qed
+renamer:
+  chars: Chars in molecules
+  n_atoms: Number of Atoms
+  n_heavy_atoms: Number of Heavy Atoms
+  n_het_atoms: Number of heteroatoms
+  n_N_atoms: Number of Nitrogen Atoms
+  fN_atoms: Fraction of Nitrogen Atoms
+  charged_mol: Charged Molecule
+  molWt: Molecular Weight
+  logP: logP
+  clogP: clogP
+  sw: Sw
+  ring_size: Size of rings
+  n_rings: Number of rings
+  n_aroma_rings: Number of aromatic rings
+  n_fused_aromatic_rings: Number of fused aromatic rings
+  n_rigid_bonds: Number of rigid bonds
+  n_rot_bonds: Number of rotatable bonds
+  hbd: Hydrogen Bond Donors
+  hba: Hydrogen Bond Acceptors
+  fsp3: Fraction of SP3
+  tpsa: TPSA
+  qed: QED
+```
+
+---
+
+## config_structFilters.yml
+
+Controls structural alert screening and medicinal chemistry filters. Molecules flagged by enabled filters are removed from the pipeline.
+
+### General Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable the structural filters stage |
+| `run_before_descriptors` | bool | `true` | Run structural filters before descriptor calculation (pre-filter) |
+| `filter_data` | bool | `true` | Whether to actually remove flagged molecules from downstream stages |
+
+### Structural Alerts
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `alerts_data_path` | string | `data/common_alerts_collection.csv` | Path to CSV file containing structural alert SMARTS patterns |
+| `calculate_common_alerts` | bool | `true` | Enable SMARTS-based structural alert screening |
+| `include_rulesets` | list[string] | _(see YAML below)_ | Alert rulesets to activate (e.g., Dundee, BMS, PAINS, Glaxo, etc.) |
+| `exclude_descriptions` | dict[string, list[string]] | _(see YAML below)_ | Per-ruleset list of alert descriptions to exclude (override false positives) |
+
+### Molecular Graph and Complexity Filters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `calculate_molgraph_stats` | bool | `true` | Compute molecular graph statistics (connectivity, bridges, etc.) |
+| `calculate_molcomplexity` | bool | `true` | Compute molecular complexity scores |
+| `calculate_NIBR` | bool | `true` | Run Novartis In-silico ADME/Tox (NIBR) filter |
+| `nibr_scheduler` | string | `threads` | Parallelism for NIBR: `threads` or `processes` |
+| `calculate_bredt` | bool | `true` | Run Bredt's rule violation check (strained bridgehead double bonds) |
+| `calculate_lilly` | bool | `true` | Run Lilly medchem rules filter |
+| `lilly_scheduler` | string | `threads` | Parallelism for Lilly: `threads` or `processes` |
+
+### Medchem Functional Filters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `calculate_protecting_groups` | bool | `true` | Flag molecules containing protecting groups (Boc, Fmoc, Cbz, etc.) |
+| `calculate_ring_infraction` | bool | `true` | Flag molecules with strained ring infractions |
+| `ring_infraction_hetcycle_min_size` | int | `4` | Minimum heterocycle ring size before flagging as an infraction |
+| `calculate_stereo_center` | bool | `true` | Flag molecules with excessive stereocenters |
+| `stereo_max_centers` | int | `4` | Maximum allowed total stereocenters |
+| `stereo_max_undefined` | int | `2` | Maximum allowed undefined stereocenters |
+| `calculate_halogenicity` | bool | `true` | Flag molecules with excessive halogen counts |
+| `halogenicity_thresh_F` | int | `6` | Maximum allowed fluorine atoms |
+| `halogenicity_thresh_Br` | int | `3` | Maximum allowed bromine atoms |
+| `halogenicity_thresh_Cl` | int | `3` | Maximum allowed chlorine atoms |
+| `calculate_symmetry` | bool | `false` | Flag highly symmetric molecules (off by default — many drugs are symmetric) |
+| `symmetry_threshold` | float | `0.8` | Symmetry score threshold above which a molecule is flagged |
+
+### Default YAML
+
+```yaml
+run: true
+run_before_descriptors: true
+filter_data: true
+alerts_data_path: data/common_alerts_collection.csv
+calculate_common_alerts: true
+include_rulesets:
+- Dundee
+- BMS
+- Inpharmatica
+- LD50-Oral
+- Glaxo
+- PAINS
+- AlphaScreen-Hitters
+- Frequent-Hitter
+- Chelator
+- Toxicophore
+- Skin
+- Reactive-Unstable-Toxic
+- SureChEMBL
+- Electrophilic
+- Genotoxic-Carcinogenicity
+- MLSMR
+- LINT
+- GST-Hitters
+- Non-Genotoxic-Carcinogenicity
+- HIS-Hitters
+- LuciferaseInhibitor
+exclude_descriptions:
+  Dundee:
+  - Aliphatic long chain
+  - isolated alkene
+  - triple bond
+  Toxicophore:
+  - acetylene_alkyne
+  - acyclic_alkyne
+  - alkynes
+  - masked_aniline
+  - adamantane
+  - imidazole
+  - michael_acceptors_double
+  - michael_acceptors_triple
+  - n_acylated_azoles
+  - pyrrole
+  Skin:
+  - Activated alkine
+  - Tertiary alkyl
+  - Aromatic primary and secondary amines
+  - Aromatic amines
+  - Esters of aromatic alcohols and their thio and aza analogues
+  - Haloethyl-substituted aromatic compounds
+  - Ortho-disubstituted benzenes
+  Reactive-Unstable-Toxic:
+  - Aldimines and ketimines
+  - Alkyl Halides
+  - Glutarimides
+  - Activated Halides
+  - Activated halides (o-nitro substituted haloaromatics)
+  - Activated halides (p-nitro substituted haloaromatics)
+  - Activated halides (α-halogen substituted N-heterocycles)
+  - Activated halides (γ-halogen substituted N-heterocycles)
+  - Activated haloaromatics
+  - Aminals
+  - Enamines
+  - Halomethyl amines
+  - Halomethyl ethers
+  - Other undesirable policyclic (adamantane derivatives)
+  - Oxetanes
+  - Oxetanes, thietanes
+  - Polycyclic 4 fused rings and more
+  - Simple anilines and phenols
+  SureChEMBL:
+  - aminothiazole
+  Electrophilic:
+  - Acetates
+  - Alkyl halides
+  - Ethanolamines
+  - Morpholines
+  - Poly aromatic hydrocarbons
+  Genotoxic-Carcinogenicity:
+  - Aromatic N-acyl amine
+  - Aromatic amines
+  - Derivatives of urethane (carbamates)
+  - Halogenated methanes
+  - Polycyclic aromatic hydrocarbons
+  - Polycyclic aromatic system (general)
+  - Polycyclic aromatic system (specific)
+  - Secondary aromatic acetamides and formamides
+  - Tertiary aromatic amines
+  - Aromatic amines
+  LINT:
+  - high halogen content (>3)
+  Non-Genotoxic-Carcinogenicity:
+  - Halogenated benzene
+  - Heterocyclic Polycyclic Aromatic Hydrocarbons
+  - Polycyclic Aromatic Hydrocarbons
+  HIS-Hitters:
+  - Picolylamines_A
+calculate_molgraph_stats: true
+calculate_molcomplexity: true
+calculate_NIBR: true
+nibr_scheduler: threads
+calculate_bredt: true
+calculate_lilly: true
+lilly_scheduler: threads
+calculate_protecting_groups: true
+calculate_ring_infraction: true
+ring_infraction_hetcycle_min_size: 4
+calculate_stereo_center: true
+stereo_max_centers: 4
+stereo_max_undefined: 2
+calculate_halogenicity: true
+halogenicity_thresh_F: 6
+halogenicity_thresh_Br: 3
+halogenicity_thresh_Cl: 3
+calculate_symmetry: false
+symmetry_threshold: 0.8
+```
+
+---
+
+## config_synthesis.yml
+
+Controls the retrosynthesis feasibility stage, including synthesizability score thresholds.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable the synthesis stage |
+| `run_retrosynthesis` | bool | `true` | Run AiZynthFinder retrosynthetic analysis |
+| `filter_solved_only` | bool | `true` | Keep only molecules for which a retrosynthetic route was found |
+| `sa_score_min` | float | `0` | Minimum synthetic accessibility score (Ertl) |
+| `sa_score_max` | float | `4.5` | Maximum synthetic accessibility score (lower = easier to synthesize) |
+| `syba_score_min` | float | `0` | Minimum SYBA score (Bayesian synthesizability) |
+| `syba_score_max` | float | `inf` | Maximum SYBA score |
+| `ra_score_min` | float | `0.5` | Minimum retrosynthetic accessibility score |
+| `ra_score_max` | float | `1` | Maximum retrosynthetic accessibility score |
+
+### Default YAML
+
+```yaml
+run: true
+run_retrosynthesis: true
+filter_solved_only: true
+sa_score_min: 0
+sa_score_max: 4.5
+syba_score_min: 0
+syba_score_max: inf
+ra_score_min: 0.5
+ra_score_max: 1
+```
+
+---
+
+## config_docking.yml
+
+Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, search box, and engine-specific parameters.
+
+### General Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable the docking stage |
+| `tools` | string | `gnina` | Docking engine: `gnina`, `smina`, or `both` |
+| `receptor_pdb` | string | `data/test/7EW9_apo.pdb` | Path to the receptor PDB file |
+| `auto_run` | bool | `true` | Automatically start docking after ligand preparation |
+| `run_in_background` | bool | `false` | Run docking as a background process |
+
+### SMINA Configuration (`smina_config`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bin` | string | `smina` | Path or name of the SMINA binary (resolved via PATH if not absolute) |
+| `autobox_ligand` | string | `data/test/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
+| `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
+| `cpu` | int | `32` | Number of CPU threads for docking |
+| `seed` | int | `42` | Random seed for reproducibility |
+| `exhaustiveness` | int | `8` | Search exhaustiveness (higher = more thorough, slower) |
+| `num_modes` | int | `9` | Maximum number of binding modes to generate per ligand |
+
+### GNINA Configuration (`gnina_config`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bin` | string | `gnina` | Path or name of the GNINA binary (resolved via PATH if not absolute) |
+| `autobox_ligand` | string | `data/test/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
+| `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
+| `cpu` | int | `32` | Number of CPU threads for docking |
+| `seed` | int | `42` | Random seed for reproducibility |
+
+### Default YAML
+
+```yaml
+run: true
+tools: gnina
+receptor_pdb: data/test/7EW9_apo.pdb
+auto_run: true
+run_in_background: false
+smina_config:
+  bin: smina
+  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_add: 4
+  cpu: 32
+  seed: 42
+  exhaustiveness: 8
+  num_modes: 9
+gnina_config:
+  bin: gnina
+  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_add: 4
+  cpu: 32
+  seed: 42
+```
+
+---
+
+## config_docking_filters.yml
+
+Post-docking filters that evaluate the quality of docked poses and remove poor candidates. Five independent filters can be combined with `all` (every filter must pass) or `any` (at least one must pass) aggregation.
+
+### General Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable the docking filters stage |
+| `run_after_docking` | bool | `true` | Automatically run after the docking stage completes |
+| `input_sdf` | string \| null | `null` | Path to input SDF; if null, uses docking output |
+| `receptor_pdb` | string \| null | `null` | Path to receptor PDB; if null, uses docking config value |
+
+### Filter 0: Search Box (`search_box`)
+
+Ensures the docked pose remains inside the configured docking search box.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable this filter |
+| `max_outside_fraction` | float | `0.0` | Maximum fraction of atoms allowed outside the box (0.0 = all must be inside) |
+| `short_circuit` | bool | `true` | When `aggregation.mode` is `all`, skip expensive filters for poses that already failed |
+
+### Filter 1: Pose Quality (`pose_quality`)
+
+Checks for steric clashes and ligand strain via PoseCheck.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable this filter |
+| `max_clashes` | int | `2` | Maximum allowed steric clashes (0 = strict, no clashes allowed) |
+| `max_strain_energy` | float | `50.0` | Maximum ligand strain energy in kcal/mol |
+| `strain_forcefield` | string | `UFF` | Force field for strain calculation: `UFF`, `MMFF94s`, or `MMFF94s_noEstat` |
+| `clash_tolerance` | float | `0.5` | Van der Waals overlap tolerance in Angstroms |
+
+### Filter 2: Interactions (`interactions`)
+
+Evaluates protein-ligand interactions using ProLIF.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable this filter |
+| `reference_ligand` | string \| null | `null` | Path to reference ligand SDF for interaction similarity |
+| `min_hbonds` | int | `0` | Minimum number of hydrogen bonds required (0 = no requirement) |
+| `required_residues` | list[string] | `[]` | Residues that must have at least one interaction (e.g., `["ASP:123"]`) |
+| `forbidden_residues` | list[string] | `[]` | Residues that must NOT have any interaction |
+| `interaction_types` | list[string] | `[HBDonor, HBAcceptor, Hydrophobic, VdWContact]` | Interaction types to evaluate |
+| `similarity_threshold` | float | `0.0` | Minimum Tanimoto similarity to reference interactions (0 = disabled) |
+
+### Filter 3: Shepherd-Score (`shepherd_score`)
+
+3D molecular shape comparison to a reference ligand using Gaussian overlap.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable this filter (requires a reference ligand) |
+| `reference_ligand` | string \| null | `null` | Path to reference ligand SDF (required if enabled) |
+| `min_shape_score` | float | `0.5` | Minimum Gaussian overlap Tanimoto score |
+| `alpha` | float | `0.81` | Gaussian width parameter |
+| `align_before_scoring` | bool | `true` | Align molecules before computing shape similarity |
+
+### Filter 4: Conformer Deviation (`conformer_deviation`)
+
+Checks whether the docked pose is geometrically plausible by comparing against generated conformers.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable this filter |
+| `num_conformers` | int | `50` | Number of reference conformers to generate |
+| `conformer_method` | string | `ETKDGv3` | Conformer generation method: `ETKDG`, `ETKDGv2`, `ETKDGv3` |
+| `max_rmsd_to_conformer` | float | `3.0` | Maximum RMSD (Angstroms) between docked pose and nearest conformer |
+| `random_seed` | int | `42` | Random seed for conformer generation |
+| `optimize_conformers` | bool | `false` | Apply UFF force field optimization to conformers (slow) |
+
+### Aggregation (`aggregation`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `mode` | string | `all` | `all` = molecule must pass every enabled filter; `any` = pass at least one |
+| `save_metrics` | bool | `true` | Save detailed per-molecule metrics to a CSV file |
+| `save_failed` | bool | `false` | Save molecules that failed filtering to a separate file |
+
+### Default YAML
+
+```yaml
+run: true
+run_after_docking: true
+input_sdf: null
+receptor_pdb: null
+
+search_box:
+  enabled: true
+  max_outside_fraction: 0.0
+  short_circuit: true
+
+pose_quality:
+  enabled: true
+  max_clashes: 2
+  max_strain_energy: 50.0
+  strain_forcefield: "UFF"
+  clash_tolerance: 0.5
+
+interactions:
+  enabled: true
+  reference_ligand: null
+  min_hbonds: 0
+  required_residues: []
+  forbidden_residues: []
+  interaction_types:
+    - HBDonor
+    - HBAcceptor
+    - Hydrophobic
+    - VdWContact
+  similarity_threshold: 0.0
+
+shepherd_score:
+  enabled: false
+  reference_ligand: null
+  min_shape_score: 0.5
+  alpha: 0.81
+  align_before_scoring: true
+
+conformer_deviation:
+  enabled: true
+  num_conformers: 50
+  conformer_method: "ETKDGv3"
+  max_rmsd_to_conformer: 3.0
+  random_seed: 42
+  optimize_conformers: false
+
+aggregation:
+  mode: "all"
+  save_metrics: true
+  save_failed: false
+```
+
+---
+
+## config_moleval.yml
+
+Controls generative evaluation metrics computed during report generation. These metrics assess diversity, scaffold coverage, drug-likeness, and chemical group presence across pipeline stages.
+
+### General Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable MolEval metric computation |
+| `n_jobs` | int | `4` | Number of parallel workers for metric computation |
+| `device` | string | `cpu` | Compute device: `cpu` or `cuda:0` (for neural metrics) |
+| `max_molecules` | int | `2000` | Subsample threshold for O(N^2) metrics; datasets larger than this are subsampled |
+
+### Metric Groups
+
+Each flag enables or disables a group of related metrics.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `validity` | bool | `false` | Compute validity rate (disabled by default — always 1.0 after RDKit parsing) |
+| `uniqueness` | bool | `false` | Compute uniqueness rate (disabled by default — always 1.0 after deduplication) |
+| `internal_diversity` | bool | `true` | Compute IntDiv1 and IntDiv2 (intra-set Tanimoto diversity) |
+| `se_diversity` | bool | `true` | Compute sphere-exclusion diversity (SEDiv) |
+| `scaffold_diversity` | bool | `true` | Compute ScaffDiv and ScaffUniqueness (Murcko scaffold analysis) |
+| `functional_groups` | bool | `true` | Compute functional group diversity ratio (FG) |
+| `ring_systems` | bool | `true` | Compute ring system diversity ratio (RS) |
+| `filters` | bool | `true` | Compute MCF + PAINS filter passage rate |
+
+### Drug-likeness Compliance
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `rules_compliance` | bool | `true` | Compute per-stage pass rates for drug-likeness rule sets |
+| `rules_sets` | list[string] | `[rule_of_five, rule_of_veber, rule_of_generative_design]` | Rule sets to evaluate: Lipinski's Rule of Five, Veber rules, generative design rules |
+
+### Chemical Group Presence
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `chemical_groups` | bool | `true` | Compute per-stage match rates for drug-relevant chemical groups |
+| `chemical_group_names` | list[string] | `[rings_in_drugs, privileged_scaffolds]` | Chemical group sets to evaluate |
+
+### Default YAML
+
+```yaml
+run: true
+n_jobs: 4
+device: cpu
+max_molecules: 2000
+
+validity: false
+uniqueness: false
+internal_diversity: true
+se_diversity: true
+scaffold_diversity: true
+functional_groups: true
+ring_systems: true
+filters: true
+
+rules_compliance: true
+rules_sets:
+  - rule_of_five
+  - rule_of_veber
+  - rule_of_generative_design
+
+chemical_groups: true
+chemical_group_names:
+  - rings_in_drugs
+  - privileged_scaffolds
+```

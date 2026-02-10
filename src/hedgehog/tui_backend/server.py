@@ -57,7 +57,6 @@ class JsonRpcServer:
         self.handlers["validate_output_directory"] = (
             self.validation_handler.validate_output_directory
         )
-        self.handlers["validate_config_data"] = self.validation_handler.validate_config
 
         # History methods
         self.handlers["get_job_history"] = self.history_handler.get_job_history
@@ -113,6 +112,14 @@ class JsonRpcServer:
             handler = self.handlers[method]
             result = handler(**params) if params else handler()
             self.send_response(request_id, result=result)
+        except FileNotFoundError as e:
+            self.send_response(request_id, error={"code": -32001, "message": str(e)})
+        except NotADirectoryError as e:
+            self.send_response(request_id, error={"code": -32003, "message": str(e)})
+        except PermissionError as e:
+            self.send_response(request_id, error={"code": -32002, "message": str(e)})
+        except ValueError as e:
+            self.send_response(request_id, error={"code": -32602, "message": str(e)})
         except Exception as e:
             self.send_response(request_id, error={"code": -32000, "message": str(e)})
 

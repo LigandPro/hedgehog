@@ -1,0 +1,37 @@
+---
+title: HEDGEHOG
+---
+
+# HEDGEHOG
+
+**Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration**
+
+HEDGEHOG is a comprehensive benchmark pipeline for evaluating generative models in molecular design. It takes a set of generated SMILES strings and progressively filters them through physicochemical descriptors, structural alerts, synthetic accessibility checks, molecular docking, and post-docking pose analysis — producing a detailed HTML report with per-stage statistics, interactive visualizations, and generative quality metrics.
+
+![Pipeline Structure](/pipeline_structure.png)
+
+## Key Features
+
+- **7-stage evaluation pipeline** — molecules pass through descriptors, structural filters, synthesis evaluation, docking, docking filters, and final descriptor recalculation, with an optional pre-descriptors filtering step for early elimination of problematic structures.
+- **11 structural filters** — common alerts (PAINS, Glaxo, BMS, Dundee), molecular graph severity, molecular complexity, NIBR, Bredt rule, Lilly MedChem rules, plus 5 medicinal chemistry filters (protecting groups, ring infraction, stereo center, halogenicity, symmetry).
+- **Retrosynthesis analysis** — synthetic accessibility scoring with SA Score, SYBA, and full retrosynthetic route analysis via AiZynthFinder.
+- **Molecular docking** — binding affinity scoring and pose generation with SMINA and/or GNINA, followed by pose quality filtering.
+- **Automated reporting** — interactive HTML report with molecule retention funnel, descriptor distributions, filter breakdowns, docking results, MolEval generative metrics, drug-likeness compliance, and chemical group presence analysis.
+- **CLI and TUI interfaces** — a Typer-based command-line interface (`hedgehog` / `hedge`) for scripted workflows, plus an interactive terminal UI built with Node.js for visual configuration and pipeline management.
+
+## Quick Example
+
+```bash
+# Clone the repository
+git clone https://github.com/LigandPro/hedgehog.git
+cd hedgehog
+
+# Install AiZynthFinder (required for synthesis stage)
+./modules/install_aizynthfinder.sh
+
+# Install the package
+uv sync
+
+# Run the full pipeline on test data
+uv run hedgehog run
+```

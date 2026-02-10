@@ -65,6 +65,14 @@ npm run tui
 
 See [tui/README.md](tui/README.md) for details.
 
+**Documentation Site**
+
+```bash
+cd docs && pnpm install && pnpm dev
+```
+
+The docs site is built with [Nextra](https://nextra.site) and available at `http://localhost:3000`.
+
 **HTML Reports**
 
 After each pipeline run, an interactive HTML report is automatically generated as `report.html` in the results folder. The report includes:

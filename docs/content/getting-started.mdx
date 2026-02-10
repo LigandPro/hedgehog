@@ -1,0 +1,100 @@
+---
+title: Getting Started
+---
+
+# Getting Started
+
+This guide covers installation, running your first pipeline, and understanding the output.
+
+## Prerequisites
+
+- **Python 3.10+** — HEDGEHOG requires Python 3.10 or later.
+- **uv** — used for dependency management and running the CLI. Install from [astral.sh/uv](https://astral.sh/uv).
+- **git** — to clone the repository.
+
+For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the external `aizynthfinder` tooling and its public data. The provided installer script uses `uv` to set this up inside `modules/` (no conda is required by the script).
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/LigandPro/hedgehog.git
+cd hedgehog
+
+# Install AiZynthFinder for retrosynthesis analysis
+./modules/install_aizynthfinder.sh
+
+# Install HEDGEHOG and all dependencies
+uv sync
+```
+
+The `install_aizynthfinder.sh` script clones the retrosynthesis repository and downloads the required public data. Note: it currently uses an SSH Git URL, so your machine needs GitHub SSH access for the clone step.
+
+## First Run
+
+Run the full pipeline on the included test data:
+
+```bash
+uv run hedgehog run
+```
+
+Or using the short alias:
+
+```bash
+uv run hedge run
+```
+
+This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `data/test/`. Each stage runs in sequence, filtering molecules that fail its criteria.
+
+Note: the default `config.yml` contains absolute paths for optional proprietary tools (e.g. Schrodinger LigPrep/PrepWizard). If you do not have these tools, set `ligand_preparation_tool` / `protein_preparation_tool` to empty values (or disable the affected stages) before your first run.
+
+## Expected Output
+
+When you run the pipeline, you will see:
+
+1. **Banner** — the HEDGEHOG banner with version information.
+2. **Input preprocessing** — SMILES canonicalization and deduplication.
+3. **Stage execution** — each enabled stage runs in order, logging progress and molecule counts. Stages that are disabled in the configuration are skipped.
+4. **Report generation** — an HTML report and associated plots are generated automatically at the end of a successful run.
+
+Typical console output looks like:
+
+```
+🦔 HEDGEHOG
+Starting pipeline...
+Stage 1: Molecular Descriptors — 500 molecules processed, 423 passed
+Stage 2: Post-descriptors Structural Filters — 423 molecules processed, 387 passed
+Stage 3: Synthesis Analysis — 387 molecules processed, 312 passed
+...
+Pipeline completed: 6/6 stages successful
+```
+
+## Understanding Results
+
+Results are saved to an auto-numbered directory under the configured output path (default: `results/run_N/`). Each run creates a new numbered folder unless you use the `--reuse` flag.
+
+The output directory structure:
+
+```
+results/run_1/
+├── input/
+│   └── sampled_molecules.csv       # Preprocessed input molecules
+├── stages/
+│   ├── 01_descriptors_initial/     # Physicochemical descriptors
+│   ├── 02_structural_filters_pre/  # Pre-descriptors structural filters (optional)
+│   ├── 03_structural_filters_post/ # Post-descriptors structural filters
+│   ├── 04_synthesis/               # Retrosynthesis analysis
+│   ├── 05_docking/                 # Molecular docking (SMINA/GNINA)
+│   ├── 06_docking_filters/         # Post-docking pose & interaction filters
+│   └── 07_descriptors_final/       # Final descriptor recalculation
+├── output/
+│   └── final_molecules.csv         # Final filtered molecules
+├── configs/                        # Configuration snapshots
+│   ├── master_config_resolved.yml
+│   └── config_*.yml
+├── report.html                     # Interactive HTML report
+├── report_data.json                # Report data
+└── RUN_INFO.md                     # Run summary with MolEval metrics table
+```
+
+Each stage directory contains a `filtered_molecules.csv` file with the molecules that passed that stage, along with any stage-specific outputs (plots, intermediate files). The `report.html` file is the primary deliverable — open it in a browser to explore per-stage statistics, descriptor distributions, filter breakdowns, and generative quality metrics.

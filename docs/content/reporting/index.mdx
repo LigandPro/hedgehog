@@ -1,0 +1,168 @@
+---
+title: HTML Report
+---
+
+# HTML Report
+
+After each pipeline run, HEDGEHOG generates a self-contained interactive HTML report at:
+
+```
+results/run_N/report.html
+```
+
+The report uses [Plotly.js](https://plotly.com/javascript/) for interactive charts and includes a model
+filter dropdown that lets you view metrics for individual generative models or compare all models
+side-by-side.
+
+## Report Sections
+
+### Pipeline Flow (Sankey Diagram)
+
+The top of the report displays a **Sankey diagram** showing how molecules flow through the pipeline.
+Each node represents a pipeline stage, and the width of each link is proportional to the number of
+molecules that survive that transition.
+
+- **Purple links** represent molecules that pass to the next stage.
+- **Gray "Lost" nodes** branch off at each transition, showing how many molecules were filtered out.
+- Hover over any link or node to see exact counts and percentages relative to the initial set.
+
+A classic **funnel chart** is also included, showing the absolute molecule count at each stage with
+percentage-of-initial annotations.
+
+### Executive Summary
+
+Four summary cards display key pipeline statistics:
+
+| Card | Description |
+|------|-------------|
+| Initial Molecules | Total molecules entering the pipeline |
+| Final Molecules | Molecules surviving all stages |
+| Retention Rate | Percentage of molecules retained end-to-end |
+| Stages Completed | Number of pipeline stages that ran successfully |
+
+A stage status table shows each stage as **COMPLETED**, **FAILED**, or **DISABLED**.
+
+### Model Comparison
+
+When the input contains molecules from multiple generative models, the report includes:
+
+- **Grouped bar chart** comparing initial vs. final molecule counts per model with retention rates.
+- **Stacked bar chart** showing where molecules were lost (by stage) for each model.
+- A **model dropdown** at the top of the report to filter all sections by a single model or compare all.
+
+### Structural Filters
+
+This section covers the structural filtering stages (pre-descriptor and post-descriptor filters):
+
+- **Stacked bar chart** of molecules passed vs. banned per filter, grouped by model.
+- **Heatmap** of banned ratios (fraction of molecules failing each filter) by model.
+- **Top failure reasons** bar chart showing the most common structural alerts.
+- A summary table of pass/fail counts per filter.
+
+### Synthesis Analysis
+
+The synthesis section presents scores from SA Score, SYBA Score, and RA Score computations:
+
+- **Histograms** for each score distribution (SA, SYBA, RA).
+- **SA vs. SYBA scatter plot** colored by model, showing the trade-off between synthetic accessibility
+  and synthesizability.
+- **Retrosynthesis route score histogram** and **step count histogram** from AiZynthFinder results.
+- **Pie chart** showing solved vs. unsolved retrosynthesis targets.
+
+### Docking
+
+The docking section reports binding affinity results from GNINA and/or SMINA:
+
+- **Affinity distribution histogram** for each docking tool (kcal/mol scale, lower is better).
+- **Box plots** of affinity scores grouped by model.
+- **Top molecules table** listing the best-scoring compounds with their affinities and CNN scores
+  (for GNINA).
+
+### Docking Filters
+
+If docking filters are enabled, this section shows:
+
+- **Per-filter pass/fail stats** for each enabled filter (search box, pose quality, interactions, conformer deviation, shepherd score).
+- **Histograms** of numeric metrics (clashes, strain energy, conformer RMSD, shape score, etc.) with threshold lines.
+- **Per-model breakdown** of total poses, passed poses, and pass rates.
+- The aggregation mode (`all` or `any`) and overall pass rate.
+
+### Descriptors
+
+Two descriptor sections appear in the report -- one for initial descriptors (computed early in the
+pipeline) and one for final descriptors (recomputed on surviving molecules):
+
+- **Violin plots** of key molecular descriptors (MolWt, LogP, TPSA, QED) grouped by model.
+- **Box plots** comparing H-bond donors and acceptors across models.
+- **Summary table** with mean values for all computed descriptors, broken down by model.
+
+Drug-likeness threshold lines (e.g., Lipinski's Rule of Five boundaries) are included as reference
+markers in the interactive histograms.
+
+#### Interpreting Comparison Histograms
+
+When comparing generated molecules against reference sets:
+
+- **Overlapping distributions** indicate that generated molecules match the reference property profile.
+- **Shifted distributions** highlight systematic differences (e.g., generated molecules are heavier or
+  more lipophilic than references).
+- Use the model dropdown to isolate individual models and see which generator best matches the target
+  property space.
+
+### Generative Metrics (MolEval)
+
+This section reports intrinsic distribution quality metrics computed by the vendored
+[MolEval](/reporting/moleval) library at five pipeline checkpoints. It includes:
+
+- **Line chart** tracking all active metrics across stages.
+- **Heatmap** with exact metric values (rows = metrics, columns = stages).
+- **Data table** in `RUN_INFO.md` appended after the run.
+
+See the [MolEval Metrics](/reporting/moleval) page for detailed metric definitions.
+
+### Drug-likeness Compliance
+
+This section shows what fraction of molecules pass established drug-likeness rule sets at each
+pipeline stage:
+
+| Rule Set | What It Checks |
+|----------|----------------|
+| Lipinski (Ro5) | MW ≤ 500, LogP ≤ 5, HBD ≤ 5, HBA ≤ 10 |
+| Veber | RotBonds ≤ 10, TPSA ≤ 140 |
+| GenDesign | Relaxed rules for generative chemistry (MW ≤ 600, LogP ≤ 6, etc.) |
+
+A **line chart** plots the pass rate (0--1) for each rule set across the five checkpoint stages. An
+increasing trend indicates that filtering stages are enriching for drug-like molecules.
+
+### Chemical Group Presence
+
+This section tracks what fraction of molecules contain known drug-relevant substructures:
+
+| Group | Description |
+|-------|-------------|
+| `rings_in_drugs` | Ring systems commonly found in approved drugs |
+| `privileged_scaffolds` | Scaffolds with established biological activity profiles |
+
+A **line chart** shows match rates across stages. Higher values indicate better overlap with known
+pharmacophoric scaffolds.
+
+## Output Files
+
+After report generation, the run directory contains:
+
+| File | Description |
+|------|-------------|
+| `report.html` | Self-contained interactive HTML report |
+| `report_data.json` | Raw JSON data used to build the report |
+| `RUN_INFO.md` | Markdown summary with MolEval metrics table |
+
+## Configuration
+
+Report generation is triggered automatically by `hedgehog run` after all pipeline stages complete.
+The MolEval sections require a valid `config_moleval` path in the pipeline configuration:
+
+```yaml
+config_moleval: config_moleval.yml
+```
+
+See [MolEval Configuration](/reporting/moleval#configuration) for all available options.

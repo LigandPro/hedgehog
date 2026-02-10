@@ -22,6 +22,24 @@ def _validate_path(resolved_path: Path, allowed_base: Path | None = None) -> Non
         ) from err
 
 
+def _normalize_extensions(extensions: list[str] | None) -> set[str] | None:
+    """Normalize file extensions to lowercase without leading dots."""
+    if extensions is None:
+        return None
+    return {ext.lstrip(".").lower() for ext in extensions}
+
+
+def _resolve_and_validate_dir(path: str) -> Path:
+    """Resolve a path, validate it, and ensure it is an existing directory."""
+    dir_path = Path(path).expanduser().resolve()
+    _validate_path(dir_path)
+    if not dir_path.exists():
+        raise FileNotFoundError(f"Directory not found: {path}")
+    if not dir_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {path}")
+    return dir_path
+
+
 class FilesHandler:
     """Handler for file-related RPC methods."""
 
@@ -30,26 +48,13 @@ class FilesHandler:
 
     def list_files(self, path: str, extensions: list[str] | None = None) -> list[str]:
         """List files in a directory, optionally filtered by extension."""
-        dir_path = Path(path).expanduser().resolve()
-        _validate_path(dir_path)
-
-        if not dir_path.exists():
-            raise FileNotFoundError(f"Directory not found: {path}")
-
-        if not dir_path.is_dir():
-            raise NotADirectoryError(f"Not a directory: {path}")
-
-        # Normalize extensions: handle both '.csv' and 'csv' formats
-        normalized_extensions = None
-        if extensions is not None:
-            normalized_extensions = {ext.lstrip(".").lower() for ext in extensions}
+        dir_path = _resolve_and_validate_dir(path)
+        ext_set = _normalize_extensions(extensions)
 
         files = []
         for item in sorted(dir_path.iterdir()):
             if item.is_file():
-                if normalized_extensions is None:
-                    files.append(str(item))
-                elif item.suffix.lstrip(".").lower() in normalized_extensions:
+                if ext_set is None or item.suffix.lstrip(".").lower() in ext_set:
                     files.append(str(item))
 
         return files
@@ -58,19 +63,8 @@ class FilesHandler:
         self, path: str, extensions: list[str] | None = None
     ) -> list[dict[str, Any]]:
         """List directory contents with metadata."""
-        dir_path = Path(path).expanduser().resolve()
-        _validate_path(dir_path)
-
-        if not dir_path.exists():
-            raise FileNotFoundError(f"Directory not found: {path}")
-
-        if not dir_path.is_dir():
-            raise NotADirectoryError(f"Not a directory: {path}")
-
-        # Normalize extensions: handle both '.csv' and 'csv' formats
-        normalized_extensions = None
-        if extensions is not None:
-            normalized_extensions = {ext.lstrip(".").lower() for ext in extensions}
+        dir_path = _resolve_and_validate_dir(path)
+        ext_set = _normalize_extensions(extensions)
 
         entries = []
 
@@ -85,9 +79,9 @@ class FilesHandler:
                 is_dir = item.is_dir()
 
                 # Filter by extension for files
-                if not is_dir and normalized_extensions is not None:
+                if not is_dir and ext_set is not None:
                     file_ext = item.suffix.lstrip(".").lower()
-                    if file_ext not in normalized_extensions:
+                    if file_ext not in ext_set:
                         continue
 
                 entry = {
@@ -135,13 +129,12 @@ class FilesHandler:
                 with open(file_path) as f:
                     count = sum(1 for line in f if line.strip())
             elif ext in (".sdf", ".mol2"):
-                # SDF: count $$$$ delimiters
+                # SDF: count $$$$ delimiters using streaming to avoid OOM on large files
                 with open(file_path) as f:
-                    content = f.read()
-                    count = content.count("$$$$")
+                    count = sum(1 for line in f if "$$$$" in line)
                     if count == 0:
-                        # Fallback: might be single molecule
-                        count = 1 if content.strip() else 0
+                        # Fallback: might be single molecule without delimiter
+                        count = 1 if file_path.stat().st_size > 0 else 0
             else:
                 # Unknown format - try counting lines
                 with open(file_path) as f:

@@ -12,16 +12,4 @@ scaffold_diversity: true  # ScaffDiv, ScaffUniqueness
 functional_groups: true   # FG diversity ratio
 ring_systems: true        # RS diversity ratio
 filters: true             # MCF + PAINS passage rate
-
-# Drug-likeness compliance (% passing each rule set per stage)
-rules_compliance: true
-rules_sets:
-  - rule_of_five
-  - rule_of_veber
-  - rule_of_generative_design
-
-# Chemical group match rates (% containing drug-relevant scaffolds per stage)
-chemical_groups: true
-chemical_group_names:
-  - rings_in_drugs
-  - privileged_scaffolds
+mce18: true               # MCE-18 molecular complexity

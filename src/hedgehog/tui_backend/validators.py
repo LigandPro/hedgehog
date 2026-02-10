@@ -28,8 +28,9 @@ class ConfigValidator:
         if validator_method:
             validator_method(data, result)
         else:
-            # Unknown config type - no specific validation
-            pass
+            result["warnings"].append(
+                f"No specific validator for config type: {config_type}"
+            )
 
         result["valid"] = len(result["errors"]) == 0
         return result
@@ -75,13 +76,28 @@ class ConfigValidator:
     def _validate_synthesis(data: dict[str, Any], result: dict[str, Any]) -> None:
         """Validate synthesis configuration."""
         if "sa_score_min" in data:
-            if data["sa_score_min"] < 0:
-                result["errors"].append("sa_score_min must be non-negative")
+            sa_min = data["sa_score_min"]
+            if not isinstance(sa_min, (int, float)) or sa_min < 1 or sa_min > 10:
+                result["errors"].append("sa_score_min must be between 1 and 10")
+
+        if "sa_score_max" in data:
+            sa_max = data["sa_score_max"]
+            if not isinstance(sa_max, (int, float)) or sa_max < 1 or sa_max > 10:
+                result["errors"].append("sa_score_max must be between 1 and 10")
 
         if "ra_score_min" in data:
             ra_min = data["ra_score_min"]
-            if ra_min < 0 or ra_min > 1:
+            if not isinstance(ra_min, (int, float)) or ra_min < 0 or ra_min > 1:
                 result["errors"].append("ra_score_min must be between 0 and 1")
+
+    @staticmethod
+    def _validate_retrosynthesis(data: dict[str, Any], result: dict[str, Any]) -> None:
+        """Validate retrosynthesis configuration.
+
+        Retrosynthesis config uses complex nested AiZynthFinder format;
+        detailed validation is not yet implemented.
+        """
+        pass
 
     @staticmethod
     def _validate_docking(data: dict[str, Any], result: dict[str, Any]) -> None:
