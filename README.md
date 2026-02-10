@@ -6,12 +6,16 @@
 
 Comprehensive benchmark pipeline for evaluating generative models in molecular design.
 
-### 5-Stage Filtering Pipeline:
-1) Physicochemical Descriptors: 22 descriptors ([descriptors folder](src/hedgehog/stages/descriptors/))
-2) Structural Filters: 6 structural criteria with ~2500 SMARTS patterns ([structural filters folder](src/hedgehog/stages/structFilters/))
-3) Synthesis evaluation ([synthesis folder](src/hedgehog/stages/synthesis/))
-4) Docking: able to calculate docking score with smina and/or GNINA docking tools ([docking folder](src/hedgehog/stages/docking/))
-5) Medicinal Chemists evaluation: calculate 4 medichinal chemists evaluation criteria (*in development*)
+### Pipeline Stages:
+1) Pre-descriptors Structural Filters (optional)
+2) Molecular Descriptors: 22 physicochemical descriptors ([descriptors folder](src/hedgehog/stages/descriptors/))
+3) Post-descriptors Structural Filters: 6 criteria with ~2500 SMARTS patterns ([structural filters folder](src/hedgehog/stages/structFilters/))
+4) Synthesis Evaluation ([synthesis folder](src/hedgehog/stages/synthesis/))
+5) Molecular Docking: SMINA and/or GNINA ([docking folder](src/hedgehog/stages/docking/))
+6) Docking Filters: post-docking pose quality filtering
+7) Final Descriptors: recalculation on filtered set
+
+Post-pipeline analysis: MolEval generative metrics, Drug-likeness compliance, Chemical group presence
 
 ## Setup & Run
 

@@ -180,7 +180,7 @@ def docking_filters_main(config: dict[str, Any]) -> pd.DataFrame | None:
     gnina_cnn_score: list[float | None] = []
     gnina_cnn_aff: list[float | None] = []
 
-    for i, mol in enumerate(mols):
+    for mol in mols:
         model_name = _get_first_prop_value(
             mol, {"model_name", "sm_model_name", "s_sm_model_name"}
         )

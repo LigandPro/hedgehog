@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from hedgehog.configs.logger import LoggerSingleton, load_config, logger
+from hedgehog.configs.logger import load_config, logger
 from hedgehog.reporting import ReportGenerator
 from hedgehog.stages.descriptors.main import main as descriptors_main
 from hedgehog.stages.docking.utils import run_docking as docking_main
@@ -1149,9 +1149,9 @@ def _generate_structure_readme(
     stage_timings: dict[str, float] | None = None,
     config: dict | None = None,
 ) -> None:
-    """Generate README.md documenting the output structure for this run."""
+    """Generate RUN_INFO.md documenting the output structure for this run."""
     try:
-        readme_path = base_path / "README.md"
+        readme_path = base_path / "RUN_INFO.md"
         enabled_stages = {s.name for s in stages if s.enabled}
         enabled_count = len(enabled_stages)
         completed_count = sum(1 for s in stages if s.completed)
@@ -1198,7 +1198,7 @@ def _generate_structure_readme(
         total_time = sum(stage_timings.values()) if stage_timings else None
 
         content = f"""\
-# HEDGEHOG Pipeline Output
+# HEDGEHOG Run Info
 
 Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
@@ -1253,9 +1253,9 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         with open(readme_path, "w") as f:
             f.write(content)
 
-        logger.info("Generated structure documentation: %s", readme_path)
+        logger.info("Generated run info: %s", readme_path)
     except Exception as e:
-        logger.warning("Failed to generate structure README: %s", e)
+        logger.warning("Failed to generate RUN_INFO.md: %s", e)
 
 
 def calculate_metrics(data, config: dict, progress_callback=None) -> bool:

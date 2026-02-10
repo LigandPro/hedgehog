@@ -1,0 +1,9 @@
+"""Vendored moleval package from MolScore v1.9.5 (MIT License)."""
+
+# Import lib resources depending on python version
+import sys
+
+if sys.version_info[1] < 9:
+    import importlib_resources as resources
+else:
+    from importlib import resources

@@ -14,3 +14,4 @@ config_structFilters: src/hedgehog/configs/config_structFilters.yml
 config_synthesis: src/hedgehog/configs/config_synthesis.yml
 config_docking: src/hedgehog/configs/config_docking.yml
 config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+config_moleval: src/hedgehog/configs/config_moleval.yml
