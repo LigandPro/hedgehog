@@ -97,9 +97,15 @@ def main(config: dict) -> None:
 
     aizynth_config = _get_aizynthfinder_config()
     if not aizynth_config.exists():
-        _log_aizynthfinder_setup_instructions(aizynth_config)
-        _save_ordered_csv(score_filtered_df, filtered_output)
-        return
+        from hedgehog.setup import ensure_aizynthfinder
+
+        project_root = Path(__file__).resolve().parents[4]
+        try:
+            aizynth_config = ensure_aizynthfinder(project_root)
+        except RuntimeError:
+            _log_aizynthfinder_setup_instructions(aizynth_config)
+            _save_ordered_csv(score_filtered_df, filtered_output)
+            return
 
     prepare_input_smiles(score_filtered_df, output_folder / "input_smiles.smi")
     output_json = output_folder / "retrosynthesis_results.json"

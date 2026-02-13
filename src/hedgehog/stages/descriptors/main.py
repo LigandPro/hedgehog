@@ -36,7 +36,9 @@ def main(data, config, subfolder):
         Path(folder).mkdir(parents=True, exist_ok=True)
 
     config_descriptors = load_config(config["config_descriptors"])
-    metrics_df = compute_metrics(data, metrics_folder, config=config)
+    metrics_df = compute_metrics(
+        data, metrics_folder, config=config, config_descriptors=config_descriptors
+    )
 
     if config_descriptors["filter_data"]:
         filter_molecules(metrics_df, config_descriptors["borders"], filtered_folder)

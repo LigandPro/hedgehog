@@ -9,6 +9,13 @@ import typer
 from rdkit import Chem
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
@@ -215,13 +222,39 @@ def preprocess_input_with_tool(
         ligand_preparation_tool,
         input_format,
         str(input_path),
-        "-ucsv",
+        "-ocsv",
         str(prepared_output),
+        "-WAIT",
     ]
 
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return str(prepared_output) if prepared_output.exists() else None
+        if not prepared_output.exists():
+            return None
+
+        # Normalize the preparation tool output to the minimal schema expected by
+        # HEDGEHOG input loading: (smiles, model_name).
+        df = pd.read_csv(prepared_output)
+        lower_cols = {c.lower(): c for c in df.columns}
+        smiles_col = lower_cols.get("smiles")
+        if not smiles_col:
+            log.debug(
+                "Ligand preparation output missing SMILES column in %s (cols=%s)",
+                prepared_output,
+                list(df.columns),
+            )
+            return None
+
+        if smiles_col != "smiles":
+            df = df.rename(columns={smiles_col: "smiles"})
+
+        # LigPrep may emit a per-molecule name/title column; do not treat it as
+        # a model identifier. Pin model_name to the input file stem.
+        df["model_name"] = input_path_obj.stem
+        df = df[["smiles", "model_name"]].dropna(subset=["smiles"])
+        df.to_csv(prepared_output, index=False)
+
+        return str(prepared_output)
     except Exception as e:
         log.debug("Ligand preparation failed: %s", e)
         return None
@@ -323,7 +356,18 @@ def _preprocess_input(
     if not original_input_path:
         return
 
-    if ligand_preparation_tool:
+    input_path_obj = _validate_input_path(original_input_path)
+    # If this is a glob pattern or doesn't exist, defer to prepare_input_data().
+    if not input_path_obj:
+        return
+
+    # Prefer the lightweight RDKit preprocessing for CSV inputs. The external
+    # ligand preparation tool is primarily useful for SMI-like inputs.
+    if input_path_obj.suffix.lower() == ".csv":
+        prepared_path = preprocess_input_with_rdkit(
+            original_input_path, folder_to_save, logger
+        )
+    elif ligand_preparation_tool:
         prepared_path = preprocess_input_with_tool(
             original_input_path,
             ligand_preparation_tool,
@@ -404,11 +448,23 @@ class Stage(str, Enum):
 
 @app.command()
 def run(
+    config_path: str = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        "-c",
+        help="Path to master YAML config file (default: src/hedgehog/configs/config.yml)",
+    ),
     generated_mols_path: str | None = typer.Option(
         None,
         "--mols",
         "-m",
         help="Path or glob pattern to generated SMILES files (overrides config)",
+    ),
+    out_dir: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Output directory for this run (overrides config folder_to_save).",
     ),
     stage: Stage | None = typer.Option(
         None,
@@ -470,12 +526,26 @@ def run(
         )
         raise typer.Exit(code=1)
 
-    config_dict = load_config(DEFAULT_CONFIG_PATH)
+    if out_dir and (reuse_folder or force_new_folder):
+        logger.error(
+            "[red]Error:[/red] Cannot use --out together with --reuse/--force-new. "
+            "Please manage uniqueness via --out."
+        )
+        raise typer.Exit(code=1)
+
+    config_dict = load_config(config_path)
     _apply_cli_overrides(config_dict, generated_mols_path, stage)
 
-    folder_to_save = _resolve_output_folder(
-        config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
-    )
+    if out_dir:
+        folder_to_save = Path(out_dir).resolve()
+        logger.info(
+            "[#B29EEE]Folder override:[/#B29EEE] Using output folder '%s' (--out)",
+            folder_to_save,
+        )
+    else:
+        folder_to_save = _resolve_output_folder(
+            config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
+        )
     config_dict["folder_to_save"] = str(folder_to_save)
     LoggerSingleton().configure_log_directory(folder_to_save)
 
@@ -490,7 +560,35 @@ def run(
     _save_sampled_molecules(data, folder_to_save, should_save)
 
     logger.info("[bold #B29EEE]Starting pipeline...[/bold #B29EEE]")
-    success = calculate_metrics(data, config_dict)
+
+    shared_console = LoggerSingleton().console
+
+    with Progress(
+        SpinnerColumn(style="#B29EEE"),
+        TextColumn("[bold #B29EEE]{task.description}[/bold #B29EEE]"),
+        BarColumn(bar_width=40, complete_style="#B29EEE", finished_style="green"),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        console=shared_console,
+    ) as progress:
+        task_id = progress.add_task("Initializing pipeline...", total=None)
+
+        def _cli_progress(stage_name: str, current: int, total: int) -> None:
+            progress.update(
+                task_id,
+                total=total,
+                completed=current - 1,
+                description=f"Stage {current}/{total}: {stage_name}",
+            )
+
+        success = calculate_metrics(data, config_dict, _cli_progress)
+        if progress.tasks[task_id].total:
+            progress.update(
+                task_id,
+                completed=progress.tasks[task_id].total,
+                description="Pipeline complete",
+            )
+
     if not success:
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)

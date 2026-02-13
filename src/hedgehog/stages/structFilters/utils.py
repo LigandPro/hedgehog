@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import warnings
 from pathlib import Path
@@ -40,6 +42,7 @@ except ImportError:
     LillyDemeritsFilters = None
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # Default columns for Lilly filter results
 _LILLY_DEFAULT_COLUMNS = ["smiles", "status", "pass_filter", "demerit_score", "reasons"]
@@ -227,7 +230,14 @@ def process_one_dataframe(config, df, apply_filter, subsample):
     if df is None or len(df) == 0:
         return None
 
-    data = df.head(subsample) if len(df) > subsample else df
+    if subsample is None or subsample <= 0:
+        data = df
+    elif "model_name" in df.columns and df["model_name"].nunique(dropna=True) > 1:
+        # In multi-model mode, apply the subsample limit per model, not globally.
+        # The global sampling is handled earlier by prepare_input_data().
+        data = df.groupby("model_name", group_keys=False).head(subsample)
+    else:
+        data = df.head(subsample) if len(df) > subsample else df
     smiles_col = "smiles"
 
     is_multi = data["model_name"].nunique(dropna=True) > 1
@@ -420,6 +430,42 @@ def filter_function_applier(filter_name):
     return filters[filter_name]
 
 
+def _check_alerts_single_mol(args):
+    """Check all alert SMARTS patterns against a single molecule.
+
+    Args:
+        args: Tuple of (mol_idx, mol, compiled_smarts, rule_set_names).
+
+    Returns:
+        dict with per-rule-set pass/fail flags and failure reasons.
+    """
+    mol_idx, mol, compiled_smarts, rule_set_names = args
+
+    row_data = {"_mol_idx": mol_idx}
+    row_data["smiles"] = dm.to_smiles(mol) if mol is not None else None
+
+    if mol is not None:
+        reasons_map: dict[str, list[str]] = {}
+        for name in rule_set_names:
+            row_data[f"pass_{name}"] = True
+            reasons_map[name] = []
+
+        for ruleset, patt, desc in compiled_smarts:
+            if mol.HasSubstructMatch(patt):
+                row_data[f"pass_{ruleset}"] = False
+                if desc and desc not in reasons_map[ruleset]:
+                    reasons_map[ruleset].append(desc)
+
+        for name in rule_set_names:
+            row_data[f"reasons_{name}"] = ";".join(reasons_map[name])
+    else:
+        for name in rule_set_names:
+            row_data[f"pass_{name}"] = False
+            row_data[f"reasons_{name}"] = "invalid_molecule"
+
+    return row_data
+
+
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Common Alerts...")
 
@@ -436,81 +482,39 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
         len(rule_set_names),
     )
 
-    # Process molecules sequentially since pandarallel has issues with closures
-    # This is more reliable than parallel_apply with complex nested functions
-    results_list = []
-    for i, mol in enumerate(mols):
-        if i % 100 == 0:
-            logger.debug("Processing molecule %d/%d", i + 1, len(mols))
+    # Pre-compile SMARTS patterns once to avoid recompiling per molecule.
+    compiled_smarts: list[tuple[str, Chem.Mol, str]] = []
+    for _, row in alert_data.iterrows():
+        smarts = row.get("smarts")
+        ruleset = row.get("rule_set_name")
+        desc = row.get("description") or ""
+        if not isinstance(smarts, str) or not isinstance(ruleset, str):
+            continue
+        patt = Chem.MolFromSmarts(smarts)
+        if patt is None:
+            continue
+        compiled_smarts.append((ruleset, patt, str(desc)))
 
-        row_data = {"mol": mol}
-        row_data["smiles"] = dm.to_smiles(mol) if mol is not None else None
+    # Parallel per-molecule alert checking.
+    n_jobs = resolve_n_jobs(config_structFilters, config)
+    items = [(i, mol, compiled_smarts, rule_set_names) for i, mol in enumerate(mols)]
+    results_list = parallel_map(_check_alerts_single_mol, items, n_jobs)
 
-        if mol is not None:
-            # Apply all SMARTS patterns
-            df = alert_data.copy()
-            matches: list[tuple[tuple[int, ...], ...] | tuple[()]] = []
-            for smarts in df["smarts"].tolist():
-                patt = Chem.MolFromSmarts(smarts)
-                matches.append(mol.GetSubstructMatches(patt) if patt else ())
-            df["matches"] = matches
-
-            grouped = (
-                df.groupby("rule_set_name")
-                .apply(
-                    lambda group: pd.Series(
-                        {
-                            "matches": [
-                                match
-                                for matches in group["matches"]
-                                for match in matches
-                            ]
-                            if any(matches for matches in group["matches"])
-                            else (),
-                            "reasons": ";".join(
-                                group[group["matches"].apply(lambda x: len(x) > 0)][
-                                    "description"
-                                ]
-                                .fillna("")
-                                .tolist()
-                            )
-                            if any(matches for matches in group["matches"])
-                            else "",
-                        }
-                    )
-                )
-                .reset_index()
-            )
-            grouped["pass_filter"] = grouped["matches"].apply(
-                lambda x: True if not x else False
-            )
-            for _, g_row in grouped.iterrows():
-                name = g_row["rule_set_name"]
-                row_data[f"pass_{name}"] = g_row["pass_filter"]
-                row_data[f"reasons_{name}"] = g_row["reasons"]
-        else:
-            # Molecule is None - mark as failed for all rule sets
-            for name in rule_set_names:
-                row_data[f"pass_{name}"] = False
-                row_data[f"reasons_{name}"] = "invalid_molecule"
-
-        results_list.append(row_data)
+    # Restore mol column (RDKit Mol objects are not picklable across processes).
+    for row_data in results_list:
+        idx = row_data.pop("_mol_idx")
+        row_data["mol"] = mols[idx]
 
     results = pd.DataFrame(results_list)
 
-    # Calculate pass and pass_any columns
-    def _get_full_any_pass(row):
-        pass_val = True
-        any_pass_val = False
-        for col in row.index:
-            if col.startswith("pass_") and col != "pass_any" and col != "pass":
-                pass_val &= row[col]
-                any_pass_val |= row[col]
-        row["pass"] = pass_val
-        row["pass_any"] = any_pass_val
-        return row
-
-    results = results.apply(_get_full_any_pass, axis=1)
+    # Calculate pass and pass_any columns.
+    pass_cols = [
+        c
+        for c in results.columns
+        if c.startswith("pass_") and c not in {"pass", "pass_any"}
+    ]
+    results["pass"] = results[pass_cols].all(axis=1)
+    results["pass_any"] = results[pass_cols].any(axis=1)
 
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
@@ -542,9 +546,38 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Complexity filters...")
     final_result = pd.DataFrame({"mol": mols, "pass": True, "pass_any": False})
     alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
+
+    def _apply_quiet_smcm(flt, mol):
+        if mol is None:
+            return False
+        try:
+            # Some datasets provide explicit [H] atoms in SMILES which are not
+            # supported by medchem's SMCM implementation. Remove explicit Hs
+            # before evaluation to avoid noisy stdout and to match implicit-H
+            # representations used by most generators.
+            mol = Chem.RemoveHs(mol)
+        except Exception:
+            pass
+
+        # medchem.complexity.SMCM uses print() for unsupported atoms.
+        # Suppress stdout/stderr so SLURM logs stay readable.
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            try:
+                return bool(flt(mol))
+            except Exception:
+                return False
+
     for name in alert_names:
         cfilter = mc.complexity.ComplexityFilter(complexity_metric=name)
-        final_result[f"pass_{name}"] = final_result["mol"].apply(cfilter)
+        if name == "smcm":
+            final_result[f"pass_{name}"] = final_result["mol"].apply(
+                lambda m, flt=cfilter: _apply_quiet_smcm(flt, m)
+            )
+        else:
+            final_result[f"pass_{name}"] = final_result["mol"].apply(cfilter)
         final_result["pass"] = final_result["pass"] * final_result[f"pass_{name}"]
         final_result["pass_any"] = (
             final_result["pass_any"] | final_result[f"pass_{name}"]
@@ -656,9 +689,8 @@ def apply_symmetry(config, mols, smiles_modelName_mols=None):
 
 def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating NIBR filter...")
-    n_jobs = config["n_jobs"]
-
     config_structFilters = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = config_structFilters["nibr_scheduler"]
 
     nibr_filters = mc.structural.NIBRFilters()
@@ -764,8 +796,8 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
         )
 
     logger.info("Calculating Lilly filter...")
-    n_jobs = config["n_jobs"]
     config_structFilters = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = config_structFilters["lilly_scheduler"]
 
     if smiles_modelName_mols is not None:
@@ -887,8 +919,17 @@ def get_basic_stats(
     config, filter_results, model_name, filter_name, stat=None, extend=None
 ):
     """Calculate basic statistics for filter results."""
-    is_multi = filter_results["model_name"].nunique(dropna=True) > 1
+    model_col = (
+        filter_results["model_name"] if "model_name" in filter_results.columns else None
+    )
+    is_multi = (not isinstance(model_name, str)) or (
+        model_col is not None and model_col.nunique(dropna=True) > 1
+    )
     if is_multi:
+        if model_col is None:
+            raise ValueError(
+                "Multi-model statistics requested but 'model_name' column is missing"
+            )
         all_res = []
         all_extended = []
         for model, group in filter_results.groupby("model_name"):
@@ -903,7 +944,8 @@ def get_basic_stats(
 
     num_mol = len(filter_results)
     filter_results.dropna(subset="mol", inplace=True)
-    filter_results["model_name"] = model_name
+    if isinstance(model_name, str):
+        filter_results["model_name"] = model_name
 
     if filter_name == "common_alerts":
         res_df = _create_base_stats_df(

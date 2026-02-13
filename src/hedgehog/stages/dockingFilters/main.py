@@ -9,13 +9,16 @@ import pandas as pd
 from rdkit import Chem
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.utils.parallel import resolve_n_jobs
 
 from .utils import (
     apply_conformer_deviation_filter,
     apply_interaction_filter,
     apply_pose_quality_filter,
+    apply_posebusters_fast_filter,
     apply_search_box_filter,
     apply_shepherd_score_filter,
+    apply_symmetry_rmsd_filter,
     load_molecules_from_sdf,
 )
 
@@ -100,6 +103,19 @@ def docking_filters_main(config: dict[str, Any]) -> pd.DataFrame | None:
     if not filter_config.get("run", False):
         logger.info("Docking filters disabled in config")
         return None
+
+    # Resolve n_jobs once and propagate to sub-configs that don't override it
+    n_jobs = resolve_n_jobs(filter_config, config)
+    for sub_key in (
+        "search_box",
+        "pose_quality",
+        "interactions",
+        "shepherd_score",
+        "conformer_deviation",
+    ):
+        sub = filter_config.get(sub_key)
+        if isinstance(sub, dict) and "n_jobs" not in sub:
+            sub["n_jobs"] = n_jobs
 
     # Determine paths
     output_dir = base_folder / "stages" / "06_docking_filters"
@@ -230,12 +246,20 @@ def docking_filters_main(config: dict[str, Any]) -> pd.DataFrame | None:
             results_df["pass_search_box"] == True, "mol_idx"  # noqa: E712
         ].tolist()
 
-    # Filter 1: Pose Quality
+    # Filter 1: Pose Quality — dispatch by backend
     if pq_config.get("enabled", True):
         if active_pose_indices:
             try:
                 mols_active = [mols[i] for i in active_pose_indices]
-                pq_df = apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
+                pq_backend = pq_config.get("backend", "posebusters_fast")
+                if pq_backend == "posebusters_fast":
+                    pq_df = apply_posebusters_fast_filter(
+                        mols_active, protein_pdb, pq_config
+                    )
+                else:  # "posecheck" (legacy)
+                    pq_df = apply_pose_quality_filter(
+                        mols_active, protein_pdb, pq_config
+                    )
                 pq_df["mol_idx"] = [active_pose_indices[i] for i in pq_df["mol_idx"]]
                 results_df = results_df.merge(pq_df, on="mol_idx", how="left")
                 filters_applied.append("pose_quality")
@@ -244,6 +268,17 @@ def docking_filters_main(config: dict[str, Any]) -> pd.DataFrame | None:
                 results_df["pass_pose_quality"] = True
         else:
             results_df["pass_pose_quality"] = False
+
+    # Optional optimization: under aggregation mode "all", if a pose fails pose quality
+    # it cannot pass the overall filter, so we can skip heavier checks (interactions,
+    # conformer deviation, etc.) for those poses.
+    pq_short_circuit = bool(pq_config.get("short_circuit", True)) and agg_mode == "all"
+    if pq_short_circuit and "pass_pose_quality" in results_df.columns:
+        pq_mask = results_df["pass_pose_quality"].fillna(False) == True  # noqa: E712
+        if "pass_search_box" in results_df.columns:
+            sb_mask = results_df["pass_search_box"].fillna(False) == True  # noqa: E712
+            pq_mask = pq_mask & sb_mask
+        active_pose_indices = results_df.loc[pq_mask, "mol_idx"].tolist()
 
     # Filter 2: Interactions
     if int_config.get("enabled", True):
@@ -292,13 +327,17 @@ def docking_filters_main(config: dict[str, Any]) -> pd.DataFrame | None:
             logger.info("Shepherd-Score disabled (no reference ligand)")
             results_df["pass_shepherd_score"] = True
 
-    # Filter 4: Conformer Deviation
+    # Filter 4: Conformer Deviation — dispatch by backend
     cd_config = filter_config.get("conformer_deviation", {})
     if cd_config.get("enabled", True):
         if active_pose_indices:
             try:
                 mols_active = [mols[i] for i in active_pose_indices]
-                cd_df = apply_conformer_deviation_filter(mols_active, cd_config)
+                cd_backend = cd_config.get("backend", "symmetry_rmsd")
+                if cd_backend == "symmetry_rmsd":
+                    cd_df = apply_symmetry_rmsd_filter(mols_active, cd_config)
+                else:  # "naive" (legacy)
+                    cd_df = apply_conformer_deviation_filter(mols_active, cd_config)
                 cd_df["mol_idx"] = [active_pose_indices[i] for i in cd_df["mol_idx"]]
                 results_df = results_df.merge(cd_df, on="mol_idx", how="left")
                 filters_applied.append("conformer_deviation")
