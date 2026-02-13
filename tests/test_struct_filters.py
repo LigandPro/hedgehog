@@ -10,6 +10,7 @@ import pytest
 from rdkit import Chem
 
 from hedgehog.stages.structFilters.utils import (
+    apply_molcomplexity_filters,
     apply_halogenicity,
     apply_lilly_filter,
     apply_nibr_filter,
@@ -146,6 +147,24 @@ class TestGetBasicStats:
         # Verify DataFrame structure
         assert df["model_name"].nunique() == 2
         assert "pass" in df.columns
+
+    def test_multimodel_with_model_name_list_does_not_overwrite_column(self):
+        """Should not crash when model_name arg is a list for multi-model inputs."""
+        from hedgehog.stages.structFilters.utils import get_basic_stats
+
+        df = pd.DataFrame(
+            {
+                "smiles": ["CCO", "CC", "CCC", "CCCC"],
+                "model_name": ["m1", "m1", "m2", "m2"],
+                "mol": [1, 1, 1, 1],
+                "pass": [True, False, True, True],
+            }
+        )
+
+        res_df, extended = get_basic_stats({}, df, ["m1", "m2"], "bredt")
+        assert set(res_df["model_name"].tolist()) == {"m1", "m2"}
+        assert extended["model_name"].nunique(dropna=True) == 2
+        assert len(extended) == 4
 
 
 class TestPadDataframeToLength:
@@ -811,3 +830,11 @@ class TestGetBasicStatsLilly:
         res_df, _ = get_basic_stats(config, df, "m1", "lilly")
         # mean of [10.0, 30.0] (excluding NaN) = 20.0
         assert abs(res_df["mean_noNA_demerit_score"].iloc[0] - 20.0) < 1e-9
+
+
+def test_molcomplexity_smcm_does_not_print_unsupported_atom(capsys):
+    mol = Chem.MolFromSmiles("[H]/N=C/C")
+    res = apply_molcomplexity_filters({}, [mol])
+    captured = capsys.readouterr()
+    assert "Unsupported atom" not in captured.out
+    assert "pass_smcm" in res.columns
