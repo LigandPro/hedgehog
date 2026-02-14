@@ -355,7 +355,9 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
         if isinstance(smiles[0], tuple):
             if progress_cb is not None:
                 try:
-                    final_result = apply_filter(config, mols, smiles, progress_cb=progress_cb)
+                    final_result = apply_filter(
+                        config, mols, smiles, progress_cb=progress_cb
+                    )
                 except TypeError:
                     final_result = apply_filter(config, mols, smiles)
             else:

@@ -1110,7 +1110,11 @@ def _materialize_prepared_ligands(
     if not prep_cmd:
         return ligands_path.exists()
 
-    cmd = [str(part) for part in prep_cmd] if isinstance(prep_cmd, (list, tuple)) else shlex.split(str(prep_cmd))
+    cmd = (
+        [str(part) for part in prep_cmd]
+        if isinstance(prep_cmd, (list, tuple))
+        else shlex.split(str(prep_cmd))
+    )
     logger.info(
         "%s per-molecule mode: preparing ligands before split",
         tool_name.upper(),
@@ -1317,7 +1321,15 @@ def _auto_detect_cudnn_path() -> str | None:
 
     # 2. Check common conda installation paths
     for root_name in ("miniforge", "miniconda3", "mambaforge", "anaconda3"):
-        torch_glob = Path.home() / root_name / "lib" / "python*" / "site-packages" / "torch" / "lib"
+        torch_glob = (
+            Path.home()
+            / root_name
+            / "lib"
+            / "python*"
+            / "site-packages"
+            / "torch"
+            / "lib"
+        )
         import glob as _glob
 
         matches = _glob.glob(str(torch_glob))
@@ -1488,21 +1500,21 @@ def _create_gnina_per_molecule_script(
         f.write("TOTAL=0\n")
         f.write(f'for config in "{configs_dir}"/gnina_*.ini; do\n')
         f.write('  [ -e "${config}" ] || continue\n')
-        f.write("  while [ \"$(jobs -rp | wc -l)\" -ge \"${MAX_JOBS}\" ]; do\n")
+        f.write('  while [ "$(jobs -rp | wc -l)" -ge "${MAX_JOBS}" ]; do\n')
         f.write("    sleep 0.2\n")
         f.write("  done\n")
         f.write("  TOTAL=$((TOTAL + 1))\n")
         f.write("  (\n")
         f.write('    mol_id=$(basename "${config}" .ini | sed "s/gnina_//")\n')
         f.write('    echo "[${TOTAL}] Processing ${mol_id}..."\n')
-        f.write(
-            f'    if {per_mol_cmd} 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
-        )
+        f.write(f'    if {per_mol_cmd} 2>> "{logs_dir}/${{mol_id}}.log"; then\n')
         f.write('      echo "${mol_id}" >> "${STATUS_DIR}/success.txt"\n')
         f.write("    else\n")
         f.write("      exit_code=$?\n")
         f.write('      echo "${mol_id}" >> "${STATUS_DIR}/failed.txt"\n')
-        f.write('      echo "${mol_id}:${exit_code}" >> "${STATUS_DIR}/failed_with_code.txt"\n')
+        f.write(
+            '      echo "${mol_id}:${exit_code}" >> "${STATUS_DIR}/failed_with_code.txt"\n'
+        )
         f.write("      if [ ${exit_code} -eq 143 ]; then\n")
         f.write(
             '        echo "${mol_id}: SIGTERM detected (timeout/memory limit/killed)" >> "${STATUS_DIR}/signals.txt"\n'
@@ -1532,12 +1544,16 @@ def _create_gnina_per_molecule_script(
         f.write('echo "Parallel jobs: ${MAX_JOBS}"\n\n')
 
         f.write('if [ "${FAILED}" -gt 0 ] && [ -f "${STATUS_DIR}/failed.txt" ]; then\n')
-        f.write(f'  cp "${{STATUS_DIR}}/failed.txt" "{ligands_dir}/gnina/failed_molecules.txt"\n')
+        f.write(
+            f'  cp "${{STATUS_DIR}}/failed.txt" "{ligands_dir}/gnina/failed_molecules.txt"\n'
+        )
         f.write('  echo "Failed molecules were saved to failed_molecules.txt"\n')
         f.write("fi\n\n")
 
         f.write('if [ "${SUCCESS}" -gt 0 ]; then\n')
-        f.write('  echo "Docking completed with ${SUCCESS}/${TOTAL} molecules successful"\n')
+        f.write(
+            '  echo "Docking completed with ${SUCCESS}/${TOTAL} molecules successful"\n'
+        )
         f.write("  exit 0\n")
         f.write("fi\n")
         f.write('echo "ERROR: All molecules failed docking"\n')
@@ -2087,7 +2103,9 @@ def _setup_gnina(
 
                 # Split SDF into per-molecule files
                 molecules_dir = ligands_dir / "_workdir" / "molecules"
-                molecule_files = _split_sdf_to_molecules(ligands_path_obj, molecules_dir)
+                molecule_files = _split_sdf_to_molecules(
+                    ligands_path_obj, molecules_dir
+                )
 
                 if molecule_files:
                     # Create per-molecule configs
@@ -2116,7 +2134,9 @@ def _setup_gnina(
                     )
                     return script_path
                 else:
-                    logger.warning("No molecules found in SDF, falling back to batch mode")
+                    logger.warning(
+                        "No molecules found in SDF, falling back to batch mode"
+                    )
 
         # Fallback to legacy batch mode
         config_file = ligands_dir / "_workdir" / "gnina_config.ini"
@@ -2321,10 +2341,14 @@ def run_docking(config, reporter=None):
         background = bool(cfg.get("run_in_background", False))
         run_status = {}
 
-        selected_tools = [t for t in tools_list if t in ["smina", "gnina"] and t in job_ids]
+        selected_tools = [
+            t for t in tools_list if t in ["smina", "gnina"] and t in job_ids
+        ]
         progress_total = 0
         tool_totals: dict[str, int] = {}
-        gnina_output_sdf = _get_gnina_output_directory(cfg, base_folder) / "gnina_out.sdf"
+        gnina_output_sdf = (
+            _get_gnina_output_directory(cfg, base_folder) / "gnina_out.sdf"
+        )
         if reporter is not None and not background and selected_tools:
             configs_dir = ligands_dir / "_workdir" / "configs"
             for tool in selected_tools:
@@ -2347,7 +2371,9 @@ def run_docking(config, reporter=None):
 
             def _make_tick(tool_name: str):
                 def _tick() -> None:
-                    reporter.progress(_count_done(), progress_total, message=f"Docking ({tool_name})")
+                    reporter.progress(
+                        _count_done(), progress_total, message=f"Docking ({tool_name})"
+                    )
 
                 return _tick
 
@@ -2355,7 +2381,11 @@ def run_docking(config, reporter=None):
 
         if "smina" in job_ids:
             logger.info("Running SMINA docking")
-            tick = _make_tick("smina") if reporter is not None and not background and progress_total else None
+            tick = (
+                _make_tick("smina")
+                if reporter is not None and not background and progress_total
+                else None
+            )
             run_status["smina"] = _run_smina(
                 ligands_dir, background, job_ids["smina"], tick=tick
             )
@@ -2368,7 +2398,11 @@ def run_docking(config, reporter=None):
             try:
                 gnina_dir = _get_gnina_output_directory(cfg, base_folder)
                 output_sdf = gnina_dir / "gnina_out.sdf"
-                tick = _make_tick("gnina") if reporter is not None and not background and progress_total else None
+                tick = (
+                    _make_tick("gnina")
+                    if reporter is not None and not background and progress_total
+                    else None
+                )
                 run_status["gnina"] = _run_gnina(
                     ligands_dir, output_sdf, background, job_ids["gnina"], tick=tick
                 )
@@ -2400,7 +2434,9 @@ def run_docking(config, reporter=None):
             ]
 
             if reporter is not None and progress_total:
-                reporter.progress(progress_total, progress_total, message="Docking complete")
+                reporter.progress(
+                    progress_total, progress_total, message="Docking complete"
+                )
 
             if failed_tools:
                 logger.error(f"Docking tools failed: {', '.join(failed_tools)}")

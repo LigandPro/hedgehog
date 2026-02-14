@@ -252,6 +252,7 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
 
     progress_cb = None
     if reporter is not None:
+
         def _progress_cb(done: int, total: int) -> None:
             reporter.progress(done, total, message="Computing descriptors")
 

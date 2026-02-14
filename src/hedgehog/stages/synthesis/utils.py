@@ -481,6 +481,7 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
 
     sa_progress = None
     if progress_cb is not None:
+
         def _sa_progress(done: int, total: int) -> None:
             progress_cb("sa_score", done, total)
 
@@ -493,6 +494,7 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
     # SYBA uses GPU internally — always run sequentially to avoid forking issues
     syba_progress = None
     if progress_cb is not None:
+
         def _syba_progress(done: int, total: int) -> None:
             progress_cb("syba_score", done, total)
 

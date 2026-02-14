@@ -20,7 +20,9 @@ def test_parallel_map_progress_sequential():
     assert calls == [(1, 3), (2, 3), (3, 3)]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="multiprocessing fork semantics differ on Windows")
+@pytest.mark.skipif(
+    os.name == "nt", reason="multiprocessing fork semantics differ on Windows"
+)
 def test_parallel_map_progress_multiprocessing():
     calls: list[tuple[int, int]] = []
 
@@ -32,4 +34,3 @@ def test_parallel_map_progress_multiprocessing():
     assert len(calls) == 4
     assert calls[0] == (1, 4)
     assert calls[-1] == (4, 4)
-

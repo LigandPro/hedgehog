@@ -693,7 +693,9 @@ class MolecularAnalysisPipeline:
             return False, False
 
         enabled_stages = [s.name for s in self.stages if s.enabled]
-        current_idx = enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+        current_idx = (
+            enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+        )
         reporter = StageProgressReporter(
             emit_event=self._emit_progress_event,
             stage=stage.name,
@@ -1128,10 +1130,14 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
     ]
     if has_smina:
         lines.append("|   +-- smina/")
-        lines.append("|   |   +-- smina_out.sdf          Aggregated SMINA results (1 pose/molecule)")
+        lines.append(
+            "|   |   +-- smina_out.sdf          Aggregated SMINA results (1 pose/molecule)"
+        )
     if has_gnina:
         lines.append("|   +-- gnina/")
-        lines.append("|   |   +-- gnina_out.sdf          Aggregated GNINA results (1 pose/molecule)")
+        lines.append(
+            "|   |   +-- gnina_out.sdf          Aggregated GNINA results (1 pose/molecule)"
+        )
 
     # _workdir subtree
     lines.append("|   +-- _workdir/                  Intermediate files")

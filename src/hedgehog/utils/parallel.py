@@ -89,7 +89,9 @@ def parallel_map(
     ctx = multiprocessing.get_context("fork")
     with ctx.Pool(processes=n_jobs) as pool:
         out = []
-        for idx, result in enumerate(pool.imap(func, items, chunksize=chunksize), start=1):
+        for idx, result in enumerate(
+            pool.imap(func, items, chunksize=chunksize), start=1
+        ):
             out.append(result)
             if progress:
                 progress(idx, length)

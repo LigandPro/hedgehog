@@ -10,9 +10,9 @@ import pytest
 from rdkit import Chem
 
 from hedgehog.stages.structFilters.utils import (
-    apply_molcomplexity_filters,
     apply_halogenicity,
     apply_lilly_filter,
+    apply_molcomplexity_filters,
     apply_nibr_filter,
     apply_protecting_groups,
     apply_ring_infraction,

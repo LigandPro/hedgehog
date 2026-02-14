@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
-
 
 # ---------------------------------------------------------------------------
 # resolve_n_jobs
@@ -16,7 +13,9 @@ class TestResolveNJobs:
     """Tests for the resolve_n_jobs function."""
 
     def test_stage_config_takes_priority(self):
-        assert resolve_n_jobs(stage_config={"n_jobs": 4}, global_config={"n_jobs": 8}) == 4
+        assert (
+            resolve_n_jobs(stage_config={"n_jobs": 4}, global_config={"n_jobs": 8}) == 4
+        )
 
     def test_global_config_fallback(self):
         assert resolve_n_jobs(stage_config={}, global_config={"n_jobs": 8}) == 8

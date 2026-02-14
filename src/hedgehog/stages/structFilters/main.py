@@ -225,21 +225,26 @@ def main(config, stage_dir, reporter=None):
     for idx, filter_name in enumerate(filter_names):
         base = idx * 100
         if reporter is not None:
-            reporter.progress(base, stage_total, message=f"StructFilters: {filter_name}")
+            reporter.progress(
+                base, stage_total, message=f"StructFilters: {filter_name}"
+            )
 
         apply_func = filter_function_applier(filter_name)
         progress_cb = None
         if reporter is not None and filter_name == "common_alerts":
-            def _alerts_progress(done: int, total: int) -> None:
+
+            def _alerts_progress(
+                done: int, total: int, base_value: int = base, name: str = filter_name
+            ) -> None:
                 if total <= 0:
                     pct = 0
                 else:
                     pct = int(round((done / total) * 100))
                 pct = max(0, min(100, pct))
                 reporter.progress(
-                    base + pct,
+                    base_value + pct,
                     stage_total,
-                    message=f"StructFilters: {filter_name}",
+                    message=f"StructFilters: {name}",
                 )
 
             progress_cb = _alerts_progress

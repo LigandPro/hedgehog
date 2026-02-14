@@ -22,7 +22,6 @@ from .utils import (
     load_molecules_from_sdf,
 )
 
-
 apply_posecheck_fast_filter = apply_posebusters_fast_filter
 
 
@@ -125,9 +124,7 @@ def _collapse_to_single_pose(
     return selected_mols, collapsed_df
 
 
-def docking_filters_main(
-    config: dict[str, Any], reporter=None
-) -> pd.DataFrame | None:
+def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame | None:
     """
     Main entry point for docking filters stage.
 
@@ -321,7 +318,9 @@ def docking_filters_main(
             else:
                 pct = int(round((done / total) * 100))
             pct = max(0, min(100, pct))
-            reporter.progress(base + pct, stage_total, message=f"DockingFilters: {label}")
+            reporter.progress(
+                base + pct, stage_total, message=f"DockingFilters: {label}"
+            )
 
         return _progress
 
@@ -431,7 +430,11 @@ def docking_filters_main(
     # Filter 3: Shepherd-Score
     if ss_config.get("enabled", False):
         if ref_path and Path(ref_path).exists():
-            ss_step_idx = step_names.index("shepherd_score") if "shepherd_score" in step_names else None
+            ss_step_idx = (
+                step_names.index("shepherd_score")
+                if "shepherd_score" in step_names
+                else None
+            )
             if reporter is not None and ss_step_idx is not None:
                 reporter.progress(
                     ss_step_idx * 100,
@@ -449,7 +452,9 @@ def docking_filters_main(
                             mols_active,
                             ref_mol,
                             ss_config,
-                            progress_cb=_step_progress(ss_step_idx or 0, "shepherd_score")
+                            progress_cb=_step_progress(
+                                ss_step_idx or 0, "shepherd_score"
+                            )
                             if ss_step_idx is not None
                             else None,
                         )
@@ -494,17 +499,13 @@ def docking_filters_main(
                     cd_df = apply_symmetry_rmsd_filter(
                         mols_active,
                         cd_config,
-                        progress_cb=_step_progress(
-                            cd_step_idx, "conformer_deviation"
-                        ),
+                        progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
                     )
                 else:  # "naive" (legacy)
                     cd_df = apply_conformer_deviation_filter(
                         mols_active,
                         cd_config,
-                        progress_cb=_step_progress(
-                            cd_step_idx, "conformer_deviation"
-                        ),
+                        progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
                     )
                 cd_df["mol_idx"] = [active_pose_indices[i] for i in cd_df["mol_idx"]]
                 results_df = results_df.merge(cd_df, on="mol_idx", how="left")

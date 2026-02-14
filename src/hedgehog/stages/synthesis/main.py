@@ -137,7 +137,9 @@ def main(config: dict, reporter=None) -> None:
     prepare_input_smiles(score_filtered_df, output_folder / "input_smiles.smi")
     output_json = output_folder / "retrosynthesis_results.json"
     if reporter is not None:
-        reporter.progress(300, stage_total, message="Running retrosynthesis (AiZynthFinder)")
+        reporter.progress(
+            300, stage_total, message="Running retrosynthesis (AiZynthFinder)"
+        )
     if not run_aizynthfinder(
         output_folder / "input_smiles.smi", output_json, aizynth_config
     ):
