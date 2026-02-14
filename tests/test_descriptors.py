@@ -73,6 +73,7 @@ class TestComputeSingleMoleculeDescriptors:
             "n_het_atoms",
             "n_N_atoms",
             "fN_atoms",
+            "fNS_atoms",
             "charged_mol",
             "molWt",
             "logP",
@@ -92,6 +93,16 @@ class TestComputeSingleMoleculeDescriptors:
         ]
         for key in expected_keys:
             assert key in result, f"Missing key: {key}"
+
+    def test_fns_atoms_fraction(self):
+        """fNS_atoms should count N+S atoms over heavy atoms."""
+        mol = Chem.MolFromSmiles("NS")
+        result = _compute_single_molecule_descriptors(mol, "test", "ns-0")
+
+        assert result["n_heavy_atoms"] == 2
+        assert result["n_N_atoms"] == 1
+        assert result["fN_atoms"] == 0.5
+        assert result["fNS_atoms"] == 1.0
 
 
 class TestOrderIdentityColumns:
@@ -234,6 +245,54 @@ class TestComputeMetrics:
 
         assert len(result) == 2  # Invalid skipped
         # Check skipped file was created
+        assert (tmp_path / "skipped_molecules.csv").exists()
+
+    def test_compute_metrics_remove_stereochemistry(self, tmp_path):
+        """When enabled, stereochemistry should be removed from output SMILES."""
+        df = pd.DataFrame(
+            {
+                "smiles": ["F[C@H](Cl)Br"],
+                "model_name": ["test"],
+                "mol_idx": ["t-0"],
+            }
+        )
+        cfg = {"preprocess": {"remove_stereochemistry": True}}
+        result = compute_metrics(df, str(tmp_path) + "/", config_descriptors=cfg)
+
+        assert len(result) == 1
+        assert "@" not in result.iloc[0]["smiles"]
+
+    def test_compute_metrics_remove_charges_best_effort(self, tmp_path):
+        """When enabled, charged molecules should be neutralized or skipped."""
+        df = pd.DataFrame(
+            {
+                "smiles": ["C[NH3+]"],
+                "model_name": ["test"],
+                "mol_idx": ["t-0"],
+            }
+        )
+        cfg = {"preprocess": {"remove_charges": True}}
+        result = compute_metrics(df, str(tmp_path) + "/", config_descriptors=cfg)
+
+        # Best-effort behavior: if neutralization succeeds, '+' is removed.
+        if len(result) == 1:
+            assert "+" not in result.iloc[0]["smiles"]
+        else:
+            assert (tmp_path / "skipped_molecules.csv").exists()
+
+    def test_compute_metrics_reject_radicals(self, tmp_path):
+        """When enabled, radicals should be skipped."""
+        df = pd.DataFrame(
+            {
+                "smiles": ["[CH3]"],
+                "model_name": ["test"],
+                "mol_idx": ["t-0"],
+            }
+        )
+        cfg = {"preprocess": {"remove_radicals": True}}
+        result = compute_metrics(df, str(tmp_path) + "/", config_descriptors=cfg)
+
+        assert len(result) == 0
         assert (tmp_path / "skipped_molecules.csv").exists()
 
     def test_compute_metrics_preserves_model_name(self, tmp_path):
