@@ -47,7 +47,6 @@ const DESCRIPTORS_PARAMS: ParamDef[] = [
 
 const FILTERS_PARAMS: ParamDef[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable structural filters' },
-  { key: 'run_before_descriptors', label: 'Run Before Descriptors', type: 'boolean', description: 'Filter first (faster if many fail)' },
   { key: 'calculate_common_alerts', label: 'Common Alerts', type: 'boolean', description: 'PAINS, Dundee, Glaxo alerts' },
   { key: 'calculate_NIBR', label: 'NIBR Filters', type: 'boolean', description: 'Novartis structural filters' },
   { key: 'calculate_lilly', label: 'Lilly Filters', type: 'boolean', description: 'Eli Lilly medchem demerits' },

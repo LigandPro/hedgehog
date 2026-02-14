@@ -2,6 +2,14 @@ run: true
 n_jobs: -1
 batch_size: 1000
 filter_data: true
+
+preprocess:
+  # MolPrep stage owns molecule standardization. Keep these disabled to avoid
+  # double-processing the same transformations.
+  remove_charges: false
+  remove_radicals: false
+  remove_stereochemistry: false
+
 borders:
   allowed_chars:
   - C

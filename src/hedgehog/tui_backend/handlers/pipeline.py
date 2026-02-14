@@ -26,7 +26,7 @@ class PipelineJob:
 
     # Map internal stage names to TUI stage names
     STAGE_NAME_MAP = {
-        "struct_ini_filters": "struct_filters",
+        "mol_prep": "mol_prep",
         "descriptors": "descriptors",
         "struct_filters": "struct_filters",
         "synthesis": "synthesis",

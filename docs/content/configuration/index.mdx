@@ -10,6 +10,7 @@ Hedgehog uses a hierarchical YAML configuration system. A single **main config f
 
 ```
 config.yml                  (main — global settings + paths to stage configs)
+  ├── config_mol_prep.yml          (Datamol molecule standardization)
   ├── config_descriptors.yml       (molecular descriptor calculation)
   ├── config_structFilters.yml     (structural / medchem filters)
   ├── config_synthesis.yml         (retrosynthesis scoring)
@@ -75,6 +76,7 @@ folder_to_save: results/my_run
 n_jobs: 8
 sample_size: 500
 config_descriptors: configs/config_descriptors.yml
+config_mol_prep: configs/config_mol_prep.yml
 config_structFilters: configs/config_structFilters.yml
 config_synthesis: configs/config_synthesis.yml
 config_docking: configs/config_docking.yml
@@ -93,6 +95,7 @@ Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. Th
 | File | Purpose |
 |------|---------|
 | `config.yml` | Global paths, parallelism, sample size, and references to all stage configs |
+| `config_mol_prep.yml` | Datamol-based molecule standardization and strict filtering |
 | `config_descriptors.yml` | Descriptor borders, filtering flags, plotting options |
 | `config_structFilters.yml` | Structural alerts, medchem filters (Bredt, NIBR, Lilly, etc.) |
 | `config_synthesis.yml` | Retrosynthesis toggle, SA/SYBA/RA score thresholds |
@@ -116,6 +119,7 @@ pains_file_path: data/wehi_pains.csv
 mcf_file_path: data/mcf.csv
 ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
 protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
 config_structFilters: src/hedgehog/configs/config_structFilters.yml
 config_synthesis: src/hedgehog/configs/config_synthesis.yml

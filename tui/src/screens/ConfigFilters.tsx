@@ -28,7 +28,6 @@ interface SettingItem {
 
 const settingsItems: SettingItem[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable structural filters stage' },
-  { key: 'run_before_descriptors', label: 'Run Before Descriptors', type: 'boolean', description: 'Run filters before descriptor calculation (faster)' },
   { key: 'filter_data', label: 'Filter Data', type: 'boolean', description: 'Apply filters to remove flagged molecules' },
   { key: 'alerts_data_path', label: 'Alerts Data Path', type: 'path', description: 'Path to structural alerts SMARTS database' },
   { key: 'calculate_common_alerts', label: 'Common Alerts', type: 'boolean', description: 'Check for PAINS, Dundee, Glaxo, etc. alerts' },

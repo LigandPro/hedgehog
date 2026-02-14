@@ -376,9 +376,7 @@ def _preprocess_input(
             logger,
         )
     else:
-        prepared_path = preprocess_input_with_rdkit(
-            original_input_path, folder_to_save, logger
-        )
+        prepared_path = None
 
     if prepared_path:
         config_dict["generated_mols_path"] = prepared_path
@@ -426,6 +424,7 @@ console = Console()
 class Stage(str, Enum):
     """Available pipeline stages."""
 
+    mol_prep = "mol_prep"
     descriptors = "descriptors"
     struct_filters = "struct_filters"
     synthesis = "synthesis"
@@ -437,6 +436,10 @@ class Stage(str, Enum):
     def description(self) -> str:
         """Return human-readable description for this stage."""
         descriptions = {
+            Stage.mol_prep: (
+                "Standardize molecules (salts/fragments removal, uncharge, "
+                "tautomer canonicalization, stereo removal)"
+            ),
             Stage.descriptors: "Compute 22 physicochemical descriptors per molecule",
             Stage.struct_filters: "Apply structural filters (Lilly, NIBR, PAINS, etc.)",
             Stage.synthesis: (

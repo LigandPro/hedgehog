@@ -1,5 +1,4 @@
 run: true
-run_before_descriptors: false
 filter_data: true
 alerts_data_path: data/common_alerts_collection.csv
 calculate_common_alerts: true

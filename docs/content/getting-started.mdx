@@ -65,7 +65,7 @@ Note: the default `config.yml` contains absolute paths for optional proprietary 
 When you run the pipeline, you will see:
 
 1. **Banner** — the HEDGEHOG banner with version information.
-2. **Input preprocessing** — SMILES canonicalization and deduplication.
+2. **Mol Prep** — Datamol-based standardization and strict filtering (salts/fragments cleanup, uncharging, tautomer canonicalization, stereo removal).
 3. **Stage execution** — each enabled stage runs in order, logging progress and molecule counts. Stages that are disabled in the configuration are skipped.
 4. **Report generation** — an HTML report and associated plots are generated automatically at the end of a successful run.
 
@@ -74,11 +74,12 @@ Typical console output looks like:
 ```
 🦔 HEDGEHOG
 Starting pipeline...
-Stage 1: Molecular Descriptors — 500 molecules processed, 423 passed
-Stage 2: Post-descriptors Structural Filters — 423 molecules processed, 387 passed
-Stage 3: Synthesis Analysis — 387 molecules processed, 312 passed
+Stage 1: Mol Prep (Datamol) — 500 molecules processed, 451 passed
+Stage 2: Molecular Descriptors — 451 molecules processed, 423 passed
+Stage 3: Structural Filters — 423 molecules processed, 387 passed
+Stage 4: Synthesis Analysis — 387 molecules processed, 312 passed
 ...
-Pipeline completed: 6/6 stages successful
+Pipeline completed: 7/7 stages successful
 ```
 
 ## Understanding Results
@@ -90,10 +91,10 @@ The output directory structure:
 ```
 results/run_1/
 ├── input/
-│   └── sampled_molecules.csv       # Preprocessed input molecules
+│   └── sampled_molecules.csv       # Input molecules (sampled)
 ├── stages/
+│   ├── 00_mol_prep/               # Datamol-based standardization + strict filtering
 │   ├── 01_descriptors_initial/     # Physicochemical descriptors
-│   ├── 02_structural_filters_pre/  # Pre-descriptors structural filters (optional)
 │   ├── 03_structural_filters_post/ # Post-descriptors structural filters
 │   ├── 04_synthesis/               # Retrosynthesis analysis
 │   ├── 05_docking/                 # Molecular docking (SMINA/GNINA)

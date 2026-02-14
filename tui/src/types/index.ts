@@ -63,6 +63,7 @@ export interface MainConfig {
   mcf_file_path: string;
   ligand_preparation_tool?: string;
   protein_preparation_tool?: string;
+  config_mol_prep: string;
   config_descriptors: string;
   config_structFilters: string;
   config_synthesis: string;
@@ -88,7 +89,6 @@ export interface DescriptorsConfig {
 
 export interface FiltersConfig {
   run: boolean;
-  run_before_descriptors: boolean;
   filter_data: boolean;
   alerts_data_path: string;
   calculate_common_alerts: boolean;
@@ -339,7 +339,6 @@ export interface WizardStageConfig {
 }
 
 export interface WizardDependencies {
-  runFiltersBeforeDescriptors: boolean;
 }
 
 export interface WizardState {

@@ -9,6 +9,7 @@ import { formatDuration } from '../utils/format.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 
 const STAGE_NAMES: Record<string, string> = {
+  mol_prep: 'Mol Prep',
   descriptors: 'Descriptors',
   struct_filters: 'Struct Filters',
   synthesis: 'Synthesis',

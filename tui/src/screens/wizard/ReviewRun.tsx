@@ -8,6 +8,7 @@ import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import type { Screen, JobHistoryRecord } from '../../types/index.js';
 
 const STAGE_NAMES: Record<string, string> = {
+  mol_prep: 'Mol Prep',
   descriptors: 'Descriptors',
   struct_filters: 'Struct Filters',
   synthesis: 'Synthesis',
@@ -50,6 +51,9 @@ export function ReviewRun(): React.ReactElement {
       let dependency: string | undefined;
 
       switch (stageName) {
+        case 'mol_prep':
+          summary = 'Datamol standardization';
+          break;
         case 'descriptors':
           summary = `Batch: ${params.batch_size}`;
           if (preset) {
@@ -60,9 +64,6 @@ export function ReviewRun(): React.ReactElement {
           const nibr = params.calculate_NIBR ? 'Yes' : 'No';
           const lilly = params.calculate_lilly ? 'Yes' : 'No';
           summary = `NIBR: ${nibr} | Lilly: ${lilly}`;
-          if (params.run_before_descriptors && wizard.selectedStages.includes('descriptors')) {
-            dependency = 'before descriptors';
-          }
           break;
         case 'synthesis':
           const saMax = params.sa_score_max === 'inf' ? '∞' : params.sa_score_max;
