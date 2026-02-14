@@ -45,7 +45,8 @@ rdBase.DisableLog("rdApp.*")
 def order_identity_columns(df):
     """Reorder dataframe columns with identity columns first."""
     id_cols = ["smiles", "model_name", "mol_idx"]
-    ordered = id_cols + [c for c in df.columns if c not in id_cols]
+    existing_id_cols = [c for c in id_cols if c in df.columns]
+    ordered = existing_id_cols + [c for c in df.columns if c not in id_cols]
     return df[ordered]
 
 
@@ -342,6 +343,8 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
         skipped_df.to_csv(save_path / "skipped_molecules.csv", index=False)
 
     metrics_df = pd.DataFrame(metrics)
+    if metrics_df.shape[1] == 0:
+        metrics_df = pd.DataFrame(columns=["smiles", "model_name", "mol_idx"])
     metrics_df = order_identity_columns(metrics_df)
     metrics_df.to_csv(save_path / "descriptors_all.csv", index=False)
     return metrics_df
