@@ -28,25 +28,30 @@ script_args = ["-osd", str(output_sdf)]
 script_args = ["-osd", str(output_sdf.resolve())]
 ```
 
-## Conda / Mamba Detection
+## Conda / Mamba Detection (GNINA)
 
-The synthesis stage relies on AiZynthFinder, which runs inside a separate conda environment. HEDGEHOG auto-detects the conda installation by searching for these directory names under the user's home:
+If you configure GNINA to run inside an existing conda environment, HEDGEHOG may need to locate
+`conda.sh` to activate that environment before launching GNINA. When `conda_sh` is not provided in
+your docking configuration, HEDGEHOG auto-detects common conda installs by searching for these
+directory names under the user's home:
 
 - `miniforge`
 - `miniconda3`
 - `mambaforge`
 - `anaconda3`
 
-**Symptom:** synthesis stage fails with an error like `conda not found` or `CondaError`.
+**Symptom:** docking (GNINA) stage fails with an error like `conda not found` or `CondaError`, or
+GNINA cannot find required shared libraries after activation.
 
-**Fix:** ensure one of the supported conda distributions is installed and its `bin/` directory is on your `PATH`. If you use `miniforge` (common on modern systems), it will be detected automatically. You do not need `miniconda3` specifically.
+**Fix:** ensure one of the supported conda distributions is installed and its `bin/` directory is on
+your `PATH`, or set `conda_sh` explicitly to your `.../etc/profile.d/conda.sh` path.
 
 ```bash
 # Verify conda is accessible
 conda --version
 
-# If using miniforge, the base directory should be ~/miniforge
-ls ~/miniforge/bin/conda
+# If using miniforge, conda.sh is typically here:
+ls ~/miniforge/etc/profile.d/conda.sh
 ```
 
 ## Autobox Coordinate Frame Mismatch
@@ -206,7 +211,7 @@ ref_ligand: /path/to/your/reference_ligand.sdf
 | Log message | Meaning | Action |
 |---|---|---|
 | `No data available for structural filters` | The previous stage produced no output | Check that descriptors stage completed and produced molecules |
-| `Synthesis finished but no output file detected` | AiZynthFinder did not write results | Check conda environment and model files |
+| `Synthesis finished but no output file detected` | AiZynthFinder did not write results | Check AiZynthFinder installation and that model/public data files exist |
 | `Docking finished but no results detected in output directories` | Neither SMINA nor GNINA produced output | Check binary paths and receptor PDB |
 | `No molecules left after synthesis` | All molecules were filtered out | Relax synthesis thresholds in `config_synthesis.yml` |
 | `Pipeline completed with failures` | At least one enabled stage did not complete | Review the per-stage status in the log output |

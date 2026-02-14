@@ -124,25 +124,61 @@ class PipelineJob:
         self.previous_stage = tui_stage
         self.current_stage = tui_stage
 
-    def _progress_callback(self, stage: str, current: int, total: int) -> None:
+    def _progress_callback(self, event: dict) -> None:
         """Pipeline progress callback; raises InterruptedError on cancel."""
         if self.cancelled:
             raise InterruptedError("Pipeline cancelled")
 
+        event_type = event.get("type")
+        stage = str(event.get("stage", ""))
         tui_stage = self._map_stage_name(stage)
         self._emit_stage_transition(tui_stage)
 
-        progress_pct = int((current / total) * 100) if total > 0 else 0
-        self.progress[tui_stage] = progress_pct
-        self._notify(
-            "progress",
-            {
-                "stage": tui_stage,
-                "current": progress_pct,
-                "total": 100,
-                "message": f"Running stage {current}/{total}: {tui_stage}",
-            },
-        )
+        if event_type == "stage_progress":
+            current = int(event.get("current", 0) or 0)
+            total = int(event.get("total", 0) or 0)
+            progress_pct = int((current / total) * 100) if total > 0 else 0
+            progress_pct = max(0, min(100, progress_pct))
+            message = event.get("message") or f"Running: {tui_stage}"
+            self.progress[tui_stage] = progress_pct
+            self._notify(
+                "progress",
+                {
+                    "stage": tui_stage,
+                    "current": progress_pct,
+                    "total": 100,
+                    "message": message,
+                },
+            )
+            return
+
+        if event_type == "stage_start":
+            self.progress[tui_stage] = 0
+            message = event.get("message") or f"Starting: {tui_stage}"
+            self._notify(
+                "progress",
+                {
+                    "stage": tui_stage,
+                    "current": 0,
+                    "total": 100,
+                    "message": message,
+                },
+            )
+            return
+
+        if event_type == "stage_complete":
+            self.progress[tui_stage] = 100
+            message = event.get("message") or f"Completed: {tui_stage}"
+            self._notify(
+                "progress",
+                {
+                    "stage": tui_stage,
+                    "current": 100,
+                    "total": 100,
+                    "message": message,
+                },
+            )
+            return
 
     def _run(self):
         """Execute the pipeline."""

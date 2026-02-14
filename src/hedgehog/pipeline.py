@@ -91,6 +91,58 @@ DOCKING_RESULTS_DIR_TEMPLATE = {
 FILE_RUN_INCOMPLETE = ".RUN_INCOMPLETE"
 
 
+class StageProgressReporter:
+    """Emit structured progress events for a single pipeline stage."""
+
+    def __init__(
+        self,
+        emit_event,
+        stage: str,
+        stage_index: int,
+        total_stages: int,
+    ) -> None:
+        self._emit_event = emit_event
+        self.stage = stage
+        self.stage_index = stage_index
+        self.total_stages = total_stages
+
+    def start(self, message: str | None = None) -> None:
+        self._emit_event(
+            {
+                "type": "stage_start",
+                "stage": self.stage,
+                "stage_index": self.stage_index,
+                "total_stages": self.total_stages,
+                "message": message,
+            }
+        )
+
+    def progress(self, current: int, total: int, message: str | None = None) -> None:
+        self._emit_event(
+            {
+                "type": "stage_progress",
+                "stage": self.stage,
+                "stage_index": self.stage_index,
+                "total_stages": self.total_stages,
+                "current": int(current),
+                "total": int(total),
+                "message": message,
+            }
+        )
+
+    def complete(self, ok: bool = True, message: str | None = None) -> None:
+        self._emit_event(
+            {
+                "type": "stage_complete",
+                "stage": self.stage,
+                "stage_index": self.stage_index,
+                "total_stages": self.total_stages,
+                "ok": bool(ok),
+                "message": message,
+            }
+        )
+
+
 def _log_stage_header(stage_label: str) -> None:
     """Log a formatted stage header."""
     separator = "[#B29EEE]" + "\u2500" * 59 + "[/#B29EEE]"
@@ -342,20 +394,27 @@ class PipelineStageRunner:
         logger.debug("No processed data found from any stage")
         return None
 
-    def run_descriptors(self, data, subfolder: str | None = None) -> bool:
+    def run_descriptors(
+        self,
+        data,
+        subfolder: str | None = None,
+        reporter: StageProgressReporter | None = None,
+    ) -> bool:
         """Run molecular descriptors calculation."""
         try:
             config_descriptors = load_config(self.config[CONFIG_DESCRIPTORS])
             if not config_descriptors.get(CONFIG_RUN_KEY, False):
                 logger.info("Descriptors calculation disabled in config")
                 return False
-            descriptors_main(data, self.config, subfolder=subfolder)
+            descriptors_main(data, self.config, subfolder=subfolder, reporter=reporter)
             return True
         except Exception as e:
             logger.error("Error running descriptors: %s", e)
             return False
 
-    def run_structural_filters(self, stage_dir: str) -> bool:
+    def run_structural_filters(
+        self, stage_dir: str, reporter: StageProgressReporter | None = None
+    ) -> bool:
         """Run structural filters on molecules."""
         try:
             is_post_descriptors = stage_dir != DIR_STRUCT_FILTERS_PRE
@@ -379,13 +438,13 @@ class PipelineStageRunner:
                 logger.info("Structural filters disabled in config")
                 return False
 
-            structural_filters_main(self.config, stage_dir)
+            structural_filters_main(self.config, stage_dir, reporter=reporter)
             return True
         except Exception as e:
             logger.error("Error running structural filters: %s", e)
             return False
 
-    def run_synthesis(self) -> bool:
+    def run_synthesis(self, reporter: StageProgressReporter | None = None) -> bool:
         """Run synthesis analysis."""
         try:
             if not self._validate_synthesis_input():
@@ -396,7 +455,7 @@ class PipelineStageRunner:
                 logger.info("Synthesis disabled in config")
                 return False
 
-            synthesis_main(self.config)
+            synthesis_main(self.config, reporter=reporter)
 
             output_path = (
                 self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
@@ -479,7 +538,7 @@ class PipelineStageRunner:
             return out_dir if out_dir.is_absolute() else base_folder / out_dir
         return base_folder / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_GNINA]
 
-    def run_docking(self) -> bool:
+    def run_docking(self, reporter: StageProgressReporter | None = None) -> bool:
         """Run molecular docking."""
         try:
             config_docking = load_config(self.config[CONFIG_DOCKING])
@@ -487,7 +546,7 @@ class PipelineStageRunner:
                 logger.info("Docking disabled in config")
                 return False
 
-            if not docking_main(self.config):
+            if not docking_main(self.config, reporter=reporter):
                 return False
 
             if not self.docking_results_present():
@@ -500,7 +559,9 @@ class PipelineStageRunner:
             logger.error("Error running docking: %s", e)
             return False
 
-    def run_docking_filters(self) -> bool:
+    def run_docking_filters(
+        self, reporter: StageProgressReporter | None = None
+    ) -> bool:
         """Run docking filters stage."""
         try:
             # Check if config exists
@@ -523,7 +584,7 @@ class PipelineStageRunner:
                 return False
 
             # Run docking filters
-            result = docking_filters_main(self.config)
+            result = docking_filters_main(self.config, reporter=reporter)
             return result is not None and len(result) > 0
         except Exception as e:
             logger.error("Error running docking filters: %s", e)
@@ -595,6 +656,43 @@ class MolecularAnalysisPipeline:
             except Exception as e:
                 logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
+
+    def _emit_progress_event(self, event: dict) -> None:
+        """Emit a structured progress event to the configured callback.
+
+        Supports both:
+          - New signature: ``callback(event: dict)``
+          - Legacy signature: ``callback(stage_name: str, current: int, total: int)``
+        """
+        if not self.progress_callback:
+            return
+
+        try:
+            self.progress_callback(event)
+            return
+        except TypeError:
+            # Legacy callback: (stage_name, current, total)
+            try:
+                event_type = event.get("type")
+                stage = event.get("stage")
+                if not stage:
+                    return
+
+                if event_type == "stage_progress":
+                    self.progress_callback(
+                        stage, int(event.get("current", 0)), int(event.get("total", 0))
+                    )
+                elif event_type == "stage_start":
+                    self.progress_callback(
+                        stage,
+                        int(event.get("stage_index", 0)),
+                        int(event.get("total_stages", 0)),
+                    )
+                elif event_type == "stage_complete":
+                    total = int(event.get("total_stages", 0))
+                    self.progress_callback(stage, total, total)
+            except Exception:
+                return
 
     def get_latest_data(
         self, skip_descriptors: bool = False, fallback_on_empty: bool = True
@@ -708,20 +806,28 @@ class MolecularAnalysisPipeline:
         if not stage.enabled:
             return False, False
 
-        # Call progress callback if provided
-        if self.progress_callback:
-            enabled_stages = [s.name for s in self.stages if s.enabled]
-            current_idx = (
-                enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
-            )
-            self.progress_callback(stage.name, current_idx + 1, len(enabled_stages))
+        enabled_stages = [s.name for s in self.stages if s.enabled]
+        current_idx = (
+            enabled_stages.index(stage.name) if stage.name in enabled_stages else 0
+        )
+        reporter = StageProgressReporter(
+            emit_event=self._emit_progress_event,
+            stage=stage.name,
+            stage_index=current_idx + 1,
+            total_stages=len(enabled_stages),
+        )
+        reporter.start()
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
         start_time = time.perf_counter()
-        completed = runner_func(*args)
+        try:
+            completed = runner_func(*args, reporter=reporter)
+        except TypeError:
+            completed = runner_func(*args)
         elapsed = time.perf_counter() - start_time
         self.stage_timings[stage.name] = elapsed
         logger.info("Stage %s completed in %.1f seconds", stage.name, elapsed)
+        reporter.complete(ok=bool(completed))
 
         if completed:
             return True, False
@@ -1116,10 +1222,10 @@ _STAGE_TREE_TEMPLATES: dict[str, list[str]] = {
         "|   +-- retrosynthesis_results.json",
     ],
     STAGE_DOCKING_FILTERS: [
-        "|   +-- metrics.csv                Per-pose filter metrics and pass flags",
-        "|   +-- filtered_molecules.csv     Unique molecules (best pose per molecule)",
-        "|   +-- filtered_poses.csv         All passing poses with full metrics",
-        "|   +-- filtered_poses.sdf         Filtered poses (SDF, all passing poses)",
+        "|   +-- metrics.csv                Per-molecule filter metrics and pass flags",
+        "|   +-- filtered_molecules.csv     Passing molecules (single best pose)",
+        "|   +-- filtered_poses.csv         Passing poses with full metrics (1 per molecule)",
+        "|   +-- filtered_poses.sdf         Filtered poses (SDF, 1 per molecule)",
     ],
     STAGE_FINAL_DESCRIPTORS: [
         "|   +-- metrics/",
@@ -1161,10 +1267,14 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
     ]
     if has_smina:
         lines.append("|   +-- smina/")
-        lines.append("|   |   +-- smina_out.sdf          Aggregated SMINA results")
+        lines.append(
+            "|   |   +-- smina_out.sdf          Aggregated SMINA results (1 pose/molecule)"
+        )
     if has_gnina:
         lines.append("|   +-- gnina/")
-        lines.append("|   |   +-- gnina_out.sdf          Aggregated GNINA results")
+        lines.append(
+            "|   |   +-- gnina_out.sdf          Aggregated GNINA results (1 pose/molecule)"
+        )
 
     # _workdir subtree
     lines.append("|   +-- _workdir/                  Intermediate files")

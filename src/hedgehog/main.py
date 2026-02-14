@@ -1,3 +1,4 @@
+import os
 import subprocess
 import warnings
 from enum import Enum
@@ -9,6 +10,13 @@ import typer
 from rdkit import Chem
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
@@ -215,13 +223,39 @@ def preprocess_input_with_tool(
         ligand_preparation_tool,
         input_format,
         str(input_path),
-        "-ucsv",
+        "-ocsv",
         str(prepared_output),
+        "-WAIT",
     ]
 
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return str(prepared_output) if prepared_output.exists() else None
+        if not prepared_output.exists():
+            return None
+
+        # Normalize the preparation tool output to the minimal schema expected by
+        # HEDGEHOG input loading: (smiles, model_name).
+        df = pd.read_csv(prepared_output)
+        lower_cols = {c.lower(): c for c in df.columns}
+        smiles_col = lower_cols.get("smiles")
+        if not smiles_col:
+            log.debug(
+                "Ligand preparation output missing SMILES column in %s (cols=%s)",
+                prepared_output,
+                list(df.columns),
+            )
+            return None
+
+        if smiles_col != "smiles":
+            df = df.rename(columns={smiles_col: "smiles"})
+
+        # LigPrep may emit a per-molecule name/title column; do not treat it as
+        # a model identifier. Pin model_name to the input file stem.
+        df["model_name"] = input_path_obj.stem
+        df = df[["smiles", "model_name"]].dropna(subset=["smiles"])
+        df.to_csv(prepared_output, index=False)
+
+        return str(prepared_output)
     except Exception as e:
         log.debug("Ligand preparation failed: %s", e)
         return None
@@ -323,7 +357,18 @@ def _preprocess_input(
     if not original_input_path:
         return
 
-    if ligand_preparation_tool:
+    input_path_obj = _validate_input_path(original_input_path)
+    # If this is a glob pattern or doesn't exist, defer to prepare_input_data().
+    if not input_path_obj:
+        return
+
+    # Prefer the lightweight RDKit preprocessing for CSV inputs. The external
+    # ligand preparation tool is primarily useful for SMI-like inputs.
+    if input_path_obj.suffix.lower() == ".csv":
+        prepared_path = preprocess_input_with_rdkit(
+            original_input_path, folder_to_save, logger
+        )
+    elif ligand_preparation_tool:
         prepared_path = preprocess_input_with_tool(
             original_input_path,
             ligand_preparation_tool,
@@ -372,6 +417,9 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="rich",
 )
+
+setup_app = typer.Typer(help="Install optional external tools and assets.")
+app.add_typer(setup_app, name="setup")
 console = Console()
 
 
@@ -404,11 +452,23 @@ class Stage(str, Enum):
 
 @app.command()
 def run(
+    config_path: str = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        "-c",
+        help="Path to master YAML config file (default: src/hedgehog/configs/config.yml)",
+    ),
     generated_mols_path: str | None = typer.Option(
         None,
         "--mols",
         "-m",
         help="Path or glob pattern to generated SMILES files (overrides config)",
+    ),
+    out_dir: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Output directory for this run (overrides config folder_to_save).",
     ),
     stage: Stage | None = typer.Option(
         None,
@@ -430,6 +490,11 @@ def run(
         False,
         "--force-new",
         help="Force creation of a new results folder even when rerunning stages",
+    ),
+    auto_install: bool = typer.Option(
+        False,
+        "--auto-install",
+        help="Auto-install missing optional tools (e.g., AiZynthFinder) without prompting.",
     ),
 ) -> None:
     """
@@ -460,8 +525,15 @@ def run(
     \b
     # Force create new folder even for stage rerun
     uv run hedgehog run --stage docking --force-new
+
+    \b
+    # Auto-install optional external tools when needed
+    uv run hedgehog run --auto-install
     """
     _display_banner()
+
+    if auto_install:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
 
     if reuse_folder and force_new_folder:
         logger.error(
@@ -470,12 +542,26 @@ def run(
         )
         raise typer.Exit(code=1)
 
-    config_dict = load_config(DEFAULT_CONFIG_PATH)
+    if out_dir and (reuse_folder or force_new_folder):
+        logger.error(
+            "[red]Error:[/red] Cannot use --out together with --reuse/--force-new. "
+            "Please manage uniqueness via --out."
+        )
+        raise typer.Exit(code=1)
+
+    config_dict = load_config(config_path)
     _apply_cli_overrides(config_dict, generated_mols_path, stage)
 
-    folder_to_save = _resolve_output_folder(
-        config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
-    )
+    if out_dir:
+        folder_to_save = Path(out_dir).resolve()
+        logger.info(
+            "[#B29EEE]Folder override:[/#B29EEE] Using output folder '%s' (--out)",
+            folder_to_save,
+        )
+    else:
+        folder_to_save = _resolve_output_folder(
+            config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
+        )
     config_dict["folder_to_save"] = str(folder_to_save)
     LoggerSingleton().configure_log_directory(folder_to_save)
 
@@ -490,7 +576,65 @@ def run(
     _save_sampled_molecules(data, folder_to_save, should_save)
 
     logger.info("[bold #B29EEE]Starting pipeline...[/bold #B29EEE]")
-    success = calculate_metrics(data, config_dict)
+
+    shared_console = LoggerSingleton().console
+
+    with Progress(
+        SpinnerColumn(style="#B29EEE"),
+        TextColumn("[bold #B29EEE]{task.description}[/bold #B29EEE]"),
+        BarColumn(bar_width=40, complete_style="#B29EEE", finished_style="green"),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        console=shared_console,
+    ) as progress:
+        task_id = progress.add_task("Initializing pipeline...", total=None)
+
+        def _cli_progress(event: dict) -> None:
+            event_type = event.get("type")
+            stage = str(event.get("stage", ""))
+            stage_index = int(event.get("stage_index", 0) or 0)
+            total_stages = int(event.get("total_stages", 0) or 0)
+            message = event.get("message")
+
+            if total_stages > 0:
+                progress.update(task_id, total=total_stages * 100)
+
+            if event_type == "stage_start":
+                completed = max(0, (stage_index - 1) * 100)
+                desc = f"Stage {stage_index}/{total_stages}: {stage}"
+                if message:
+                    desc = f"{desc} — {message}"
+                progress.update(task_id, completed=completed, description=desc)
+                return
+
+            if event_type == "stage_progress":
+                current = int(event.get("current", 0) or 0)
+                total = int(event.get("total", 0) or 0)
+                pct = int(round((current / total) * 100)) if total > 0 else 0
+                pct = max(0, min(100, pct))
+                completed = max(0, (stage_index - 1) * 100 + pct)
+                desc = f"Stage {stage_index}/{total_stages}: {stage} ({pct}%)"
+                if message:
+                    desc = f"{desc} — {message}"
+                progress.update(task_id, completed=completed, description=desc)
+                return
+
+            if event_type == "stage_complete":
+                completed = max(0, stage_index * 100)
+                desc = f"Stage {stage_index}/{total_stages}: {stage} complete"
+                if message:
+                    desc = f"{desc} — {message}"
+                progress.update(task_id, completed=completed, description=desc)
+                return
+
+        success = calculate_metrics(data, config_dict, _cli_progress)
+        if progress.tasks[task_id].total:
+            progress.update(
+                task_id,
+                completed=progress.tasks[task_id].total,
+                description="Pipeline complete",
+            )
+
     if not success:
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)
@@ -645,6 +789,28 @@ def version() -> None:
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )
     console.print("[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]")
+
+
+@setup_app.command("aizynthfinder")
+def setup_aizynthfinder(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Auto-accept downloads (no prompt).",
+    ),
+) -> None:
+    """Install AiZynthFinder retrosynthesis tooling into modules/."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    from hedgehog.setup import ensure_aizynthfinder
+
+    project_root = Path(__file__).resolve().parents[2]
+    config_path = ensure_aizynthfinder(project_root)
+    console.print(
+        f"[bold green]AiZynthFinder installed.[/bold green] Config: {config_path}"
+    )
 
 
 @app.command()

@@ -14,6 +14,7 @@ from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.structFilters.utils import process_path
 from hedgehog.utils.mce18 import compute_mce18
+from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # Canonical mapping for descriptor keys (lowercase -> canonical case)
 # Used to prevent confusion between similar names like logP and clogP
@@ -206,7 +207,18 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     }
 
 
-def compute_metrics(df, save_path, config=None):
+def _compute_descriptors_for_row(args):
+    smiles, model_name, mol_idx = args
+    mol_n = Chem.MolFromSmiles(smiles)
+    if not mol_n:
+        return None, (smiles, model_name, mol_idx)
+
+    row_metrics = _compute_single_molecule_descriptors(mol_n, model_name, mol_idx)
+    row_metrics["smiles"] = smiles
+    return row_metrics, None
+
+
+def compute_metrics(df, save_path, config=None, config_descriptors=None, reporter=None):
     """Compute 22 physicochemical descriptors for each molecule.
 
     model_name and mol_idx are already in df from sampled_molecules.csv.
@@ -228,20 +240,32 @@ def compute_metrics(df, save_path, config=None):
     metrics = []
     skipped_molecules = []
 
-    for _, row in df.iterrows():
-        smiles = row["smiles"]
-        model_name = row["model_name"]
-        mol_idx = row["mol_idx"]
+    n_jobs = resolve_n_jobs(config_descriptors, config)
+    items = list(
+        zip(
+            df["smiles"].tolist(),
+            df["model_name"].tolist(),
+            df["mol_idx"].tolist(),
+            strict=False,
+        )
+    )
 
-        mol_n = Chem.MolFromSmiles(smiles)
-        if mol_n:
-            row_metrics = _compute_single_molecule_descriptors(
-                mol_n, model_name, mol_idx
-            )
-            row_metrics["smiles"] = smiles
+    progress_cb = None
+    if reporter is not None:
+
+        def _progress_cb(done: int, total: int) -> None:
+            reporter.progress(done, total, message="Computing descriptors")
+
+        progress_cb = _progress_cb
+
+    results = parallel_map(
+        _compute_descriptors_for_row, items, n_jobs, progress=progress_cb
+    )
+    for row_metrics, skipped in results:
+        if row_metrics is not None:
             metrics.append(row_metrics)
-        else:
-            skipped_molecules.append((smiles, model_name, mol_idx))
+        elif skipped is not None:
+            skipped_molecules.append(skipped)
 
     save_path = Path(process_path(save_path))
     if skipped_molecules:
@@ -483,6 +507,12 @@ def filter_molecules(df, borders, folder_to_save):
             continue
 
         col_in_borders = any(v is not None for v in _get_border_values(col, borders))
+        # Some filters are configured without *_min/*_max keys.
+        # Treat them as "in borders" if their controlling keys exist.
+        if col == "chars" and "allowed_chars" in borders:
+            col_in_borders = True
+        if col in ("charged_mol", "is_neutral") and "charged_mol_allowed" in borders:
+            col_in_borders = True
         if col_in_borders:
             filtered_data[col] = df[col]
             filtered_data[f"{col}_pass"] = _apply_column_filter(df, col, borders)

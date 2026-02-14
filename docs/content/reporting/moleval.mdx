@@ -6,13 +6,14 @@ title: MolEval Metrics
 
 HEDGEHOG includes a vendored copy of [MolEval](https://github.com/MolScore/MolScore) (from MolScore
 v1.9.5, MIT license) to compute intrinsic distribution quality metrics at multiple pipeline stages.
-These metrics evaluate the **diversity, novelty, and chemical validity** of molecule sets without
+These metrics evaluate the **diversity and intrinsic quality** of molecule sets without
 requiring a reference dataset.
 
 ## Active Metrics
 
-Eight metrics are enabled by default. Validity and Uniqueness are disabled because they are always
-1.0 after RDKit parsing and deduplication.
+Nine metrics are enabled by default. Validity and Uniqueness are disabled because they are always
+1.0 after RDKit parsing and deduplication. MCE-18 is computed separately and reported alongside the
+intrinsic MolEval metrics.
 
 | Metric | What It Measures | Range | Interpretation |
 |--------|-----------------|-------|----------------|
@@ -24,6 +25,7 @@ Eight metrics are enabled by default. Validity and Uniqueness are disabled becau
 | **FG** | Functional group diversity ratio | 0--1 | Higher = wider variety of functional groups across the set. |
 | **RS** | Ring system diversity ratio | 0--1 | Higher = more varied ring systems. Low values suggest reliance on a few ring types. |
 | **Filters** | Fraction passing medicinal chemistry filters (MCF + PAINS) | 0--1 | Higher = cleaner set. Molecules failing PAINS or MCF contain known promiscuous substructures. |
+| **MCE18** | Mean MCE-18 molecular complexity | 0--∞ | Higher = more complex structures (reported as an average over molecules). |
 
 ## Pipeline Checkpoints
 
@@ -45,66 +47,6 @@ The expected trend is:
 - **Filters metric** should increase across stages as problematic substructures are eliminated.
 - **ScaffUniqueness** typically increases as duplicate scaffolds are filtered out.
 
-## Drug-likeness Compliance
-
-The `rules_compliance` feature computes the fraction of molecules passing established drug-likeness
-rule sets at each pipeline checkpoint. This uses `medchem.functional.rules_filter` under the hood.
-
-### Rule Sets
-
-| Rule Set | Key | Criteria |
-|----------|-----|----------|
-| **Lipinski** (Ro5) | `rule_of_five` | MW ≤ 500, LogP ≤ 5, HBD ≤ 5, HBA ≤ 10 |
-| **Veber** | `rule_of_veber` | Rotatable bonds ≤ 10, TPSA ≤ 140 A² |
-| **GenDesign** | `rule_of_generative_design` | Relaxed thresholds for generative chemistry (MW ≤ 600, LogP ≤ 6, HBD ≤ 6, HBA ≤ 12, RotBonds ≤ 15) |
-
-Additional rule sets are available but not enabled by default:
-
-```yaml
-rules_sets:
-  - rule_of_five
-  - rule_of_veber
-  - rule_of_generative_design
-  # - rule_of_ghose
-  # - rule_of_egan
-  # - rule_of_three
-  # - rule_of_reos
-  # - rule_of_cns
-```
-
-### Interpreting Pass Rates
-
-- A pass rate of **1.0** means all molecules satisfy the rule set.
-- An **increasing trend** across stages indicates the pipeline is enriching for drug-like molecules.
-- If Lipinski pass rate drops at a stage, it may indicate that stage is retaining molecules outside
-  traditional drug-like space (which may be intentional for certain targets).
-
-## Chemical Group Presence
-
-The `chemical_groups` feature measures what fraction of molecules contain known drug-relevant
-substructures at each checkpoint. This uses `medchem.functional.chemical_group_filter` and
-`medchem.groups.ChemicalGroup`.
-
-### Default Groups
-
-| Group | Description |
-|-------|-------------|
-| `rings_in_drugs` | Ring systems frequently found in FDA-approved drugs |
-| `privileged_scaffolds` | Scaffold classes with known broad biological activity |
-
-### Inverted Semantics
-
-The underlying `chemical_group_filter` function returns `True` for molecules that do **not** contain
-the specified chemical group. HEDGEHOG inverts this to report the **match rate** (fraction of
-molecules that **do** contain the group):
-
-```python
-match_rate = 1.0 - float(passed.mean())
-```
-
-A match rate of **0.75** means 75% of molecules contain at least one substructure from that chemical
-group.
-
 ## Configuration
 
 MolEval metrics are configured via `config_moleval.yml`, referenced from the main pipeline config:
@@ -125,19 +67,7 @@ scaffold_diversity: true # ScaffDiv, ScaffUniqueness
 functional_groups: true  # FG diversity ratio
 ring_systems: true       # RS diversity ratio
 filters: true            # MCF + PAINS passage rate
-
-# Drug-likeness compliance
-rules_compliance: true
-rules_sets:
-  - rule_of_five
-  - rule_of_veber
-  - rule_of_generative_design
-
-# Chemical group match rates
-chemical_groups: true
-chemical_group_names:
-  - rings_in_drugs
-  - privileged_scaffolds
+mce18: true              # Mean MCE-18 molecular complexity
 ```
 
 ### Key Options
@@ -148,15 +78,13 @@ chemical_group_names:
 | `n_jobs` | int | `4` | Parallel workers for metric computation |
 | `device` | str | `cpu` | Compute device (`cpu` or `cuda:0`) |
 | `max_molecules` | int | `2000` | Subsample threshold for O(N^2) pairwise metrics |
-| `rules_compliance` | bool | `true` | Enable drug-likeness rule compliance tracking |
-| `chemical_groups` | bool | `true` | Enable chemical group match rate tracking |
 | `seed` | int | `42` | Random seed for deterministic subsampling |
+| `mce18` | bool | `true` | Enable mean MCE-18 molecular complexity reporting |
 
 ## Deterministic Computation
 
-All three metric functions (`compute_stage_metrics`, `compute_rules_compliance`,
-`compute_group_match_rates`) accept a `seed` parameter and use a local `random.Random(seed)`
-instance for subsampling. This ensures:
+The intrinsic metric computation uses a `seed` parameter and a local `random.Random(seed)` instance
+for subsampling. This ensures:
 
 - **Reproducible results** across runs with the same input data.
 - **Thread safety** -- no global random state is mutated.
@@ -166,7 +94,6 @@ instance for subsampling. This ensures:
 
 MolEval results appear in three places:
 
-1. **HTML report** -- line chart, heatmap, and compliance charts in dedicated sections.
+1. **HTML report** -- line chart and heatmap in dedicated sections.
 2. **`RUN_INFO.md`** -- a Markdown table appended to the run info file with per-stage metric values.
-3. **`report_data.json`** -- raw metric data under the `moleval`, `rules_compliance`, and
-   `chemical_groups` keys.
+3. **`report_data.json`** -- raw metric data under the `moleval` key.

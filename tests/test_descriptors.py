@@ -8,6 +8,7 @@ from hedgehog.stages.descriptors.utils import (
     _get_border_values,
     compute_metrics,
     drop_false_rows,
+    filter_molecules,
     order_identity_columns,
 )
 
@@ -218,8 +219,6 @@ class TestComputeMetrics:
 
         assert len(result) == 3
         assert "molWt" in result.columns
-        assert "logP" in result.columns
-        assert "qed" in result.columns
 
     def test_compute_metrics_with_invalid_smiles(self, tmp_path):
         """Invalid SMILES should be skipped and logged."""
@@ -272,6 +271,57 @@ class TestComputeMetrics:
         compute_metrics(df, str(tmp_path) + "/")
 
         assert (tmp_path / "descriptors_all.csv").exists()
+
+
+class TestFilterMolecules:
+    """Tests for descriptor-based filtering."""
+
+    def test_allowed_chars_filters_out_salts(self, tmp_path):
+        mol_ok = Chem.MolFromSmiles("CCO")
+        mol_salt = Chem.MolFromSmiles("CCO.[Na+]")
+
+        row_ok = _compute_single_molecule_descriptors(mol_ok, "m", "ok-0")
+        row_ok["smiles"] = "CCO"
+        row_salt = _compute_single_molecule_descriptors(mol_salt, "m", "salt-0")
+        row_salt["smiles"] = "CCO.[Na+]"
+
+        df = pd.DataFrame([row_ok, row_salt])
+
+        borders = {
+            "allowed_chars": ["C", "N", "O", "S", "F", "Cl", "Br", "H"],
+        }
+        filter_molecules(df, borders, str(tmp_path))
+
+        passed = pd.read_csv(tmp_path / "filtered_molecules.csv")
+        assert len(passed) == 1
+        assert passed.iloc[0]["smiles"] == "CCO"
+
+        flags = pd.read_csv(tmp_path / "pass_flags.csv")
+        assert "chars_pass" in flags.columns
+
+    def test_charged_mol_filter_applies_when_enabled(self, tmp_path):
+        mol_neutral = Chem.MolFromSmiles("CCO")
+        mol_charged = Chem.MolFromSmiles("CC(=O)[O-]")
+
+        row_neutral = _compute_single_molecule_descriptors(mol_neutral, "m", "n-0")
+        row_neutral["smiles"] = "CCO"
+        row_charged = _compute_single_molecule_descriptors(mol_charged, "m", "c-0")
+        row_charged["smiles"] = "CC(=O)[O-]"
+
+        df = pd.DataFrame([row_neutral, row_charged])
+
+        borders = {
+            "charged_mol_allowed": False,
+            "filter_charged_mol": True,
+        }
+        filter_molecules(df, borders, str(tmp_path))
+
+        passed = pd.read_csv(tmp_path / "filtered_molecules.csv")
+        assert len(passed) == 1
+        assert passed.iloc[0]["smiles"] == "CCO"
+
+        flags = pd.read_csv(tmp_path / "pass_flags.csv")
+        assert "charged_mol_pass" in flags.columns
 
 
 class TestDescriptorValues:

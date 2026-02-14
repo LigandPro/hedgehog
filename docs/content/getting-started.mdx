@@ -28,7 +28,19 @@ cd hedgehog
 uv sync
 ```
 
-The `install_aizynthfinder.sh` script clones the retrosynthesis repository and downloads the required public data. Note: it currently uses an SSH Git URL, so your machine needs GitHub SSH access for the clone step.
+The `install_aizynthfinder.sh` script clones the retrosynthesis repository and downloads the required public data.
+
+Alternatively, you can use the CLI installer:
+
+```bash
+uv run hedgehog setup aizynthfinder --yes
+```
+
+If you prefer on-demand installation during a pipeline run, use:
+
+```bash
+uv run hedgehog run --auto-install
+```
 
 ## First Run
 

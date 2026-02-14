@@ -1,0 +1,23 @@
+generated_mols_path: data/test/moses_1000.csv
+target_mols_path: data/test/target_mols.csv
+folder_to_save: results/run
+
+# Cluster profile: 16 CPUs per task, ~10k molecules per model (when available).
+n_jobs: 16
+sample_size: 10000
+batch_size: 512
+save_sampled_mols: true
+
+pains_file_path: data/wehi_pains.csv
+mcf_file_path: data/mcf.csv
+
+# Optional external tools (leave as-is if available on the cluster)
+ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
+protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+
+config_descriptors: src/hedgehog/configs/config_descriptors.yml
+config_structFilters: src/hedgehog/configs/config_structFilters.yml
+config_synthesis: src/hedgehog/configs/config_synthesis.yml
+config_docking: src/hedgehog/configs/config_docking_slurm_10k.yml
+config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+config_moleval: src/hedgehog/configs/config_moleval.yml

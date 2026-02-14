@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from rdkit.Chem import AllChem
 from hedgehog.configs.logger import logger
 from hedgehog.stages.structFilters.utils import process_path
 from hedgehog.utils.input_paths import get_all_input_candidates
+from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # Lazy-loaded module cache
 _lazy_cache: dict[str, Any] = {
@@ -84,8 +86,9 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
         "--output",
         str(output_abs),
     ]
-
-    _RETROSYNTHESIS_TIMEOUT = 3600  # 1 hour
+    nproc = os.environ.get("AIZYNTH_NPROC")
+    if nproc:
+        cmd.extend(["--nproc", str(int(nproc))])
 
     try:
         logger.info("Running retrosynthesis analysis...")
@@ -97,18 +100,11 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
             capture_output=True,
             text=True,
             check=True,
-            timeout=_RETROSYNTHESIS_TIMEOUT,
             cwd=str(aizynthfinder_dir),
         )
 
         logger.info("Retrosynthesis analysis completed successfully")
         return True
-    except subprocess.TimeoutExpired:
-        logger.error(
-            "Retrosynthesis analysis timed out after %d seconds",
-            _RETROSYNTHESIS_TIMEOUT,
-        )
-        return False
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else e.stdout
         logger.error("Retrosynthesis analysis failed with exit code %d", e.returncode)
@@ -356,6 +352,42 @@ def _calculate_syba_score(smiles):
         return np.nan
 
 
+def _calculate_sa_score_single(smiles: str) -> float | None:
+    """Calculate SA Score for a single SMILES string.
+
+    Designed as a top-level picklable function for use with parallel_map.
+    With fork context, the parent's _lazy_cache is inherited by workers.
+    """
+    sascorer = _load_sascorer()
+    if not sascorer:
+        return np.nan
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return np.nan
+        return sascorer.calculateScore(mol)
+    except Exception:
+        return np.nan
+
+
+def _calculate_syba_score_single(smiles: str) -> float | None:
+    """Calculate SYBA Score for a single SMILES string.
+
+    Designed as a top-level picklable function for use with parallel_map.
+    With fork context, the parent's _lazy_cache is inherited by workers.
+    """
+    syba_model = _load_syba_model()
+    if not syba_model:
+        return np.nan
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return np.nan
+        return syba_model.predict(mol=mol)
+    except Exception:
+        return np.nan
+
+
 def _get_rascore_model_path() -> Path:
     """Get path to RAScore model file (native xgboost JSON format)."""
     molscore_path = (
@@ -427,7 +459,7 @@ def _calculate_ra_scores_batch(
         return nan_list
 
 
-def calculate_synthesis_scores(df, folder_to_save=None, config=None):
+def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb=None):
     """Calculate SA, SYBA, and RA scores for all molecules in DataFrame.
 
     Args:
@@ -443,11 +475,35 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
     _load_syba_model()
     _load_rascore()
 
+    n_jobs = resolve_n_jobs(config)
     result_df = df.copy()
-    result_df["sa_score"] = result_df["smiles"].apply(_calculate_sa_score)
-    result_df["syba_score"] = result_df["smiles"].apply(_calculate_syba_score)
-
     smiles_list = result_df["smiles"].tolist()
+
+    sa_progress = None
+    if progress_cb is not None:
+
+        def _sa_progress(done: int, total: int) -> None:
+            progress_cb("sa_score", done, total)
+
+        sa_progress = _sa_progress
+
+    result_df["sa_score"] = parallel_map(
+        _calculate_sa_score_single, smiles_list, n_jobs, progress=sa_progress
+    )
+
+    # SYBA uses GPU internally — always run sequentially to avoid forking issues
+    syba_progress = None
+    if progress_cb is not None:
+
+        def _syba_progress(done: int, total: int) -> None:
+            progress_cb("syba_score", done, total)
+
+        syba_progress = _syba_progress
+
+    result_df["syba_score"] = parallel_map(
+        _calculate_syba_score_single, smiles_list, n_jobs=1, progress=syba_progress
+    )
+
     ra_scores = _calculate_ra_scores_batch(smiles_list, config)
     result_df["ra_score"] = ra_scores
 

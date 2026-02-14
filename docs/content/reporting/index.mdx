@@ -120,32 +120,6 @@ This section reports intrinsic distribution quality metrics computed by the vend
 
 See the [MolEval Metrics](/reporting/moleval) page for detailed metric definitions.
 
-### Drug-likeness Compliance
-
-This section shows what fraction of molecules pass established drug-likeness rule sets at each
-pipeline stage:
-
-| Rule Set | What It Checks |
-|----------|----------------|
-| Lipinski (Ro5) | MW ≤ 500, LogP ≤ 5, HBD ≤ 5, HBA ≤ 10 |
-| Veber | RotBonds ≤ 10, TPSA ≤ 140 |
-| GenDesign | Relaxed rules for generative chemistry (MW ≤ 600, LogP ≤ 6, etc.) |
-
-A **line chart** plots the pass rate (0--1) for each rule set across the five checkpoint stages. An
-increasing trend indicates that filtering stages are enriching for drug-like molecules.
-
-### Chemical Group Presence
-
-This section tracks what fraction of molecules contain known drug-relevant substructures:
-
-| Group | Description |
-|-------|-------------|
-| `rings_in_drugs` | Ring systems commonly found in approved drugs |
-| `privileged_scaffolds` | Scaffolds with established biological activity profiles |
-
-A **line chart** shows match rates across stages. Higher values indicate better overlap with known
-pharmacophoric scaffolds.
-
 ## Output Files
 
 After report generation, the run directory contains:

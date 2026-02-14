@@ -6,11 +6,13 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
+from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # Suppress common warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -289,7 +291,8 @@ def apply_interaction_filter(
     # Calculate interactions (exclude FaceToFace due to edge case errors)
     safe_interactions = [it for it in interaction_types if it != "FaceToFace"]
     fp = plf.Fingerprint(interactions=safe_interactions)
-    fp.run_from_iterable(plf_mols, protein, n_jobs=1)
+    n_jobs = resolve_n_jobs(config)
+    fp.run_from_iterable(plf_mols, protein, n_jobs=n_jobs)
 
     df_interactions = fp.to_dataframe(drop_empty=False)
 
@@ -341,10 +344,40 @@ def apply_interaction_filter(
     return df
 
 
+def _check_shepherd_score_single(args: tuple) -> dict[str, Any]:
+    """Compute shape Tanimoto score for a single molecule.
+
+    Args:
+        args: Tuple of (mol, ref_positions_list, alpha, min_score).
+              ref_positions_list is a plain Python list-of-lists (not a tensor)
+              to ensure picklability across process boundaries.
+
+    Returns:
+        Dict with keys: score, passed, error.
+    """
+    import torch
+    from shepherd_score.score.gaussian_overlap import shape_tanimoto
+
+    mol, ref_positions_list, alpha, min_score = args
+    try:
+        ref_positions = torch.tensor(ref_positions_list, dtype=torch.float32)
+
+        mol_h = Chem.AddHs(mol, addCoords=True)
+        mol_conf = mol_h.GetConformer()
+        mol_positions = torch.tensor(mol_conf.GetPositions(), dtype=torch.float32)
+
+        score = shape_tanimoto(ref_positions, mol_positions, alpha=alpha).item()
+        passed = score >= min_score
+        return {"score": score, "passed": passed, "error": None}
+    except Exception as e:
+        return {"score": 0.0, "passed": False, "error": str(e)}
+
+
 def apply_shepherd_score_filter(
     mols: list[Chem.Mol],
     reference_mol: Chem.Mol,
     config: dict[str, Any],
+    progress_cb=None,
 ) -> pd.DataFrame:
     """
     Apply Shepherd-Score filter for 3D shape similarity.
@@ -357,39 +390,31 @@ def apply_shepherd_score_filter(
     Returns:
         DataFrame with columns: mol_idx, shape_score, pass
     """
-    import torch
-    from shepherd_score.score.gaussian_overlap import shape_tanimoto
-
     min_shape_score = config.get("min_shape_score", 0.5)
     alpha = config.get("alpha", 0.81)
 
     logger.info(f"Running Shepherd-Score filter (min_shape_score={min_shape_score})")
 
-    # Get reference coordinates
+    # Get reference coordinates as plain Python list for picklability
     ref_h = Chem.AddHs(reference_mol, addCoords=True)
     ref_conf = ref_h.GetConformer()
-    ref_positions = torch.tensor(ref_conf.GetPositions(), dtype=torch.float32)
+    ref_positions_list = ref_conf.GetPositions().tolist()
+
+    n_jobs = resolve_n_jobs(config)
+    items = [(mol, ref_positions_list, alpha, min_shape_score) for mol in mols]
+    raw_results = parallel_map(
+        _check_shepherd_score_single, items, n_jobs, progress=progress_cb
+    )
 
     results = []
-    for i, mol in enumerate(mols):
-        try:
-            mol_h = Chem.AddHs(mol, addCoords=True)
-            mol_conf = mol_h.GetConformer()
-            mol_positions = torch.tensor(mol_conf.GetPositions(), dtype=torch.float32)
-
-            # Calculate shape Tanimoto
-            score = shape_tanimoto(ref_positions, mol_positions, alpha=alpha).item()
-            passed = score >= min_shape_score
-        except Exception as e:
-            logger.warning(f"Shepherd-Score failed for mol {i}: {e}")
-            score = 0.0
-            passed = False
-
+    for i, res in enumerate(raw_results):
+        if res["error"]:
+            logger.warning(f"Shepherd-Score failed for mol {i}: {res['error']}")
         results.append(
             {
                 "mol_idx": i,
-                "shape_score": score,
-                "pass_shepherd_score": passed,
+                "shape_score": res["score"],
+                "pass_shepherd_score": res["passed"],
             }
         )
 
@@ -400,9 +425,385 @@ def apply_shepherd_score_filter(
     return df
 
 
+def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
+    """Run posecheck-fast checks for a single molecule.
+
+    Args:
+        args: Tuple of (mol, protein_coords, protein_atom_names, config).
+
+    Returns:
+        Dict with keys: no_clashes, no_volume_clash, not_too_far_away,
+        no_internal_clash, passed, error.
+    """
+    from posecheck_fast import check_intermolecular_distance
+
+    mol, protein_coords, protein_atom_names, config = args
+    try:
+        if mol is None or mol.GetNumConformers() == 0:
+            return {
+                "no_clashes": False,
+                "no_volume_clash": False,
+                "not_too_far_away": False,
+                "no_internal_clash": False,
+                "passed": False,
+                "error": "no conformer",
+            }
+
+        conf = mol.GetConformer()
+        pos_pred = np.array([conf.GetPositions()])  # (1, n_atoms, 3)
+        atom_names_pred = np.array([atom.GetSymbol() for atom in mol.GetAtoms()])
+
+        # check_intermolecular_distance runs all checks in one call:
+        # clashes, volume overlap, distance to protein, and internal geometry.
+        # Returns {"results": {"no_clashes": [...], ...}} with one bool per pose.
+        raw = check_intermolecular_distance(
+            mol_orig=mol,
+            pos_pred=pos_pred,
+            pos_cond=protein_coords,
+            atom_names_pred=atom_names_pred,
+            atom_names_cond=protein_atom_names,
+            clash_cutoff=config.get("clash_cutoff", 0.75),
+            clash_cutoff_volume=config.get("volume_clash_cutoff", 0.075),
+            max_distance=config.get("max_distance", 5.0),
+        )
+        r = raw["results"]
+
+        no_clashes = r["no_clashes"][0]
+        no_volume_clash = r["no_volume_clash"][0]
+        not_too_far = r["not_too_far_away"][0]
+        no_internal_clash = r["no_internal_clash"][0]
+
+        passed = no_clashes and no_volume_clash and not_too_far and no_internal_clash
+        return {
+            "no_clashes": no_clashes,
+            "no_volume_clash": no_volume_clash,
+            "not_too_far_away": not_too_far,
+            "no_internal_clash": no_internal_clash,
+            "passed": passed,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "no_clashes": False,
+            "no_volume_clash": False,
+            "not_too_far_away": False,
+            "no_internal_clash": False,
+            "passed": False,
+            "error": str(e),
+        }
+
+
+def apply_posebusters_fast_filter(
+    mols: list[Chem.Mol],
+    protein_pdb: str | Path,
+    config: dict[str, Any],
+    progress_cb=None,
+) -> pd.DataFrame:
+    """Apply pose quality filter using posecheck-fast (~100x faster than PoseCheck).
+
+    Checks for steric clashes (VDW), volume overlap (ShapeTverskyIndex),
+    distance to protein, and internal geometry (bond lengths/angles).
+
+    Args:
+        mols: List of RDKit molecules with 3D coordinates.
+        protein_pdb: Path to protein PDB file.
+        config: Filter configuration dict with keys:
+            clash_cutoff (float): Relative VDW distance threshold (default 0.75).
+            volume_clash_cutoff (float): ShapeTverskyIndex threshold (default 0.075).
+            max_distance (float): Max min-distance to protein in Angstrom (default 5.0).
+
+    Returns:
+        DataFrame with columns: mol_idx, no_clashes, no_volume_clash,
+        not_too_far_away, no_internal_clash, pass_pose_quality.
+    """
+    logger.info(
+        "Running posecheck-fast pose quality filter "
+        "(clash_cutoff=%.2f, volume_cutoff=%.3f, max_dist=%.1f)",
+        config.get("clash_cutoff", 0.75),
+        config.get("volume_clash_cutoff", 0.075),
+        config.get("max_distance", 5.0),
+    )
+
+    # Load protein once and extract coordinates + atom names.
+    # Explicit RemoveHs is needed because MolFromPDBFile(removeHs=True) often
+    # retains explicit H from prepared PDB files, causing dimension mismatches
+    # inside posecheck-fast's ShapeTverskyIndex call.
+    protein_mol = Chem.MolFromPDBFile(str(protein_pdb), removeHs=True, sanitize=False)
+    if protein_mol is not None:
+        protein_mol = Chem.RemoveHs(protein_mol, sanitize=False)
+    if protein_mol is None:
+        logger.error("Failed to load protein PDB: %s", protein_pdb)
+        return pd.DataFrame(
+            {
+                "mol_idx": range(len(mols)),
+                "pass_pose_quality": False,
+            }
+        )
+
+    protein_conf = protein_mol.GetConformer()
+    protein_coords = np.array(protein_conf.GetPositions())  # (n_atoms, 3)
+    protein_atom_names = np.array([atom.GetSymbol() for atom in protein_mol.GetAtoms()])
+
+    items = [(mol, protein_coords, protein_atom_names, config) for mol in mols]
+    # Force sequential for posecheck-fast (uses torch internally, forking unsafe)
+    raw_results = parallel_map(
+        _check_posebusters_fast_single, items, n_jobs=1, progress=progress_cb
+    )
+
+    results = []
+    for i, res in enumerate(raw_results):
+        if res["error"]:
+            logger.warning("posecheck-fast failed for mol %d: %s", i, res["error"])
+        results.append(
+            {
+                "mol_idx": i,
+                "no_clashes": res["no_clashes"],
+                "no_volume_clash": res["no_volume_clash"],
+                "not_too_far_away": res["not_too_far_away"],
+                "no_internal_clash": res["no_internal_clash"],
+                "pass_pose_quality": res["passed"],
+            }
+        )
+
+    df = pd.DataFrame(results)
+    logger.info(
+        "posecheck-fast filter: %d/%d passed",
+        int(df["pass_pose_quality"].sum()),
+        len(df),
+    )
+    return df
+
+
+def apply_posecheck_fast_filter(
+    mols: list[Chem.Mol],
+    protein_pdb: str | Path,
+    config: dict[str, Any],
+) -> pd.DataFrame:
+    """Backward-compatible alias for posecheck-fast backend."""
+    return apply_posebusters_fast_filter(mols, protein_pdb, config)
+
+
+def _check_symmetry_rmsd_single(args: tuple) -> dict[str, Any]:
+    """Compute symmetry-corrected conformer RMSD for a single molecule.
+
+    Uses RDKit's GetBestRMS which considers molecular symmetry (via substructure
+    match) when computing RMSD — same correctness as spyrmsd but ~15x faster.
+
+    Args:
+        args: Tuple of (mol, num_conformers, max_rmsd, method_name, random_seed).
+
+    Returns:
+        Dict with keys: min_rmsd, n_conformers_generated, passed, error.
+    """
+    from rdkit.Chem import rdMolAlign
+
+    (
+        mol,
+        num_conformers,
+        max_rmsd,
+        method_name,
+        random_seed,
+        include_hydrogens,
+        max_matches,
+        early_stop_on_pass,
+    ) = args
+    try:
+        if include_hydrogens:
+            reference_mol = Chem.AddHs(mol, addCoords=True)
+        else:
+            reference_mol = Chem.RemoveHs(Chem.Mol(mol), sanitize=False)
+
+        # Select embedding method
+        if method_name == "ETKDGv3":
+            params = AllChem.ETKDGv3()
+        elif method_name == "ETKDGv2":
+            params = AllChem.ETKDGv2()
+        else:
+            params = AllChem.ETKDG()
+        params.randomSeed = random_seed
+
+        mol_confs = Chem.Mol(reference_mol)
+        mol_confs.RemoveAllConformers()
+
+        AllChem.EmbedMultipleConfs(mol_confs, numConfs=num_conformers, params=params)
+        n_generated = mol_confs.GetNumConformers()
+
+        if n_generated == 0:
+            return {
+                "min_rmsd": float("inf"),
+                "n_conformers_generated": 0,
+                "passed": False,
+                "error": "no conformers generated",
+            }
+
+        # GetBestRMS: Kabsch alignment + symmetry-aware atom permutation.
+        # NOTE: hydrogens can cause combinatorial explosion in symmetry matching.
+        rmsd_values = []
+        for conf_id in range(n_generated):
+            rmsd = rdMolAlign.GetBestRMS(
+                mol_confs,
+                reference_mol,
+                prbId=conf_id,
+                refId=0,
+                maxMatches=max_matches,
+            )
+            rmsd_values.append(rmsd)
+            if early_stop_on_pass and rmsd <= max_rmsd:
+                break
+
+        min_rmsd = min(rmsd_values)
+        return {
+            "min_rmsd": min_rmsd,
+            "n_conformers_generated": n_generated,
+            "passed": min_rmsd <= max_rmsd,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "min_rmsd": float("inf"),
+            "n_conformers_generated": 0,
+            "passed": False,
+            "error": str(e),
+        }
+
+
+def apply_symmetry_rmsd_filter(
+    mols: list[Chem.Mol],
+    config: dict[str, Any],
+    progress_cb=None,
+) -> pd.DataFrame:
+    """Apply conformer deviation filter using symmetry-corrected RMSD.
+
+    Uses symmetry-aware RDKit GetBestRMS instead of
+    naive AllChem.AlignMol. This gives chemically correct RMSD for
+    symmetric molecules (e.g., benzene, biphenyl).
+
+    Args:
+        mols: List of RDKit molecules with 3D coordinates.
+        config: Filter configuration dict (same keys as conformer_deviation).
+
+    Returns:
+        DataFrame with columns: mol_idx, min_conformer_rmsd,
+        n_conformers_generated, pass_conformer_deviation.
+    """
+    num_conformers = config.get("num_conformers", 50)
+    max_rmsd = config.get("max_rmsd_to_conformer", 3.0)
+    random_seed = config.get("random_seed", 42)
+    method = config.get("conformer_method", "ETKDGv3")
+    include_hydrogens = bool(config.get("include_hydrogens", False))
+    max_matches = int(config.get("max_matches", 10000))
+    early_stop_on_pass = bool(config.get("early_stop_on_pass", True))
+
+    logger.info(
+        "Running symmetry-RMSD conformer filter (max_rmsd=%.1f, n_confs=%d)",
+        max_rmsd,
+        num_conformers,
+    )
+
+    n_jobs = resolve_n_jobs(config)
+    items = [
+        (
+            mol,
+            num_conformers,
+            max_rmsd,
+            method,
+            random_seed,
+            include_hydrogens,
+            max_matches,
+            early_stop_on_pass,
+        )
+        for mol in mols
+    ]
+    raw_results = parallel_map(
+        _check_symmetry_rmsd_single, items, n_jobs, progress=progress_cb
+    )
+
+    results = []
+    for i, res in enumerate(raw_results):
+        if res["error"]:
+            logger.warning("Symmetry-RMSD failed for mol %d: %s", i, res["error"])
+        results.append(
+            {
+                "mol_idx": i,
+                "min_conformer_rmsd": res["min_rmsd"],
+                "n_conformers_generated": res["n_conformers_generated"],
+                "pass_conformer_deviation": res["passed"],
+            }
+        )
+
+    df = pd.DataFrame(results)
+    logger.info(
+        "Symmetry-RMSD filter: %d/%d passed",
+        int(df["pass_conformer_deviation"].sum()),
+        len(df),
+    )
+    return df
+
+
+def _check_conformer_deviation_single(args: tuple) -> dict[str, Any]:
+    """Check conformer RMSD deviation for a single molecule.
+
+    Args:
+        args: Tuple of (mol, num_conformers, max_rmsd, method_name, random_seed).
+
+    Returns:
+        Dict with keys: min_rmsd, n_conformers_generated, passed, error.
+    """
+    mol, num_conformers, max_rmsd, method_name, random_seed = args
+    try:
+        mol_h = Chem.AddHs(mol, addCoords=True)
+
+        # Select embedding method
+        if method_name == "ETKDGv3":
+            params = AllChem.ETKDGv3()
+        elif method_name == "ETKDGv2":
+            params = AllChem.ETKDGv2()
+        else:
+            params = AllChem.ETKDG()
+        params.randomSeed = random_seed
+
+        mol_confs = Chem.Mol(mol_h)
+        mol_confs.RemoveAllConformers()
+
+        AllChem.EmbedMultipleConfs(mol_confs, numConfs=num_conformers, params=params)
+        n_generated = mol_confs.GetNumConformers()
+
+        if n_generated == 0:
+            return {
+                "min_rmsd": float("inf"),
+                "n_conformers_generated": 0,
+                "passed": False,
+                "error": "no conformers generated",
+            }
+
+        rmsd_values = []
+        for conf_id in range(n_generated):
+            conf_mol = Chem.Mol(mol_confs)
+            conf_mol.RemoveAllConformers()
+            conf_mol.AddConformer(mol_confs.GetConformer(conf_id), assignId=True)
+            rmsd = AllChem.AlignMol(conf_mol, mol_h)
+            rmsd_values.append(rmsd)
+
+        min_rmsd = min(rmsd_values)
+        return {
+            "min_rmsd": min_rmsd,
+            "n_conformers_generated": n_generated,
+            "passed": min_rmsd <= max_rmsd,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "min_rmsd": float("inf"),
+            "n_conformers_generated": 0,
+            "passed": False,
+            "error": str(e),
+        }
+
+
 def apply_conformer_deviation_filter(
     mols: list[Chem.Mol],
     config: dict[str, Any],
+    progress_cb=None,
 ) -> pd.DataFrame:
     """
     Apply conformer deviation filter.
@@ -426,65 +827,22 @@ def apply_conformer_deviation_filter(
         f"Running conformer deviation filter (max_rmsd={max_rmsd}, n_confs={num_conformers})"
     )
 
-    # Select embedding method
-    if method == "ETKDGv3":
-        params = AllChem.ETKDGv3()
-    elif method == "ETKDGv2":
-        params = AllChem.ETKDGv2()
-    else:
-        params = AllChem.ETKDG()
-    params.randomSeed = random_seed
+    n_jobs = resolve_n_jobs(config)
+    items = [(mol, num_conformers, max_rmsd, method, random_seed) for mol in mols]
+    raw_results = parallel_map(
+        _check_conformer_deviation_single, items, n_jobs, progress=progress_cb
+    )
 
     results = []
-    for i, mol in enumerate(mols):
-        try:
-            # Add hydrogens
-            mol_h = Chem.AddHs(mol, addCoords=True)
-
-            # Create copy for conformer generation
-            mol_confs = Chem.Mol(mol_h)
-            mol_confs.RemoveAllConformers()
-
-            # Generate conformers
-            AllChem.EmbedMultipleConfs(
-                mol_confs, numConfs=num_conformers, params=params
-            )
-            n_generated = mol_confs.GetNumConformers()
-
-            if n_generated == 0:
-                logger.warning(f"No conformers generated for mol {i}")
-                min_rmsd = float("inf")
-                passed = False
-            else:
-                # Calculate RMSD to each conformer
-                rmsd_values = []
-                for conf_id in range(n_generated):
-                    # Create molecule with single conformer
-                    conf_mol = Chem.Mol(mol_confs)
-                    conf_mol.RemoveAllConformers()
-                    conf_mol.AddConformer(
-                        mol_confs.GetConformer(conf_id), assignId=True
-                    )
-
-                    # Align and get RMSD
-                    rmsd = AllChem.AlignMol(conf_mol, mol_h)
-                    rmsd_values.append(rmsd)
-
-                min_rmsd = min(rmsd_values)
-                passed = min_rmsd <= max_rmsd
-
-        except Exception as e:
-            logger.warning(f"Conformer deviation failed for mol {i}: {e}")
-            min_rmsd = float("inf")
-            n_generated = 0
-            passed = False
-
+    for i, res in enumerate(raw_results):
+        if res["error"]:
+            logger.warning(f"Conformer deviation failed for mol {i}: {res['error']}")
         results.append(
             {
                 "mol_idx": i,
-                "min_conformer_rmsd": min_rmsd,
-                "n_conformers_generated": n_generated,
-                "pass_conformer_deviation": passed,
+                "min_conformer_rmsd": res["min_rmsd"],
+                "n_conformers_generated": res["n_conformers_generated"],
+                "pass_conformer_deviation": res["passed"],
             }
         )
 

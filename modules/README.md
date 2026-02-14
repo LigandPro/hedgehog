@@ -59,7 +59,7 @@ If you prefer to install manually:
 
 1. **Clone the retrosynthesis repository**:
     ```bash
-    git clone git@github.com:LigandPro/retrosynthesis.git
+    git clone https://github.com/LigandPro/retrosynthesis.git
     ```
 
 2. **Download public data**:

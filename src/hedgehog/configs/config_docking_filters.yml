@@ -16,14 +16,20 @@ search_box:
   max_outside_fraction: 0.0  # 0.0 = all atoms must be inside the box
   short_circuit: true  # When aggregation.mode == "all", skip heavy filters for failed poses
 
-# Filter 1: Pose Quality (PoseCheck)
-# Checks for steric clashes and ligand strain
+# Filter 1: Pose Quality
+# backend: "posebusters_fast" (fast, default) or "posecheck" (legacy, ~100x slower)
 pose_quality:
   enabled: true
-  max_clashes: 2  # Maximum allowed steric clashes (0 = strict)
-  max_strain_energy: 50.0  # Maximum ligand strain energy in kcal/mol (relaxed from 10.0; typical: 4-10)
-  strain_forcefield: "UFF"  # UFF, MMFF94s, or MMFF94s_noEstat
-  clash_tolerance: 0.5  # Angstrom tolerance for VdW overlap detection
+  backend: "posebusters_fast"
+  # posebusters_fast params:
+  clash_cutoff: 0.75           # relative VDW distance threshold for clash detection
+  volume_clash_cutoff: 0.075   # ShapeTverskyIndex overlap threshold
+  max_distance: 5.0            # max min-distance to protein (Angstrom)
+  # posecheck params (legacy backend only):
+  max_clashes: 2
+  max_strain_energy: 50.0
+  strain_forcefield: "UFF"
+  clash_tolerance: 0.5
 
 # Filter 2: Interactions (ProLIF)
 # Checks for required protein-ligand interactions
@@ -51,13 +57,17 @@ shepherd_score:
   align_before_scoring: true  # Align molecules before scoring
 
 # Filter 4: Conformer Deviation
-# Checks if docked pose is geometrically plausible
+# backend: "symmetry_rmsd" (correct, default) or "naive" (legacy)
 conformer_deviation:
   enabled: true
-  num_conformers: 50  # Number of conformers to generate
+  backend: "symmetry_rmsd"
+  num_conformers: 50
   conformer_method: "ETKDGv3"  # ETKDG, ETKDGv2, ETKDGv3
-  max_rmsd_to_conformer: 3.0  # Angstrom - reject if pose is too different
-  random_seed: 42  # For reproducibility
+  max_rmsd_to_conformer: 3.0   # Angstrom - reject if pose is too different
+  random_seed: 42
+  include_hydrogens: false  # false is much faster; true can be combinatorially expensive
+  max_matches: 10000  # cap symmetry matching complexity in GetBestRMS
+  early_stop_on_pass: true  # stop as soon as RMSD <= threshold
   optimize_conformers: false  # UFF optimization (slow, often fails)
 
 # Aggregation settings

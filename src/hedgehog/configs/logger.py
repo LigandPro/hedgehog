@@ -46,6 +46,11 @@ class LoggerSingleton:
             self._logger = self._setup_logger(name)
         return self._logger
 
+    @property
+    def console(self) -> Console:
+        """Return the shared Rich Console used by the logging handler."""
+        return self._console
+
     def configure_log_directory(self, folder_to_save: Path) -> None:
         """Configure the log directory and add file handler.
 
