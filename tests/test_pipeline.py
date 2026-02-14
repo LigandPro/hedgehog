@@ -6,9 +6,9 @@ import pandas as pd
 import pytest
 
 from hedgehog.pipeline import (
-    DOCKING_SCORE_COLUMNS,
     DIR_DESCRIPTORS_INITIAL,
     DIR_SYNTHESIS,
+    DOCKING_SCORE_COLUMNS,
     DataChecker,
     MolecularAnalysisPipeline,
     PipelineStage,

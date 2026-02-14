@@ -944,7 +944,9 @@ class MolecularAnalysisPipeline:
 
         if final_data is None or len(final_data) == 0:
             # Always create the file so downstream tooling can rely on its presence.
-            pd.DataFrame(columns=stable_empty_cols).to_csv(final_output_path, index=False)
+            pd.DataFrame(columns=stable_empty_cols).to_csv(
+                final_output_path, index=False
+            )
             logger.info("Saved 0 final molecules to %s", final_output_path)
             return
 
@@ -956,7 +958,9 @@ class MolecularAnalysisPipeline:
                 docking_scores = docking_scores.rename(
                     columns={"mol_idx": "_join_mol_idx"}
                 )
-                output_df = output_df.merge(docking_scores, on="_join_mol_idx", how="left")
+                output_df = output_df.merge(
+                    docking_scores, on="_join_mol_idx", how="left"
+                )
                 output_df = output_df.drop(columns=["_join_mol_idx"])
         else:
             logger.warning(
