@@ -44,6 +44,15 @@ FILE_FILTERED_MOLECULES = "filtered_molecules.csv"
 FILE_PASS_SMILES_TEMPLATE = "filtered_molecules.csv"
 FILE_MASTER_CONFIG = "master_config_resolved.yml"
 FILE_GNINA_OUTPUT = "gnina_out.sdf"
+FILE_SMINA_OUTPUT = "smina_out.sdf"
+
+DOCKING_SCORE_COLUMNS = [
+    "gnina_affinity",
+    "gnina_cnnscore",
+    "gnina_cnnaffinity",
+    "gnina_cnn_vs",
+    "smina_affinity",
+]
 
 # Stage names
 STAGE_STRUCT_INI_FILTERS = "struct_ini_filters"
@@ -125,6 +134,111 @@ def _directory_has_files(dir_path: Path) -> bool:
         return dir_path.exists() and any(p.is_file() for p in dir_path.iterdir())
     except OSError:
         return False
+
+
+def _extract_float_prop(mol, prop_names: list[str]) -> float | None:
+    """Return the first parseable float property from an SDF molecule."""
+    for prop_name in prop_names:
+        if not mol.HasProp(prop_name):
+            continue
+        try:
+            return float(mol.GetProp(prop_name))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _find_docking_sdf(base_path: Path, tool_name: str) -> Path | None:
+    """Find docking output SDF for a docking tool."""
+    docking_dir = base_path / DIR_DOCKING
+    output_name = (
+        FILE_GNINA_OUTPUT if tool_name == DOCKING_TOOL_GNINA else FILE_SMINA_OUTPUT
+    )
+    candidates = [
+        docking_dir / tool_name / output_name,
+        docking_dir / f"{tool_name}_out.sdf",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _extract_best_tool_scores(sdf_path: Path, tool_name: str) -> dict[str, dict]:
+    """Extract best (lowest affinity) pose scores per molecule from docking SDF."""
+    try:
+        from rdkit import Chem
+    except ImportError:
+        logger.warning(
+            "RDKit is not available. Docking score enrichment for %s is skipped.",
+            tool_name,
+        )
+        return {}
+
+    best_by_mol_idx: dict[str, dict] = {}
+    try:
+        supplier = Chem.SDMolSupplier(str(sdf_path))
+    except Exception as e:
+        logger.warning("Could not read %s docking SDF %s: %s", tool_name, sdf_path, e)
+        return {}
+
+    for mol in supplier:
+        if mol is None or not mol.HasProp("_Name"):
+            continue
+
+        mol_idx = str(mol.GetProp("_Name")).strip()
+        if not mol_idx:
+            continue
+
+        affinity = _extract_float_prop(
+            mol, ["minimizedAffinity", "affinity", "score", "docking_score"]
+        )
+        if affinity is None:
+            continue
+
+        if tool_name == DOCKING_TOOL_GNINA:
+            record = {
+                "gnina_affinity": affinity,
+                "gnina_cnnscore": _extract_float_prop(mol, ["CNNscore"]),
+                "gnina_cnnaffinity": _extract_float_prop(mol, ["CNNaffinity"]),
+                "gnina_cnn_vs": _extract_float_prop(mol, ["CNN_VS"]),
+            }
+            key = "gnina_affinity"
+        else:
+            record = {"smina_affinity": affinity}
+            key = "smina_affinity"
+
+        current = best_by_mol_idx.get(mol_idx)
+        if current is None or record[key] < current[key]:
+            best_by_mol_idx[mol_idx] = record
+
+    return best_by_mol_idx
+
+
+def _collect_docking_scores(base_path: Path) -> pd.DataFrame:
+    """Collect best docking scores per molecule across configured tools."""
+    merged: dict[str, dict] = {}
+
+    for tool in (DOCKING_TOOL_GNINA, DOCKING_TOOL_SMINA):
+        sdf_path = _find_docking_sdf(base_path, tool)
+        if not sdf_path:
+            continue
+
+        tool_scores = _extract_best_tool_scores(sdf_path, tool)
+        for mol_idx, score_map in tool_scores.items():
+            entry = merged.setdefault(mol_idx, {})
+            entry.update(score_map)
+
+    rows = []
+    for mol_idx, score_map in merged.items():
+        row = {"mol_idx": mol_idx}
+        for col in DOCKING_SCORE_COLUMNS:
+            row[col] = score_map.get(col)
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame(columns=["mol_idx", *DOCKING_SCORE_COLUMNS])
+    return pd.DataFrame(rows)
 
 
 class PipelineStage:
@@ -826,15 +940,34 @@ class MolecularAnalysisPipeline:
         final_output_path.parent.mkdir(parents=True, exist_ok=True)
 
         id_cols = ["smiles", "model_name", "mol_idx"]
+        stable_empty_cols = [*id_cols, *DOCKING_SCORE_COLUMNS]
 
         if final_data is None or len(final_data) == 0:
             # Always create the file so downstream tooling can rely on its presence.
-            pd.DataFrame(columns=id_cols).to_csv(final_output_path, index=False)
+            pd.DataFrame(columns=stable_empty_cols).to_csv(final_output_path, index=False)
             logger.info("Saved 0 final molecules to %s", final_output_path)
             return
 
-        cols = [c for c in id_cols if c in final_data.columns]
-        final_data[cols].to_csv(final_output_path, index=False)
+        output_df = final_data.copy()
+        if "mol_idx" in output_df.columns:
+            docking_scores = _collect_docking_scores(self.data_checker.base_path)
+            if not docking_scores.empty:
+                output_df["_join_mol_idx"] = output_df["mol_idx"].astype(str)
+                docking_scores = docking_scores.rename(
+                    columns={"mol_idx": "_join_mol_idx"}
+                )
+                output_df = output_df.merge(docking_scores, on="_join_mol_idx", how="left")
+                output_df = output_df.drop(columns=["_join_mol_idx"])
+        else:
+            logger.warning(
+                "Final output is missing 'mol_idx'; docking score enrichment was skipped."
+            )
+
+        for col in DOCKING_SCORE_COLUMNS:
+            if col not in output_df.columns:
+                output_df[col] = pd.NA
+
+        output_df.to_csv(final_output_path, index=False)
         logger.info("Saved %d final molecules to %s", final_count, final_output_path)
 
     def _log_pipeline_summary(self) -> None:
