@@ -66,7 +66,7 @@ Defined in `src/hedgehog/pipeline.py`. This is the central orchestrator that exe
 ```python
 class MolecularAnalysisPipeline:
     _STAGE_DEFINITIONS = [
-        (STAGE_STRUCT_INI_FILTERS, CONFIG_STRUCT_FILTERS, DIR_BEFORE_DESCRIPTORS),
+        (STAGE_MOL_PREP, CONFIG_MOL_PREP, DIR_MOL_PREP),
         (STAGE_DESCRIPTORS, CONFIG_DESCRIPTORS, DIR_DESCRIPTORS),
         (STAGE_STRUCT_FILTERS, CONFIG_STRUCT_FILTERS, DIR_STRUCT_FILTERS),
         (STAGE_SYNTHESIS, CONFIG_SYNTHESIS, DIR_SYNTHESIS),
@@ -96,7 +96,7 @@ class PipelineStageRunner:
         DIR_SYNTHESIS,
         DIR_STRUCT_FILTERS_POST,
         DIR_DESCRIPTORS_INITIAL,
-        DIR_STRUCT_FILTERS_PRE,
+        DIR_MOL_PREP,
     ]
 ```
 

@@ -225,7 +225,7 @@ class TestStageNameMapping:
         server = _mock_server()
         job = PipelineJob("test-id", ["descriptors", "struct_filters"], server)
         assert job._map_stage_name("final_descriptors") == "descriptors"
-        assert job._map_stage_name("struct_ini_filters") == "struct_filters"
+        assert job._map_stage_name("mol_prep") == "mol_prep"
         assert job._map_stage_name("docking") == "docking"
         assert job._map_stage_name("unknown_stage") == "unknown_stage"
 

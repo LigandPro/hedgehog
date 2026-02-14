@@ -7,6 +7,7 @@ import pytest
 
 from hedgehog.pipeline import (
     DIR_DESCRIPTORS_INITIAL,
+    DIR_MOL_PREP,
     DIR_SYNTHESIS,
     DOCKING_SCORE_COLUMNS,
     DataChecker,
@@ -160,6 +161,17 @@ class TestDataChecker:
 
         assert checker.check_stage_data(DIR_DESCRIPTORS_INITIAL) is True
 
+    def test_check_stage_data_mol_prep(self, tmp_path):
+        """Check stage data for MolPrep output."""
+        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir.mkdir(parents=True)
+        (prep_dir / "filtered_molecules.csv").write_text("smiles,model_name\nCCO,test")
+
+        config = {"folder_to_save": str(tmp_path)}
+        checker = DataChecker(config)
+
+        assert checker.check_stage_data(DIR_MOL_PREP) is True
+
 
 class TestPipelineStageRunner:
     """Tests for PipelineStageRunner class."""
@@ -189,6 +201,19 @@ class TestPipelineStageRunner:
 
         result = runner.find_latest_data_source()
         assert result == DIR_DESCRIPTORS_INITIAL
+
+    def test_find_latest_data_source_with_mol_prep(self, tmp_path):
+        """Find latest data source when only MolPrep output exists."""
+        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir.mkdir(parents=True)
+        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+
+        config = {"folder_to_save": str(tmp_path)}
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        result = runner.find_latest_data_source()
+        assert result == DIR_MOL_PREP
 
     def test_find_latest_data_source_empty(self, tmp_path):
         """Find latest data source when no output exists."""

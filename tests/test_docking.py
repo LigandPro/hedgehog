@@ -43,6 +43,16 @@ class TestFindLatestInputSource:
         assert result is not None
         assert "descriptors" in str(result).lower()
 
+    def test_mol_prep_output(self, tmp_path):
+        """Should find MolPrep output."""
+        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir.mkdir(parents=True)
+        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+
+        result = _find_latest_input_source(tmp_path)
+        assert result is not None
+        assert "mol_prep" in str(result).lower() or "00_mol_prep" in str(result)
+
     def test_sampled_molecules_input(self, tmp_path):
         """Should find sampled molecules in input directory."""
         input_dir = tmp_path / "input"
@@ -63,6 +73,10 @@ class TestFindLatestInputSource:
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         (desc_dir / "filtered_molecules.csv").write_text("smiles\nCC")
+
+        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir.mkdir(parents=True)
+        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCC")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None

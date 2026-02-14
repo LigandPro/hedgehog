@@ -12,7 +12,7 @@ HEDGEHOG is a comprehensive benchmark pipeline for evaluating generative models 
 
 ## Key Features
 
-- **7-stage evaluation pipeline** — molecules pass through descriptors, structural filters, synthesis evaluation, docking, docking filters, and final descriptor recalculation, with an optional pre-descriptors filtering step for early elimination of problematic structures.
+- **7-stage evaluation pipeline** — molecules pass through Mol Prep (Datamol standardization), descriptors, structural filters, synthesis evaluation, docking, docking filters, and final descriptor recalculation.
 - **11 structural filters** — common alerts (PAINS, Glaxo, BMS, Dundee), molecular graph severity, molecular complexity, NIBR, Bredt rule, Lilly MedChem rules, plus 5 medicinal chemistry filters (protecting groups, ring infraction, stereo center, halogenicity, symmetry).
 - **Retrosynthesis analysis** — synthetic accessibility scoring with SA Score, SYBA, and full retrosynthetic route analysis via AiZynthFinder.
 - **Molecular docking** — binding affinity scoring and pose generation with SMINA and/or GNINA, followed by pose quality filtering.

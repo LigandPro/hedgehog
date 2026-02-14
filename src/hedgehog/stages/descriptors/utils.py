@@ -34,6 +34,7 @@ _DESCRIPTOR_KEY_MAP = {
     "n_rot_bonds": "n_rot_bonds",
     "n_rigid_bonds": "n_rigid_bonds",
     "n_rings": "n_rings",
+    "fns_atoms": "fNS_atoms",
 }
 
 # Disable RDKit warnings
@@ -44,7 +45,8 @@ rdBase.DisableLog("rdApp.*")
 def order_identity_columns(df):
     """Reorder dataframe columns with identity columns first."""
     id_cols = ["smiles", "model_name", "mol_idx"]
-    ordered = id_cols + [c for c in df.columns if c not in id_cols]
+    existing_id_cols = [c for c in id_cols if c in df.columns]
+    ordered = existing_id_cols + [c for c in df.columns if c not in id_cols]
     return df[ordered]
 
 
@@ -169,6 +171,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     molWt = Descriptors.ExactMolWt(mol_n)
     clogp = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
+    n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
 
     return {
         "model_name": model_name,
@@ -181,6 +184,9 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         ),
         "n_N_atoms": n_N_atoms,
         "fN_atoms": n_N_atoms / n_heavy_atoms if n_heavy_atoms > 0 else 0,
+        "fNS_atoms": (n_N_atoms + n_S_atoms) / n_heavy_atoms
+        if n_heavy_atoms > 0
+        else 0,
         "is_neutral": is_neutral,
         "has_formal_charge": has_formal_charge,
         "charged_mol": charged_mol,  # DEPRECATED: use is_neutral instead
@@ -208,10 +214,45 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
 
 
 def _compute_descriptors_for_row(args):
-    smiles, model_name, mol_idx = args
+    smiles, model_name, mol_idx, remove_charges, remove_radicals, remove_stereo = args
     mol_n = Chem.MolFromSmiles(smiles)
     if not mol_n:
         return None, (smiles, model_name, mol_idx)
+
+    # Descriptor-level preprocessing is kept as an optional fallback.
+    # Prefer MolPrep stage for standardization to avoid double-processing.
+    if remove_radicals:
+        has_radical = any(
+            atom.GetNumRadicalElectrons() > 0 for atom in mol_n.GetAtoms()
+        )
+        if has_radical:
+            return None, (smiles, model_name, mol_idx)
+
+    if remove_charges:
+        try:
+            from rdkit.Chem.MolStandardize import rdMolStandardize
+
+            uncharger = rdMolStandardize.Uncharger()
+            mol_n = uncharger.uncharge(mol_n)
+        except Exception:
+            # Best-effort: if uncharger isn't available, fall back to charge check only.
+            pass
+
+        still_charged = any(atom.GetFormalCharge() != 0 for atom in mol_n.GetAtoms())
+        if still_charged:
+            return None, (smiles, model_name, mol_idx)
+
+    if remove_stereo:
+        try:
+            Chem.RemoveStereochemistry(mol_n)
+        except Exception:
+            pass
+
+    if remove_charges or remove_radicals or remove_stereo:
+        try:
+            smiles = Chem.MolToSmiles(mol_n, canonical=True, isomericSmiles=False)
+        except Exception:
+            return None, (smiles, model_name, mol_idx)
 
     row_metrics = _compute_single_molecule_descriptors(mol_n, model_name, mol_idx)
     row_metrics["smiles"] = smiles
@@ -240,6 +281,15 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
     metrics = []
     skipped_molecules = []
 
+    preprocess_cfg = {}
+    if isinstance(config_descriptors, dict):
+        preprocess_cfg = config_descriptors.get("preprocess", {}) or {}
+
+    remove_charges = bool(preprocess_cfg.get("remove_charges", False))
+    remove_radicals = bool(preprocess_cfg.get("remove_radicals", False))
+    remove_stereo = bool(preprocess_cfg.get("remove_stereochemistry", False))
+    do_preprocess = remove_charges or remove_radicals or remove_stereo
+
     n_jobs = resolve_n_jobs(config_descriptors, config)
     items = list(
         zip(
@@ -249,6 +299,10 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
             strict=False,
         )
     )
+    items = [
+        (s, m, idx, remove_charges, remove_radicals, remove_stereo)
+        for (s, m, idx) in items
+    ]
 
     progress_cb = None
     if reporter is not None:
@@ -269,9 +323,15 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
 
     save_path = Path(process_path(save_path))
     if skipped_molecules:
-        logger.warning(
-            "Skipped %d molecules that failed to parse", len(skipped_molecules)
-        )
+        if do_preprocess:
+            logger.warning(
+                "Skipped %d molecules during preprocessing or SMILES parsing",
+                len(skipped_molecules),
+            )
+        else:
+            logger.warning(
+                "Skipped %d molecules that failed to parse", len(skipped_molecules)
+            )
         skipped_df = pd.DataFrame(
             {
                 "smiles": [s for s, _, _ in skipped_molecules],
@@ -283,6 +343,8 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
         skipped_df.to_csv(save_path / "skipped_molecules.csv", index=False)
 
     metrics_df = pd.DataFrame(metrics)
+    if metrics_df.shape[1] == 0:
+        metrics_df = pd.DataFrame(columns=["smiles", "model_name", "mol_idx"])
     metrics_df = order_identity_columns(metrics_df)
     metrics_df.to_csv(save_path / "descriptors_all.csv", index=False)
     return metrics_df

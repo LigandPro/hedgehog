@@ -3,9 +3,9 @@ import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
 import { useStore } from '../../store/index.js';
-import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 
 const STAGE_NAMES: Record<string, string> = {
+  mol_prep: 'Mol Prep',
   descriptors: 'Descriptors',
   struct_filters: 'Struct Filters',
   synthesis: 'Synthesis',
@@ -16,23 +16,11 @@ const STAGE_NAMES: Record<string, string> = {
 export function StageOrder(): React.ReactElement {
   const setScreen = useStore((state) => state.setScreen);
   const wizard = useStore((state) => state.wizard);
-  const setWizardDependency = useStore((state) => state.setWizardDependency);
   const getWizardSelectedStagesInOrder = useStore((state) => state.getWizardSelectedStagesInOrder);
-
-  const { width: terminalWidth } = useTerminalSize();
 
   const selectedStagesInOrder = useMemo(() => getWizardSelectedStagesInOrder(), [wizard.stageOrder, wizard.selectedStages]);
 
-  // Check if both descriptors and struct_filters are selected (for dependency option)
-  const showDependencyOption = wizard.selectedStages.includes('descriptors') && wizard.selectedStages.includes('struct_filters');
-
   useInput((input, key) => {
-    if (showDependencyOption) {
-      if (input === ' ') {
-        setWizardDependency('runFiltersBeforeDescriptors', !wizard.dependencies.runFiltersBeforeDescriptors);
-      }
-    }
-
     if (key.return || key.rightArrow) {
       goNext();
     } else if (key.escape || key.leftArrow || input === 'q') {
@@ -41,8 +29,8 @@ export function StageOrder(): React.ReactElement {
   });
 
   const goNext = () => {
-    // Navigate to first selected stage config
-    const firstStage = selectedStagesInOrder[0];
+    // Navigate to first selected stage config (Mol Prep is not configured in the wizard UI).
+    const firstStage = selectedStagesInOrder.find((s) => s !== 'mol_prep') || selectedStagesInOrder[0];
     if (firstStage === 'descriptors') {
       setScreen('wizardConfigDescriptors');
     } else if (firstStage === 'struct_filters') {
@@ -60,16 +48,10 @@ export function StageOrder(): React.ReactElement {
 
   const totalSteps = 2 + selectedStagesInOrder.length + 1; // selection + order + configs + review
 
-  const shortcuts = showDependencyOption
-    ? [
-        { key: 'Space', label: 'Toggle dependency' },
-        { key: '→/Enter', label: 'Next' },
-        { key: '←/Esc', label: 'Back' },
-      ]
-    : [
-        { key: '→/Enter', label: 'Next' },
-        { key: '←/Esc', label: 'Back' },
-      ];
+  const shortcuts = [
+    { key: '→/Enter', label: 'Next' },
+    { key: '←/Esc', label: 'Back' },
+  ];
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -87,27 +69,6 @@ export function StageOrder(): React.ReactElement {
           </Box>
         ))}
       </Box>
-
-      {showDependencyOption && (
-        <>
-          <Box marginY={1}>
-            <Text color="gray">{'─'.repeat(terminalWidth - 2)}</Text>
-          </Box>
-
-          <Box flexDirection="column">
-            <Text color="cyan" bold>Dependencies:</Text>
-            <Box marginTop={1}>
-              <Text color="cyan">{'▸ '}</Text>
-              <Text color={wizard.dependencies.runFiltersBeforeDescriptors ? 'green' : 'gray'}>
-                [{wizard.dependencies.runFiltersBeforeDescriptors ? '✓' : ' '}]
-              </Text>
-              <Text color="white">
-                {' '}Run Struct Filters before Descriptors
-              </Text>
-            </Box>
-          </Box>
-        </>
-      )}
 
       <Footer shortcuts={shortcuts} />
     </Box>

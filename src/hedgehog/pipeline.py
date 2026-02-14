@@ -11,6 +11,7 @@ from hedgehog.reporting import ReportGenerator
 from hedgehog.stages.descriptors.main import main as descriptors_main
 from hedgehog.stages.docking.utils import run_docking as docking_main
 from hedgehog.stages.dockingFilters.main import docking_filters_main
+from hedgehog.stages.molPrep.main import main as mol_prep_main
 from hedgehog.stages.structFilters.main import main as structural_filters_main
 from hedgehog.stages.synthesis.main import main as synthesis_main
 from hedgehog.utils.input_paths import find_latest_input_source as _find_input
@@ -22,8 +23,8 @@ DIR_OUTPUT = "output"
 DIR_CONFIGS = "configs"
 
 # Stage subdirectories
+DIR_MOL_PREP = "stages/00_mol_prep"
 DIR_DESCRIPTORS_INITIAL = "stages/01_descriptors_initial"
-DIR_STRUCT_FILTERS_PRE = "stages/02_structural_filters_pre"
 DIR_STRUCT_FILTERS_POST = "stages/03_structural_filters_post"
 DIR_SYNTHESIS = "stages/04_synthesis"
 DIR_DOCKING = "stages/05_docking"
@@ -33,7 +34,6 @@ DIR_DESCRIPTORS_FINAL = "stages/07_descriptors_final"
 # Legacy names for backwards compatibility
 DIR_DESCRIPTORS = DIR_DESCRIPTORS_INITIAL
 DIR_STRUCT_FILTERS = DIR_STRUCT_FILTERS_POST
-DIR_BEFORE_DESCRIPTORS = DIR_STRUCT_FILTERS_PRE
 DIR_FINAL_DESCRIPTORS = DIR_DESCRIPTORS_FINAL
 DIR_RUN_CONFIGS = DIR_CONFIGS
 
@@ -55,7 +55,7 @@ DOCKING_SCORE_COLUMNS = [
 ]
 
 # Stage names
-STAGE_STRUCT_INI_FILTERS = "struct_ini_filters"
+STAGE_MOL_PREP = "mol_prep"
 STAGE_DESCRIPTORS = "descriptors"
 STAGE_STRUCT_FILTERS = "struct_filters"
 STAGE_SYNTHESIS = "synthesis"
@@ -64,18 +64,17 @@ STAGE_DOCKING_FILTERS = "docking_filters"
 STAGE_FINAL_DESCRIPTORS = "final_descriptors"
 
 # Config keys
+CONFIG_MOL_PREP = "config_mol_prep"
 CONFIG_DESCRIPTORS = "config_descriptors"
 CONFIG_STRUCT_FILTERS = "config_structFilters"
 CONFIG_SYNTHESIS = "config_synthesis"
 CONFIG_DOCKING = "config_docking"
 CONFIG_DOCKING_FILTERS = "config_docking_filters"
 CONFIG_RUN_KEY = "run"
-CONFIG_RUN_BEFORE_DESCRIPTORS = "run_before_descriptors"
 CONFIG_TOOLS = "tools"
 CONFIG_FOLDER_TO_SAVE = "folder_to_save"
 
 # Command-line override keys
-OVERRIDE_STRUCT_FILTERS_BEFORE = "_run_struct_filters_before_descriptors_override"
 OVERRIDE_SINGLE_STAGE = "_run_single_stage_override"
 
 # Docking tools
@@ -309,12 +308,12 @@ class DataChecker:
 
     # Mapping of stage names to their output file paths (relative to base_path)
     _STAGE_OUTPUT_PATHS = {
+        DIR_MOL_PREP: Path(DIR_MOL_PREP) / FILE_FILTERED_MOLECULES,
         DIR_DESCRIPTORS_INITIAL: Path(DIR_DESCRIPTORS_INITIAL)
         / "filtered"
         / FILE_FILTERED_MOLECULES,
         DIR_STRUCT_FILTERS_POST: Path(DIR_STRUCT_FILTERS_POST)
         / FILE_FILTERED_MOLECULES,
-        DIR_STRUCT_FILTERS_PRE: Path(DIR_STRUCT_FILTERS_PRE) / FILE_FILTERED_MOLECULES,
         DIR_SYNTHESIS: Path(DIR_SYNTHESIS) / FILE_FILTERED_MOLECULES,
         DIR_DOCKING_FILTERS: Path(DIR_DOCKING_FILTERS) / FILE_FILTERED_MOLECULES,
         # Legacy paths
@@ -359,7 +358,7 @@ class PipelineStageRunner:
         DIR_SYNTHESIS,
         DIR_STRUCT_FILTERS_POST,
         DIR_DESCRIPTORS_INITIAL,
-        DIR_STRUCT_FILTERS_PRE,
+        DIR_MOL_PREP,
     ]
 
     def __init__(self, config: dict, data_checker: DataChecker, progress_callback=None):
@@ -394,6 +393,36 @@ class PipelineStageRunner:
         logger.debug("No processed data found from any stage")
         return None
 
+    def run_mol_prep(
+        self,
+        data,
+        subfolder: str | None = None,
+        reporter: StageProgressReporter | None = None,
+    ) -> bool:
+        """Run Datamol-based Mol Prep stage."""
+        try:
+            config_path = self.config.get(CONFIG_MOL_PREP)
+            if not config_path:
+                logger.info("Mol Prep config not specified, skipping")
+                return False
+
+            cfg = load_config(config_path)
+            if not cfg.get(CONFIG_RUN_KEY, False):
+                logger.info("Mol Prep disabled in config")
+                return False
+
+            if reporter is not None:
+                reporter.progress(0, 1, message="Mol Prep")
+
+            mol_prep_main(data, self.config, subfolder=subfolder)
+
+            if reporter is not None:
+                reporter.progress(1, 1, message="Mol Prep")
+            return True
+        except Exception as exc:
+            logger.error("Error running Mol Prep: %s", exc)
+            return False
+
     def run_descriptors(
         self,
         data,
@@ -417,22 +446,6 @@ class PipelineStageRunner:
     ) -> bool:
         """Run structural filters on molecules."""
         try:
-            is_post_descriptors = stage_dir != DIR_STRUCT_FILTERS_PRE
-            has_descriptor_data = self.data_checker.check_stage_data(
-                DIR_DESCRIPTORS_INITIAL
-            )
-
-            if is_post_descriptors and not has_descriptor_data:
-                if self.config.get(OVERRIDE_SINGLE_STAGE) == STAGE_STRUCT_FILTERS:
-                    logger.info(
-                        "No previous stage data found, will use molecules from config"
-                    )
-                else:
-                    logger.warning(
-                        "No data available for structural filters in %s", stage_dir
-                    )
-                    return False
-
             config_struct_filters = load_config(self.config[CONFIG_STRUCT_FILTERS])
             if not config_struct_filters.get(CONFIG_RUN_KEY, False):
                 logger.info("Structural filters disabled in config")
@@ -596,7 +609,7 @@ class MolecularAnalysisPipeline:
 
     # Stage definitions: (name, config_key, directory)
     _STAGE_DEFINITIONS = [
-        (STAGE_STRUCT_INI_FILTERS, CONFIG_STRUCT_FILTERS, DIR_BEFORE_DESCRIPTORS),
+        (STAGE_MOL_PREP, CONFIG_MOL_PREP, DIR_MOL_PREP),
         (STAGE_DESCRIPTORS, CONFIG_DESCRIPTORS, DIR_DESCRIPTORS),
         (STAGE_STRUCT_FILTERS, CONFIG_STRUCT_FILTERS, DIR_STRUCT_FILTERS),
         (STAGE_SYNTHESIS, CONFIG_SYNTHESIS, DIR_SYNTHESIS),
@@ -607,13 +620,13 @@ class MolecularAnalysisPipeline:
 
     # Stage display labels for logging
     _STAGE_LABELS = {
-        STAGE_STRUCT_INI_FILTERS: "Stage 1': Pre-descriptors Structural Filters",
-        STAGE_DESCRIPTORS: "Stage 1: Molecular Descriptors",
-        STAGE_STRUCT_FILTERS: "Stage 2: Post-descriptors Structural Filters",
-        STAGE_SYNTHESIS: "Stage 3: Synthesis Analysis",
-        STAGE_DOCKING: "Stage 4: Molecular Docking",
-        STAGE_DOCKING_FILTERS: "Stage 5: Docking Filters",
-        STAGE_FINAL_DESCRIPTORS: "Stage 6': Final Descriptors Calculation",
+        STAGE_MOL_PREP: "Stage 1: Mol Prep (Datamol)",
+        STAGE_DESCRIPTORS: "Stage 2: Molecular Descriptors",
+        STAGE_STRUCT_FILTERS: "Stage 3: Structural Filters",
+        STAGE_SYNTHESIS: "Stage 4: Synthesis Analysis",
+        STAGE_DOCKING: "Stage 5: Molecular Docking",
+        STAGE_DOCKING_FILTERS: "Stage 6: Docking Filters",
+        STAGE_FINAL_DESCRIPTORS: "Stage 7': Final Descriptors Calculation",
     }
 
     def __init__(self, config: dict, progress_callback=None):
@@ -636,13 +649,6 @@ class MolecularAnalysisPipeline:
                 stage_config = load_config(self.config[stage.config_key])
                 stage.enabled = stage_config.get(CONFIG_RUN_KEY, False)
 
-                if stage.name == STAGE_STRUCT_INI_FILTERS:
-                    run_before = self.config.get(
-                        OVERRIDE_STRUCT_FILTERS_BEFORE,
-                        stage_config.get(CONFIG_RUN_BEFORE_DESCRIPTORS, False),
-                    )
-                    stage.enabled = stage.enabled and run_before
-
                 if single_stage_override:
                     stage.enabled = stage.name == single_stage_override
                     if stage.enabled:
@@ -656,6 +662,23 @@ class MolecularAnalysisPipeline:
             except Exception as e:
                 logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
+
+        # In single-stage mode, always run Mol Prep first (if enabled in config),
+        # so downstream stages operate on standardized molecules.
+        if single_stage_override and single_stage_override != STAGE_MOL_PREP:
+            mol_prep = self._stage_by_name.get(STAGE_MOL_PREP)
+            if mol_prep is not None:
+                try:
+                    cfg_path = self.config.get(CONFIG_MOL_PREP)
+                    if cfg_path:
+                        cfg = load_config(cfg_path)
+                        if cfg.get(CONFIG_RUN_KEY, False):
+                            mol_prep.enabled = True
+                            logger.info(
+                                "Single stage mode: also enabling %s", STAGE_MOL_PREP
+                            )
+                except Exception:
+                    pass
 
     def _emit_progress_event(self, event: dict) -> None:
         """Emit a structured progress event to the configured callback.
@@ -767,7 +790,7 @@ class MolecularAnalysisPipeline:
 
         # Execute each stage
         stage_results = [
-            self._run_pre_descriptors_filters(),
+            self._run_mol_prep(data),
             self._run_descriptors(data),
             self._run_post_descriptors_filters(),
             self._run_synthesis(),
@@ -835,34 +858,54 @@ class MolecularAnalysisPipeline:
             return on_failure()
         return False, False
 
-    def _run_pre_descriptors_filters(self) -> tuple[bool, bool]:
-        """Run pre-descriptors structural filters stage."""
-        return self._run_stage(
-            STAGE_STRUCT_INI_FILTERS,
-            self.stage_runner.run_structural_filters,
-            DIR_STRUCT_FILTERS_PRE,
+    def _run_mol_prep(self, data) -> tuple[bool, bool]:
+        """Run MolPrep stage (Datamol standardization + strict filtering)."""
+
+        def _on_failure():
+            logger.info("MolPrep failed; ending pipeline early.")
+            return False, True
+
+        completed, early_exit = self._run_stage(
+            STAGE_MOL_PREP, self.stage_runner.run_mol_prep, data, on_failure=_on_failure
         )
+        if not completed or early_exit:
+            return completed, early_exit
+
+        out_path = self.data_checker.base_path / DIR_MOL_PREP / FILE_FILTERED_MOLECULES
+        if out_path.exists():
+            try:
+                df_out = pd.read_csv(out_path)
+                self.current_data = df_out
+                if len(df_out) == 0:
+                    logger.info(
+                        "No molecules left after MolPrep; ending pipeline early."
+                    )
+                    return True, True
+            except Exception as e:
+                logger.warning("Could not load MolPrep output (%s): %s", out_path, e)
+
+        return True, False
 
     def _run_descriptors(self, data) -> tuple[bool, bool]:
         """Run descriptors calculation stage."""
         descriptors_input = data
 
-        # If pre-descriptors structural filters are enabled, use their output as the
-        # input to descriptors (otherwise stage 1' becomes analysis-only and the
-        # molecule counts become inconsistent across stages).
-        pre_stage = self._stage_by_name[STAGE_STRUCT_INI_FILTERS]
-        if pre_stage.enabled:
-            pre_path = self._build_data_path(DIR_STRUCT_FILTERS_PRE)
-            if pre_path.exists():
+        # If MolPrep is enabled, use its output as the input to descriptors.
+        mol_prep_stage = self._stage_by_name.get(STAGE_MOL_PREP)
+        if mol_prep_stage is not None and mol_prep_stage.enabled:
+            prep_path = (
+                self.data_checker.base_path / DIR_MOL_PREP / FILE_FILTERED_MOLECULES
+            )
+            if prep_path.exists():
                 try:
-                    pre_df = pd.read_csv(pre_path)
-                    if len(pre_df) > 0:
-                        descriptors_input = pre_df
-                        self.current_data = pre_df
+                    prep_df = pd.read_csv(prep_path)
+                    if len(prep_df) > 0:
+                        descriptors_input = prep_df
+                        self.current_data = prep_df
                 except Exception as e:
                     logger.warning(
-                        "Could not load pre-descriptors structural filters output (%s): %s",
-                        pre_path,
+                        "Could not load MolPrep output (%s): %s",
+                        prep_path,
                         e,
                     )
 
@@ -991,7 +1034,7 @@ class MolecularAnalysisPipeline:
                 DIR_DOCKING_FILTERS,
                 DIR_SYNTHESIS,
                 DIR_STRUCT_FILTERS_POST,
-                DIR_STRUCT_FILTERS_PRE,
+                DIR_MOL_PREP,
             ]
             latest = self._find_data_source(sources)
             if not latest:
@@ -1112,7 +1155,7 @@ class MolecularAnalysisPipeline:
                 DIR_DOCKING_FILTERS,
                 DIR_SYNTHESIS,
                 DIR_STRUCT_FILTERS_POST,
-                DIR_STRUCT_FILTERS_PRE,
+                DIR_MOL_PREP,
             ]
             latest = self._find_data_source(sources)
             if not latest:
@@ -1168,9 +1211,9 @@ def _save_config_snapshot(config: dict) -> None:
 
 # Stage descriptions for README generation
 _STAGE_DESCRIPTIONS = {
-    STAGE_STRUCT_INI_FILTERS: "Pre-descriptors structural filters",
+    STAGE_MOL_PREP: "Datamol molecule preparation (standardization + strict filtering)",
     STAGE_DESCRIPTORS: "Physicochemical descriptors",
-    STAGE_STRUCT_FILTERS: "Post-descriptors structural filters",
+    STAGE_STRUCT_FILTERS: "Structural filters",
     STAGE_SYNTHESIS: "Retrosynthesis analysis",
     STAGE_DOCKING: "Molecular docking",
     STAGE_DOCKING_FILTERS: "Post-docking pose & interaction filters",
@@ -1179,16 +1222,11 @@ _STAGE_DESCRIPTIONS = {
 
 # Directory-level tree templates per stage (static parts)
 _STAGE_TREE_TEMPLATES: dict[str, list[str]] = {
-    STAGE_STRUCT_INI_FILTERS: [
-        "|   +-- {filter_name}/             Per-filter results",
-        "|   |   +-- metrics.csv",
-        "|   |   +-- extended.csv",
-        "|   |   +-- filtered_molecules.csv",
-        "|   +-- filtered_molecules.csv     Combined passed molecules",
-        "|   +-- failed_molecules.csv       Combined failed molecules",
-        "|   +-- plots/",
-        "|       +-- molecule_counts_comparison.png",
-        "|       +-- restriction_ratios_comparison.png",
+    STAGE_MOL_PREP: [
+        "|   +-- filtered_molecules.csv     Standardized molecules (passed)",
+        "|   +-- failed_molecules.csv       Rejected molecules with reasons",
+        "|   +-- metrics.csv                Summary counts and failure breakdown",
+        "|   +-- duplicates_removed.csv     Removed duplicates (optional)",
     ],
     STAGE_DESCRIPTORS: [
         "|   +-- metrics/",

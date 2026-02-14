@@ -5,7 +5,8 @@ import { Footer } from '../../components/Footer.js';
 import { useStore } from '../../store/index.js';
 import type { Screen } from '../../types/index.js';
 
-const STAGES = [
+const STAGES: Array<{ key: string; name: string; description: string; configScreen?: Screen }> = [
+  { key: 'mol_prep', name: 'Mol Prep', description: 'Standardize molecules (Datamol)' },
   { key: 'descriptors', name: 'Descriptors', description: 'Calculate molecular descriptors', configScreen: 'wizardConfigDescriptors' as Screen },
   { key: 'struct_filters', name: 'Struct Filters', description: 'Apply structural filters', configScreen: 'wizardConfigFilters' as Screen },
   { key: 'synthesis', name: 'Synthesis', description: 'Score synthesizability', configScreen: 'wizardConfigSynthesis' as Screen },
@@ -25,6 +26,10 @@ export function StageSelection(): React.ReactElement {
 
   const openConfig = () => {
     const stage = STAGES[focusedIndex];
+    if (!stage.configScreen) {
+      showToast('info', 'Mol Prep is configured via config_mol_prep.yml');
+      return;
+    }
     // Enable the stage if not already enabled
     if (!wizard.selectedStages.includes(stage.key)) {
       toggleWizardStage(stage.key);
@@ -47,7 +52,11 @@ export function StageSelection(): React.ReactElement {
       setFocusedIndex(Math.min(STAGES.length - 1, focusedIndex + 1));
     } else if (input === ' ') {
       // Space - toggle stage
-      toggleWizardStage(STAGES[focusedIndex].key);
+      if (STAGES[focusedIndex].key === 'mol_prep') {
+        showToast('info', 'Mol Prep is a prerequisite stage and is usually kept enabled');
+      } else {
+        toggleWizardStage(STAGES[focusedIndex].key);
+      }
     } else if (input === 'c') {
       // 'c' - open config
       openConfig();

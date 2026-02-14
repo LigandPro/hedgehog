@@ -229,6 +229,7 @@ class TestStageEnum:
 
     def test_stage_values(self):
         """Test stage enum values."""
+        assert Stage.mol_prep.value == "mol_prep"
         assert Stage.descriptors.value == "descriptors"
         assert Stage.struct_filters.value == "struct_filters"
         assert Stage.synthesis.value == "synthesis"
@@ -236,6 +237,7 @@ class TestStageEnum:
 
     def test_stage_description(self):
         """Test stage descriptions."""
+        assert "standard" in Stage.mol_prep.description.lower()
         assert "descriptors" in Stage.descriptors.description.lower()
         assert "filter" in Stage.struct_filters.description.lower()
         assert "synth" in Stage.synthesis.description.lower()

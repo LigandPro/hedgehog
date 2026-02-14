@@ -12,7 +12,7 @@ INPUT_SOURCE_PRIORITY_NEW = [
     ("stages", "04_synthesis", "filtered_molecules.csv"),
     ("stages", "03_structural_filters_post", "filtered_molecules.csv"),
     ("stages", "01_descriptors_initial", "filtered", "filtered_molecules.csv"),
-    ("stages", "02_structural_filters_pre", "filtered_molecules.csv"),
+    ("stages", "00_mol_prep", "filtered_molecules.csv"),
     ("input", "sampled_molecules.csv"),
 ]
 
@@ -29,11 +29,11 @@ STAGE_DIRECTORIES = {
     "synthesis": ["stages/04_synthesis", "Synthesis"],
     "struct_filters": [
         "stages/03_structural_filters_post",
-        "stages/02_structural_filters_pre",
         "StructFilters",
     ],
     "descriptors": ["stages/01_descriptors_initial", "Descriptors"],
     "docking": ["stages/05_docking"],
+    "mol_prep": ["stages/00_mol_prep"],
 }
 
 

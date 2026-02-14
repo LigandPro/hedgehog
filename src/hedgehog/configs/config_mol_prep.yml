@@ -1,0 +1,57 @@
+run: true
+
+columns:
+  smiles: smiles
+  model_name: model_name
+  mol_idx: mol_idx
+  smiles_raw: smiles_raw
+
+steps:
+  to_mol:
+    ordered: true
+    sanitize: false
+    allow_cxsmiles: true
+    strict_cxsmiles: true
+    remove_hs: true
+
+  fix_mol:
+    enabled: true
+    n_iter: 1
+    remove_singleton: true
+    largest_only: false
+
+  sanitize_mol:
+    enabled: true
+
+  remove_salts_solvents:
+    enabled: true
+    defn_data: null
+    defn_format: smarts
+    dont_remove_everything: true
+    sanitize: true
+
+  keep_largest_fragment: true
+
+  standardize_mol:
+    enabled: true
+    disconnect_metals: true
+    normalize: true
+    reionize: true
+    uncharge: true
+    stereo: true
+
+  remove_stereochemistry: true
+
+  standardize_smiles:
+    enabled: true
+
+filters:
+  allowed_atoms: [C, N, O, S, F, Cl, Br, I, P, H]
+  reject_radicals: true
+  require_neutral: true
+  reject_isotopes: true
+  require_single_fragment: true
+
+output:
+  write_duplicates_removed: true
+

@@ -4,10 +4,9 @@ title: Structural Filters
 
 # Structural Filters
 
-The structural filters stage applies medicinal chemistry rules and structural alert databases to remove molecules with undesirable substructures, excessive complexity, or known toxicophores. This stage can run in two positions in the pipeline:
+The structural filters stage applies medicinal chemistry rules and structural alert databases to remove molecules with undesirable substructures, excessive complexity, or known toxicophores. This stage runs after descriptor-based filtering in the pipeline:
 
-- **Pre-descriptors** (Stage 1'): optional early filtering before descriptor computation, enabled by setting `run_before_descriptors: true` (default: `false`)
-- **Post-descriptors** (Stage 2): the standard position, running after descriptor-based filtering
+- **Post-descriptors**: the standard position, running after descriptor-based filtering. Early normalization and cleanup happens in the **Mol Prep** stage.
 
 ## Filter Reference
 
@@ -41,16 +40,9 @@ These five filters use the `medchem.functional` API:
 
 The symmetry filter is disabled by default because many approved drugs are symmetric (e.g., ibuprofen, metformin). Enable it only if your project specifically requires asymmetric scaffolds.
 
-## Pre-Descriptor vs. Post-Descriptor Filtering
+## Pipeline Position
 
-When `run_before_descriptors: true` is set in the structural filters config, the pipeline runs structural filters **before** computing descriptors. This is useful when:
-
-- Your input set is very large and you want to reduce it before the more expensive descriptor computation
-- You want to ensure that obviously problematic molecules never enter the descriptor stage
-
-In the shipped default configuration, `run_before_descriptors` is `false` (post-descriptors only).
-
-The pre-descriptor run and post-descriptor run use the same configuration file but write to different output directories (`02_structural_filters_pre/` and `03_structural_filters_post/`).
+Structural filters run after the descriptor stage and write results to `03_structural_filters_post/`.
 
 ## Common Alerts Configuration
 
@@ -86,7 +78,6 @@ Full configuration in `config_structFilters.yml`:
 
 ```yaml
 run: true
-run_before_descriptors: false
 filter_data: true
 
 # Database-based filters

@@ -9,6 +9,7 @@ pains_file_path: data/wehi_pains.csv
 mcf_file_path: data/mcf.csv
 ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
 protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
 config_structFilters: src/hedgehog/configs/config_structFilters.yml
 config_synthesis: src/hedgehog/configs/config_synthesis.yml

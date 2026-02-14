@@ -51,6 +51,7 @@ const ASCII_LOGOS = [
 ];
 
 const STAGE_NAMES: Record<string, string> = {
+  mol_prep: 'Mol Prep',
   descriptors: 'Descriptors',
   struct_filters: 'Filters',
   synthesis: 'Synthesis',

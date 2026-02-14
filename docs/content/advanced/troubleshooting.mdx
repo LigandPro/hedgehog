@@ -97,7 +97,7 @@ export SCHRODINGER=/opt/schrodinger/suites2024-1
 $SCHRODINGER/licadmin STAT
 ```
 
-3. If you do not have a Schrodinger license, remove or clear the `ligand_preparation_tool` and `protein_preparation_tool` fields in `config.yml`. HEDGEHOG falls back to RDKit-based SMILES canonicalization and deduplication, which does not require a license:
+3. If you do not have a Schrodinger license, remove or clear the `ligand_preparation_tool` and `protein_preparation_tool` fields in `config.yml`. HEDGEHOG will skip Schrodinger preprocessing and rely on the Mol Prep stage (Datamol standardization), which does not require a license:
 
 ```yaml
 # config.yml — disable Schrodinger tools

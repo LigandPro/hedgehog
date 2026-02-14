@@ -2,6 +2,15 @@ run: true
 n_jobs: -1
 batch_size: 1000
 filter_data: true
+
+preprocess:
+  # MolPrep stage owns molecule standardization. Keep these disabled to avoid
+  # double-processing the same transformations. If you disable MolPrep, you can
+  # enable these as a fallback (but MolPrep is recommended).
+  remove_charges: false
+  remove_radicals: false
+  remove_stereochemistry: false
+
 borders:
   allowed_chars:
   - C
@@ -11,6 +20,8 @@ borders:
   - F
   - Cl
   - Br
+  - I
+  - P
   - H
   n_atoms_min: 10
   n_atoms_max: 100
@@ -21,17 +32,21 @@ borders:
   n_N_atoms_min: 0
   n_N_atoms_max: 12
   fN_atoms_min: 0
-  fN_atoms_max: 1
+  fN_atoms_max: 0.22
+
+  fNS_atoms_min: 0
+  fNS_atoms_max: 0.3
   charged_mol_allowed: true
   filter_charged_mol: false
   molWt_min: 200
-  molWt_max: 500
+  molWt_max: 550
   logP_min: -0.4
   logP_max: 5.6
-  clogP_min: -100  # Effectively disabled; typical drug-like range: -5 to 10
-  clogP_max: 100
-  sw_min: -100  # Effectively disabled; typical logSw range: -12 to 2
-  sw_max: 100
+  clogP_min: 0
+  clogP_max: 8
+
+  sw_min: -20
+  sw_max: 1
   ring_size_min: 3
   ring_size_max: 12
   n_rings_min: 0
@@ -42,16 +57,17 @@ borders:
   n_fused_aromatic_rings_max: 2
   n_rigid_bonds_min: 0
   n_rigid_bonds_max: 30
-  n_rot_bonds_min: 2
+  n_rot_bonds_min: 0
   n_rot_bonds_max: 8
   hbd_min: 0
-  hbd_max: 5
-  hba_min: 0
-  hba_max: 10
+  hbd_max: 4
+  hba_min: 1
+  hba_max: 9
   fsp3_min: 0.15
   fsp3_max: 0.8
   mce18_min: 20
-  tpsa_min: 0
+  mce18_max: 140
+  tpsa_min: 20
   tpsa_max: 140
   qed_min: 0.3
   qed_max: 1
@@ -62,6 +78,7 @@ filtered_cols_to_plot:
 - n_het_atoms
 - n_N_atoms
 - fN_atoms
+- fNS_atoms
 - charged_mol
 - molWt
 - logP
@@ -96,6 +113,7 @@ not_to_smooth_plot_by_sides:
 - n_atoms
 - n_heavy_atoms
 - fN_atoms
+- fNS_atoms
 - molWt
 - fsp3
 - tpsa
@@ -107,6 +125,7 @@ renamer:
   n_het_atoms: Number of heteroatoms
   n_N_atoms: Number of Nitrogen Atoms
   fN_atoms: Fraction of Nitrogen Atoms
+  fNS_atoms: Fraction of Nitrogen and Sulfur Atoms
   charged_mol: Charged Molecule
   molWt: Molecular Weight
   logP: logP

@@ -25,6 +25,7 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 | `mcf_file_path` | string | `data/mcf.csv` | Path to the MCF (medicinal chemistry filters) definitions file |
 | `ligand_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger LigPrep binary for ligand preparation |
 | `protein_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger PrepWizard binary for protein preparation |
+| `config_mol_prep` | string | `src/hedgehog/configs/config_mol_prep.yml` | Path to the Mol Prep stage config |
 | `config_descriptors` | string | `src/hedgehog/configs/config_descriptors.yml` | Path to the descriptors stage config |
 | `config_structFilters` | string | `src/hedgehog/configs/config_structFilters.yml` | Path to the structural filters stage config |
 | `config_synthesis` | string | `src/hedgehog/configs/config_synthesis.yml` | Path to the synthesis stage config |
@@ -46,12 +47,88 @@ pains_file_path: data/wehi_pains.csv
 mcf_file_path: data/mcf.csv
 ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
 protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
 config_structFilters: src/hedgehog/configs/config_structFilters.yml
 config_synthesis: src/hedgehog/configs/config_synthesis.yml
 config_docking: src/hedgehog/configs/config_docking.yml
 config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
 config_moleval: src/hedgehog/configs/config_moleval.yml
+```
+
+---
+
+## config_mol_prep.yml
+
+Standardizes molecules before any descriptor computation. This stage aims to produce “clean” molecules by:
+
+- removing salts/solvents and keeping the largest fragment
+- disconnecting metals
+- neutralizing charges
+- canonicalizing tautomers (`standardize_smiles`)
+- removing stereochemistry
+- applying strict filters (allowed atom whitelist, no radicals, no isotopes, single fragment, neutral molecules)
+
+### General Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable Mol Prep |
+| `filters.allowed_atoms` | list[string] | `[C, N, O, S, F, Cl, Br, I, P, H]` | Allowed atom symbols |
+| `filters.require_neutral` | bool | `true` | Reject molecules with any formal charge |
+| `filters.require_single_fragment` | bool | `true` | Reject multi-fragment molecules |
+| `filters.reject_radicals` | bool | `true` | Reject molecules with radical electrons |
+| `filters.reject_isotopes` | bool | `true` | Reject isotopically labeled molecules |
+| `output.write_duplicates_removed` | bool | `true` | Write `duplicates_removed.csv` when duplicates are dropped |
+
+### Default YAML
+
+```yaml
+run: true
+columns:
+  smiles: smiles
+  model_name: model_name
+  mol_idx: mol_idx
+  smiles_raw: smiles_raw
+steps:
+  to_mol:
+    ordered: true
+    sanitize: false
+    allow_cxsmiles: true
+    strict_cxsmiles: true
+    remove_hs: true
+  fix_mol:
+    enabled: true
+    n_iter: 1
+    remove_singleton: true
+    largest_only: false
+  sanitize_mol:
+    enabled: true
+  remove_salts_solvents:
+    enabled: true
+    defn_data: null
+    defn_format: smarts
+    dont_remove_everything: true
+    sanitize: true
+  keep_largest_fragment: true
+  standardize_mol:
+    enabled: true
+    disconnect_metals: true
+    normalize: true
+    reionize: true
+    uncharge: true
+    stereo: true
+  remove_stereochemistry: true
+  standardize_smiles:
+    enabled: true
+filters:
+  allowed_atoms: [C, N, O, S, F, Cl, Br, I, P, H]
+  reject_radicals: true
+  require_neutral: true
+  reject_isotopes: true
+  require_single_fragment: true
+output:
+  write_duplicates_removed: true
 ```
 
 ---
@@ -65,8 +142,12 @@ Controls molecular descriptor calculation, filtering borders, and plotting optio
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the descriptors stage |
+| `n_jobs` | int | `-1` | Number of parallel workers for descriptor calculation (-1 = auto) |
 | `batch_size` | int | `1000` | Batch size for descriptor computation |
 | `filter_data` | bool | `true` | Whether to apply border-based filtering after descriptor calculation |
+| `preprocess.remove_charges` | bool | `false` | (Deprecated) Descriptor-stage preprocessing; Mol Prep should be used instead |
+| `preprocess.remove_radicals` | bool | `false` | (Deprecated) Descriptor-stage preprocessing; Mol Prep should be used instead |
+| `preprocess.remove_stereochemistry` | bool | `false` | (Deprecated) Descriptor-stage preprocessing; Mol Prep should be used instead |
 
 ### Border Parameters (`borders`)
 
@@ -74,28 +155,30 @@ These define the acceptable range for each molecular descriptor. Molecules outsi
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `allowed_chars` | list[string] | `[C, N, S, O, F, Cl, Br, H]` | Allowed chemical elements in molecules |
+| `allowed_chars` | list[string] | `[C, N, S, O, F, Cl, Br, I, P, H]` | Allowed chemical elements in molecules |
 | `n_atoms_min` / `n_atoms_max` | int | `10` / `100` | Total atom count range |
 | `n_heavy_atoms_min` / `n_heavy_atoms_max` | int | `10` / `50` | Heavy (non-hydrogen) atom count range |
 | `n_het_atoms_min` / `n_het_atoms_max` | int | `2` / `15` | Heteroatom count range |
 | `n_N_atoms_min` / `n_N_atoms_max` | int | `0` / `12` | Nitrogen atom count range |
-| `fN_atoms_min` / `fN_atoms_max` | float | `0` / `1` | Fraction of nitrogen atoms range |
+| `fN_atoms_min` / `fN_atoms_max` | float | `0` / `0.22` | Fraction of nitrogen atoms (among heavy atoms) range |
+| `fNS_atoms_min` / `fNS_atoms_max` | float | `0` / `0.3` | Fraction of nitrogen and sulfur atoms (among heavy atoms) range |
 | `charged_mol_allowed` | bool | `true` | Whether charged molecules are allowed |
 | `filter_charged_mol` | bool | `false` | Whether to filter out charged molecules |
-| `molWt_min` / `molWt_max` | float | `200` / `500` | Molecular weight range (Da) |
+| `molWt_min` / `molWt_max` | float | `200` / `550` | Molecular weight range (Da) |
 | `logP_min` / `logP_max` | float | `-0.4` / `5.6` | Crippen logP range |
-| `clogP_min` / `clogP_max` | float | `-100` / `100` | Calculated logP range |
-| `sw_min` / `sw_max` | float | `-100` / `100` | Sw (water solubility estimate) range |
+| `clogP_min` / `clogP_max` | float | `0` / `8` | Calculated logP range |
+| `sw_min` / `sw_max` | float | `-20` / `1` | Sw (water solubility estimate) range |
 | `ring_size_min` / `ring_size_max` | int | `3` / `12` | Individual ring size range |
 | `n_rings_min` / `n_rings_max` | int | `0` / `6` | Total ring count range |
 | `n_aroma_rings_min` / `n_aroma_rings_max` | int | `0` / `5` | Aromatic ring count range |
 | `n_fused_aromatic_rings_min` / `n_fused_aromatic_rings_max` | int | `0` / `2` | Fused aromatic ring count range |
 | `n_rigid_bonds_min` / `n_rigid_bonds_max` | int | `0` / `30` | Rigid bond count range |
-| `n_rot_bonds_min` / `n_rot_bonds_max` | int | `2` / `8` | Rotatable bond count range |
-| `hbd_min` / `hbd_max` | int | `0` / `5` | Hydrogen bond donor count range |
-| `hba_min` / `hba_max` | int | `0` / `10` | Hydrogen bond acceptor count range |
+| `n_rot_bonds_min` / `n_rot_bonds_max` | int | `0` / `8` | Rotatable bond count range |
+| `hbd_min` / `hbd_max` | int | `0` / `4` | Hydrogen bond donor count range |
+| `hba_min` / `hba_max` | int | `1` / `9` | Hydrogen bond acceptor count range |
 | `fsp3_min` / `fsp3_max` | float | `0.15` / `0.8` | Fraction of sp3 carbons range |
-| `tpsa_min` / `tpsa_max` | float | `0` / `140` | Topological polar surface area range (A^2) |
+| `mce18_min` / `mce18_max` | float | `20` / `140` | MCE-18 complexity score range |
+| `tpsa_min` / `tpsa_max` | float | `20` / `140` | Topological polar surface area range (A^2) |
 | `qed_min` / `qed_max` | float | `0.3` / `1` | Quantitative estimate of drug-likeness range |
 
 ### Plotting Settings
@@ -111,8 +194,13 @@ These define the acceptable range for each molecular descriptor. Molecules outsi
 
 ```yaml
 run: true
+n_jobs: -1
 batch_size: 1000
 filter_data: true
+preprocess:
+  remove_charges: false
+  remove_radicals: false
+  remove_stereochemistry: false
 borders:
   allowed_chars:
   - C
@@ -122,6 +210,8 @@ borders:
   - F
   - Cl
   - Br
+  - I
+  - P
   - H
   n_atoms_min: 10
   n_atoms_max: 100
@@ -132,17 +222,19 @@ borders:
   n_N_atoms_min: 0
   n_N_atoms_max: 12
   fN_atoms_min: 0
-  fN_atoms_max: 1
+  fN_atoms_max: 0.22
+  fNS_atoms_min: 0
+  fNS_atoms_max: 0.3
   charged_mol_allowed: true
   filter_charged_mol: false
   molWt_min: 200
-  molWt_max: 500
+  molWt_max: 550
   logP_min: -0.4
   logP_max: 5.6
-  clogP_min: -100
-  clogP_max: 100
-  sw_min: -100
-  sw_max: 100
+  clogP_min: 0
+  clogP_max: 8
+  sw_min: -20
+  sw_max: 1
   ring_size_min: 3
   ring_size_max: 12
   n_rings_min: 0
@@ -153,15 +245,17 @@ borders:
   n_fused_aromatic_rings_max: 2
   n_rigid_bonds_min: 0
   n_rigid_bonds_max: 30
-  n_rot_bonds_min: 2
+  n_rot_bonds_min: 0
   n_rot_bonds_max: 8
   hbd_min: 0
-  hbd_max: 5
-  hba_min: 0
-  hba_max: 10
+  hbd_max: 4
+  hba_min: 1
+  hba_max: 9
   fsp3_min: 0.15
   fsp3_max: 0.8
-  tpsa_min: 0
+  mce18_min: 20
+  mce18_max: 140
+  tpsa_min: 20
   tpsa_max: 140
   qed_min: 0.3
   qed_max: 1
@@ -172,6 +266,7 @@ filtered_cols_to_plot:
 - n_het_atoms
 - n_N_atoms
 - fN_atoms
+- fNS_atoms
 - charged_mol
 - molWt
 - logP
@@ -186,6 +281,7 @@ filtered_cols_to_plot:
 - hbd
 - hba
 - fsp3
+- mce18
 - tpsa
 - qed
 discrete_features_to_plot:
@@ -205,6 +301,7 @@ not_to_smooth_plot_by_sides:
 - n_atoms
 - n_heavy_atoms
 - fN_atoms
+- fNS_atoms
 - molWt
 - fsp3
 - tpsa
@@ -216,6 +313,7 @@ renamer:
   n_het_atoms: Number of heteroatoms
   n_N_atoms: Number of Nitrogen Atoms
   fN_atoms: Fraction of Nitrogen Atoms
+  fNS_atoms: Fraction of Nitrogen and Sulfur Atoms
   charged_mol: Charged Molecule
   molWt: Molecular Weight
   logP: logP
@@ -230,6 +328,7 @@ renamer:
   hbd: Hydrogen Bond Donors
   hba: Hydrogen Bond Acceptors
   fsp3: Fraction of SP3
+  mce18: MCE-18 Complexity
   tpsa: TPSA
   qed: QED
 ```
@@ -245,7 +344,6 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the structural filters stage |
-| `run_before_descriptors` | bool | `false` | Run structural filters before descriptor calculation (pre-filter) |
 | `filter_data` | bool | `true` | Whether to actually remove flagged molecules from downstream stages |
 
 ### Structural Alerts
@@ -290,7 +388,6 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 
 ```yaml
 run: true
-run_before_descriptors: false
 filter_data: true
 alerts_data_path: data/common_alerts_collection.csv
 calculate_common_alerts: true

@@ -156,6 +156,7 @@ interface AppState {
 }
 
 const initialStages: Record<string, StageInfo> = {
+  mol_prep: { name: 'mol_prep', displayName: 'Mol Prep', status: 'pending', progress: 0 },
   descriptors: { name: 'descriptors', displayName: 'Descriptors', status: 'pending', progress: 0 },
   struct_filters: { name: 'struct_filters', displayName: 'Struct Filters', status: 'pending', progress: 0 },
   synthesis: { name: 'synthesis', displayName: 'Synthesis', status: 'pending', progress: 0 },
@@ -171,16 +172,21 @@ const initialPipelineProgress: PipelineProgress = {
   latestMessage: '',
 };
 
-const WIZARD_STAGES = ['descriptors', 'struct_filters', 'synthesis', 'docking', 'docking_filters'];
+const WIZARD_STAGES = ['mol_prep', 'descriptors', 'struct_filters', 'synthesis', 'docking', 'docking_filters'];
 
 const initialWizardState: WizardState = {
   currentStep: 'stage-selection',
   selectedStages: [...WIZARD_STAGES],
   stageOrder: [...WIZARD_STAGES],
   stageConfigs: {
-    descriptors: {
+    mol_prep: {
       enabled: true,
       order: 0,
+      quickParams: {},
+    },
+    descriptors: {
+      enabled: true,
+      order: 1,
       quickParams: {
         batch_size: 1000,
         filter_data: true,
@@ -199,9 +205,8 @@ const initialWizardState: WizardState = {
     },
     struct_filters: {
       enabled: true,
-      order: 1,
+      order: 2,
       quickParams: {
-        run_before_descriptors: true,
         calculate_common_alerts: true,
         calculate_NIBR: true,
         calculate_lilly: true,
@@ -210,7 +215,7 @@ const initialWizardState: WizardState = {
     },
     synthesis: {
       enabled: true,
-      order: 2,
+      order: 3,
       quickParams: {
         filter_solved_only: true,
         sa_score_min: 0,
@@ -223,7 +228,7 @@ const initialWizardState: WizardState = {
     },
     docking: {
       enabled: true,
-      order: 3,
+      order: 4,
       quickParams: {
         tools: 'smina',
         exhaustiveness: 8,
@@ -232,7 +237,7 @@ const initialWizardState: WizardState = {
     },
     docking_filters: {
       enabled: true,
-      order: 4,
+      order: 5,
       quickParams: {
         aggregation_mode: 'all',
         max_clashes: 2,
@@ -241,9 +246,7 @@ const initialWizardState: WizardState = {
       },
     },
   },
-  dependencies: {
-    runFiltersBeforeDescriptors: true,
-  },
+  dependencies: {},
 };
 
 export const useStore = create<AppState>((set, get) => ({

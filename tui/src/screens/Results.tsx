@@ -113,6 +113,13 @@ export function Results(): React.ReactElement {
 
         const stageDefinitions = [
           {
+            key: 'mol_prep',
+            label: 'Mol Prep',
+            candidates: [
+              'stages/00_mol_prep/filtered_molecules.csv',
+            ],
+          },
+          {
             key: 'descriptors',
             label: 'Descriptors',
             candidates: [
@@ -125,7 +132,6 @@ export function Results(): React.ReactElement {
             label: 'Struct Filters',
             candidates: [
               'stages/03_structural_filters_post/filtered_molecules.csv',
-              'stages/02_structural_filters_pre/filtered_molecules.csv',
               'StructFilters/passStructFiltersSMILES.csv',
             ],
           },

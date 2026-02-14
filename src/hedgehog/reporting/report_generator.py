@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Stage directory names
 STAGE_DIRS = {
+    "mol_prep": "stages/00_mol_prep",
     "descriptors_initial": "stages/01_descriptors_initial",
-    "struct_filters_pre": "stages/02_structural_filters_pre",
     "struct_filters_post": "stages/03_structural_filters_post",
     "synthesis": "stages/04_synthesis",
     "docking": "stages/05_docking",
@@ -29,8 +29,8 @@ STAGE_DIRS = {
 
 # Stage display names
 STAGE_DISPLAY_NAMES = {
+    "mol_prep": "Mol Prep",
     "descriptors_initial": "Initial Descriptors",
-    "struct_filters_pre": "Pre-Descriptors Filters",
     "struct_filters_post": "Post-Descriptors Filters",
     "synthesis": "Synthesis Analysis",
     "docking": "Molecular Docking",
@@ -278,8 +278,9 @@ class ReportGenerator:
         else:
             # Auto-detect stages from existing directories
             stage_order = [
+                ("mol_prep", "Mol Prep"),
                 ("descriptors_initial", "Initial Descriptors"),
-                ("struct_filters_pre", "Structural Filters"),
+                ("struct_filters_post", "Structural Filters"),
                 ("synthesis", "Synthesis Analysis"),
                 ("docking", "Molecular Docking"),
                 ("docking_filters", "Docking Filters"),
@@ -329,6 +330,7 @@ class ReportGenerator:
         # Only filtering stages — skip preprocessing, docking (scoring only),
         # and final descriptors (recalculation only)
         stage_order = [
+            ("mol_prep", "Mol Prep"),
             ("descriptors_initial", "Descriptors"),
             ("struct_filters_post", "Structural Filters"),
             ("synthesis", "Synthesis"),
@@ -466,6 +468,7 @@ class ReportGenerator:
         funnel = [{"stage": "Initial", "count": initial_count}]
 
         stage_order = [
+            ("mol_prep", "Mol Prep"),
             ("descriptors_initial", "Descriptors"),
             ("struct_filters_post", "Structural Filters"),
             ("synthesis", "Synthesis"),
@@ -593,6 +596,7 @@ class ReportGenerator:
         losses = {}
 
         stage_pairs = [
+            ("mol_prep", "mol_prep"),
             ("descriptors", "descriptors_initial"),
             ("struct_filters", "struct_filters_post"),
             ("synthesis", "synthesis"),
@@ -705,8 +709,8 @@ class ReportGenerator:
         """Get filter statistics."""
         filter_stats = {"by_filter": {}, "totals": {}, "by_model": {}}
 
-        # Check both pre and post filter directories
-        for stage_key in ["struct_filters_pre", "struct_filters_post"]:
+        # Structural filters are post-descriptors only.
+        for stage_key in ["struct_filters_post"]:
             stage_dir = self.base_path / STAGE_DIRS.get(stage_key, "")
             if not stage_dir.exists():
                 continue
@@ -1193,7 +1197,7 @@ class ReportGenerator:
         }
 
         # Read filter data from each filter subdirectory
-        for stage_key in ["struct_filters_pre", "struct_filters_post"]:
+        for stage_key in ["struct_filters_post"]:
             stage_dir = self.base_path / STAGE_DIRS.get(stage_key, "")
             if not stage_dir.exists():
                 continue
@@ -1373,7 +1377,7 @@ class ReportGenerator:
             "filter_metrics": {},
         }
 
-        for stage_key in ["struct_filters_pre", "struct_filters_post"]:
+        for stage_key in ["struct_filters_post"]:
             stage_dir = self.base_path / STAGE_DIRS.get(stage_key, "")
             if not stage_dir.exists():
                 continue
@@ -1704,14 +1708,6 @@ class ReportGenerator:
                 STAGE_DIRS["descriptors_final"] + "/plots/descriptors_distribution.png"
             ),
             # Structural filters
-            "filters_pre_counts": (
-                STAGE_DIRS["struct_filters_pre"]
-                + "/plots/molecule_counts_comparison.png"
-            ),
-            "filters_pre_ratios": (
-                STAGE_DIRS["struct_filters_pre"]
-                + "/plots/restriction_ratios_comparison.png"
-            ),
             "filters_post_counts": (
                 STAGE_DIRS["struct_filters_post"]
                 + "/plots/molecule_counts_comparison.png"
@@ -2130,6 +2126,7 @@ class ReportGenerator:
         # Stage checkpoints to analyze
         stage_paths = [
             ("Input", "input/sampled_molecules.csv"),
+            ("MolPrep", "stages/00_mol_prep/filtered_molecules.csv"),
             (
                 "Descriptors",
                 "stages/01_descriptors_initial/filtered/filtered_molecules.csv",
@@ -2192,8 +2189,8 @@ class ReportGenerator:
             stages_dir = self.base_path / "stages"
             if stages_dir.exists():
                 stage_names = {
+                    "00_mol_prep": "Mol Prep",
                     "01_descriptors_initial": "Descriptors (Initial)",
-                    "02_structural_filters_pre": "Structural Filters (Pre)",
                     "03_structural_filters_post": "Structural Filters (Post)",
                     "04_synthesis": "Synthesis Analysis",
                     "05_docking": "Molecular Docking",
