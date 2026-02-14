@@ -215,7 +215,7 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
     return res_df, filter_extended
 
 
-def process_one_dataframe(config, df, apply_filter, subsample):
+def process_one_dataframe(config, df, apply_filter, subsample, progress_cb=None):
     """Process a DataFrame directly without re-reading from file.
 
     Args:
@@ -272,10 +272,15 @@ def process_one_dataframe(config, df, apply_filter, subsample):
     if len(mols) == 0:
         return None
 
+    if progress_cb is not None:
+        try:
+            return apply_filter(config, mols, smiles, progress_cb=progress_cb)
+        except TypeError:
+            pass
     return apply_filter(config, mols, smiles)
 
 
-def process_one_file(config, input_path, apply_filter, subsample):
+def process_one_file(config, input_path, apply_filter, subsample, progress_cb=None):
     """Process molecules from file through a filter function.
 
     For CSV files, consider using process_one_dataframe() directly if you
@@ -348,9 +353,21 @@ def process_one_file(config, input_path, apply_filter, subsample):
     final_result = None
     if len(mols) > 0:
         if isinstance(smiles[0], tuple):
-            final_result = apply_filter(config, mols, smiles)
+            if progress_cb is not None:
+                try:
+                    final_result = apply_filter(config, mols, smiles, progress_cb=progress_cb)
+                except TypeError:
+                    final_result = apply_filter(config, mols, smiles)
+            else:
+                final_result = apply_filter(config, mols, smiles)
         else:
-            final_result = apply_filter(config, mols)
+            if progress_cb is not None:
+                try:
+                    final_result = apply_filter(config, mols, progress_cb=progress_cb)
+                except TypeError:
+                    final_result = apply_filter(config, mols)
+            else:
+                final_result = apply_filter(config, mols)
 
     return final_result
 
@@ -466,7 +483,7 @@ def _check_alerts_single_mol(args):
     return row_data
 
 
-def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
+def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_cb=None):
     logger.info("Calculating Common Alerts...")
 
     # Load config and filter alerts ONCE outside
@@ -498,7 +515,9 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None):
     # Parallel per-molecule alert checking.
     n_jobs = resolve_n_jobs(config_structFilters, config)
     items = [(i, mol, compiled_smarts, rule_set_names) for i, mol in enumerate(mols)]
-    results_list = parallel_map(_check_alerts_single_mol, items, n_jobs)
+    results_list = parallel_map(
+        _check_alerts_single_mol, items, n_jobs, progress=progress_cb
+    )
 
     # Restore mol column (RDKit Mol objects are not picklable across processes).
     for row_data in results_list:

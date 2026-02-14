@@ -60,6 +60,8 @@
 
         header .meta p {
             margin: 4px 0;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .summary-grid {
@@ -207,6 +209,9 @@
             .container {
                 padding: 24px 16px;
             }
+            .js-plotly-plot .modebar {
+                display: none !important;
+            }
         }
 
         .empty-state {
@@ -216,12 +221,19 @@
         }
 
         .view-toggle {
-            display: inline-flex;
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: center;
+            width: 100%;
+            max-width: 100%;
             gap: 4px;
             padding: 4px;
             background: var(--primary-subtle);
             border-radius: 8px;
             margin-bottom: 16px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
         }
 
         .view-toggle button {
@@ -234,6 +246,11 @@
             font-weight: 500;
             color: var(--text-secondary);
             transition: all 0.15s;
+            max-width: 220px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 0 0 auto;
         }
 
         .view-toggle button.active {
@@ -372,7 +389,7 @@
                 <button class="{% if not data.available_models %}active{% endif %}" onclick="selectModel('all', this)">All Models</button>
                 <button onclick="selectModel('__compare__', this)">Compare</button>
                 {% for model in data.available_models %}
-                <button onclick="selectModel('{{ model }}', this)">{{ model }}</button>
+                <button title="{{ model }}" onclick="selectModel('{{ model }}', this)">{{ model }}</button>
                 {% endfor %}
             </div>
             {% endif %}
@@ -1155,7 +1172,7 @@
                 <button class="active" onclick="selectDescriptorModel('all', this)">All Models</button>
                 <button onclick="selectDescriptorModel('__compare__', this)">Compare</button>
                 {% for model in data.available_models %}
-                <button onclick="selectDescriptorModel('{{ model }}', this)">{{ model }}</button>
+                <button title="{{ model }}" onclick="selectDescriptorModel('{{ model }}', this)">{{ model }}</button>
                 {% endfor %}
             </div>
             {% endif %}
@@ -1737,7 +1754,7 @@
             <div class="view-toggle" id="synthesis-toggle">
                 <button class="active" onclick="selectSynthesisModel('all', this)">All Models</button>
                 {% for model in data.available_models %}
-                <button onclick="selectSynthesisModel('{{ model }}', this)">{{ model }}</button>
+                <button title="{{ model }}" onclick="selectSynthesisModel('{{ model }}', this)">{{ model }}</button>
                 {% endfor %}
             </div>
             {% endif %}
@@ -1871,7 +1888,7 @@
                 <button class="active" onclick="selectDockingModel('all', this)">All Models</button>
                 <button onclick="selectDockingModel('__compare__', this)">Compare</button>
                 {% for model in data.available_models %}
-                <button onclick="selectDockingModel('{{ model }}', this)">{{ model }}</button>
+                <button title="{{ model }}" onclick="selectDockingModel('{{ model }}', this)">{{ model }}</button>
                 {% endfor %}
             </div>
             {% endif %}
@@ -1971,7 +1988,7 @@
             <div class="view-toggle" id="docking-filters-toggle">
                 <button class="active" onclick="selectDockingFiltersModel('all', this)">All Models</button>
                 {% for model in data.available_models %}
-                <button onclick="selectDockingFiltersModel('{{ model }}', this)">{{ model }}</button>
+                <button title="{{ model }}" onclick="selectDockingFiltersModel('{{ model }}', this)">{{ model }}</button>
                 {% endfor %}
             </div>
             {% endif %}

@@ -54,6 +54,7 @@ def parallel_map(
     items: Sequence,
     n_jobs: int,
     chunksize: int | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> list:
     """Apply *func* to every element of *items*, optionally in parallel.
 
@@ -75,11 +76,21 @@ def parallel_map(
         return []
 
     if n_jobs == 1 or length == 1:
-        return [func(item) for item in items]
+        out = []
+        for idx, item in enumerate(items, start=1):
+            out.append(func(item))
+            if progress:
+                progress(idx, length)
+        return out
 
     if chunksize is None:
         chunksize = max(1, length // (n_jobs * 4))
 
     ctx = multiprocessing.get_context("fork")
     with ctx.Pool(processes=n_jobs) as pool:
-        return list(pool.imap(func, items, chunksize=chunksize))
+        out = []
+        for idx, result in enumerate(pool.imap(func, items, chunksize=chunksize), start=1):
+            out.append(result)
+            if progress:
+                progress(idx, length)
+        return out

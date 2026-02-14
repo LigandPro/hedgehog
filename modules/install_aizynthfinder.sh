@@ -25,7 +25,7 @@ if [ ! -d "$RETROSYNTHESIS_DIR" ]; then
     fi
     
     cd "$SCRIPT_DIR"
-    git clone git@github.com:LigandPro/retrosynthesis.git
+    git clone https://github.com/LigandPro/retrosynthesis.git
     echo -e "${GREEN} Repository cloned successfully${NC}"
 else
     echo -e "${GREEN} Retrosynthesis repository found${NC}"
@@ -121,4 +121,3 @@ echo -e "${GREEN}=========================================="
 echo -e "✓ AiZynthFinder installation completed!${NC}"
 echo -e "${GREEN}==========================================${NC}"
 echo ""
-

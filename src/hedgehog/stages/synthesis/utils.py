@@ -459,7 +459,7 @@ def _calculate_ra_scores_batch(
         return nan_list
 
 
-def calculate_synthesis_scores(df, folder_to_save=None, config=None):
+def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb=None):
     """Calculate SA, SYBA, and RA scores for all molecules in DataFrame.
 
     Args:
@@ -479,12 +479,27 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None):
     result_df = df.copy()
     smiles_list = result_df["smiles"].tolist()
 
+    sa_progress = None
+    if progress_cb is not None:
+        def _sa_progress(done: int, total: int) -> None:
+            progress_cb("sa_score", done, total)
+
+        sa_progress = _sa_progress
+
     result_df["sa_score"] = parallel_map(
-        _calculate_sa_score_single, smiles_list, n_jobs
+        _calculate_sa_score_single, smiles_list, n_jobs, progress=sa_progress
     )
+
     # SYBA uses GPU internally — always run sequentially to avoid forking issues
+    syba_progress = None
+    if progress_cb is not None:
+        def _syba_progress(done: int, total: int) -> None:
+            progress_cb("syba_score", done, total)
+
+        syba_progress = _syba_progress
+
     result_df["syba_score"] = parallel_map(
-        _calculate_syba_score_single, smiles_list, n_jobs=1
+        _calculate_syba_score_single, smiles_list, n_jobs=1, progress=syba_progress
     )
 
     ra_scores = _calculate_ra_scores_batch(smiles_list, config)

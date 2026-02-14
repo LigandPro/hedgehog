@@ -22,7 +22,7 @@ dependencies = [
     "posecheck>=1.3.1",
     "shepherd-score>=1.2.1",
     "xgboost>=2",
-    "posebench-fast>=0.1.4 ; python_full_version >= '3.11'",
+    "posecheck-fast>=0.1.6 ; python_full_version >= '3.11'",
 ]
 
 [build-system]

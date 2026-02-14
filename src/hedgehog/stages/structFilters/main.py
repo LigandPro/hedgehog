@@ -193,7 +193,7 @@ def _get_enabled_filters(config_structFilters):
     }
 
 
-def main(config, stage_dir):
+def main(config, stage_dir, reporter=None):
     """Main entry point for structural filters stage.
 
     Args:
@@ -219,15 +219,38 @@ def main(config, stage_dir):
     # Determine if input is CSV (use DataFrame directly to avoid re-reading)
     is_csv = input_path.lower().endswith(".csv")
 
-    for filter_name in filters_to_calculate:
+    filter_names = list(filters_to_calculate)
+    stage_total = max(1, len(filter_names) * 100)
+
+    for idx, filter_name in enumerate(filter_names):
+        base = idx * 100
+        if reporter is not None:
+            reporter.progress(base, stage_total, message=f"StructFilters: {filter_name}")
+
         apply_func = filter_function_applier(filter_name)
+        progress_cb = None
+        if reporter is not None and filter_name == "common_alerts":
+            def _alerts_progress(done: int, total: int) -> None:
+                if total <= 0:
+                    pct = 0
+                else:
+                    pct = int(round((done / total) * 100))
+                pct = max(0, min(100, pct))
+                reporter.progress(
+                    base + pct,
+                    stage_total,
+                    message=f"StructFilters: {filter_name}",
+                )
+
+            progress_cb = _alerts_progress
+
         if is_csv:
             filter_results = process_one_dataframe(
-                config, input_df, apply_func, sample_size
+                config, input_df, apply_func, sample_size, progress_cb=progress_cb
             )
         else:
             filter_results = process_one_file(
-                config, input_path, apply_func, sample_size
+                config, input_path, apply_func, sample_size, progress_cb=progress_cb
             )
 
         if filter_results is None:
@@ -238,6 +261,10 @@ def main(config, stage_dir):
             config_structFilters, filter_results, model_name, filter_name=filter_name
         )
         _save_filter_results(output_dir, filter_name, final_res, final_extended)
+        if reporter is not None:
+            reporter.progress(
+                base + 100, stage_total, message=f"StructFilters: {filter_name}"
+            )
 
     plot_calculated_stats(config, stage_dir)
     plot_restriction_ratios(config, stage_dir)
@@ -250,3 +277,6 @@ def main(config, stage_dir):
         filter_data(config, stage_dir)
 
     inject_identity_columns_to_all_csvs(config, stage_dir)
+
+    if reporter is not None:
+        reporter.progress(stage_total, stage_total, message="StructFilters complete")

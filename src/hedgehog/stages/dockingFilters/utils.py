@@ -377,6 +377,7 @@ def apply_shepherd_score_filter(
     mols: list[Chem.Mol],
     reference_mol: Chem.Mol,
     config: dict[str, Any],
+    progress_cb=None,
 ) -> pd.DataFrame:
     """
     Apply Shepherd-Score filter for 3D shape similarity.
@@ -401,7 +402,9 @@ def apply_shepherd_score_filter(
 
     n_jobs = resolve_n_jobs(config)
     items = [(mol, ref_positions_list, alpha, min_shape_score) for mol in mols]
-    raw_results = parallel_map(_check_shepherd_score_single, items, n_jobs)
+    raw_results = parallel_map(
+        _check_shepherd_score_single, items, n_jobs, progress=progress_cb
+    )
 
     results = []
     for i, res in enumerate(raw_results):
@@ -423,7 +426,7 @@ def apply_shepherd_score_filter(
 
 
 def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
-    """Run posebench-fast checks for a single molecule.
+    """Run posecheck-fast checks for a single molecule.
 
     Args:
         args: Tuple of (mol, protein_coords, protein_atom_names, config).
@@ -432,7 +435,7 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
         Dict with keys: no_clashes, no_volume_clash, not_too_far_away,
         no_internal_clash, passed, error.
     """
-    from posebench_fast import check_intermolecular_distance
+    from posecheck_fast import check_intermolecular_distance
 
     mol, protein_coords, protein_atom_names, config = args
     try:
@@ -494,8 +497,9 @@ def apply_posebusters_fast_filter(
     mols: list[Chem.Mol],
     protein_pdb: str | Path,
     config: dict[str, Any],
+    progress_cb=None,
 ) -> pd.DataFrame:
-    """Apply pose quality filter using posebench-fast (~100x faster than PoseCheck).
+    """Apply pose quality filter using posecheck-fast (~100x faster than PoseCheck).
 
     Checks for steric clashes (VDW), volume overlap (ShapeTverskyIndex),
     distance to protein, and internal geometry (bond lengths/angles).
@@ -513,7 +517,7 @@ def apply_posebusters_fast_filter(
         not_too_far_away, no_internal_clash, pass_pose_quality.
     """
     logger.info(
-        "Running posebusters-fast pose quality filter "
+        "Running posecheck-fast pose quality filter "
         "(clash_cutoff=%.2f, volume_cutoff=%.3f, max_dist=%.1f)",
         config.get("clash_cutoff", 0.75),
         config.get("volume_clash_cutoff", 0.075),
@@ -523,7 +527,7 @@ def apply_posebusters_fast_filter(
     # Load protein once and extract coordinates + atom names.
     # Explicit RemoveHs is needed because MolFromPDBFile(removeHs=True) often
     # retains explicit H from prepared PDB files, causing dimension mismatches
-    # inside posebench-fast's ShapeTverskyIndex call.
+    # inside posecheck-fast's ShapeTverskyIndex call.
     protein_mol = Chem.MolFromPDBFile(str(protein_pdb), removeHs=True, sanitize=False)
     if protein_mol is not None:
         protein_mol = Chem.RemoveHs(protein_mol, sanitize=False)
@@ -541,13 +545,15 @@ def apply_posebusters_fast_filter(
     protein_atom_names = np.array([atom.GetSymbol() for atom in protein_mol.GetAtoms()])
 
     items = [(mol, protein_coords, protein_atom_names, config) for mol in mols]
-    # Force sequential for posebench-fast (uses torch internally, forking unsafe)
-    raw_results = parallel_map(_check_posebusters_fast_single, items, n_jobs=1)
+    # Force sequential for posecheck-fast (uses torch internally, forking unsafe)
+    raw_results = parallel_map(
+        _check_posebusters_fast_single, items, n_jobs=1, progress=progress_cb
+    )
 
     results = []
     for i, res in enumerate(raw_results):
         if res["error"]:
-            logger.warning("posebusters-fast failed for mol %d: %s", i, res["error"])
+            logger.warning("posecheck-fast failed for mol %d: %s", i, res["error"])
         results.append(
             {
                 "mol_idx": i,
@@ -561,11 +567,20 @@ def apply_posebusters_fast_filter(
 
     df = pd.DataFrame(results)
     logger.info(
-        "posebusters-fast filter: %d/%d passed",
+        "posecheck-fast filter: %d/%d passed",
         int(df["pass_pose_quality"].sum()),
         len(df),
     )
     return df
+
+
+def apply_posecheck_fast_filter(
+    mols: list[Chem.Mol],
+    protein_pdb: str | Path,
+    config: dict[str, Any],
+) -> pd.DataFrame:
+    """Backward-compatible alias for posecheck-fast backend."""
+    return apply_posebusters_fast_filter(mols, protein_pdb, config)
 
 
 def _check_symmetry_rmsd_single(args: tuple) -> dict[str, Any]:
@@ -655,11 +670,12 @@ def _check_symmetry_rmsd_single(args: tuple) -> dict[str, Any]:
 def apply_symmetry_rmsd_filter(
     mols: list[Chem.Mol],
     config: dict[str, Any],
+    progress_cb=None,
 ) -> pd.DataFrame:
     """Apply conformer deviation filter using symmetry-corrected RMSD.
 
-    Uses posebench-fast's graph-isomorphism-aware RMSD (via spyrmsd) instead
-    of naive AllChem.AlignMol. This gives chemically correct RMSD for
+    Uses symmetry-aware RDKit GetBestRMS instead of
+    naive AllChem.AlignMol. This gives chemically correct RMSD for
     symmetric molecules (e.g., benzene, biphenyl).
 
     Args:
@@ -698,7 +714,9 @@ def apply_symmetry_rmsd_filter(
         )
         for mol in mols
     ]
-    raw_results = parallel_map(_check_symmetry_rmsd_single, items, n_jobs)
+    raw_results = parallel_map(
+        _check_symmetry_rmsd_single, items, n_jobs, progress=progress_cb
+    )
 
     results = []
     for i, res in enumerate(raw_results):
@@ -785,6 +803,7 @@ def _check_conformer_deviation_single(args: tuple) -> dict[str, Any]:
 def apply_conformer_deviation_filter(
     mols: list[Chem.Mol],
     config: dict[str, Any],
+    progress_cb=None,
 ) -> pd.DataFrame:
     """
     Apply conformer deviation filter.
@@ -810,7 +829,9 @@ def apply_conformer_deviation_filter(
 
     n_jobs = resolve_n_jobs(config)
     items = [(mol, num_conformers, max_rmsd, method, random_seed) for mol in mols]
-    raw_results = parallel_map(_check_conformer_deviation_single, items, n_jobs)
+    raw_results = parallel_map(
+        _check_conformer_deviation_single, items, n_jobs, progress=progress_cb
+    )
 
     results = []
     for i, res in enumerate(raw_results):

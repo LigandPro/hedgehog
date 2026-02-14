@@ -218,7 +218,7 @@ def _compute_descriptors_for_row(args):
     return row_metrics, None
 
 
-def compute_metrics(df, save_path, config=None, config_descriptors=None):
+def compute_metrics(df, save_path, config=None, config_descriptors=None, reporter=None):
     """Compute 22 physicochemical descriptors for each molecule.
 
     model_name and mol_idx are already in df from sampled_molecules.csv.
@@ -250,7 +250,16 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None):
         )
     )
 
-    results = parallel_map(_compute_descriptors_for_row, items, n_jobs)
+    progress_cb = None
+    if reporter is not None:
+        def _progress_cb(done: int, total: int) -> None:
+            reporter.progress(done, total, message="Computing descriptors")
+
+        progress_cb = _progress_cb
+
+    results = parallel_map(
+        _compute_descriptors_for_row, items, n_jobs, progress=progress_cb
+    )
     for row_metrics, skipped in results:
         if row_metrics is not None:
             metrics.append(row_metrics)

@@ -26,7 +26,17 @@ The CLI resolves the default config path relative to the installed package:
 DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.yml")
 ```
 
-There is no CLI flag to override the config path at runtime. To use a custom configuration, edit the YAML files inside the installed package directory or modify the default config paths before running the pipeline.
+You can override the master config path at runtime with `--config/-c`:
+
+```bash
+uv run hedgehog run --config path/to/config.yml
+```
+
+You can also override the output directory (`folder_to_save`) with `--out/-o`:
+
+```bash
+uv run hedgehog run --out results/my_run
+```
 
 Each stage config path in `config.yml` is treated as a **relative path from the working directory** (the directory you run the command from) or as an **absolute path**. For example:
 
@@ -40,11 +50,20 @@ config_descriptors: /opt/hedgehog/configs/config_descriptors.yml
 
 ## Overriding Parameters
 
-There are two ways to customise the pipeline:
+There are three common ways to customise the pipeline:
 
-1. **Edit the YAML files directly.** Copy the default configs to your project directory and modify the values.
+1. **Create your own config files and pass them via `--config`.** Copy the default configs, edit them, then run:
 
-2. **Edit the main config that the CLI actually loads.** The CLI currently always loads its default `config.yml` from the installed package (there is no `--config` flag), and it does not merge/overlay multiple config files.
+   ```bash
+   uv run hedgehog run --config path/to/my_config.yml
+   ```
+
+2. **Override common paths via CLI flags.** Use:
+
+   - `--mols/-m` to override `generated_mols_path`
+   - `--out/-o` to override `folder_to_save`
+
+3. **Edit the YAML files directly in place.** In a source checkout, edit `src/hedgehog/configs/*.yml`. In an installed package, edit the installed `hedgehog/configs/*.yml` (or reinstall after updating the source).
 
 For example, to run only descriptors and skip all other stages:
 
@@ -65,8 +84,7 @@ config_moleval: configs/config_moleval.yml
 
 To use a custom configuration today:
 
-- In a **source checkout**, edit `src/hedgehog/configs/config.yml` and point the `config_*` keys to your copied stage configs.
-- In an **installed package**, edit the installed `hedgehog/configs/config.yml` (or reinstall after updating the source).
+- Pass it explicitly with `--config`, or edit the defaults in a source checkout / installed package as described above.
 
 Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. The same `run` flag is available in every stage config.
 
@@ -80,7 +98,7 @@ Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. Th
 | `config_synthesis.yml` | Retrosynthesis toggle, SA/SYBA/RA score thresholds |
 | `config_docking.yml` | Docking tool selection (GNINA/SMINA), receptor, autobox settings |
 | `config_docking_filters.yml` | Post-docking filters: search box, pose quality, interactions, shape, conformer deviation |
-| `config_moleval.yml` | Generative evaluation metrics: diversity, scaffolds, drug-likeness compliance |
+| `config_moleval.yml` | Generative evaluation metrics: diversity, scaffolds, filter pass rates |
 
 ## Main Config Structure
 

@@ -19,7 +19,7 @@ Each stage takes the output of the previous one, progressively filtering the mol
 
 Optional: **Pre-descriptors Structural Filters** can run before step 1 for early elimination of obviously problematic molecules.
 
-Post-pipeline analysis: MolEval generative metrics, drug-likeness compliance, chemical group presence
+Post-pipeline analysis: MolEval generative metrics
 
 ## Setup & Run
 
@@ -29,8 +29,11 @@ git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
 
 
-# Install AiZynthFinder (for synthesis stage):**
+# Install AiZynthFinder (for synthesis stage)
 ./modules/install_aizynthfinder.sh
+#
+# Alternatively (recommended), install via CLI:
+# uv run hedgehog setup aizynthfinder --yes
 
 # Install package with uv
 uv sync

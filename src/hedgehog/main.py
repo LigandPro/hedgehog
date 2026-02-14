@@ -1,3 +1,4 @@
+import os
 import subprocess
 import warnings
 from enum import Enum
@@ -416,6 +417,9 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="rich",
 )
+
+setup_app = typer.Typer(help="Install optional external tools and assets.")
+app.add_typer(setup_app, name="setup")
 console = Console()
 
 
@@ -487,6 +491,11 @@ def run(
         "--force-new",
         help="Force creation of a new results folder even when rerunning stages",
     ),
+    auto_install: bool = typer.Option(
+        False,
+        "--auto-install",
+        help="Auto-install missing optional tools (e.g., AiZynthFinder) without prompting.",
+    ),
 ) -> None:
     """
     Run the molecular analysis pipeline.
@@ -516,8 +525,15 @@ def run(
     \b
     # Force create new folder even for stage rerun
     uv run hedgehog run --stage docking --force-new
+
+    \b
+    # Auto-install optional external tools when needed
+    uv run hedgehog run --auto-install
     """
     _display_banner()
+
+    if auto_install:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
 
     if reuse_folder and force_new_folder:
         logger.error(
@@ -573,13 +589,43 @@ def run(
     ) as progress:
         task_id = progress.add_task("Initializing pipeline...", total=None)
 
-        def _cli_progress(stage_name: str, current: int, total: int) -> None:
-            progress.update(
-                task_id,
-                total=total,
-                completed=current - 1,
-                description=f"Stage {current}/{total}: {stage_name}",
-            )
+        def _cli_progress(event: dict) -> None:
+            event_type = event.get("type")
+            stage = str(event.get("stage", ""))
+            stage_index = int(event.get("stage_index", 0) or 0)
+            total_stages = int(event.get("total_stages", 0) or 0)
+            message = event.get("message")
+
+            if total_stages > 0:
+                progress.update(task_id, total=total_stages * 100)
+
+            if event_type == "stage_start":
+                completed = max(0, (stage_index - 1) * 100)
+                desc = f"Stage {stage_index}/{total_stages}: {stage}"
+                if message:
+                    desc = f"{desc} — {message}"
+                progress.update(task_id, completed=completed, description=desc)
+                return
+
+            if event_type == "stage_progress":
+                current = int(event.get("current", 0) or 0)
+                total = int(event.get("total", 0) or 0)
+                pct = int(round((current / total) * 100)) if total > 0 else 0
+                pct = max(0, min(100, pct))
+                completed = max(0, (stage_index - 1) * 100 + pct)
+                desc = f"Stage {stage_index}/{total_stages}: {stage} ({pct}%)"
+                if message:
+                    desc = f"{desc} — {message}"
+                progress.update(task_id, completed=completed, description=desc)
+                return
+
+            if event_type == "stage_complete":
+                completed = max(0, stage_index * 100)
+                desc = f"Stage {stage_index}/{total_stages}: {stage} complete"
+                if message:
+                    desc = f"{desc} — {message}"
+                progress.update(task_id, completed=completed, description=desc)
+                return
 
         success = calculate_metrics(data, config_dict, _cli_progress)
         if progress.tasks[task_id].total:
@@ -743,6 +789,28 @@ def version() -> None:
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )
     console.print("[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]")
+
+
+@setup_app.command("aizynthfinder")
+def setup_aizynthfinder(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Auto-accept downloads (no prompt).",
+    ),
+) -> None:
+    """Install AiZynthFinder retrosynthesis tooling into modules/."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    from hedgehog.setup import ensure_aizynthfinder
+
+    project_root = Path(__file__).resolve().parents[2]
+    config_path = ensure_aizynthfinder(project_root)
+    console.print(
+        f"[bold green]AiZynthFinder installed.[/bold green] Config: {config_path}"
+    )
 
 
 @app.command()

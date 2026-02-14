@@ -19,6 +19,7 @@ uv run hedge --help
 | `report`  | Regenerate the HTML report from an existing run       |
 | `info`    | Display pipeline information and available stages     |
 | `version` | Display version information                           |
+| `setup`   | Install optional external tools                       |
 | `tui`     | Launch the interactive TUI (Terminal User Interface)   |
 
 ## `hedgehog run`
@@ -33,12 +34,17 @@ uv run hedgehog run [OPTIONS]
 
 | Option | Short | Type | Default | Description |
 |--------|-------|------|---------|-------------|
+| `--config` | `-c` | `TEXT` | `src/hedgehog/configs/config.yml` | Path to master YAML config file. |
 | `--mols` | `-m` | `TEXT` | `None` | Path or glob pattern to generated SMILES files. Overrides the `generated_mols_path` value in config. |
+| `--out` | `-o` | `TEXT` | `None` | Output directory for this run. Overrides `folder_to_save` from config. |
 | `--stage` | `-s` | `STAGE` | `None` | Run only a specific pipeline stage. When used without `--mols`, molecules are read from config. Case-insensitive. |
 | `--reuse` | | `FLAG` | `False` | Force reuse of the existing results folder instead of creating a new one. |
 | `--force-new` | | `FLAG` | `False` | Force creation of a new results folder even when rerunning a single stage. |
+| `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools (e.g., AiZynthFinder) without prompting. |
 
 The `--reuse` and `--force-new` flags are mutually exclusive. Using both will produce an error.
+
+The `--out` option cannot be used together with `--reuse` or `--force-new`.
 
 ### Available Stages
 
@@ -69,8 +75,14 @@ The output folder strategy depends on what you are running:
 # Run the full pipeline with default config
 uv run hedgehog run
 
+# Run with a custom master config
+uv run hedgehog run --config src/hedgehog/configs/config.yml
+
 # Run with a custom molecule set
 uv run hedgehog run --mols data/my_molecules.csv
+
+# Run into a custom output directory
+uv run hedgehog run --out results/my_run
 
 # Run with a glob pattern
 uv run hedgehog run --mols "data/generated/*.csv"
@@ -130,6 +142,20 @@ Prints the current HEDGEHOG version and project tagline.
 uv run hedgehog version
 ```
 
+## `hedgehog setup aizynthfinder`
+
+Installs the AiZynthFinder retrosynthesis tool and its public data into `modules/retrosynthesis/`.
+
+```bash
+uv run hedgehog setup aizynthfinder
+```
+
+To auto-accept the download prompt:
+
+```bash
+uv run hedgehog setup aizynthfinder --yes
+```
+
 ## `hedgehog tui`
 
 Launches the interactive Terminal User Interface for visual pipeline configuration and management. Requires Node.js to be installed. If the TUI has not been built yet, it will automatically run `npm install` and `npm run build` on first launch.
@@ -158,4 +184,4 @@ uv run hedgehog run --stage docking
 | Code | Meaning |
 |------|---------|
 | `0`  | Pipeline completed successfully |
-| `1`  | Pipeline completed with failures, conflicting flags (`--reuse` + `--force-new`), TUI directory not found, or Node.js not available |
+| `1`  | Pipeline completed with failures, conflicting flags (`--reuse` + `--force-new`, or `--out` with `--reuse/--force-new`), TUI directory not found, or Node.js not available |

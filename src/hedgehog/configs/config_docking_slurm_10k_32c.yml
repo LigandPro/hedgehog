@@ -16,7 +16,7 @@ smina_config:
   cpu: 32
   seed: 42
   exhaustiveness: 8
-  num_modes: 9
+  num_modes: 1
 
 gnina_config:
   bin: /mnt/ligandpro/soft/docking/gnina/gnina
@@ -24,6 +24,7 @@ gnina_config:
   autobox_add: 4
   cpu: 32
   seed: 42
+  num_modes: 1
 
 gnina_ld_library_path: /mnt/ligandpro/soft/docking/gnina/env/lib/python3.10/site-packages/torch/lib
 gnina_container:

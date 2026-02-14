@@ -1,4 +1,4 @@
-"""Tests for dockingFilters/utils.py — posebusters-fast and symmetry-RMSD backends."""
+"""Tests for dockingFilters/utils.py — posecheck-fast and symmetry-RMSD backends."""
 
 from __future__ import annotations
 
@@ -54,16 +54,16 @@ def _write_protein_pdb(path: Path, coords: np.ndarray | None = None) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# posebusters-fast filter tests
+# posecheck-fast filter tests
 # ---------------------------------------------------------------------------
 
 
 class TestPosebustersFastFilter:
-    """Tests for apply_posebusters_fast_filter."""
+    """Tests for apply_posecheck_fast_filter."""
 
     def test_basic_returns_correct_schema(self, tmp_path):
         """Filter should return DataFrame with all expected columns."""
-        from hedgehog.stages.dockingFilters.utils import apply_posebusters_fast_filter
+        from hedgehog.stages.dockingFilters.utils import apply_posecheck_fast_filter
 
         mol = _mol_with_3d("CCO")
         conf = mol.GetConformer()
@@ -80,7 +80,7 @@ class TestPosebustersFastFilter:
             "max_distance": 5.0,
             "n_jobs": 1,
         }
-        df = apply_posebusters_fast_filter([mol], pdb_path, config)
+        df = apply_posecheck_fast_filter([mol], pdb_path, config)
 
         assert len(df) == 1
         expected_cols = {
@@ -97,7 +97,7 @@ class TestPosebustersFastFilter:
 
     def test_too_far_away_fails(self, tmp_path):
         """A molecule placed far from the protein should fail not_too_far_away."""
-        from hedgehog.stages.dockingFilters.utils import apply_posebusters_fast_filter
+        from hedgehog.stages.dockingFilters.utils import apply_posecheck_fast_filter
 
         mol = _mol_with_3d("CCO")
         # Place protein atoms very far away
@@ -108,7 +108,7 @@ class TestPosebustersFastFilter:
             "max_distance": 5.0,
             "n_jobs": 1,
         }
-        df = apply_posebusters_fast_filter([mol], pdb_path, config)
+        df = apply_posecheck_fast_filter([mol], pdb_path, config)
         assert (
             df["not_too_far_away"].iloc[0] is False
             or not df["not_too_far_away"].iloc[0]
@@ -116,13 +116,13 @@ class TestPosebustersFastFilter:
 
     def test_none_mol_fails(self, tmp_path):
         """None molecules should fail gracefully."""
-        from hedgehog.stages.dockingFilters.utils import apply_posebusters_fast_filter
+        from hedgehog.stages.dockingFilters.utils import apply_posecheck_fast_filter
 
         protein_coords = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]])
         pdb_path = _write_protein_pdb(tmp_path, protein_coords)
 
         config: dict[str, Any] = {"n_jobs": 1}
-        df = apply_posebusters_fast_filter([None], pdb_path, config)
+        df = apply_posecheck_fast_filter([None], pdb_path, config)
 
         assert len(df) == 1
         assert (
@@ -132,7 +132,7 @@ class TestPosebustersFastFilter:
 
     def test_multiple_molecules(self, tmp_path):
         """Should process multiple molecules and return correct length."""
-        from hedgehog.stages.dockingFilters.utils import apply_posebusters_fast_filter
+        from hedgehog.stages.dockingFilters.utils import apply_posecheck_fast_filter
 
         mols = [_mol_with_3d("CCO"), _mol_with_3d("c1ccccc1"), _mol_with_3d("CC")]
 
@@ -142,21 +142,21 @@ class TestPosebustersFastFilter:
         pdb_path = _write_protein_pdb(tmp_path, protein_coords)
 
         config: dict[str, Any] = {"n_jobs": 1}
-        df = apply_posebusters_fast_filter(mols, pdb_path, config)
+        df = apply_posecheck_fast_filter(mols, pdb_path, config)
 
         assert len(df) == 3
         assert list(df["mol_idx"]) == [0, 1, 2]
 
     def test_bad_protein_pdb_returns_all_fail(self, tmp_path):
         """An unreadable protein PDB should mark all molecules as failed."""
-        from hedgehog.stages.dockingFilters.utils import apply_posebusters_fast_filter
+        from hedgehog.stages.dockingFilters.utils import apply_posecheck_fast_filter
 
         bad_pdb = tmp_path / "protein.pdb"
         bad_pdb.write_text("NOT A VALID PDB")
 
         mol = _mol_with_3d("CCO")
         config: dict[str, Any] = {"n_jobs": 1}
-        df = apply_posebusters_fast_filter([mol], bad_pdb, config)
+        df = apply_posecheck_fast_filter([mol], bad_pdb, config)
 
         assert len(df) == 1
         assert not df["pass_pose_quality"].iloc[0]
@@ -259,11 +259,11 @@ class TestSymmetryRmsdFilter:
 class TestBackendDispatch:
     """Tests that main.py dispatches to the correct backend."""
 
-    def test_pose_quality_dispatch_posebusters_fast(self, tmp_path):
-        """backend=posebusters_fast should call apply_posebusters_fast_filter."""
+    def test_pose_quality_dispatch_posecheck_fast(self, tmp_path):
+        """backend=posecheck_fast should call apply_posecheck_fast_filter."""
         with (
             patch(
-                "hedgehog.stages.dockingFilters.main.apply_posebusters_fast_filter"
+                "hedgehog.stages.dockingFilters.main.apply_posecheck_fast_filter"
             ) as mock_pb,
             patch(
                 "hedgehog.stages.dockingFilters.main.apply_pose_quality_filter"
@@ -277,14 +277,14 @@ class TestBackendDispatch:
             )
 
             # Simulate the dispatch logic from main.py
-            pq_config: dict[str, Any] = {"enabled": True, "backend": "posebusters_fast"}
+            pq_config: dict[str, Any] = {"enabled": True, "backend": "posecheck_fast"}
             mols_active = [_mol_with_3d("CCO")]
             protein_pdb = tmp_path / "protein.pdb"
 
-            pq_backend = pq_config.get("backend", "posebusters_fast")
-            if pq_backend == "posebusters_fast":
-                apply_posebusters_fast_filter = mock_pb
-                apply_posebusters_fast_filter(mols_active, protein_pdb, pq_config)
+            pq_backend = pq_config.get("backend", "posecheck_fast")
+            if pq_backend == "posecheck_fast":
+                apply_posecheck_fast_filter = mock_pb
+                apply_posecheck_fast_filter(mols_active, protein_pdb, pq_config)
             else:
                 apply_pose_quality_filter = mock_pc
                 apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
@@ -296,7 +296,7 @@ class TestBackendDispatch:
         """backend=posecheck should call apply_pose_quality_filter."""
         with (
             patch(
-                "hedgehog.stages.dockingFilters.main.apply_posebusters_fast_filter"
+                "hedgehog.stages.dockingFilters.main.apply_posecheck_fast_filter"
             ) as mock_pb,
             patch(
                 "hedgehog.stages.dockingFilters.main.apply_pose_quality_filter"
@@ -313,10 +313,10 @@ class TestBackendDispatch:
             mols_active = [_mol_with_3d("CCO")]
             protein_pdb = tmp_path / "protein.pdb"
 
-            pq_backend = pq_config.get("backend", "posebusters_fast")
-            if pq_backend == "posebusters_fast":
-                apply_posebusters_fast_filter = mock_pb
-                apply_posebusters_fast_filter(mols_active, protein_pdb, pq_config)
+            pq_backend = pq_config.get("backend", "posecheck_fast")
+            if pq_backend == "posecheck_fast":
+                apply_posecheck_fast_filter = mock_pb
+                apply_posecheck_fast_filter(mols_active, protein_pdb, pq_config)
             else:
                 apply_pose_quality_filter = mock_pc
                 apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
@@ -385,3 +385,33 @@ class TestBackendDispatch:
 
             mock_naive.assert_called_once()
             mock_sr.assert_not_called()
+
+
+class TestSinglePoseCollapse:
+    """Tests for pre-filter single-pose collapse helper."""
+
+    def test_collapse_keeps_lowest_affinity_per_source_molecule(self):
+        """Should keep the best (lowest affinity) pose for each source molecule."""
+        from hedgehog.stages.dockingFilters.main import _collapse_to_single_pose
+
+        mols = [_mol_with_3d("CCO", 1), _mol_with_3d("CCO", 2), _mol_with_3d("CC", 3)]
+        results_df = pd.DataFrame(
+            {
+                "mol_idx": [0, 1, 2],
+                "model_name": ["m", "m", "m"],
+                "source_mol_idx": ["mol-A", "mol-A", "mol-B"],
+                "gnina_minimizedAffinity": [-6.0, -8.0, -5.0],
+                "gnina_CNNscore": [0.5, 0.8, 0.6],
+                "gnina_CNNaffinity": [6.0, 8.0, 5.0],
+            }
+        )
+
+        collapsed_mols, collapsed_df = _collapse_to_single_pose(mols, results_df)
+
+        assert len(collapsed_mols) == 2
+        assert len(collapsed_df) == 2
+        assert set(collapsed_df["source_mol_idx"].tolist()) == {"mol-A", "mol-B"}
+
+        row_mol_a = collapsed_df[collapsed_df["source_mol_idx"] == "mol-A"].iloc[0]
+        assert row_mol_a["gnina_minimizedAffinity"] == -8.0
+        assert collapsed_df["mol_idx"].tolist() == [0, 1]

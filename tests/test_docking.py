@@ -291,9 +291,9 @@ class TestPerMoleculeArchitecture:
 
         assert len(result) == 3
         assert molecules_dir.exists()
-        assert (molecules_dir / "ethanol.sdf").exists()
-        assert (molecules_dir / "benzene.sdf").exists()
-        assert (molecules_dir / "ethane.sdf").exists()
+        assert (molecules_dir / "000000_ethanol.sdf").exists()
+        assert (molecules_dir / "000001_benzene.sdf").exists()
+        assert (molecules_dir / "000002_ethane.sdf").exists()
 
     def test_split_sdf_with_unnamed_molecules(self, tmp_path):
         """Should handle molecules without names."""
@@ -361,6 +361,43 @@ class TestPerMoleculeArchitecture:
         count = _aggregate_docking_results(results_dir, output_sdf)
 
         assert count == 0
+
+    def test_aggregate_keeps_best_pose_per_molecule_file(self, tmp_path):
+        """Should keep only the best affinity pose from each result file."""
+        from rdkit import Chem
+
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+
+        writer1 = Chem.SDWriter(str(results_dir / "mol1_out.sdf"))
+        mol1_worse = Chem.MolFromSmiles("CCO")
+        mol1_worse.SetProp("_Name", "mol1_worse")
+        mol1_worse.SetProp("minimizedAffinity", "-6.1")
+        writer1.write(mol1_worse)
+
+        mol1_best = Chem.MolFromSmiles("CCO")
+        mol1_best.SetProp("_Name", "mol1_best")
+        mol1_best.SetProp("minimizedAffinity", "-8.4")
+        writer1.write(mol1_best)
+        writer1.close()
+
+        writer2 = Chem.SDWriter(str(results_dir / "mol2_out.sdf"))
+        mol2 = Chem.MolFromSmiles("CC")
+        mol2.SetProp("_Name", "mol2_only")
+        mol2.SetProp("minimizedAffinity", "-5.0")
+        writer2.write(mol2)
+        writer2.close()
+
+        output_sdf = tmp_path / "aggregated.sdf"
+        count = _aggregate_docking_results(results_dir, output_sdf)
+
+        assert count == 2
+
+        suppl = Chem.SDMolSupplier(str(output_sdf))
+        names = [m.GetProp("_Name") for m in suppl if m is not None]
+        assert "mol1_best" in names
+        assert "mol1_worse" not in names
+        assert "mol2_only" in names
 
     def test_aggregate_with_invalid_files(self, tmp_path):
         """Should skip invalid SDF files during aggregation."""

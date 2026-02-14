@@ -9,7 +9,7 @@ from hedgehog.stages.descriptors.utils import (
 )
 
 
-def main(data, config, subfolder):
+def main(data, config, subfolder=None, reporter=None):
     """
     Computes default set of 22 physicochemical descriptors per molecule using RDKit,
     filters molecules based on configurable thresholds, and generates
@@ -37,7 +37,11 @@ def main(data, config, subfolder):
 
     config_descriptors = load_config(config["config_descriptors"])
     metrics_df = compute_metrics(
-        data, metrics_folder, config=config, config_descriptors=config_descriptors
+        data,
+        metrics_folder,
+        config=config,
+        config_descriptors=config_descriptors,
+        reporter=reporter,
     )
 
     if config_descriptors["filter_data"]:

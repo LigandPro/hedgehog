@@ -64,7 +64,7 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
         modules_dir = project_root / "modules"
         modules_dir.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["git", "clone", "git@github.com:LigandPro/retrosynthesis.git"],
+            ["git", "clone", "https://github.com/LigandPro/retrosynthesis.git"],
             cwd=modules_dir,
             check=True,
             timeout=600,

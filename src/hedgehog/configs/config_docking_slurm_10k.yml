@@ -11,7 +11,7 @@ smina_config:
   cpu: 16
   seed: 42
   exhaustiveness: 8
-  num_modes: 9
+  num_modes: 1
 
 gnina_config:
   bin: gnina
@@ -19,3 +19,4 @@ gnina_config:
   autobox_add: 4
   cpu: 16
   seed: 42
+  num_modes: 1

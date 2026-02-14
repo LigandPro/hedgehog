@@ -365,7 +365,8 @@ def _create_docking_config_file(
     config_path.parent.mkdir(parents=True, exist_ok=True)
     Path(output_sdf).parent.mkdir(parents=True, exist_ok=True)
 
-    tool_config = cfg.get(f"{tool_name}_config", {})
+    tool_config = dict(cfg.get(f"{tool_name}_config", {}) or {})
+    tool_config["num_modes"] = 1
 
     receptor = _resolve_path(receptor, ligands_dir)
     ligands_path = _resolve_path(ligands_path, ligands_dir)
@@ -455,6 +456,7 @@ def _create_per_molecule_configs(
     tool_config = dict(cfg.get(f"{tool_name}_config", {}) or {})
     if cpu_override is not None:
         tool_config["cpu"] = int(cpu_override)
+    tool_config["num_modes"] = 1
 
     # Resolve common settings once
     receptor_abs = _resolve_path(receptor, ligands_dir)
@@ -1168,23 +1170,44 @@ def _aggregate_docking_results(results_dir: Path, output_sdf: Path) -> int:
         logger.warning("No result files found in %s", results_dir)
         return 0
 
+    def _extract_pose_affinity(mol) -> float | None:
+        for prop_name in ("minimizedAffinity", "affinity", "score"):
+            if mol.HasProp(prop_name):
+                try:
+                    return float(mol.GetProp(prop_name))
+                except Exception:
+                    continue
+        return None
+
+    def _pick_best_pose(result_file: Path):
+        best_mol = None
+        best_affinity = float("inf")
+        for mol in Chem.SDMolSupplier(str(result_file)):
+            if mol is None:
+                continue
+            affinity = _extract_pose_affinity(mol)
+            affinity_sort = affinity if affinity is not None else float("inf")
+            if best_mol is None or affinity_sort < best_affinity:
+                best_mol = mol
+                best_affinity = affinity_sort
+        return best_mol
+
     writer = Chem.SDWriter(str(output_sdf))
     count = 0
 
     for result_file in result_files:
         try:
-            suppl = Chem.SDMolSupplier(str(result_file))
-            for mol in suppl:
-                if mol is not None:
-                    writer.write(mol)
-                    count += 1
+            best_pose = _pick_best_pose(result_file)
+            if best_pose is not None:
+                writer.write(best_pose)
+                count += 1
         except Exception as e:
             logger.warning("Failed to read result file %s: %s", result_file, e)
             continue
 
     writer.close()
     logger.info(
-        "Aggregated %d poses from %d result files into %s",
+        "Aggregated %d best poses (single pose per molecule) from %d result files into %s",
         count,
         len(result_files),
         output_sdf,
@@ -1697,7 +1720,43 @@ def _update_metadata_with_run_status(ligands_dir, run_status):
         logger.warning(f"Failed to update metadata with run status: {e}")
 
 
-def _run_docking_script(script_path: Path, working_dir, log_path, background):
+def _count_lines(path: Path) -> int:
+    """Count lines in a text file; returns 0 if missing/unreadable."""
+    try:
+        if not path.exists():
+            return 0
+        return sum(1 for _ in path.open("r", encoding="utf-8", errors="ignore"))
+    except OSError:
+        return 0
+
+
+def _count_smina_done(ligands_dir: Path) -> int:
+    results_dir = ligands_dir / "_workdir" / "smina" / "results"
+    if results_dir.exists():
+        done = 0
+        for p in results_dir.glob("*_out.sdf"):
+            try:
+                if p.is_file() and p.stat().st_size > 0:
+                    done += 1
+            except OSError:
+                continue
+        return done
+    output_sdf = ligands_dir / "smina" / "smina_out.sdf"
+    return 1 if output_sdf.exists() and output_sdf.stat().st_size > 0 else 0
+
+
+def _count_gnina_done(ligands_dir: Path, output_sdf: Path) -> int:
+    status_dir = ligands_dir / "_workdir" / "gnina" / "status"
+    if status_dir.exists():
+        return _count_lines(status_dir / "success.txt") + _count_lines(
+            status_dir / "failed.txt"
+        )
+    return 1 if output_sdf.exists() and output_sdf.stat().st_size > 0 else 0
+
+
+def _run_docking_script(
+    script_path: Path, working_dir, log_path, background, tick=None
+):
     """Run a docking script and return execution status."""
     if not script_path.exists():
         logger.error("Script not found: %s", script_path)
@@ -1714,52 +1773,55 @@ def _run_docking_script(script_path: Path, working_dir, log_path, background):
         logger.info("Started %s in background. Log: %s", script_path.name, log_path)
         return {"status": "started_background", "log_path": str(log_path)}
     else:
-        try:
-            with open(log_path, "wb") as logf:
-                subprocess.run(
-                    ["./" + script_path.name],
-                    check=True,
-                    stdout=logf,
-                    stderr=logf,
-                    cwd=str(working_dir),
-                )
+        with open(log_path, "wb") as logf:
+            proc = subprocess.Popen(
+                ["./" + script_path.name],
+                stdout=logf,
+                stderr=logf,
+                cwd=str(working_dir),
+            )
+            while proc.poll() is None:
+                if tick:
+                    tick()
+                time.sleep(0.5)
+            if tick:
+                tick()
+
+        returncode = proc.returncode or 0
+        if returncode == 0:
             logger.info(
                 "%s completed successfully. Log: %s", script_path.name, log_path
             )
             return {"status": "completed", "log_path": str(log_path)}
-        except subprocess.CalledProcessError as e:
-            if e.returncode == 143:
-                logger.error(
-                    "%s terminated by SIGTERM (exit 143) - likely timeout, memory limit, or killed by system. "
-                    "Check system logs and consider reducing batch size or using per-molecule mode.",
-                    script_path.name,
-                )
-            elif e.returncode == 137:
-                logger.error(
-                    "%s killed by SIGKILL (exit 137) - likely OOM killer. "
-                    "Consider reducing batch size or using per-molecule mode.",
-                    script_path.name,
-                )
-            else:
-                logger.error(
-                    "%s failed with exit code %d. See log: %s",
-                    script_path.name,
-                    e.returncode,
-                    log_path,
-                )
-            return {
-                "status": "failed",
-                "log_path": str(log_path),
-                "exit_code": e.returncode,
-            }
+
+        if returncode == 143:
+            logger.error(
+                "%s terminated by SIGTERM (exit 143) - likely timeout, memory limit, or killed by system. "
+                "Check system logs and consider reducing batch size or using per-molecule mode.",
+                script_path.name,
+            )
+        elif returncode == 137:
+            logger.error(
+                "%s killed by SIGKILL (exit 137) - likely OOM killer. "
+                "Consider reducing batch size or using per-molecule mode.",
+                script_path.name,
+            )
+        else:
+            logger.error(
+                "%s failed with exit code %d. See log: %s",
+                script_path.name,
+                returncode,
+                log_path,
+            )
+        return {"status": "failed", "log_path": str(log_path), "exit_code": returncode}
 
 
-def _run_smina(ligands_dir, background, job_id):
+def _run_smina(ligands_dir, background, job_id, tick=None):
     """Run SMINA docking."""
     workdir = ligands_dir / "_workdir"
     script_path = workdir / "run_smina.sh"
     log_path = workdir / "smina_run.log"
-    status = _run_docking_script(script_path, workdir, log_path, background)
+    status = _run_docking_script(script_path, workdir, log_path, background, tick=tick)
     if job_id:
         status["job_id"] = job_id
 
@@ -1780,12 +1842,12 @@ def _run_smina(ligands_dir, background, job_id):
     return status
 
 
-def _run_gnina(ligands_dir, output_sdf, background, job_id):
+def _run_gnina(ligands_dir, output_sdf, background, job_id, tick=None):
     """Run GNINA docking."""
     workdir = ligands_dir / "_workdir"
     script_path = workdir / "run_gnina.sh"
     log_path = workdir / "gnina_run.log"
-    status = _run_docking_script(script_path, workdir, log_path, background)
+    status = _run_docking_script(script_path, workdir, log_path, background, tick=tick)
     if job_id:
         status["job_id"] = job_id
 
@@ -2081,7 +2143,7 @@ def _setup_gnina(
         return None
 
 
-def run_docking(config):
+def run_docking(config, reporter=None):
     """Main docking orchestration function."""
     cfg = load_config(config["config_docking"])
     if not cfg.get("run", False):
@@ -2259,9 +2321,44 @@ def run_docking(config):
         background = bool(cfg.get("run_in_background", False))
         run_status = {}
 
+        selected_tools = [t for t in tools_list if t in ["smina", "gnina"] and t in job_ids]
+        progress_total = 0
+        tool_totals: dict[str, int] = {}
+        gnina_output_sdf = _get_gnina_output_directory(cfg, base_folder) / "gnina_out.sdf"
+        if reporter is not None and not background and selected_tools:
+            configs_dir = ligands_dir / "_workdir" / "configs"
+            for tool in selected_tools:
+                count = 0
+                if configs_dir.exists():
+                    count = len(list(configs_dir.glob(f"{tool}_*.ini")))
+                tool_totals[tool] = count if count > 0 else 1
+            progress_total = sum(tool_totals.values()) or 1
+
+            def _count_done() -> int:
+                done = 0
+                if "smina" in tool_totals:
+                    done += min(_count_smina_done(ligands_dir), tool_totals["smina"])
+                if "gnina" in tool_totals:
+                    done += min(
+                        _count_gnina_done(ligands_dir, gnina_output_sdf),
+                        tool_totals["gnina"],
+                    )
+                return done
+
+            def _make_tick(tool_name: str):
+                def _tick() -> None:
+                    reporter.progress(_count_done(), progress_total, message=f"Docking ({tool_name})")
+
+                return _tick
+
+            reporter.progress(0, progress_total, message="Docking")
+
         if "smina" in job_ids:
             logger.info("Running SMINA docking")
-            run_status["smina"] = _run_smina(ligands_dir, background, job_ids["smina"])
+            tick = _make_tick("smina") if reporter is not None and not background and progress_total else None
+            run_status["smina"] = _run_smina(
+                ligands_dir, background, job_ids["smina"], tick=tick
+            )
             if not background and run_status["smina"].get("status") == "completed":
                 log_path = ligands_dir / "_workdir" / "smina_run.log"
                 _emit_post_docking_warnings("smina", log_path)
@@ -2271,8 +2368,9 @@ def run_docking(config):
             try:
                 gnina_dir = _get_gnina_output_directory(cfg, base_folder)
                 output_sdf = gnina_dir / "gnina_out.sdf"
+                tick = _make_tick("gnina") if reporter is not None and not background and progress_total else None
                 run_status["gnina"] = _run_gnina(
-                    ligands_dir, output_sdf, background, job_ids["gnina"]
+                    ligands_dir, output_sdf, background, job_ids["gnina"], tick=tick
                 )
                 if not background and run_status["gnina"].get("status") == "completed":
                     log_path = ligands_dir / "_workdir" / "gnina_run.log"
@@ -2300,6 +2398,9 @@ def run_docking(config):
                 for t in selected_tools
                 if run_status.get(t, {}).get("status") == "failed"
             ]
+
+            if reporter is not None and progress_total:
+                reporter.progress(progress_total, progress_total, message="Docking complete")
 
             if failed_tools:
                 logger.error(f"Docking tools failed: {', '.join(failed_tools)}")

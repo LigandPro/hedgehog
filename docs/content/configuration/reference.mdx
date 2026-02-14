@@ -245,7 +245,7 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the structural filters stage |
-| `run_before_descriptors` | bool | `true` | Run structural filters before descriptor calculation (pre-filter) |
+| `run_before_descriptors` | bool | `false` | Run structural filters before descriptor calculation (pre-filter) |
 | `filter_data` | bool | `true` | Whether to actually remove flagged molecules from downstream stages |
 
 ### Structural Alerts
@@ -290,7 +290,7 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 
 ```yaml
 run: true
-run_before_descriptors: true
+run_before_descriptors: false
 filter_data: true
 alerts_data_path: data/common_alerts_collection.csv
 calculate_common_alerts: true
@@ -643,7 +643,7 @@ aggregation:
 
 ## config_moleval.yml
 
-Controls generative evaluation metrics computed during report generation. These metrics assess diversity, scaffold coverage, drug-likeness, and chemical group presence across pipeline stages.
+Controls generative evaluation metrics computed during report generation. These metrics assess diversity, scaffold coverage, and basic filter pass rates across pipeline stages.
 
 ### General Settings
 
@@ -668,20 +668,7 @@ Each flag enables or disables a group of related metrics.
 | `functional_groups` | bool | `true` | Compute functional group diversity ratio (FG) |
 | `ring_systems` | bool | `true` | Compute ring system diversity ratio (RS) |
 | `filters` | bool | `true` | Compute MCF + PAINS filter passage rate |
-
-### Drug-likeness Compliance
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `rules_compliance` | bool | `true` | Compute per-stage pass rates for drug-likeness rule sets |
-| `rules_sets` | list[string] | `[rule_of_five, rule_of_veber, rule_of_generative_design]` | Rule sets to evaluate: Lipinski's Rule of Five, Veber rules, generative design rules |
-
-### Chemical Group Presence
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `chemical_groups` | bool | `true` | Compute per-stage match rates for drug-relevant chemical groups |
-| `chemical_group_names` | list[string] | `[rings_in_drugs, privileged_scaffolds]` | Chemical group sets to evaluate |
+| `mce18` | bool | `true` | Compute mean MCE-18 molecular complexity score |
 
 ### Default YAML
 
@@ -699,15 +686,5 @@ scaffold_diversity: true
 functional_groups: true
 ring_systems: true
 filters: true
-
-rules_compliance: true
-rules_sets:
-  - rule_of_five
-  - rule_of_veber
-  - rule_of_generative_design
-
-chemical_groups: true
-chemical_group_names:
-  - rings_in_drugs
-  - privileged_scaffolds
+mce18: true
 ```

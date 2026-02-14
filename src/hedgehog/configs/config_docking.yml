@@ -10,11 +10,11 @@ smina_config:
   cpu: 32
   seed: 42
   exhaustiveness: 8
-  num_modes: 9
+  num_modes: 1
 gnina_config:
   bin: /mnt/ligandpro/soft/docking/gnina/gnina
   autobox_ligand: data/test/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
-
+  num_modes: 1
