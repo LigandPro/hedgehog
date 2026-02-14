@@ -2,10 +2,15 @@
 
 from pathlib import Path
 
+import pandas as pd
+import pytest
+
 from hedgehog.pipeline import (
     DIR_DESCRIPTORS_INITIAL,
     DIR_SYNTHESIS,
+    DOCKING_SCORE_COLUMNS,
     DataChecker,
+    MolecularAnalysisPipeline,
     PipelineStage,
     PipelineStageRunner,
     _directory_has_files,
@@ -259,3 +264,134 @@ class TestPipelineStage:
         stage.enabled = True
 
         assert stage.enabled is True
+
+
+def _write_test_docking_sdf(path: Path, records: list[dict]) -> None:
+    """Write a minimal docking SDF with specified properties."""
+    pytest.importorskip("rdkit")
+    from rdkit import Chem
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = Chem.SDWriter(str(path))
+    for rec in records:
+        mol = Chem.MolFromSmiles("CC")
+        assert mol is not None
+        mol.SetProp("_Name", str(rec["name"]))
+        for key, value in rec.items():
+            if key == "name":
+                continue
+            mol.SetProp(str(key), str(value))
+        writer.write(mol)
+    writer.close()
+
+
+class TestFinalOutputWithDockingScores:
+    """Tests for final output enrichment with docking scores."""
+
+    def _pipeline(self, tmp_path: Path) -> MolecularAnalysisPipeline:
+        return MolecularAnalysisPipeline({"folder_to_save": str(tmp_path)})
+
+    def test_preserves_existing_columns_and_adds_score_columns(self, tmp_path):
+        """Keep all existing columns and append docking score schema."""
+        pipeline = self._pipeline(tmp_path)
+        final_data = pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCC"],
+                "model_name": ["model_a", "model_b"],
+                "mol_idx": ["m1", "m2"],
+                "sa_score": [2.1, 3.4],
+                "custom_flag": [True, False],
+            }
+        )
+
+        pipeline._save_final_output(final_data, len(final_data))
+
+        output_path = tmp_path / "output" / "final_molecules.csv"
+        out = pd.read_csv(output_path)
+        assert "sa_score" in out.columns
+        assert "custom_flag" in out.columns
+        for col in DOCKING_SCORE_COLUMNS:
+            assert col in out.columns
+            assert out[col].isna().all()
+
+    def test_adds_gnina_and_smina_scores_using_best_pose(self, tmp_path):
+        """For each tool, choose the best pose (minimum affinity) per molecule."""
+        pipeline = self._pipeline(tmp_path)
+
+        _write_test_docking_sdf(
+            tmp_path / "stages" / "05_docking" / "gnina" / "gnina_out.sdf",
+            [
+                {
+                    "name": "mol-1",
+                    "minimizedAffinity": -7.1,
+                    "CNNscore": 0.51,
+                    "CNNaffinity": -6.0,
+                    "CNN_VS": 0.22,
+                },
+                {
+                    "name": "mol-1",
+                    "minimizedAffinity": -8.4,
+                    "CNNscore": 0.73,
+                    "CNNaffinity": -6.8,
+                    "CNN_VS": 0.31,
+                },
+                {
+                    "name": "mol-2",
+                    "minimizedAffinity": -6.3,
+                    "CNNscore": 0.44,
+                    "CNNaffinity": -5.1,
+                    "CNN_VS": 0.11,
+                },
+            ],
+        )
+        _write_test_docking_sdf(
+            tmp_path / "stages" / "05_docking" / "smina" / "smina_out.sdf",
+            [
+                {"name": "mol-1", "minimizedAffinity": -6.0},
+                {"name": "mol-1", "minimizedAffinity": -9.2},
+                {"name": "mol-2", "minimizedAffinity": -5.7},
+            ],
+        )
+
+        final_data = pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCC", "CCN"],
+                "model_name": ["model_a", "model_a", "model_b"],
+                "mol_idx": ["mol-1", "mol-2", "mol-3"],
+            }
+        )
+        pipeline._save_final_output(final_data, len(final_data))
+
+        output_path = tmp_path / "output" / "final_molecules.csv"
+        out = pd.read_csv(output_path).assign(
+            mol_idx=lambda df: df["mol_idx"].astype(str)
+        )
+        rows = out.set_index("mol_idx")
+
+        assert rows.loc["mol-1", "gnina_affinity"] == pytest.approx(-8.4)
+        assert rows.loc["mol-1", "gnina_cnnscore"] == pytest.approx(0.73)
+        assert rows.loc["mol-1", "gnina_cnnaffinity"] == pytest.approx(-6.8)
+        assert rows.loc["mol-1", "gnina_cnn_vs"] == pytest.approx(0.31)
+        assert rows.loc["mol-1", "smina_affinity"] == pytest.approx(-9.2)
+
+        assert rows.loc["mol-2", "gnina_affinity"] == pytest.approx(-6.3)
+        assert rows.loc["mol-2", "smina_affinity"] == pytest.approx(-5.7)
+
+        assert pd.isna(rows.loc["mol-3", "gnina_affinity"])
+        assert pd.isna(rows.loc["mol-3", "smina_affinity"])
+
+    def test_empty_final_output_has_stable_header(self, tmp_path):
+        """Empty final output should still expose a stable score schema."""
+        pipeline = self._pipeline(tmp_path)
+        empty_data = pd.DataFrame(columns=["smiles", "model_name", "mol_idx"])
+
+        pipeline._save_final_output(empty_data, 0)
+
+        output_path = tmp_path / "output" / "final_molecules.csv"
+        out = pd.read_csv(output_path)
+        assert list(out.columns) == [
+            "smiles",
+            "model_name",
+            "mol_idx",
+            *DOCKING_SCORE_COLUMNS,
+        ]

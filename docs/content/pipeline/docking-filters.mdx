@@ -165,6 +165,16 @@ aggregation:
 | `filtered_poses.csv` | All passing poses with full metrics (before deduplication) |
 | `filtered_poses.sdf` | 3D structures of all passing poses in SDF format |
 
+The pipeline-level output file `output/final_molecules.csv` now keeps all upstream columns and adds aggregated docking scores per molecule:
+
+- `gnina_affinity`
+- `gnina_cnnscore`
+- `gnina_cnnaffinity`
+- `gnina_cnn_vs`
+- `smina_affinity`
+
+For each tool, values are taken from the best pose per molecule (minimum affinity).
+
 ## Usage
 
 ```bash
