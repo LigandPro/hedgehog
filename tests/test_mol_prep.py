@@ -121,4 +121,3 @@ def test_invalid_smiles_reported(tmp_path: Path):
 
     failed = pd.read_csv(tmp_path / "failed_molecules.csv")
     assert "parse_failed" in failed["reason"].astype(str).tolist()
-

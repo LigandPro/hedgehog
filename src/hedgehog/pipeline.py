@@ -877,7 +877,9 @@ class MolecularAnalysisPipeline:
                 df_out = pd.read_csv(out_path)
                 self.current_data = df_out
                 if len(df_out) == 0:
-                    logger.info("No molecules left after MolPrep; ending pipeline early.")
+                    logger.info(
+                        "No molecules left after MolPrep; ending pipeline early."
+                    )
                     return True, True
             except Exception as e:
                 logger.warning("Could not load MolPrep output (%s): %s", out_path, e)
@@ -891,7 +893,9 @@ class MolecularAnalysisPipeline:
         # If MolPrep is enabled, use its output as the input to descriptors.
         mol_prep_stage = self._stage_by_name.get(STAGE_MOL_PREP)
         if mol_prep_stage is not None and mol_prep_stage.enabled:
-            prep_path = self.data_checker.base_path / DIR_MOL_PREP / FILE_FILTERED_MOLECULES
+            prep_path = (
+                self.data_checker.base_path / DIR_MOL_PREP / FILE_FILTERED_MOLECULES
+            )
             if prep_path.exists():
                 try:
                     prep_df = pd.read_csv(prep_path)

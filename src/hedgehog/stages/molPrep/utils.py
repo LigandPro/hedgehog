@@ -187,7 +187,9 @@ def _molprep_one(
     if bool(_get_cfg(cfg, ["filters", "reject_isotopes"], True)) and _has_isotopes(mol):
         return None, "isotopes", "filters"
 
-    if bool(_get_cfg(cfg, ["filters", "require_neutral"], True)) and not _is_neutral(mol):
+    if bool(_get_cfg(cfg, ["filters", "require_neutral"], True)) and not _is_neutral(
+        mol
+    ):
         return None, "charged", "filters"
 
     if bool(_get_cfg(cfg, ["filters", "require_single_fragment"], True)) and (
@@ -295,7 +297,9 @@ def run_mol_prep(
 
     passed_df[stable_cols].to_csv(filtered_path, index=False)
     if failed_df.empty:
-        failed_df = pd.DataFrame(columns=[*stable_cols, "reason", "step", "reason_detail"])
+        failed_df = pd.DataFrame(
+            columns=[*stable_cols, "reason", "step", "reason_detail"]
+        )
     failed_df.to_csv(failed_path, index=False)
 
     reasons = Counter([f.reason for f in failures])
@@ -304,11 +308,16 @@ def run_mol_prep(
         "passed": int(len(passed_df)),
         "failed": int(len(failures)),
         "dedup_removed": int(dedup_removed),
-        "failed_by_reason_json": json.dumps(dict(sorted(reasons.items())), ensure_ascii=False),
+        "failed_by_reason_json": json.dumps(
+            dict(sorted(reasons.items())), ensure_ascii=False
+        ),
     }
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
 
-    if bool(_get_cfg(cfg, ["output", "write_duplicates_removed"], True)) and not duplicates_df.empty:
+    if (
+        bool(_get_cfg(cfg, ["output", "write_duplicates_removed"], True))
+        and not duplicates_df.empty
+    ):
         duplicates_df.to_csv(out_dir / "duplicates_removed.csv", index=False)
 
     logger.info(

@@ -35,4 +35,3 @@ def main(data, config: dict, subfolder: str | None = None):
 
     cfg = load_config(config["config_mol_prep"])
     return run_mol_prep(data, cfg, out_dir)
-

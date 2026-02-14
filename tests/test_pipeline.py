@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 
 from hedgehog.pipeline import (
-    DIR_MOL_PREP,
     DIR_DESCRIPTORS_INITIAL,
+    DIR_MOL_PREP,
     DIR_SYNTHESIS,
     DOCKING_SCORE_COLUMNS,
     DataChecker,

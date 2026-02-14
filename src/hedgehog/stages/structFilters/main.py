@@ -197,7 +197,9 @@ def _get_enabled_filters(config_structFilters):
     }
 
 
-def _write_stage_readme(output_dir: Path, stage_dir: str, config_structFilters: dict) -> None:
+def _write_stage_readme(
+    output_dir: Path, stage_dir: str, config_structFilters: dict
+) -> None:
     """Write a README.md into the stage output directory describing available filters and outputs."""
     enabled = sorted(_get_enabled_filters(config_structFilters).keys())
     all_known = sorted(_FILTER_DESCRIPTIONS.keys(), key=lambda x: x.lower())
@@ -243,12 +245,16 @@ def _write_stage_readme(output_dir: Path, stage_dir: str, config_structFilters: 
     lines.append("")
     lines.append("- `{filter_name}/metrics.csv` — per-filter summary statistics")
     lines.append("- `{filter_name}/extended.csv` — detailed per-molecule results")
-    lines.append("- `{filter_name}/filtered_molecules.csv` — molecules passing that filter")
+    lines.append(
+        "- `{filter_name}/filtered_molecules.csv` — molecules passing that filter"
+    )
     lines.append("")
     lines.append("Combined outputs (stage root):")
     lines.append("")
     lines.append("- `filtered_molecules.csv` — molecules passing all enabled filters")
-    lines.append("- `failed_molecules.csv` — molecules failing at least one filter (best effort)")
+    lines.append(
+        "- `failed_molecules.csv` — molecules failing at least one filter (best effort)"
+    )
     lines.append("")
     lines.append("Plots (if generated):")
     lines.append("")
@@ -263,10 +269,13 @@ def _write_stage_readme(output_dir: Path, stage_dir: str, config_structFilters: 
     if disabled:
         preview = ", ".join(f"`{n}`" for n in disabled[:5])
         suffix = "..." if len(disabled) > 5 else ""
-        lines.append(f"Some available filters may be disabled in this run (e.g., {preview}{suffix}).")
+        lines.append(
+            f"Some available filters may be disabled in this run (e.g., {preview}{suffix})."
+        )
     lines.append("")
 
     (output_dir / "README.md").write_text("\n".join(lines), encoding="utf-8")
+
 
 def main(config, stage_dir, reporter=None):
     """Main entry point for structural filters stage.
