@@ -21,8 +21,8 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 | `sample_size` | int | `1000` | Number of molecules to sample from the input file (0 or negative = use all) |
 | `batch_size` | int | `512` | Batch size for descriptor computation and other batched operations |
 | `save_sampled_mols` | bool | `true` | Whether to save the sampled molecule subset to disk |
-| `pains_file_path` | string | `data/wehi_pains.csv` | Path to the PAINS filter definitions file |
-| `mcf_file_path` | string | `data/mcf.csv` | Path to the MCF (medicinal chemistry filters) definitions file |
+| `pains_file_path` | string | `src/hedgehog/vendor/moleval/metrics/wehi_pains.csv` | Path to the PAINS filter definitions file |
+| `mcf_file_path` | string | `src/hedgehog/vendor/moleval/metrics/mcf.csv` | Path to the MCF (medicinal chemistry filters) definitions file |
 | `ligand_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger LigPrep binary for ligand preparation |
 | `protein_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger PrepWizard binary for protein preparation |
 | `config_mol_prep` | string | `src/hedgehog/configs/config_mol_prep.yml` | Path to the Mol Prep stage config |
@@ -32,6 +32,8 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 | `config_docking` | string | `src/hedgehog/configs/config_docking.yml` | Path to the docking stage config |
 | `config_docking_filters` | string | `src/hedgehog/configs/config_docking_filters.yml` | Path to the docking filters stage config |
 | `config_moleval` | string | `src/hedgehog/configs/config_moleval.yml` | Path to the MolEval reporting config |
+
+Note: `src/hedgehog/configs/config.yml` points `pains_file_path` and `mcf_file_path` at `data/` by default, but this repository vendors `wehi_pains.csv` and `mcf.csv` at `src/hedgehog/vendor/moleval/metrics/wehi_pains.csv` and `src/hedgehog/vendor/moleval/metrics/mcf.csv`. Point `pains_file_path` / `mcf_file_path` to those paths or copy the files into `data/`.
 
 ### Default YAML
 
@@ -43,8 +45,8 @@ n_jobs: 62
 sample_size: 1000
 batch_size: 512
 save_sampled_mols: true
-pains_file_path: data/wehi_pains.csv
-mcf_file_path: data/mcf.csv
+pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
+mcf_file_path: src/hedgehog/vendor/moleval/metrics/mcf.csv
 ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
 protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
 config_mol_prep: src/hedgehog/configs/config_mol_prep.yml

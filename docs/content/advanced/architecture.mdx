@@ -252,7 +252,7 @@ To add a new stage to the pipeline:
 Create a new directory under `src/hedgehog/stages/`:
 
 ```
-src/hedgehog/stages/myStage/
+src/hedgehog/stages/<my_stage>/
 ├── __init__.py
 ├── main.py       # Entry point: main(config) or main(config, stage_dir)
 └── utils.py      # Stage logic
@@ -262,7 +262,7 @@ The `main.py` should accept the pipeline config dictionary and write its output 
 
 ### 2. Add a configuration file
 
-Create `src/hedgehog/configs/config_myStage.yml`:
+Create `src/hedgehog/configs/<my_stage_config>.yml`:
 
 ```yaml
 run: true
@@ -274,7 +274,7 @@ Add the reference to the master config:
 
 ```yaml
 # In config.yml
-config_myStage: src/hedgehog/configs/config_myStage.yml
+config_<my_stage>: src/hedgehog/configs/<my_stage_config>.yml
 ```
 
 ### 3. Register the stage in the pipeline
@@ -284,7 +284,7 @@ In `pipeline.py`, add constants and register the stage:
 ```python
 # Add stage name and config key constants
 STAGE_MY_STAGE = "my_stage"
-CONFIG_MY_STAGE = "config_myStage"
+CONFIG_MY_STAGE = "config_<my_stage>"
 DIR_MY_STAGE = "stages/08_my_stage"
 
 # Add to _STAGE_DEFINITIONS in MolecularAnalysisPipeline

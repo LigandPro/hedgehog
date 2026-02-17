@@ -148,19 +148,19 @@ The retrosynthesis stage requires AiZynthFinder, which is installed in a virtual
 ./modules/install_aizynthfinder.sh
 ```
 
-This script clones the retrosynthesis repository into `modules/retrosynthesis/`, installs dependencies with `uv sync`, and downloads the required public data (model files and templates).
+This script clones the retrosynthesis repository into `./modules/retrosynthesis/`, installs dependencies with `uv sync`, and downloads the required public data (model files and templates).
 
 2. Verify the installation:
 
 ```bash
 # Check that the virtual environment exists
-ls modules/retrosynthesis/aizynthfinder/.venv/
+ls ./modules/retrosynthesis/aizynthfinder/.venv/
 
 # Check that public data was downloaded
-ls modules/retrosynthesis/aizynthfinder/public/
+ls ./modules/retrosynthesis/aizynthfinder/public/
 
 # Check that model data files exist
-ls modules/retrosynthesis/aizynthfinder/aizynthfinder/data/
+ls ./modules/retrosynthesis/aizynthfinder/aizynthfinder/data/
 ```
 
 3. If the installer fails during the clone step, ensure you have SSH access to the LigandPro GitHub organization, or switch to HTTPS in the script.

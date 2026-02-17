@@ -70,8 +70,8 @@ For example, to run only descriptors and skip all other stages:
 
 ```yaml
 # my_config.yml
-generated_mols_path: data/my_molecules.csv
-target_mols_path: data/my_targets.csv
+generated_mols_path: data/test/generated_mols.csv
+target_mols_path: data/test/target_mols.csv
 folder_to_save: results/my_run
 n_jobs: 8
 sample_size: 500
@@ -115,8 +115,8 @@ n_jobs: 62
 sample_size: 1000
 batch_size: 512
 save_sampled_mols: true
-pains_file_path: data/wehi_pains.csv
-mcf_file_path: data/mcf.csv
+pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
+mcf_file_path: src/hedgehog/vendor/moleval/metrics/mcf.csv
 ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
 protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
 config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
@@ -127,5 +127,7 @@ config_docking: src/hedgehog/configs/config_docking.yml
 config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
 config_moleval: src/hedgehog/configs/config_moleval.yml
 ```
+
+Note: `src/hedgehog/configs/config.yml` points `pains_file_path` and `mcf_file_path` at `data/` by default, but this repository vendors `wehi_pains.csv` and `mcf.csv` at `src/hedgehog/vendor/moleval/metrics/wehi_pains.csv` and `src/hedgehog/vendor/moleval/metrics/mcf.csv`. Point `pains_file_path` / `mcf_file_path` to those paths (as shown above) or copy the files into `data/`.
 
 For a complete description of every parameter, see the [Parameter Reference](/configuration/reference).

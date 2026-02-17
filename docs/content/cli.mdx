@@ -80,19 +80,19 @@ uv run hedgehog run
 uv run hedgehog run --config src/hedgehog/configs/config.yml
 
 # Run with a custom molecule set
-uv run hedgehog run --mols data/my_molecules.csv
+uv run hedgehog run --mols data/test/generated_mols.csv
 
 # Run into a custom output directory
 uv run hedgehog run --out results/my_run
 
 # Run with a glob pattern
-uv run hedgehog run --mols "data/generated/*.csv"
+uv run hedgehog run --mols "/path/to/generated/*.csv"
 
 # Run only the docking stage
 uv run hedge run --stage docking
 
 # Run a specific stage with custom molecules
-uv run hedge run --stage descriptors --mols data/candidates.csv
+uv run hedge run --stage descriptors --mols data/test/moses_1000.csv
 
 # Rerun into the same results folder
 uv run hedge run --reuse
@@ -145,7 +145,7 @@ uv run hedgehog version
 
 ## `hedgehog setup aizynthfinder`
 
-Installs the AiZynthFinder retrosynthesis tool and its public data into `modules/retrosynthesis/`.
+Installs the AiZynthFinder retrosynthesis tool and its public data into `./modules/retrosynthesis/`.
 
 ```bash
 uv run hedgehog setup aizynthfinder
