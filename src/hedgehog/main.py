@@ -41,6 +41,28 @@ def _plain_output_enabled() -> bool:
     return os.environ.get(PLAIN_OUTPUT_ENV, "").strip() == "1"
 
 
+def _build_progress_columns(console_width: int):
+    """Build adaptive progress columns for narrow terminals/tmux panes."""
+    if console_width < 120:
+        return [
+            SpinnerColumn(style="dim"),
+            TextColumn("[bold]{task.description}[/bold]"),
+            BarColumn(bar_width=20),
+            TextColumn("mols {task.fields[done_total]}"),
+            TimeElapsedColumn(),
+        ]
+
+    return [
+        SpinnerColumn(style="dim"),
+        TextColumn("[bold]{task.description}[/bold]"),
+        BarColumn(bar_width=40),
+        TextColumn("mols {task.fields[done_total]}"),
+        TextColumn("rate {task.fields[rate]}"),
+        TextColumn("eta {task.fields[eta]}"),
+        TimeElapsedColumn(),
+    ]
+
+
 def _validate_input_path(input_path):
     """Validate input path and return Path object if valid, None otherwise."""
     if "*" in input_path or "?" in input_path:
@@ -621,14 +643,11 @@ def run(
                 return "-"
             return f"{value:,}"
 
+        console_width = shared_console.width
+        progress_columns = _build_progress_columns(console_width)
         with Progress(
-            SpinnerColumn(style="dim"),
-            TextColumn("[bold]{task.description}[/bold]"),
-            BarColumn(bar_width=40),
-            TextColumn("mols {task.fields[done_total]}"),
-            TextColumn("rate {task.fields[rate]}"),
-            TextColumn("eta {task.fields[eta]}"),
-            TimeElapsedColumn(),
+            *progress_columns,
+            refresh_per_second=4,
             console=shared_console,
         ) as progress:
             stage_tasks: dict[int, int] = {}
