@@ -215,6 +215,15 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
 
 def _compute_descriptors_for_row(args):
     smiles, model_name, mol_idx, remove_charges, remove_radicals, remove_stereo = args
+    if not isinstance(smiles, str):
+        if pd.isna(smiles):
+            return None, ("", model_name, mol_idx)
+        smiles = str(smiles)
+
+    smiles = smiles.strip()
+    if smiles.lower() in {"", "nan", "none"}:
+        return None, (smiles, model_name, mol_idx)
+
     mol_n = Chem.MolFromSmiles(smiles)
     if not mol_n:
         return None, (smiles, model_name, mol_idx)
@@ -259,7 +268,16 @@ def _compute_descriptors_for_row(args):
     return row_metrics, None
 
 
-def compute_metrics(df, save_path, config=None, config_descriptors=None, reporter=None):
+def compute_metrics(
+    df,
+    save_path,
+    config=None,
+    config_descriptors=None,
+    reporter=None,
+    progress_stage_total: int | None = None,
+    progress_completed_base: int = 0,
+    progress_completed_span: int | None = None,
+):
     """Compute 22 physicochemical descriptors for each molecule.
 
     model_name and mol_idx are already in df from sampled_molecules.csv.
@@ -291,6 +309,7 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
     do_preprocess = remove_charges or remove_radicals or remove_stereo
 
     n_jobs = resolve_n_jobs(config_descriptors, config)
+    logger.info("Descriptors workers: %d", n_jobs)
     items = list(
         zip(
             df["smiles"].tolist(),
@@ -308,7 +327,19 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
     if reporter is not None:
 
         def _progress_cb(done: int, total: int) -> None:
-            reporter.progress(done, total, message="Computing descriptors")
+            mapped_done = done
+            mapped_total = total
+            if (
+                progress_stage_total is not None
+                and progress_completed_span is not None
+                and total > 0
+            ):
+                ratio = min(1.0, max(0.0, done / total))
+                mapped_done = progress_completed_base + int(
+                    round(ratio * progress_completed_span)
+                )
+                mapped_total = progress_stage_total
+            reporter.progress(mapped_done, mapped_total, message="Computing descriptors")
 
         progress_cb = _progress_cb
 
@@ -347,6 +378,16 @@ def compute_metrics(df, save_path, config=None, config_descriptors=None, reporte
         metrics_df = pd.DataFrame(columns=["smiles", "model_name", "mol_idx"])
     metrics_df = order_identity_columns(metrics_df)
     metrics_df.to_csv(save_path / "descriptors_all.csv", index=False)
+    if (
+        reporter is not None
+        and progress_stage_total is not None
+        and progress_completed_span is not None
+    ):
+        reporter.progress(
+            progress_completed_base + progress_completed_span,
+            progress_stage_total,
+            message="Descriptors computed",
+        )
     return metrics_df
 
 
@@ -1059,7 +1100,7 @@ def _plot_single_column(
     _style_axis(ax)
 
 
-def draw_filtered_mols(df, folder_to_save, config):
+def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     """Generate distribution plots for descriptor filters.
 
     Args:
@@ -1095,6 +1136,8 @@ def draw_filtered_mols(df, folder_to_save, config):
     axes = axes.flatten()
 
     # Plot each column
+    plotted_count = 0
+    total_to_plot = max(len(cols_to_plot), 1)
     for i, col in enumerate(cols_to_plot):
         col_lower = col.lower()
         canonical = _DESCRIPTOR_KEY_MAP.get(col_lower, col).lower()
@@ -1105,6 +1148,8 @@ def draw_filtered_mols(df, folder_to_save, config):
             and k.rsplit("_", 1)[0].lower() in (col_lower, canonical)
         ]
         if not relevant_keys:
+            if progress_cb is not None:
+                progress_cb(i + 1, total_to_plot)
             continue
         _plot_single_column(
             axes[i],
@@ -1117,6 +1162,9 @@ def draw_filtered_mols(df, folder_to_save, config):
             renamer,
             is_multi,
         )
+        plotted_count += 1
+        if progress_cb is not None:
+            progress_cb(i + 1, total_to_plot)
 
     # Remove unused axes
     for j in range(len(cols_to_plot), len(axes)):
@@ -1130,3 +1178,5 @@ def draw_filtered_mols(df, folder_to_save, config):
         bbox_inches="tight",
         format="png",
     )
+    if progress_cb is not None and plotted_count == 0:
+        progress_cb(total_to_plot, total_to_plot)

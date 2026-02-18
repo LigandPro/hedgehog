@@ -266,8 +266,9 @@ def preprocess_input_with_tool(
         if smiles_col != "smiles":
             df = df.rename(columns={smiles_col: "smiles"})
 
-        # LigPrep may emit a per-molecule name/title column; do not treat it as
-        # a model identifier. Pin model_name to the input file stem.
+        # Some external preparation tools may emit a per-molecule name/title
+        # column; do not treat it as a model identifier. Pin model_name to the
+        # input file stem.
         df["model_name"] = input_path_obj.stem
         df = df[["smiles", "model_name"]].dropna(subset=["smiles"])
         df.to_csv(prepared_output, index=False)
@@ -643,6 +644,29 @@ def run(
                 return "-"
             return f"{value:,}"
 
+        def _short_progress_message(value: str | None) -> str:
+            if not value:
+                return ""
+            text = " ".join(str(value).split())
+            if len(text) > 36:
+                return text[:33] + "..."
+            return text
+
+        def _progress_description(
+            stage_index: int,
+            total_stages: int,
+            short_name: str,
+            message: str | None = None,
+            *,
+            completed: bool = False,
+        ) -> str:
+            shown_stage = stage_index if completed else max(stage_index - 1, 0)
+            base = f"{shown_stage}/{total_stages} - {short_name}"
+            short_message = _short_progress_message(message)
+            if short_message:
+                return f"{base} · {short_message}"
+            return base
+
         console_width = shared_console.width
         progress_columns = _build_progress_columns(console_width)
         with Progress(
@@ -666,7 +690,7 @@ def run(
                 if existing is not None:
                     return existing
                 task = progress.add_task(
-                    f"{max(stage_index - 1, 0)}/{total_stages} - {short_name}",
+                    _progress_description(stage_index, total_stages, short_name),
                     total=100,
                     done_total="-/-",
                     rate="-",
@@ -684,6 +708,7 @@ def run(
                 task_id = _get_or_create_task(stage_index, total_stages, short_name)
                 if task_id is None:
                     return
+                message = event.get("message")
 
                 if event_type == "stage_start":
                     stage_started_at[stage_index] = time.perf_counter()
@@ -692,7 +717,12 @@ def run(
                     progress.update(
                         task_id,
                         completed=0,
-                        description=f"{max(stage_index - 1, 0)}/{total_stages} - {short_name}",
+                        description=_progress_description(
+                            stage_index,
+                            total_stages,
+                            short_name,
+                            message,
+                        ),
                         done_total="-/-",
                         rate="-",
                         eta="-",
@@ -728,7 +758,12 @@ def run(
                     progress.update(
                         task_id,
                         completed=pct,
-                        description=f"{max(stage_index - 1, 0)}/{total_stages} - {short_name}",
+                        description=_progress_description(
+                            stage_index,
+                            total_stages,
+                            short_name,
+                            message,
+                        ),
                         done_total=(
                             f"{_format_count(current)}/{_format_count(total)}"
                             if total > 0
@@ -751,7 +786,13 @@ def run(
                     progress.update(
                         task_id,
                         completed=100,
-                        description=f"{stage_index}/{total_stages} - {short_name}",
+                        description=_progress_description(
+                            stage_index,
+                            total_stages,
+                            short_name,
+                            message,
+                            completed=True,
+                        ),
                         done_total=done_total,
                         rate="-",
                         eta="-",
