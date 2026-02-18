@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import sys
 from collections.abc import Callable, Sequence
 from typing import TypeVar
 
@@ -30,14 +31,35 @@ def resolve_n_jobs(
     Returns:
         Positive integer >= 1.
     """
-    n_jobs: int | None = None
+    stage_n_jobs: int | None = None
+    global_n_jobs: int | None = None
 
     if stage_config and "n_jobs" in stage_config:
-        n_jobs = int(stage_config["n_jobs"])
-    elif global_config and "n_jobs" in global_config:
-        n_jobs = int(global_config["n_jobs"])
+        stage_n_jobs = int(stage_config["n_jobs"])
+    if global_config and "n_jobs" in global_config:
+        global_n_jobs = int(global_config["n_jobs"])
+
+    if stage_n_jobs is not None:
+        if stage_n_jobs > 0:
+            n_jobs = stage_n_jobs
+        elif global_n_jobs is not None and global_n_jobs > 0:
+            n_jobs = global_n_jobs
+        else:
+            n_jobs = default
+    elif global_n_jobs is not None:
+        n_jobs = global_n_jobs
     else:
         n_jobs = default
+
+    if n_jobs <= 0:
+        env_n_jobs = os.environ.get("MOLSCORE_NJOBS")
+        if env_n_jobs:
+            try:
+                parsed = int(env_n_jobs)
+                if parsed > 0:
+                    n_jobs = parsed
+            except ValueError:
+                pass
 
     if n_jobs <= 0:
         slurm_cpus = os.environ.get("SLURM_CPUS_PER_TASK")
@@ -49,12 +71,36 @@ def resolve_n_jobs(
     return max(1, n_jobs)
 
 
+def _get_mp_context() -> multiprocessing.context.BaseContext:
+    """Select a safe multiprocessing start method.
+
+    Notes:
+    - ``fork`` is fast but can deadlock in multi-threaded parents (e.g., Rich
+      progress rendering). Prefer ``forkserver`` on Linux when available.
+    - ``spawn`` is the most portable fallback.
+    - Override via ``HEDGEHOG_MP_START_METHOD`` if needed.
+    """
+    forced = os.environ.get("HEDGEHOG_MP_START_METHOD")
+    if forced:
+        return multiprocessing.get_context(forced)
+
+    if sys.platform.startswith("linux"):
+        try:
+            return multiprocessing.get_context("forkserver")
+        except ValueError:
+            return multiprocessing.get_context("spawn")
+
+    return multiprocessing.get_context("spawn")
+
+
 def parallel_map(
     func: Callable,
     items: Sequence,
     n_jobs: int,
     chunksize: int | None = None,
     progress: Callable[[int, int], None] | None = None,
+    initializer: Callable[..., None] | None = None,
+    initargs: tuple = (),
 ) -> list:
     """Apply *func* to every element of *items*, optionally in parallel.
 
@@ -67,6 +113,9 @@ def parallel_map(
         n_jobs: Number of worker processes.  ``1`` → sequential.
         chunksize: Items sent to each worker at a time.  ``None`` →
             auto-calculated as ``max(1, len(items) // (n_jobs * 4))``.
+        initializer: Optional initializer called once per worker (and once in
+            sequential mode) to set up per-process globals.
+        initargs: Arguments passed to *initializer*.
 
     Returns:
         List of results in the same order as *items*.
@@ -76,6 +125,8 @@ def parallel_map(
         return []
 
     if n_jobs == 1 or length == 1:
+        if initializer:
+            initializer(*initargs)
         out = []
         for idx, item in enumerate(items, start=1):
             out.append(func(item))
@@ -86,8 +137,12 @@ def parallel_map(
     if chunksize is None:
         chunksize = max(1, length // (n_jobs * 4))
 
-    ctx = multiprocessing.get_context("fork")
-    with ctx.Pool(processes=n_jobs) as pool:
+    ctx = _get_mp_context()
+    with ctx.Pool(
+        processes=n_jobs,
+        initializer=initializer,
+        initargs=initargs,
+    ) as pool:
         out = []
         for idx, result in enumerate(
             pool.imap(func, items, chunksize=chunksize), start=1
