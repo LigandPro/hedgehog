@@ -1,9 +1,6 @@
 name: Publish to PyPI (OIDC)
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 jobs:

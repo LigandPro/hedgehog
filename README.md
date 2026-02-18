@@ -1,6 +1,11 @@
 # 🦔 HEDGEHOG
 **Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration**
 
+[![PyPI version](https://badge.fury.io/py/hedgehog.svg)](https://pypi.org/project/hedgehog/)
+[![CI](https://github.com/LigandPro/hedgehog/actions/workflows/ci.yaml/badge.svg)](https://github.com/LigandPro/hedgehog/actions/workflows/ci.yaml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
 ![HEDGEHOG Pipeline](data/imgs/pipeline_structure.png)
 
 
