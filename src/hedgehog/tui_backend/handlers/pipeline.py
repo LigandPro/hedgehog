@@ -422,10 +422,17 @@ class PipelineHandler:
             config_type = self.TUI_STAGE_TO_CONFIG_TYPE[stage]
 
             def add_stage(
-                code: str, level: str, message: str, field: str | None = None
+                code: str,
+                level: str,
+                message: str,
+                field: str | None = None,
+                _stage_checks: list[dict[str, Any]] = stage_checks,
+                _stage_name: str = stage,
             ) -> None:
-                stage_checks.append(
-                    self._make_check(code, level, message, stage=stage, field=field)
+                _stage_checks.append(
+                    self._make_check(
+                        code, level, message, stage=_stage_name, field=field
+                    )
                 )
 
             try:
