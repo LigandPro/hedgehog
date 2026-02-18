@@ -72,6 +72,23 @@ def _import_medchem_quietly():
         os.close(stderr_fd)
 
 
+def _run_with_suppressed_stdio(func, *args, **kwargs):
+    """Run callable while suppressing noisy stdout/stderr output."""
+    stdout_fd = os.dup(1)
+    stderr_fd = os.dup(2)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        return func(*args, **kwargs)
+    finally:
+        os.dup2(stdout_fd, 1)
+        os.dup2(stderr_fd, 2)
+        os.close(devnull_fd)
+        os.close(stdout_fd)
+        os.close(stderr_fd)
+
+
 def _resolve_scheduler(config_structFilters, scheduler_key, default="processes"):
     """Resolve scheduler name for medchem parallel APIs."""
     scheduler_raw = config_structFilters.get(scheduler_key)
@@ -168,7 +185,8 @@ def _process_nibr_chunk(args):
     mol_chunk = [item[1] for item in indexed_chunk]
 
     nibr_filters = mc.structural.NIBRFilters()
-    chunk_df = nibr_filters(
+    chunk_df = _run_with_suppressed_stdio(
+        nibr_filters,
         mols=mol_chunk,
         n_jobs=1,
         scheduler="threads",
@@ -849,7 +867,8 @@ def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
 
     results = {"mol": mols}
     for s in severities:
-        out = mc.functional.molecular_graph_filter(
+        out = _run_with_suppressed_stdio(
+            mc.functional.molecular_graph_filter,
             mols=mols,
             max_severity=s,
             n_jobs=n_jobs,
@@ -897,7 +916,8 @@ def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
     n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = _resolve_scheduler(config_structFilters, "bredt_scheduler")
     logger.info("Bredt workers: %d (scheduler=%s)", n_jobs, scheduler)
-    out = mc.functional.bredt_filter(
+    out = _run_with_suppressed_stdio(
+        mc.functional.bredt_filter,
         mols=mols,
         n_jobs=n_jobs,
         scheduler=scheduler,
@@ -916,7 +936,8 @@ def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
     n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = _resolve_scheduler(config_structFilters, "protecting_groups_scheduler")
     logger.info("Protecting Groups workers: %d (scheduler=%s)", n_jobs, scheduler)
-    out = mc.functional.protecting_groups_filter(
+    out = _run_with_suppressed_stdio(
+        mc.functional.protecting_groups_filter,
         mols=mols,
         n_jobs=n_jobs,
         scheduler=scheduler,
@@ -936,7 +957,8 @@ def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
     scheduler = _resolve_scheduler(config_sf, "ring_infraction_scheduler")
     logger.info("Ring Infraction workers: %d (scheduler=%s)", n_jobs, scheduler)
     min_size = config_sf.get("ring_infraction_hetcycle_min_size", 4)
-    out = mc.functional.ring_infraction_filter(
+    out = _run_with_suppressed_stdio(
+        mc.functional.ring_infraction_filter,
         mols=mols,
         hetcycle_min_size=min_size,
         n_jobs=n_jobs,
@@ -958,7 +980,8 @@ def apply_stereo_center(config, mols, smiles_modelName_mols=None):
     logger.info("Stereo Center workers: %d (scheduler=%s)", n_jobs, scheduler)
     max_centers = config_sf.get("stereo_max_centers", 4)
     max_undefined = config_sf.get("stereo_max_undefined", 2)
-    out = mc.functional.num_stereo_center_filter(
+    out = _run_with_suppressed_stdio(
+        mc.functional.num_stereo_center_filter,
         mols=mols,
         max_stereo_centers=max_centers,
         max_undefined_stereo_centers=max_undefined,
@@ -979,7 +1002,8 @@ def apply_halogenicity(config, mols, smiles_modelName_mols=None):
     n_jobs = resolve_n_jobs(config_sf, config)
     scheduler = _resolve_scheduler(config_sf, "halogenicity_scheduler")
     logger.info("Halogenicity workers: %d (scheduler=%s)", n_jobs, scheduler)
-    out = mc.functional.halogenicity_filter(
+    out = _run_with_suppressed_stdio(
+        mc.functional.halogenicity_filter,
         mols=mols,
         thresh_F=config_sf.get("halogenicity_thresh_F", 6),
         thresh_Br=config_sf.get("halogenicity_thresh_Br", 3),
@@ -1002,7 +1026,8 @@ def apply_symmetry(config, mols, smiles_modelName_mols=None):
     scheduler = _resolve_scheduler(config_sf, "symmetry_scheduler")
     logger.info("Symmetry workers: %d (scheduler=%s)", n_jobs, scheduler)
     threshold = config_sf.get("symmetry_threshold", 0.8)
-    out = mc.functional.symmetry_filter(
+    out = _run_with_suppressed_stdio(
+        mc.functional.symmetry_filter,
         mols=mols,
         symmetry_threshold=threshold,
         n_jobs=n_jobs,
@@ -1048,7 +1073,8 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
             len(mols),
         )
         nibr_filters = mc.structural.NIBRFilters()
-        results = nibr_filters(
+        results = _run_with_suppressed_stdio(
+            nibr_filters,
             mols=mols,
             n_jobs=n_jobs,
             scheduler=scheduler,
