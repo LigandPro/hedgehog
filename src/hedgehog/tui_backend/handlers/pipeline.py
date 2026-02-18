@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from ..validators import ConfigValidator
 from .config import ConfigHandler
+from .files import FilesHandler
+from .validation import ValidationHandler
 
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
@@ -230,6 +233,15 @@ _MAX_COMPLETED_JOBS = 50
 class PipelineHandler:
     """Handler for pipeline-related RPC methods."""
 
+    TUI_STAGE_TO_CONFIG_TYPE = {
+        "mol_prep": "mol_prep",
+        "descriptors": "descriptors",
+        "struct_filters": "filters",
+        "synthesis": "synthesis",
+        "docking": "docking",
+        "docking_filters": "docking_filters",
+    }
+
     def __init__(self, server: "JsonRpcServer"):
         self.server = server
         self.jobs: dict[str, PipelineJob] = {}
@@ -257,6 +269,310 @@ class PipelineHandler:
             self.jobs[job_id] = job
         job.start()
         return job_id
+
+    @staticmethod
+    def _make_check(
+        code: str,
+        level: str,
+        message: str,
+        stage: str | None = None,
+        field: str | None = None,
+    ) -> dict[str, Any]:
+        check = {
+            "code": code,
+            "level": level,
+            "message": message,
+        }
+        if stage:
+            check["stage"] = stage
+        if field:
+            check["field"] = field
+        return check
+
+    @staticmethod
+    def _estimate_runtime(stages: list[str], molecule_count: int | None) -> str:
+        """Estimate runtime bucket from selected stages and input size."""
+        if molecule_count is None:
+            return "unknown"
+
+        score = 0
+        if molecule_count >= 10000:
+            score += 3
+        elif molecule_count >= 3000:
+            score += 2
+        elif molecule_count >= 1000:
+            score += 1
+
+        if "synthesis" in stages:
+            score += 1
+        if "docking" in stages:
+            score += 2
+        if "docking_filters" in stages:
+            score += 1
+
+        if score <= 1:
+            return "short"
+        if score <= 3:
+            return "medium"
+        return "long"
+
+    def preflight_pipeline(self, stages: list[str]) -> dict[str, Any]:
+        """Run preflight checks for selected pipeline stages."""
+        selected_stages = [s for s in stages if s in self.TUI_STAGE_TO_CONFIG_TYPE]
+        if not selected_stages:
+            raise ValueError("Select at least one valid stage")
+
+        config_handler = getattr(self.server, "config_handler", None)
+        if not isinstance(config_handler, ConfigHandler):
+            config_handler = ConfigHandler(self.server)
+
+        validation_handler = getattr(self.server, "validation_handler", None)
+        if not isinstance(validation_handler, ValidationHandler):
+            validation_handler = ValidationHandler(self.server)
+
+        files_handler = getattr(self.server, "files_handler", None)
+        if not isinstance(files_handler, FilesHandler):
+            files_handler = FilesHandler(self.server)
+
+        result: dict[str, Any] = {
+            "valid": True,
+            "molecule_count": None,
+            "estimated_runtime": "unknown",
+            "checks": [],
+            "stage_reports": [],
+        }
+
+        def add_global(
+            code: str, level: str, message: str, field: str | None = None
+        ) -> None:
+            result["checks"].append(self._make_check(code, level, message, field=field))
+
+        try:
+            main_config = config_handler.load_config("main")
+        except Exception as exc:
+            add_global(
+                "MAIN_CONFIG_LOAD_FAILED",
+                "error",
+                f"Failed to load main config: {exc}",
+            )
+            result["valid"] = False
+            return result
+
+        main_validation = ConfigValidator.validate("main", main_config)
+        for msg in main_validation.get("errors", []):
+            add_global("MAIN_CONFIG_INVALID", "error", msg)
+        for msg in main_validation.get("warnings", []):
+            add_global("MAIN_CONFIG_WARNING", "warning", msg)
+
+        input_path = main_config.get("generated_mols_path")
+        if input_path:
+            try:
+                input_validation = validation_handler.validate_input_file(input_path)
+                for msg in input_validation.get("errors", []):
+                    add_global("MAIN_INPUT_INVALID", "error", msg, field="generated_mols_path")
+                for msg in input_validation.get("warnings", []):
+                    add_global("MAIN_INPUT_WARNING", "warning", msg, field="generated_mols_path")
+            except Exception as exc:
+                add_global(
+                    "MAIN_INPUT_CHECK_FAILED",
+                    "error",
+                    f"Failed to validate input file: {exc}",
+                    field="generated_mols_path",
+                )
+
+            try:
+                count_result = files_handler.count_molecules(input_path)
+                if "error" in count_result:
+                    add_global(
+                        "MAIN_COUNT_WARNING",
+                        "warning",
+                        f"Could not count molecules: {count_result['error']}",
+                        field="generated_mols_path",
+                    )
+                else:
+                    result["molecule_count"] = int(count_result.get("count", 0))
+            except Exception as exc:
+                add_global(
+                    "MAIN_COUNT_FAILED",
+                    "warning",
+                    f"Could not count molecules: {exc}",
+                    field="generated_mols_path",
+                )
+
+        output_path = main_config.get("folder_to_save")
+        if output_path:
+            try:
+                output_validation = validation_handler.validate_output_directory(
+                    output_path
+                )
+                for msg in output_validation.get("errors", []):
+                    add_global("MAIN_OUTPUT_INVALID", "error", msg, field="folder_to_save")
+                for msg in output_validation.get("warnings", []):
+                    add_global("MAIN_OUTPUT_WARNING", "warning", msg, field="folder_to_save")
+            except Exception as exc:
+                add_global(
+                    "MAIN_OUTPUT_CHECK_FAILED",
+                    "error",
+                    f"Failed to validate output directory: {exc}",
+                    field="folder_to_save",
+                )
+
+        for stage in selected_stages:
+            stage_checks: list[dict[str, Any]] = []
+            config_type = self.TUI_STAGE_TO_CONFIG_TYPE[stage]
+
+            def add_stage(
+                code: str, level: str, message: str, field: str | None = None
+            ) -> None:
+                stage_checks.append(
+                    self._make_check(code, level, message, stage=stage, field=field)
+                )
+
+            try:
+                stage_config = config_handler.load_config(config_type)
+            except Exception as exc:
+                add_stage(
+                    "STAGE_CONFIG_LOAD_FAILED",
+                    "error",
+                    f"Failed to load config: {exc}",
+                )
+                result["stage_reports"].append(
+                    {"stage": stage, "status": "error", "checks": stage_checks}
+                )
+                continue
+
+            stage_validation = ConfigValidator.validate(config_type, stage_config)
+            for msg in stage_validation.get("errors", []):
+                add_stage("STAGE_CONFIG_INVALID", "error", msg)
+            for msg in stage_validation.get("warnings", []):
+                add_stage("STAGE_CONFIG_WARNING", "warning", msg)
+
+            if stage == "docking" and stage_config.get("run", False):
+                receptor = stage_config.get("receptor_pdb")
+                if not receptor:
+                    add_stage(
+                        "DOCKING_RECEPTOR_REQUIRED",
+                        "error",
+                        "receptor_pdb is required when docking is enabled",
+                        field="receptor_pdb",
+                    )
+                else:
+                    try:
+                        receptor_validation = validation_handler.validate_receptor_pdb(
+                            receptor
+                        )
+                        for msg in receptor_validation.get("errors", []):
+                            add_stage(
+                                "DOCKING_RECEPTOR_INVALID",
+                                "error",
+                                msg,
+                                field="receptor_pdb",
+                            )
+                        for msg in receptor_validation.get("warnings", []):
+                            add_stage(
+                                "DOCKING_RECEPTOR_WARNING",
+                                "warning",
+                                msg,
+                                field="receptor_pdb",
+                            )
+                    except Exception as exc:
+                        add_stage(
+                            "DOCKING_RECEPTOR_CHECK_FAILED",
+                            "error",
+                            f"Failed to validate receptor: {exc}",
+                            field="receptor_pdb",
+                        )
+
+            if stage == "docking_filters" and stage_config.get("run", False):
+                run_after_docking = bool(stage_config.get("run_after_docking", True))
+                input_sdf = stage_config.get("input_sdf")
+                receptor_pdb = stage_config.get("receptor_pdb")
+
+                if not run_after_docking and not input_sdf:
+                    add_stage(
+                        "DOCKING_FILTERS_INPUT_REQUIRED",
+                        "error",
+                        "input_sdf is required when run_after_docking is false",
+                        field="input_sdf",
+                    )
+
+                if input_sdf:
+                    try:
+                        input_validation = validation_handler.validate_input_file(
+                            str(input_sdf)
+                        )
+                        for msg in input_validation.get("errors", []):
+                            add_stage(
+                                "DOCKING_FILTERS_INPUT_INVALID",
+                                "error",
+                                msg,
+                                field="input_sdf",
+                            )
+                        for msg in input_validation.get("warnings", []):
+                            add_stage(
+                                "DOCKING_FILTERS_INPUT_WARNING",
+                                "warning",
+                                msg,
+                                field="input_sdf",
+                            )
+                    except Exception as exc:
+                        add_stage(
+                            "DOCKING_FILTERS_INPUT_CHECK_FAILED",
+                            "error",
+                            f"Failed to validate input_sdf: {exc}",
+                            field="input_sdf",
+                        )
+
+                if receptor_pdb:
+                    try:
+                        receptor_validation = validation_handler.validate_receptor_pdb(
+                            str(receptor_pdb)
+                        )
+                        for msg in receptor_validation.get("errors", []):
+                            add_stage(
+                                "DOCKING_FILTERS_RECEPTOR_INVALID",
+                                "error",
+                                msg,
+                                field="receptor_pdb",
+                            )
+                        for msg in receptor_validation.get("warnings", []):
+                            add_stage(
+                                "DOCKING_FILTERS_RECEPTOR_WARNING",
+                                "warning",
+                                msg,
+                                field="receptor_pdb",
+                            )
+                    except Exception as exc:
+                        add_stage(
+                            "DOCKING_FILTERS_RECEPTOR_CHECK_FAILED",
+                            "error",
+                            f"Failed to validate receptor_pdb: {exc}",
+                            field="receptor_pdb",
+                        )
+
+            if any(check["level"] == "error" for check in stage_checks):
+                status = "error"
+            elif any(check["level"] == "warning" for check in stage_checks):
+                status = "warning"
+            else:
+                status = "ok"
+
+            result["stage_reports"].append(
+                {"stage": stage, "status": status, "checks": stage_checks}
+            )
+
+        all_stage_checks = [
+            check
+            for report in result["stage_reports"]
+            for check in report.get("checks", [])
+        ]
+        all_checks = [*result["checks"], *all_stage_checks]
+
+        result["valid"] = not any(check["level"] == "error" for check in all_checks)
+        result["estimated_runtime"] = self._estimate_runtime(
+            selected_stages, result["molecule_count"]
+        )
+        return result
 
     def get_progress(self, job_id: str) -> dict[str, Any]:
         """Get progress of a running pipeline."""

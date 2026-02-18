@@ -61,6 +61,9 @@ uv run hedge run
 # Run specific stage
 uv run hedge run --stage descriptors
 
+# Enable live progress bar in CLI
+uv run hedge run --progress
+
 # Get help
 uv run hedge --help
 ```
@@ -69,8 +72,8 @@ uv run hedge --help
 
 For interactive configuration and pipeline management, use the TUI:
 ```bash
-./run-tui.sh
-# or
+cd tui
+npm install
 npm run tui
 ```
 

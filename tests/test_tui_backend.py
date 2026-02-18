@@ -642,3 +642,210 @@ class TestDisableUnrequestedStages:
 
         # Should not have been modified
         assert config_dict["config_synthesis"] == str(synth_cfg)
+
+
+# =====================================================================
+# Preflight pipeline checks
+# =====================================================================
+
+
+class TestPipelinePreflight:
+    """Test PipelineHandler.preflight_pipeline end-to-end checks."""
+
+    @staticmethod
+    def _write_source_configs(project_root: Path, paths: dict[str, Path]) -> None:
+        config_dir = project_root / "src" / "hedgehog" / "configs"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        (config_dir / "config.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "generated_mols_path": str(paths["input_csv"]),
+                    "folder_to_save": str(paths["output_dir"]),
+                    "n_jobs": 1,
+                    "config_mol_prep": str(config_dir / "config_mol_prep.yml"),
+                    "config_descriptors": str(config_dir / "config_descriptors.yml"),
+                    "config_structFilters": str(
+                        config_dir / "config_structFilters.yml"
+                    ),
+                    "config_synthesis": str(config_dir / "config_synthesis.yml"),
+                    "config_docking": str(config_dir / "config_docking.yml"),
+                    "config_docking_filters": str(
+                        config_dir / "config_docking_filters.yml"
+                    ),
+                },
+                sort_keys=False,
+            )
+        )
+        (config_dir / "config_mol_prep.yml").write_text(
+            yaml.safe_dump({"run": True, "n_jobs": 1}, sort_keys=False)
+        )
+        (config_dir / "config_descriptors.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "batch_size": 1000,
+                    "borders": {
+                        "molWt_min": 200,
+                        "molWt_max": 500,
+                        "logP_min": 0.0,
+                        "logP_max": 5.0,
+                    },
+                },
+                sort_keys=False,
+            )
+        )
+        (config_dir / "config_structFilters.yml").write_text(
+            yaml.safe_dump({"run": True}, sort_keys=False)
+        )
+        (config_dir / "config_synthesis.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "sa_score_min": 1,
+                    "sa_score_max": 4.5,
+                    "ra_score_min": 0.5,
+                    "ra_score_max": 1.0,
+                },
+                sort_keys=False,
+            )
+        )
+        (config_dir / "config_docking.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "tools": "smina",
+                    "receptor_pdb": str(paths["receptor_pdb"]),
+                },
+                sort_keys=False,
+            )
+        )
+        (config_dir / "config_docking_filters.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "run_after_docking": True,
+                    "input_sdf": None,
+                    "receptor_pdb": None,
+                    "aggregation": {"mode": "all"},
+                },
+                sort_keys=False,
+            )
+        )
+
+    @pytest.fixture()
+    def preflight_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "hedgehog.tui_backend.handlers.files._validate_path",
+            lambda *_a, **_kw: None,
+        )
+        monkeypatch.setattr(
+            "hedgehog.tui_backend.handlers.validation._validate_path",
+            lambda *_a, **_kw: None,
+        )
+
+        input_csv = tmp_path / "input.csv"
+        input_csv.write_text("smiles\nCCO\nCCN\n")
+
+        receptor_pdb = tmp_path / "receptor.pdb"
+        receptor_pdb.write_text(
+            "ATOM      1  N   ALA A   1      11.104  13.207  14.281  1.00 20.00           N\n"
+        )
+
+        output_dir = tmp_path / "results"
+        output_dir.mkdir(parents=True)
+
+        project_root = tmp_path / "project"
+        user_config_root = tmp_path / "user-configs"
+        paths = {
+            "input_csv": input_csv,
+            "receptor_pdb": receptor_pdb,
+            "output_dir": output_dir,
+            "project_root": project_root,
+        }
+        self._write_source_configs(project_root, paths)
+
+        server = JsonRpcServer()
+        server.config_handler._project_root = project_root
+        server.config_handler._user_config_root = user_config_root
+
+        return {
+            "server": server,
+            "paths": paths,
+        }
+
+    def test_preflight_success(self, preflight_env):
+        handler = preflight_env["server"].pipeline_handler
+
+        result = handler.preflight_pipeline(["descriptors"])
+
+        assert result["valid"] is True
+        assert result["molecule_count"] == 2
+        assert result["estimated_runtime"] == "short"
+        assert any(r["stage"] == "descriptors" for r in result["stage_reports"])
+
+    def test_preflight_blocks_invalid_docking_receptor(self, preflight_env):
+        project_root = preflight_env["paths"]["project_root"]
+        docking_cfg = project_root / "src" / "hedgehog" / "configs" / "config_docking.yml"
+        docking_cfg.write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "tools": "smina",
+                    "receptor_pdb": str(project_root / "missing_receptor.pdb"),
+                },
+                sort_keys=False,
+            )
+        )
+
+        handler = preflight_env["server"].pipeline_handler
+        result = handler.preflight_pipeline(["docking"])
+
+        assert result["valid"] is False
+        stage_checks = result["stage_reports"][0]["checks"]
+        assert any(
+            check["code"] == "DOCKING_RECEPTOR_INVALID" and check["level"] == "error"
+            for check in stage_checks
+        )
+
+    def test_preflight_warning_only_keeps_valid(self, preflight_env):
+        output_file = preflight_env["paths"]["output_dir"] / "existing.txt"
+        output_file.write_text("already here")
+
+        handler = preflight_env["server"].pipeline_handler
+        result = handler.preflight_pipeline(["descriptors"])
+
+        assert result["valid"] is True
+        assert any(
+            check["code"] == "MAIN_OUTPUT_WARNING" and check["level"] == "warning"
+            for check in result["checks"]
+        )
+
+    def test_preflight_requires_input_sdf_for_manual_docking_filters(self, preflight_env):
+        project_root = preflight_env["paths"]["project_root"]
+        filters_cfg = (
+            project_root / "src" / "hedgehog" / "configs" / "config_docking_filters.yml"
+        )
+        filters_cfg.write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "run_after_docking": False,
+                    "input_sdf": None,
+                    "receptor_pdb": None,
+                    "aggregation": {"mode": "all"},
+                },
+                sort_keys=False,
+            )
+        )
+
+        handler = preflight_env["server"].pipeline_handler
+        result = handler.preflight_pipeline(["docking_filters"])
+
+        assert result["valid"] is False
+        stage_checks = result["stage_reports"][0]["checks"]
+        assert any(
+            check["code"] == "DOCKING_FILTERS_INPUT_REQUIRED"
+            and check["level"] == "error"
+            for check in stage_checks
+        )

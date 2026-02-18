@@ -44,6 +44,7 @@ class JsonRpcServer:
 
         # Pipeline methods
         self.handlers["start_pipeline"] = self.pipeline_handler.start_pipeline
+        self.handlers["preflight_pipeline"] = self.pipeline_handler.preflight_pipeline
         self.handlers["get_progress"] = self.pipeline_handler.get_progress
         self.handlers["cancel_pipeline"] = self.pipeline_handler.cancel_pipeline
 

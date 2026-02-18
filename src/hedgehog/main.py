@@ -519,6 +519,11 @@ def run(
         "--auto-install",
         help="Auto-install missing optional tools (e.g., AiZynthFinder) without prompting.",
     ),
+    show_progress: bool = typer.Option(
+        False,
+        "--progress",
+        help="Show a live progress bar during pipeline execution.",
+    ),
 ) -> None:
     """
     Run the molecular analysis pipeline.
@@ -552,6 +557,10 @@ def run(
     \b
     # Auto-install optional external tools when needed
     uv run hedgehog run --auto-install
+
+    \b
+    # Enable live progress bar
+    uv run hedgehog run --progress
     """
     _display_banner()
 
@@ -602,7 +611,7 @@ def run(
 
     shared_console = LoggerSingleton().console
 
-    if _plain_output_enabled():
+    if _plain_output_enabled() or not show_progress:
         success = calculate_metrics(data, config_dict, None)
     else:
         short_stage_names = {

@@ -40,11 +40,8 @@ npm start
 ### From project root
 
 ```bash
-# Using npm script
+cd tui
 npm run tui
-
-# Or using the shell script
-./run-tui.sh
 ```
 
 ### Smoke checks

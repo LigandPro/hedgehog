@@ -67,6 +67,28 @@ const SCREEN_HELP_DESCRIPTIONS: Partial<Record<Screen, Record<string, string>>> 
     'r': 'Re-run this job with same settings',
     '←/Esc': 'Return to history',
   },
+  wizardInputSelection: {
+    '↑↓': 'Move between input/output fields',
+    'Space': 'Browse/edit selected field',
+    'Enter': 'Save and continue to stage selection',
+    '←/Esc': 'Return to welcome screen',
+  },
+  wizardStageSelection: {
+    '↑↓': 'Move between pipeline stages',
+    'Space': 'Enable/disable selected stage',
+    'c': 'Open configuration for selected stage',
+    'Enter': 'Fast start (preflight + run)',
+    'r/→': 'Open detailed review screen',
+    '←/Esc': 'Return to input selection',
+  },
+  wizardReview: {
+    '↑↓': 'Move between selected stages',
+    'e': 'Open config screen for focused stage',
+    'r': 'Refresh preflight checks',
+    'Tab': 'Switch summary/detailed stage view',
+    'Enter': 'Run preflight and start pipeline',
+    '←/Esc': 'Return to stage selection',
+  },
 };
 
 // Global shortcuts always available

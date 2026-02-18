@@ -41,10 +41,13 @@ uv run hedgehog run [OPTIONS]
 | `--reuse` | | `FLAG` | `False` | Force reuse of the existing results folder instead of creating a new one. |
 | `--force-new` | | `FLAG` | `False` | Force creation of a new results folder even when rerunning a single stage. |
 | `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools (e.g., AiZynthFinder) without prompting. |
+| `--progress` | | `FLAG` | `False` | Enable live Rich progress bar rendering for the pipeline run. |
 
 The `--reuse` and `--force-new` flags are mutually exclusive. Using both will produce an error.
 
 The `--out` option cannot be used together with `--reuse` or `--force-new`.
+
+The progress bar is disabled by default in CLI runs. Use `--progress` when you want live stage progress rendering.
 
 ### Available Stages
 
@@ -99,6 +102,9 @@ uv run hedge run --reuse
 
 # Force a fresh results folder for a stage rerun
 uv run hedge run --stage synthesis --force-new
+
+# Enable live progress bar
+uv run hedge run --progress
 ```
 
 ## `hedgehog report`
@@ -165,10 +171,11 @@ Launches the interactive Terminal User Interface for visual pipeline configurati
 uv run hedgehog tui
 ```
 
-The TUI can also be launched directly via the shell script:
+The TUI can also be launched directly from the TUI package:
 
 ```bash
-./run-tui.sh
+cd tui
+npm run tui
 ```
 
 ## Alias

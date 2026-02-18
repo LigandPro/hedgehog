@@ -380,6 +380,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(tmp_path, mo
         reuse_folder=False,
         force_new_folder=False,
         auto_install=False,
+        show_progress=True,
     )
 
     progress_instance = _FakeProgress.instances[-1]
@@ -393,3 +394,67 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(tmp_path, mo
     assert any(desc.startswith("1/2 - Prep") for desc in descriptions)
     assert any(desc.startswith("2/2 - Descriptors") for desc in descriptions)
     assert not any(desc.startswith("0/2 - ") for desc in descriptions)
+
+
+def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
+    """CLI should not create Rich progress/task unless --progress is enabled."""
+    import hedgehog.main as main_mod
+
+    results_dir = tmp_path / "results"
+    input_path = tmp_path / "input.csv"
+    input_path.write_text("smiles,model_name,mol_idx\nCCO,m1,0\n", encoding="utf-8")
+
+    base_config = {
+        "folder_to_save": str(results_dir),
+        "generated_mols_path": str(input_path),
+        "save_sampled_mols": False,
+    }
+    prepared_df = pd.DataFrame({"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]})
+
+    monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
+    monkeypatch.setattr(main_mod, "_plain_output_enabled", lambda: False)
+    monkeypatch.setattr(main_mod, "load_config", lambda *args, **kwargs: base_config.copy())
+    monkeypatch.setattr(main_mod, "_apply_cli_overrides", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod,
+        "_resolve_output_folder",
+        lambda *args, **kwargs: Path(base_config["folder_to_save"]),
+    )
+    monkeypatch.setattr(
+        main_mod.LoggerSingleton,
+        "configure_log_directory",
+        lambda self, folder_to_save: None,
+    )
+    monkeypatch.setattr(main_mod, "_preprocess_input", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod,
+        "prepare_input_data",
+        lambda *args, **kwargs: prepared_df.copy(),
+    )
+    monkeypatch.setattr(main_mod, "_save_sampled_molecules", lambda *args, **kwargs: None)
+
+    def _progress_should_not_be_created(*args, **kwargs):
+        raise AssertionError("Progress should not be initialized when --progress is not set")
+
+    monkeypatch.setattr(main_mod, "Progress", _progress_should_not_be_created)
+
+    captured: dict[str, object] = {}
+
+    def _fake_calculate_metrics(data, config, progress_callback):
+        captured["progress_callback"] = progress_callback
+        return True
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
+
+    main_mod.run(
+        config_path="unused.yml",
+        generated_mols_path=None,
+        out_dir=None,
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+        show_progress=False,
+    )
+
+    assert captured["progress_callback"] is None

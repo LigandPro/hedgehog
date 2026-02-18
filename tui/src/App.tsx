@@ -157,8 +157,9 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
   ],
   wizardStageSelection: [
     { key: 'Space', label: 'Toggle' },
-    { key: 'a/n', label: 'All/None' },
-    { key: '→/Enter', label: 'Next' },
+    { key: 'c', label: 'Configure stage' },
+    { key: 'Enter', label: 'Fast start' },
+    { key: 'r/→', label: 'Detailed review' },
     { key: '←/Esc', label: 'Back' },
   ],
   wizardStageOrder: [
@@ -207,6 +208,8 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
   wizardReview: [
     { key: '↑↓', label: 'Navigate' },
     { key: 'e', label: 'Edit stage' },
+    { key: 'r', label: 'Refresh preflight' },
+    { key: 'Tab', label: 'Summary/Detailed' },
     { key: 'Enter', label: 'Start' },
     { key: '←/Esc', label: 'Back' },
   ],

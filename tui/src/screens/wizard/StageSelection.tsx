@@ -1,18 +1,10 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
 import { useStore } from '../../store/index.js';
-import type { Screen } from '../../types/index.js';
-
-const STAGES: Array<{ key: string; name: string; description: string; configScreen?: Screen }> = [
-  { key: 'mol_prep', name: 'Mol Prep', description: 'Standardize molecules (Datamol)', configScreen: 'wizardConfigMolPrep' as Screen },
-  { key: 'descriptors', name: 'Descriptors', description: 'Calculate molecular descriptors', configScreen: 'wizardConfigDescriptors' as Screen },
-  { key: 'struct_filters', name: 'Struct Filters', description: 'Apply structural filters', configScreen: 'wizardConfigFilters' as Screen },
-  { key: 'synthesis', name: 'Synthesis', description: 'Score synthesizability', configScreen: 'wizardConfigSynthesis' as Screen },
-  { key: 'docking', name: 'Docking', description: 'Run molecular docking', configScreen: 'wizardConfigDocking' as Screen },
-  { key: 'docking_filters', name: 'Docking Filters', description: 'Filter docking poses and interactions', configScreen: 'wizardConfigDockingFilters' as Screen },
-];
+import { runWizardPipeline } from './runPipeline.js';
+import { STAGE_METADATA, WIZARD_STAGE_ORDER } from './stageMetadata.js';
 
 export function StageSelection(): React.ReactElement {
   const setScreen = useStore((state) => state.setScreen);
@@ -21,23 +13,34 @@ export function StageSelection(): React.ReactElement {
   const showToast = useStore((state) => state.showToast);
 
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [starting, setStarting] = useState(false);
+
+  const stages = useMemo(
+    () => WIZARD_STAGE_ORDER.map((key) => ({
+      key,
+      name: STAGE_METADATA[key].title,
+      description: STAGE_METADATA[key].shortDescription,
+      configScreen: STAGE_METADATA[key].configScreen,
+    })),
+    []
+  );
 
   const selectedCount = wizard.selectedStages.length;
 
   const openConfig = () => {
-    const stage = STAGES[focusedIndex];
-    if (!stage.configScreen) {
-      showToast('warning', `No config screen for stage: ${stage.name}`);
+    const stage = stages[focusedIndex];
+    if (!stage?.configScreen) {
+      showToast('warning', `No config screen for stage: ${stage?.name || 'unknown'}`);
       return;
     }
-    // Enable the stage if not already enabled
+
     if (!wizard.selectedStages.includes(stage.key)) {
       toggleWizardStage(stage.key);
     }
     setScreen(stage.configScreen);
   };
 
-  const goNext = () => {
+  const openReview = () => {
     if (selectedCount === 0) {
       showToast('warning', 'Select at least one stage');
       return;
@@ -45,24 +48,40 @@ export function StageSelection(): React.ReactElement {
     setScreen('wizardReview');
   };
 
+  const startFast = async () => {
+    if (starting) return;
+    if (selectedCount === 0) {
+      showToast('warning', 'Select at least one stage');
+      return;
+    }
+
+    setStarting(true);
+    try {
+      await runWizardPipeline({ onPreflightErrorScreen: 'wizardReview' });
+    } finally {
+      setStarting(false);
+    }
+  };
+
   useInput((input, key) => {
+    if (starting) return;
+
     if (key.upArrow) {
       setFocusedIndex(Math.max(0, focusedIndex - 1));
     } else if (key.downArrow) {
-      setFocusedIndex(Math.min(STAGES.length - 1, focusedIndex + 1));
+      setFocusedIndex(Math.min(stages.length - 1, focusedIndex + 1));
     } else if (input === ' ') {
-      // Space - toggle stage
-      if (STAGES[focusedIndex].key === 'mol_prep') {
+      if (stages[focusedIndex].key === 'mol_prep') {
         showToast('info', 'Mol Prep is a prerequisite stage and is usually kept enabled');
       } else {
-        toggleWizardStage(STAGES[focusedIndex].key);
+        toggleWizardStage(stages[focusedIndex].key);
       }
     } else if (input === 'c') {
-      // 'c' - open config
       openConfig();
-    } else if (key.return || key.rightArrow) {
-      // Enter or Right arrow - go to Review
-      goNext();
+    } else if (input === 'r' || key.rightArrow) {
+      openReview();
+    } else if (key.return) {
+      void startFast();
     } else if (key.escape || key.leftArrow || input === 'q') {
       setScreen('wizardInputSelection');
     }
@@ -71,7 +90,8 @@ export function StageSelection(): React.ReactElement {
   const shortcuts = [
     { key: 'Space', label: 'Toggle' },
     { key: 'c', label: 'Configure' },
-    { key: 'Enter/→', label: 'Next' },
+    { key: 'Enter', label: 'Fast start' },
+    { key: 'r/→', label: 'Detailed review' },
     { key: '←/Esc', label: 'Back' },
   ];
 
@@ -84,7 +104,7 @@ export function StageSelection(): React.ReactElement {
       </Box>
 
       <Box flexDirection="column" marginY={1}>
-        {STAGES.map((stage, index) => {
+        {stages.map((stage, index) => {
           const isSelected = wizard.selectedStages.includes(stage.key);
           const isFocused = focusedIndex === index;
 
@@ -107,6 +127,12 @@ export function StageSelection(): React.ReactElement {
         <Text color="cyan">{selectedCount}</Text>
         <Text dimColor> stage{selectedCount !== 1 ? 's' : ''} selected</Text>
       </Box>
+
+      {starting && (
+        <Box marginBottom={1}>
+          <Text color="yellow">Running preflight and starting pipeline...</Text>
+        </Box>
+      )}
 
       <Footer shortcuts={shortcuts} />
     </Box>
