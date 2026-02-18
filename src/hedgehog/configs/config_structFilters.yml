@@ -1,5 +1,11 @@
 run: true
 filter_data: true
+parse_input_n_jobs: -1
+write_per_filter_outputs: true
+generate_plots: true
+generate_failure_analysis: true
+combine_in_memory: true
+parallel_scheduler: processes
 alerts_data_path: data/common_alerts_collection.csv
 calculate_common_alerts: true
 include_rulesets:
@@ -97,7 +103,8 @@ exclude_descriptions:
 calculate_molgraph_stats: true
 calculate_molcomplexity: true
 calculate_NIBR: true
-nibr_scheduler: threads
+molgraph_scheduler: processes
+nibr_scheduler: processes
 calculate_bredt: true
 calculate_lilly: true
 lilly_scheduler: threads

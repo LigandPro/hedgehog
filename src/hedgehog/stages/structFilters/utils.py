@@ -1,4 +1,5 @@
 import contextlib
+import importlib
 import io
 import os
 import warnings
@@ -12,8 +13,6 @@ from matplotlib.colors import LinearSegmentedColormap
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-import datamol as dm
-import medchem as mc
 from rdkit import Chem
 
 # Add local Lilly binaries to PATH before importing LillyDemeritsFilters
@@ -33,6 +32,150 @@ if _LILLY_BIN_PATH.exists():
     if lilly_str not in current_path:
         os.environ["PATH"] = f"{lilly_str}:{current_path}"
 
+_VALID_SCHEDULERS = {"threads", "processes"}
+_COMPLEXITY_FILTERS_CACHE = {}
+_MOLCOMPLEXITY_ALERT_NAMES: list[str] | None = None
+_ALERT_COMPILED_SMARTS: list[tuple[str, object, str]] | None = None
+_ALERT_RULESET_NAMES: list[str] | None = None
+
+
+def _import_medchem_quietly():
+    """Import medchem while muting native stdout/stderr noise."""
+    stdout_fd = os.dup(1)
+    stderr_fd = os.dup(2)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        return importlib.import_module("medchem")
+    finally:
+        os.dup2(stdout_fd, 1)
+        os.dup2(stderr_fd, 2)
+        os.close(devnull_fd)
+        os.close(stdout_fd)
+        os.close(stderr_fd)
+
+
+def _resolve_scheduler(config_structFilters, scheduler_key, default="processes"):
+    """Resolve scheduler name for medchem parallel APIs."""
+    scheduler_raw = config_structFilters.get(scheduler_key)
+    if scheduler_raw is None:
+        scheduler_raw = config_structFilters.get("parallel_scheduler", default)
+    scheduler = str(scheduler_raw).strip().lower()
+    if scheduler not in _VALID_SCHEDULERS:
+        logger.warning(
+            "Invalid scheduler '%s' for '%s'. Using '%s'.",
+            scheduler_raw,
+            scheduler_key,
+            default,
+        )
+        return default
+    return scheduler
+
+
+def _get_complexity_filter(metric_name):
+    """Get cached complexity filter instance for worker process."""
+    complexity_filter = _COMPLEXITY_FILTERS_CACHE.get(metric_name)
+    if complexity_filter is None:
+        complexity_filter = mc.complexity.ComplexityFilter(complexity_metric=metric_name)
+        _COMPLEXITY_FILTERS_CACHE[metric_name] = complexity_filter
+    return complexity_filter
+
+
+def _compute_molcomplexity_one(args):
+    """Compute all complexity metrics for one molecule."""
+    mol_idx, mol = args
+    alert_names = _MOLCOMPLEXITY_ALERT_NAMES or []
+    row = {"_mol_idx": mol_idx}
+
+    if mol is None:
+        row.update({f"pass_{name}": False for name in alert_names})
+        row["pass"] = False
+        row["pass_any"] = False
+        return row
+
+    try:
+        prepared_mol = Chem.RemoveHs(mol)
+    except Exception:
+        prepared_mol = mol
+
+    passed_all = True
+    passed_any = False
+
+    for name in alert_names:
+        complexity_filter = _get_complexity_filter(name)
+        if name == "smcm":
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                try:
+                    passed = bool(complexity_filter(prepared_mol))
+                except Exception:
+                    passed = False
+        else:
+            try:
+                passed = bool(complexity_filter(prepared_mol))
+            except Exception:
+                passed = False
+
+        row[f"pass_{name}"] = passed
+        passed_all = passed_all and passed
+        passed_any = passed_any or passed
+
+    row["pass"] = passed_all
+    row["pass_any"] = passed_any
+    return row
+
+
+def _init_molcomplexity_worker(alert_names: list[str]) -> None:
+    global _MOLCOMPLEXITY_ALERT_NAMES
+    _MOLCOMPLEXITY_ALERT_NAMES = alert_names
+
+
+def _split_indexed_mols(indexed_mols, n_chunks):
+    """Split indexed molecules into near-equal chunks."""
+    if not indexed_mols:
+        return []
+    n_chunks = max(1, min(n_chunks, len(indexed_mols)))
+    chunk_size = (len(indexed_mols) + n_chunks - 1) // n_chunks
+    return [
+        indexed_mols[i : i + chunk_size]
+        for i in range(0, len(indexed_mols), chunk_size)
+    ]
+
+
+def _process_nibr_chunk(args):
+    """Run NIBR filter for one chunk with single-worker medchem call."""
+    indexed_chunk, keep_details = args
+    mol_indices = [item[0] for item in indexed_chunk]
+    mol_chunk = [item[1] for item in indexed_chunk]
+
+    nibr_filters = mc.structural.NIBRFilters()
+    chunk_df = nibr_filters(
+        mols=mol_chunk,
+        n_jobs=1,
+        scheduler="threads",
+        keep_details=keep_details,
+    )
+    if len(chunk_df) != len(indexed_chunk):
+        logger.warning(
+            "NIBR chunk returned %d rows for %d molecules.",
+            len(chunk_df),
+            len(indexed_chunk),
+        )
+        template = chunk_df.iloc[-1].to_dict() if len(chunk_df) > 0 else None
+        chunk_df = _ensure_dataframe_length(chunk_df, len(indexed_chunk), template)
+
+    chunk_df = chunk_df.reset_index(drop=True)
+    if "mol" in chunk_df.columns:
+        chunk_df = chunk_df.drop(columns=["mol"])
+    chunk_df["_mol_idx"] = mol_indices
+    return chunk_df.to_dict("records")
+
+
+mc = _import_medchem_quietly()
+
 try:
     from medchem.structural.lilly_demerits import LillyDemeritsFilters
 
@@ -42,7 +185,10 @@ except ImportError:
     LillyDemeritsFilters = None
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
+
+dm = import_datamol_quietly()
 
 # Default columns for Lilly filter results
 _LILLY_DEFAULT_COLUMNS = ["smiles", "status", "pass_filter", "demerit_score", "reasons"]
@@ -213,6 +359,123 @@ def common_postprocessing_statistics(filter_results, res_df, stat, extend):
         filter_extended = filter_results.copy()
 
     return res_df, filter_extended
+
+
+def _apply_subsample_to_dataframe(df, subsample):
+    """Apply structFilters subsampling policy to input DataFrame."""
+    if subsample is None or subsample <= 0:
+        return df
+
+    if "model_name" in df.columns and df["model_name"].nunique(dropna=True) > 1:
+        return df.groupby("model_name", group_keys=False).head(subsample)
+
+    return df.head(subsample) if len(df) > subsample else df
+
+
+def _parse_smiles_item(args):
+    """Parse one SMILES string into RDKit Mol."""
+    row_idx, smiles_raw, model_name, mol_idx = args
+    try:
+        mol = dm.to_mol(smiles_raw, sanitize=True)
+    except Exception:
+        mol = None
+    return row_idx, smiles_raw, model_name, mol_idx, mol
+
+
+def prepare_structfilters_input(df, subsample, parse_n_jobs, progress_cb=None):
+    """Prepare structFilters payload once: subsample + SMILES parsing.
+
+    Returns:
+        dict with keys:
+          - ``mols``: list of valid RDKit mols
+          - ``smiles_model_mols``: tuples (smiles, model_name_or_none, mol, mol_idx)
+          - ``base_df``: DataFrame with only valid rows
+    """
+    if df is None or len(df) == 0:
+        return {
+            "mols": [],
+            "smiles_model_mols": [],
+            "base_df": pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]),
+        }
+
+    if "smiles" not in df.columns:
+        raise KeyError("Input DataFrame must contain a 'smiles' column")
+
+    data = _apply_subsample_to_dataframe(df, subsample).copy()
+    if "model_name" not in data.columns:
+        data["model_name"] = "single"
+    if "mol_idx" not in data.columns:
+        data["mol_idx"] = range(len(data))
+
+    if len(data) == 0:
+        return {
+            "mols": [],
+            "smiles_model_mols": [],
+            "base_df": data.iloc[0:0].copy(),
+        }
+
+    is_multi = data["model_name"].nunique(dropna=True) > 1
+    model_vals = data["model_name"].tolist() if is_multi else [None] * len(data)
+    items = list(
+        enumerate(
+            zip(
+                data["smiles"].tolist(),
+                model_vals,
+                data["mol_idx"].tolist(),
+                strict=False,
+            )
+        )
+    )
+    parse_payload = [
+        (row_idx, item[0], item[1], item[2]) for row_idx, item in items
+    ]
+
+    n_jobs = int(parse_n_jobs)
+    if n_jobs <= 0:
+        n_jobs = os.cpu_count() or 1
+    parsed = parallel_map(
+        _parse_smiles_item,
+        parse_payload,
+        n_jobs,
+        progress=progress_cb,
+    )
+
+    valid_row_indices = []
+    smiles_model_mols = []
+    mols = []
+    for row_idx, smiles_raw, model_name, mol_idx, mol in parsed:
+        if mol is None:
+            continue
+        valid_row_indices.append(row_idx)
+        smiles_model_mols.append((smiles_raw, model_name, mol, mol_idx))
+        mols.append(mol)
+
+    if valid_row_indices:
+        base_df = data.iloc[valid_row_indices].copy().reset_index(drop=True)
+    else:
+        base_df = data.iloc[0:0].copy()
+
+    return {
+        "mols": mols,
+        "smiles_model_mols": smiles_model_mols,
+        "base_df": base_df,
+    }
+
+
+def process_prepared_payload(config, prepared_payload, apply_filter, progress_cb=None):
+    """Apply one structural filter on pre-parsed payload."""
+    mols = prepared_payload["mols"]
+    smiles = prepared_payload["smiles_model_mols"]
+
+    if len(mols) == 0:
+        return None
+
+    if progress_cb is not None:
+        try:
+            return apply_filter(config, mols, smiles, progress_cb=progress_cb)
+        except TypeError:
+            pass
+    return apply_filter(config, mols, smiles)
 
 
 def process_one_dataframe(config, df, apply_filter, subsample, progress_cb=None):
@@ -453,12 +716,14 @@ def _check_alerts_single_mol(args):
     """Check all alert SMARTS patterns against a single molecule.
 
     Args:
-        args: Tuple of (mol_idx, mol, compiled_smarts, rule_set_names).
+        args: Tuple of (mol_idx, mol).
 
     Returns:
         dict with per-rule-set pass/fail flags and failure reasons.
     """
-    mol_idx, mol, compiled_smarts, rule_set_names = args
+    mol_idx, mol = args
+    compiled_smarts = _ALERT_COMPILED_SMARTS or []
+    rule_set_names = _ALERT_RULESET_NAMES or []
 
     row_data = {"_mol_idx": mol_idx}
     row_data["smiles"] = dm.to_smiles(mol) if mol is not None else None
@@ -483,6 +748,15 @@ def _check_alerts_single_mol(args):
             row_data[f"reasons_{name}"] = "invalid_molecule"
 
     return row_data
+
+
+def _init_alert_worker(
+    compiled_smarts: list[tuple[str, object, str]],
+    rule_set_names: list[str],
+) -> None:
+    global _ALERT_COMPILED_SMARTS, _ALERT_RULESET_NAMES
+    _ALERT_COMPILED_SMARTS = compiled_smarts
+    _ALERT_RULESET_NAMES = rule_set_names
 
 
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_cb=None):
@@ -516,9 +790,15 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
 
     # Parallel per-molecule alert checking.
     n_jobs = resolve_n_jobs(config_structFilters, config)
-    items = [(i, mol, compiled_smarts, rule_set_names) for i, mol in enumerate(mols)]
+    logger.info("Common Alerts workers: %d (scheduler=processes)", n_jobs)
+    items = [(i, mol) for i, mol in enumerate(mols)]
     results_list = parallel_map(
-        _check_alerts_single_mol, items, n_jobs, progress=progress_cb
+        _check_alerts_single_mol,
+        items,
+        n_jobs,
+        progress=progress_cb,
+        initializer=_init_alert_worker,
+        initargs=(compiled_smarts, rule_set_names),
     )
 
     # Restore mol column (RDKit Mol objects are not picklable across processes).
@@ -545,13 +825,18 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
 def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Molecular Graph statistics...")
     severities = list(range(1, 12))
+    config_structFilters = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_structFilters, config)
+    scheduler = _resolve_scheduler(config_structFilters, "molgraph_scheduler")
+    logger.info("MolGraph workers: %d (scheduler=%s)", n_jobs, scheduler)
 
     results = {"mol": mols}
     for s in severities:
         out = mc.functional.molecular_graph_filter(
             mols=mols,
             max_severity=s,
-            n_jobs=-1,
+            n_jobs=n_jobs,
+            scheduler=scheduler,
             progress=False,
             return_idx=False,
         )
@@ -565,44 +850,24 @@ def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
 
 def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Complexity filters...")
-    final_result = pd.DataFrame({"mol": mols, "pass": True, "pass_any": False})
+    config_path = config.get("config_structFilters")
+    config_structFilters = load_config(config_path) if config_path else {}
+    n_jobs = resolve_n_jobs(config_structFilters, config)
+    logger.info("MolComplexity workers: %d (scheduler=processes)", n_jobs)
+
     alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
-
-    def _apply_quiet_smcm(flt, mol):
-        if mol is None:
-            return False
-        try:
-            # Some datasets provide explicit [H] atoms in SMILES which are not
-            # supported by medchem's SMCM implementation. Remove explicit Hs
-            # before evaluation to avoid noisy stdout and to match implicit-H
-            # representations used by most generators.
-            mol = Chem.RemoveHs(mol)
-        except Exception:
-            pass
-
-        # medchem.complexity.SMCM uses print() for unsupported atoms.
-        # Suppress stdout/stderr so SLURM logs stay readable.
-        with (
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            try:
-                return bool(flt(mol))
-            except Exception:
-                return False
-
-    for name in alert_names:
-        cfilter = mc.complexity.ComplexityFilter(complexity_metric=name)
-        if name == "smcm":
-            final_result[f"pass_{name}"] = final_result["mol"].apply(
-                lambda m, flt=cfilter: _apply_quiet_smcm(flt, m)
-            )
-        else:
-            final_result[f"pass_{name}"] = final_result["mol"].apply(cfilter)
-        final_result["pass"] = final_result["pass"] * final_result[f"pass_{name}"]
-        final_result["pass_any"] = (
-            final_result["pass_any"] | final_result[f"pass_{name}"]
-        )
+    items = [(i, mol) for i, mol in enumerate(mols)]
+    rows = parallel_map(
+        _compute_molcomplexity_one,
+        items,
+        n_jobs,
+        initializer=_init_molcomplexity_worker,
+        initargs=(alert_names,),
+    )
+    for row in rows:
+        mol_idx = row.pop("_mol_idx")
+        row["mol"] = mols[mol_idx]
+    final_result = pd.DataFrame(rows)
 
     if smiles_modelName_mols is not None:
         final_result = add_model_name_col(final_result, smiles_modelName_mols)
@@ -611,9 +876,14 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
 
 def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Bredt filter...")
+    config_structFilters = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_structFilters, config)
+    scheduler = _resolve_scheduler(config_structFilters, "bredt_scheduler")
+    logger.info("Bredt workers: %d (scheduler=%s)", n_jobs, scheduler)
     out = mc.functional.bredt_filter(
         mols=mols,
-        n_jobs=-1,
+        n_jobs=n_jobs,
+        scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
@@ -625,9 +895,14 @@ def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
 
 def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Protecting Groups filter...")
+    config_structFilters = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_structFilters, config)
+    scheduler = _resolve_scheduler(config_structFilters, "protecting_groups_scheduler")
+    logger.info("Protecting Groups workers: %d (scheduler=%s)", n_jobs, scheduler)
     out = mc.functional.protecting_groups_filter(
         mols=mols,
-        n_jobs=-1,
+        n_jobs=n_jobs,
+        scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
@@ -640,11 +915,15 @@ def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
 def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Ring Infraction filter...")
     config_sf = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "ring_infraction_scheduler")
+    logger.info("Ring Infraction workers: %d (scheduler=%s)", n_jobs, scheduler)
     min_size = config_sf.get("ring_infraction_hetcycle_min_size", 4)
     out = mc.functional.ring_infraction_filter(
         mols=mols,
         hetcycle_min_size=min_size,
-        n_jobs=-1,
+        n_jobs=n_jobs,
+        scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
@@ -657,13 +936,17 @@ def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
 def apply_stereo_center(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Stereo Center filter...")
     config_sf = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "stereo_center_scheduler")
+    logger.info("Stereo Center workers: %d (scheduler=%s)", n_jobs, scheduler)
     max_centers = config_sf.get("stereo_max_centers", 4)
     max_undefined = config_sf.get("stereo_max_undefined", 2)
     out = mc.functional.num_stereo_center_filter(
         mols=mols,
         max_stereo_centers=max_centers,
         max_undefined_stereo_centers=max_undefined,
-        n_jobs=-1,
+        n_jobs=n_jobs,
+        scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
@@ -676,12 +959,16 @@ def apply_stereo_center(config, mols, smiles_modelName_mols=None):
 def apply_halogenicity(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Halogenicity filter...")
     config_sf = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "halogenicity_scheduler")
+    logger.info("Halogenicity workers: %d (scheduler=%s)", n_jobs, scheduler)
     out = mc.functional.halogenicity_filter(
         mols=mols,
         thresh_F=config_sf.get("halogenicity_thresh_F", 6),
         thresh_Br=config_sf.get("halogenicity_thresh_Br", 3),
         thresh_Cl=config_sf.get("halogenicity_thresh_Cl", 3),
-        n_jobs=-1,
+        n_jobs=n_jobs,
+        scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
@@ -694,11 +981,15 @@ def apply_halogenicity(config, mols, smiles_modelName_mols=None):
 def apply_symmetry(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Symmetry filter...")
     config_sf = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "symmetry_scheduler")
+    logger.info("Symmetry workers: %d (scheduler=%s)", n_jobs, scheduler)
     threshold = config_sf.get("symmetry_threshold", 0.8)
     out = mc.functional.symmetry_filter(
         mols=mols,
         symmetry_threshold=threshold,
-        n_jobs=-1,
+        n_jobs=n_jobs,
+        scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
@@ -712,15 +1003,45 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating NIBR filter...")
     config_structFilters = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = config_structFilters["nibr_scheduler"]
+    scheduler = _resolve_scheduler(config_structFilters, "nibr_scheduler")
+    logger.info("NIBR workers: %d (scheduler=%s)", n_jobs, scheduler)
 
-    nibr_filters = mc.structural.NIBRFilters()
-    results = nibr_filters(
-        mols=mols,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        keep_details=True,
+    indexed_mols = list(enumerate(mols))
+    n_workers = max(1, min(n_jobs, len(indexed_mols)))
+    chunked_mols = _split_indexed_mols(indexed_mols, n_workers)
+    chunk_payloads = [(chunk, True) for chunk in chunked_mols]
+    chunk_results = parallel_map(
+        _process_nibr_chunk,
+        chunk_payloads,
+        n_workers,
+        chunksize=1,
     )
+
+    rows = []
+    for chunk_rows in chunk_results:
+        rows.extend(chunk_rows)
+    results = pd.DataFrame(rows)
+
+    expected_indices = set(range(len(mols)))
+    observed_indices = set(results["_mol_idx"].tolist()) if "_mol_idx" in results else set()
+    if len(results) != len(mols) or observed_indices != expected_indices:
+        logger.warning(
+            "NIBR chunked processing mismatch (got %d/%d rows). Falling back to medchem native parallel call.",
+            len(results),
+            len(mols),
+        )
+        nibr_filters = mc.structural.NIBRFilters()
+        results = nibr_filters(
+            mols=mols,
+            n_jobs=n_jobs,
+            scheduler=scheduler,
+            keep_details=True,
+        )
+    else:
+        results = results.sort_values("_mol_idx").reset_index(drop=True)
+        results["mol"] = [mols[i] for i in results["_mol_idx"]]
+        results = results.drop(columns=["_mol_idx"])
+
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
     return results
@@ -784,6 +1105,34 @@ def _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler, batch_size=500
     return pd.concat(batch_results, ignore_index=True)
 
 
+def _process_lilly_chunk(args):
+    """Process one Lilly chunk in an isolated worker process."""
+    indexed_chunk, scheduler = args
+    mol_indices = [item[0] for item in indexed_chunk]
+    mol_chunk = [item[1] for item in indexed_chunk]
+
+    dfilter = LillyDemeritsFilters()
+    try:
+        chunk_result = dfilter(mols=mol_chunk, n_jobs=1, scheduler=scheduler)
+    except ValueError as error:
+        if "Length of values" in str(error) or "does not match length of index" in str(
+            error
+        ):
+            chunk_result = _process_lilly_one_by_one(dfilter, mol_chunk, scheduler)
+        else:
+            raise
+
+    if len(chunk_result) != len(indexed_chunk):
+        template = chunk_result.iloc[-1].to_dict() if len(chunk_result) > 0 else None
+        chunk_result = _ensure_dataframe_length(chunk_result, len(indexed_chunk), template)
+
+    chunk_result = chunk_result.reset_index(drop=True)
+    if "mol" in chunk_result.columns:
+        chunk_result = chunk_result.drop(columns=["mol"])
+    chunk_result["_mol_idx"] = mol_indices
+    return chunk_result.to_dict("records")
+
+
 def _reconstruct_full_results(results, valid_indices, expected_len, input_smiles):
     """Reconstruct full results DataFrame including invalid molecules."""
     complete_results = []
@@ -819,7 +1168,14 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     logger.info("Calculating Lilly filter...")
     config_structFilters = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = config_structFilters["lilly_scheduler"]
+    scheduler = _resolve_scheduler(config_structFilters, "lilly_scheduler")
+    if scheduler != "threads":
+        logger.warning(
+            "Lilly supports only threads scheduler. Falling back to 'threads' (got '%s').",
+            scheduler,
+        )
+        scheduler = "threads"
+    logger.info("Lilly workers: %d (scheduler=%s)", n_jobs, scheduler)
 
     if smiles_modelName_mols is not None:
         expected_len = len(smiles_modelName_mols)
@@ -831,8 +1187,9 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
         expected_len = len(mols)
         input_smiles = [dm.to_smiles(mol) if mol is not None else None for mol in mols]
 
-    # Collect valid molecules
+    # Collect valid molecules with original indices
     valid_mols = []
+    valid_indexed = []
     valid_indices = []
     for idx, mol in enumerate(mols):
         if mol is not None:
@@ -840,6 +1197,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                 smi = dm.to_smiles(mol)
                 if smi:
                     valid_mols.append(mol)
+                    valid_indexed.append((idx, mol))
                     valid_indices.append(idx)
             except Exception:
                 pass
@@ -852,28 +1210,59 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             results = add_model_name_col(results, smiles_modelName_mols)
         return results
 
-    # Run the filter
-    dfilter = LillyDemeritsFilters()
+    # Run Lilly across worker processes, one thread-backed call per worker.
+    n_workers = max(1, min(n_jobs, len(valid_indexed)))
+    chunked_mols = _split_indexed_mols(valid_indexed, n_workers)
+    chunk_payloads = [(chunk, scheduler) for chunk in chunked_mols]
+
     try:
-        results = dfilter(mols=valid_mols, n_jobs=n_jobs, scheduler=scheduler)
-    except ValueError as e:
-        if "Length of values" in str(e) or "does not match length of index" in str(e):
+        chunk_results = parallel_map(
+            _process_lilly_chunk,
+            chunk_payloads,
+            n_workers,
+            chunksize=1,
+        )
+        rows = []
+        for chunk_rows in chunk_results:
+            rows.extend(chunk_rows)
+        results = pd.DataFrame(rows)
+    except Exception as error:
+        logger.warning(
+            "Parallel Lilly execution failed (%s). Falling back to batched native mode.",
+            error,
+        )
+        dfilter = LillyDemeritsFilters()
+        results = _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler)
+        if results is None:
+            raise ValueError("All Lilly batches failed in fallback mode.") from error
+        template = results.iloc[-1].to_dict() if len(results) > 0 else None
+        results = _ensure_dataframe_length(results, len(valid_mols), template)
+    else:
+        expected_indices = set(valid_indices)
+        observed_indices = (
+            set(results["_mol_idx"].tolist()) if "_mol_idx" in results.columns else set()
+        )
+        if len(results) != len(valid_mols) or observed_indices != expected_indices:
+            logger.warning(
+                "Lilly chunked processing mismatch (got %d/%d rows). Falling back to batched native mode.",
+                len(results),
+                len(valid_mols),
+            )
+            dfilter = LillyDemeritsFilters()
             results = _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler)
             if results is None:
-                raise ValueError(
-                    f"All batches failed. Cannot process lilly filter. Original error: {e}"
-                ) from e
+                raise ValueError("All Lilly batches failed in fallback mode.")
+            template = results.iloc[-1].to_dict() if len(results) > 0 else None
+            results = _ensure_dataframe_length(results, len(valid_mols), template)
         else:
-            raise
-
-    # Ensure results match valid_mols length
-    template = results.iloc[-1].to_dict() if len(results) > 0 else None
-    results = _ensure_dataframe_length(results, len(valid_mols), template)
+            results = results.sort_values("_mol_idx").reset_index(drop=True)
+            results = results.drop(columns=["_mol_idx"])
 
     # Reconstruct full results including invalid molecules
     results = _reconstruct_full_results(
         results, valid_indices, expected_len, input_smiles
     )
+    results["mol"] = [mols[i] if i < len(mols) else None for i in range(expected_len)]
 
     # Final length check
     results = _ensure_dataframe_length(results, expected_len)
@@ -1454,6 +1843,59 @@ def plot_restriction_ratios(config, stage_dir):
         edgecolor="none",
     )
     plt.close()
+
+
+def combine_filter_results_in_memory(output_dir, input_df, pass_mask_by_filter):
+    """Combine per-filter pass masks in-memory and persist stage outputs."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    identity_cols = [c for c in ["smiles", "model_name", "mol_idx"] if c in input_df.columns]
+    combined = input_df[identity_cols].copy()
+
+    pass_columns = []
+    for filter_name, pass_df in pass_mask_by_filter.items():
+        col_name = f"pass_{filter_name}"
+        pass_columns.append(col_name)
+
+        if pass_df is None or len(pass_df) == 0:
+            combined[col_name] = False
+            continue
+
+        local_df = pass_df.copy()
+        pass_col = None
+        if "pass" in local_df.columns:
+            pass_col = "pass"
+        elif "pass_filter" in local_df.columns:
+            pass_col = "pass_filter"
+
+        if pass_col is None:
+            combined[col_name] = False
+            continue
+
+        merge_cols = [c for c in identity_cols if c in local_df.columns]
+        if not merge_cols:
+            combined[col_name] = False
+            continue
+
+        cols_to_take = merge_cols + [pass_col]
+        local_df = local_df[cols_to_take].drop_duplicates(subset=merge_cols, keep="last")
+        local_df = local_df.rename(columns={pass_col: col_name})
+        combined = combined.merge(local_df, on=merge_cols, how="left")
+        combined[col_name] = combined[col_name].fillna(False).astype(bool)
+
+    if pass_columns:
+        combined["_pass_all"] = combined[pass_columns].all(axis=1)
+    else:
+        combined["_pass_all"] = False
+
+    filtered_df = combined[combined["_pass_all"]][identity_cols].copy()
+    filtered_df.to_csv(output_path / "filtered_molecules.csv", index=False)
+
+    failed_cols = identity_cols + pass_columns
+    failed_df = combined[~combined["_pass_all"]][failed_cols].copy()
+    failed_df.to_csv(output_path / "failed_molecules.csv", index=False)
+    return filtered_df, failed_df
 
 
 def filter_data(config, stage_dir):
