@@ -71,6 +71,9 @@ def main(config: dict, reporter=None) -> None:
 
     if len(input_df) == 0:
         logger.warning("No molecules to process for synthesis analysis")
+        empty = pd.DataFrame(columns=IDENTITY_COLUMNS)
+        _save_ordered_csv(empty, filtered_output)
+        logger.info("Saved 0 molecules to %s", filtered_output)
         return
 
     stage_total = 400
@@ -129,7 +132,7 @@ def main(config: dict, reporter=None) -> None:
         project_root = Path(__file__).resolve().parents[4]
         try:
             aizynth_config = ensure_aizynthfinder(project_root)
-        except RuntimeError:
+        except Exception:
             _log_aizynthfinder_setup_instructions(aizynth_config)
             _save_ordered_csv(score_filtered_df, filtered_output)
             return

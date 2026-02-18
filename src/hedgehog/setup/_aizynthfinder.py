@@ -58,18 +58,44 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
     if not confirm_download("AiZynthFinder", "~800 MB (repo + models)"):
         raise RuntimeError("AiZynthFinder download declined by user.")
 
-    # 4. Clone repository
-    if not retro_dir.exists():
-        logger.info("Cloning retrosynthesis repository...")
-        modules_dir = project_root / "modules"
-        modules_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["git", "clone", "https://github.com/LigandPro/retrosynthesis.git"],
-            cwd=modules_dir,
-            check=True,
-            timeout=600,
+    # 4. Ensure repository layout exists
+    if not aizynth_dir.exists():
+        if retro_dir.exists() and not (retro_dir / ".git").exists():
+            logger.warning(
+                "Found incomplete retrosynthesis directory at %s; recreating it.",
+                retro_dir,
+            )
+            shutil.rmtree(retro_dir)
+
+        if not retro_dir.exists():
+            logger.info("Cloning retrosynthesis repository...")
+            modules_dir = project_root / "modules"
+            modules_dir.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "https://github.com/LigandPro/retrosynthesis.git"],
+                cwd=modules_dir,
+                check=True,
+                timeout=1800,
+            )
+            logger.info("Repository cloned successfully")
+        elif (retro_dir / ".git").exists():
+            logger.info("Updating retrosynthesis repository...")
+            try:
+                subprocess.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=retro_dir,
+                    check=True,
+                    timeout=1800,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "git pull timed out after 1800s; continuing with existing checkout."
+                )
+
+    if not aizynth_dir.exists():
+        raise RuntimeError(
+            f"AiZynthFinder directory not found after setup: {aizynth_dir}"
         )
-        logger.info("Repository cloned successfully")
 
     # 5. Install dependencies
     if not (aizynth_dir / ".venv").exists():
@@ -84,7 +110,7 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
 
     # 6. Download public data
     public_dir.mkdir(parents=True, exist_ok=True)
-    if not any(public_dir.iterdir()):
+    def _download_public_data() -> None:
         logger.info("Downloading AiZynthFinder public data (models)...")
         subprocess.run(
             [
@@ -100,6 +126,19 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
             timeout=7200,
         )
         logger.info("Public data downloaded successfully")
+
+    if not any(public_dir.iterdir()):
+        _download_public_data()
+
+    # The public data download is also responsible for writing config.yml.
+    # If the directory already had content but config.yml is missing (partial
+    # manual copy, interrupted download), try running it again.
+    if not config_yml.exists():
+        logger.warning("AiZynthFinder config.yml is missing; re-running public data setup.")
+        _download_public_data()
+
+    if not config_yml.exists():
+        raise RuntimeError(f"AiZynthFinder config.yml not found after setup: {config_yml}")
 
     # 7. Copy logging.yml
     logging_src = (

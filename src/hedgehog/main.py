@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 import warnings
 from enum import Enum
 from pathlib import Path
@@ -30,9 +31,14 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.yml")
 SAMPLED_MOLS_FILENAME = "sampled_molecules.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
+PLAIN_OUTPUT_ENV = "HEDGEHOG_PLAIN_OUTPUT"
 
 # Supported SMI-like file extensions for ligand preparation tool
 SMI_EXTENSIONS = {"smi", "ismi", "cmi", "txt"}
+
+
+def _plain_output_enabled() -> bool:
+    return os.environ.get(PLAIN_OUTPUT_ENV, "").strip() == "1"
 
 
 def _validate_input_path(input_path):
@@ -67,6 +73,8 @@ def _get_unique_results_folder(base_folder) -> Path:
     import re
 
     base_folder = Path(base_folder)
+    if _folder_is_empty(base_folder):
+        return base_folder
     parent = base_folder.parent
     base_name = base_folder.name
 
@@ -99,7 +107,8 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
     Preprocess input CSV file using RDKit.
 
     Fallback when ligand_preparation_tool is not provided.
-    Canonicalizes SMILES and removes duplicates within each model.
+    For CSV inputs, performs lightweight schema normalization and duplicate
+    removal. Full molecule standardization is handled by the MolPrep stage.
 
     Parameters
     ----------
@@ -124,11 +133,10 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
         prepared_output = folder_to_save / f"prepared_{input_path_obj.stem}.csv"
 
         df = pd.read_csv(input_path_obj)
-        # Normalize common column variants to match prepare_input_data expectations.
         lower_cols = {c.lower(): c for c in df.columns}
         smiles_col = lower_cols.get("smiles")
         if not smiles_col:
-            log.debug("RDKit preprocessing: missing SMILES column in %s", input_path)
+            log.debug("CSV preprocessing: missing SMILES column in %s", input_path)
             return None
         if smiles_col != "smiles":
             df = df.rename(columns={smiles_col: "smiles"})
@@ -140,24 +148,11 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
         else:
             df["model_name"] = input_path_obj.stem
 
-        cleaned_data = []
-
-        for _, row in df.iterrows():
-            canonical_smi = _canonicalize_smiles(str(row["smiles"]))
-            if canonical_smi is None:
-                continue
-            row_data = {"smiles": canonical_smi, "model_name": row["model_name"]}
-            cleaned_data.append(row_data)
-
-        if not cleaned_data:
-            return None
-
-        output_df = pd.DataFrame(cleaned_data)
+        output_df = df[["smiles", "model_name"]].dropna(subset=["smiles"]).copy()
         initial_count = len(output_df)
-
-        output_df = output_df.drop_duplicates(
-            subset=["smiles", "model_name"], keep="first"
-        ).reset_index(drop=True)
+        output_df = output_df.drop_duplicates(subset=["smiles", "model_name"]).reset_index(
+            drop=True
+        )
 
         duplicates_removed = initial_count - len(output_df)
         if duplicates_removed > 0:
@@ -168,7 +163,7 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
 
         output_df.to_csv(prepared_output, index=False)
         log.info(
-            "RDKit preprocessing: %d molecules saved to %s",
+            "CSV preprocessing: %d molecules saved to %s",
             len(output_df),
             prepared_output,
         )
@@ -263,12 +258,14 @@ def preprocess_input_with_tool(
 
 def _display_banner() -> None:
     """Display the HEDGEHOG banner."""
+    if _plain_output_enabled():
+        return
     banner_content = (
-        "[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE]\n"
+        "[bold]🦔 HEDGEHOG[/bold]\n"
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]\n"
         "[dim italic]Developed by Ligand Pro[/dim italic]"
     )
-    banner = Panel(banner_content, border_style="#B29EEE", padding=(0, 1), expand=False)
+    banner = Panel(banner_content, border_style="dim", padding=(0, 1), expand=False)
     console.print("")
     console.print(banner)
     console.print("")
@@ -283,7 +280,7 @@ def _apply_cli_overrides(
     if generated_mols_path:
         config_dict["generated_mols_path"] = generated_mols_path
         logger.info(
-            "[#B29EEE]Override:[/#B29EEE] Using molecules from: %s",
+            "[bold]Override:[/bold] Using molecules from: %s",
             generated_mols_path,
         )
     elif stage:
@@ -295,7 +292,7 @@ def _apply_cli_overrides(
     if stage:
         config_dict[STAGE_OVERRIDE_KEY] = stage.value
         logger.info(
-            "[#B29EEE]Override:[/#B29EEE] Running only stage: [bold]%s[/bold]",
+            "[bold]Override:[/bold] Running only stage: [bold]%s[/bold]",
             stage.value,
         )
 
@@ -312,7 +309,7 @@ def _resolve_output_folder(
 
     if reuse_folder:
         logger.info(
-            "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' (--reuse flag)",
+            "[bold]Folder mode:[/bold] Reusing folder '%s' (--reuse flag)",
             original_folder,
         )
         return original_folder
@@ -321,7 +318,7 @@ def _resolve_output_folder(
         folder = _get_unique_results_folder(original_folder)
         if folder != original_folder:
             logger.info(
-                "[#B29EEE]Folder mode:[/#B29EEE] Creating new folder '%s' "
+                "[bold]Folder mode:[/bold] Creating new folder '%s' "
                 "(--force-new flag)",
                 folder,
             )
@@ -330,7 +327,7 @@ def _resolve_output_folder(
     # Auto-mode: reuse for stage reruns, create new otherwise
     if stage and not generated_mols_path:
         logger.info(
-            "[#B29EEE]Folder mode:[/#B29EEE] Reusing folder '%s' for stage execution",
+            "[bold]Folder mode:[/bold] Reusing folder '%s' for stage execution",
             original_folder,
         )
         return original_folder
@@ -338,7 +335,7 @@ def _resolve_output_folder(
     folder = _get_unique_results_folder(original_folder)
     if folder != original_folder:
         logger.info(
-            "[#B29EEE]Folder mode:[/#B29EEE] Folder '%s' "
+            "[bold]Folder mode:[/bold] Folder '%s' "
             "contains results. Using '%s' instead.",
             original_folder,
             folder,
@@ -399,7 +396,7 @@ def _save_sampled_molecules(
 
     data.to_csv(output_path, index=False)
     logger.info(
-        "[#B29EEE]✓[/#B29EEE] Sampled total of %d molecules saved to %s",
+        "Sampled total of %d molecules saved to %s",
         len(data),
         output_path,
     )
@@ -418,7 +415,7 @@ app = typer.Typer(
 
 setup_app = typer.Typer(help="Install optional external tools and assets.")
 app.add_typer(setup_app, name="setup")
-console = Console()
+console = Console(no_color=_plain_output_enabled())
 
 
 class Stage(str, Enum):
@@ -558,7 +555,7 @@ def run(
     if out_dir:
         folder_to_save = Path(out_dir).resolve()
         logger.info(
-            "[#B29EEE]Folder override:[/#B29EEE] Using output folder '%s' (--out)",
+            "[bold]Folder override:[/bold] Using output folder '%s' (--out)",
             folder_to_save,
         )
     else:
@@ -578,73 +575,182 @@ def run(
     should_save = config_dict.get("save_sampled_mols", False) or stage is not None
     _save_sampled_molecules(data, folder_to_save, should_save)
 
-    logger.info("[bold #B29EEE]Starting pipeline...[/bold #B29EEE]")
+    logger.info("[bold]Starting pipeline...[/bold]")
 
     shared_console = LoggerSingleton().console
 
-    with Progress(
-        SpinnerColumn(style="#B29EEE"),
-        TextColumn("[bold #B29EEE]{task.description}[/bold #B29EEE]"),
-        BarColumn(bar_width=40, complete_style="#B29EEE", finished_style="green"),
-        TextColumn("{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=shared_console,
-    ) as progress:
-        task_id = progress.add_task("Initializing pipeline...", total=None)
+    if _plain_output_enabled():
+        success = calculate_metrics(data, config_dict, None)
+    else:
+        short_stage_names = {
+            "mol_prep": "Prep",
+            "descriptors": "Descriptors",
+            "struct_filters": "StructFilters",
+            "synthesis": "Synthesis",
+            "docking": "Docking",
+            "docking_filters": "DockFilters",
+            "final_descriptors": "FinalDesc",
+        }
 
-        def _cli_progress(event: dict) -> None:
-            event_type = event.get("type")
-            stage = str(event.get("stage", ""))
-            stage_index = int(event.get("stage_index", 0) or 0)
-            total_stages = int(event.get("total_stages", 0) or 0)
-            message = event.get("message")
+        def _short_stage_name(stage: str) -> str:
+            if stage in short_stage_names:
+                return short_stage_names[stage]
+            return stage.replace("_", " ").title()
 
-            if total_stages > 0:
-                progress.update(task_id, total=total_stages * 100)
+        def _to_int(value) -> int | None:
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
 
-            if event_type == "stage_start":
-                completed = max(0, (stage_index - 1) * 100)
-                desc = f"Stage {stage_index}/{total_stages}: {stage}"
-                if message:
-                    desc = f"{desc} — {message}"
-                progress.update(task_id, completed=completed, description=desc)
-                return
+        def _format_seconds(value: float | None) -> str:
+            if value is None:
+                return "-"
+            if value < 60:
+                return f"{value:.1f}s"
+            minutes, seconds = divmod(int(round(value)), 60)
+            if minutes < 60:
+                return f"{minutes:02d}:{seconds:02d}"
+            hours, minutes = divmod(minutes, 60)
+            return f"{hours:d}:{minutes:02d}:{seconds:02d}"
 
-            if event_type == "stage_progress":
-                current = int(event.get("current", 0) or 0)
-                total = int(event.get("total", 0) or 0)
-                pct = int(round((current / total) * 100)) if total > 0 else 0
-                pct = max(0, min(100, pct))
-                completed = max(0, (stage_index - 1) * 100 + pct)
-                desc = f"Stage {stage_index}/{total_stages}: {stage} ({pct}%)"
-                if message:
-                    desc = f"{desc} — {message}"
-                progress.update(task_id, completed=completed, description=desc)
-                return
+        def _format_count(value: int | None) -> str:
+            if value is None:
+                return "-"
+            return f"{value:,}"
 
-            if event_type == "stage_complete":
-                completed = max(0, stage_index * 100)
-                desc = f"Stage {stage_index}/{total_stages}: {stage} complete"
-                if message:
-                    desc = f"{desc} — {message}"
-                progress.update(task_id, completed=completed, description=desc)
-                return
+        with Progress(
+            SpinnerColumn(style="dim"),
+            TextColumn("[bold]{task.description}[/bold]"),
+            BarColumn(bar_width=40),
+            TextColumn("mols {task.fields[done_total]}"),
+            TextColumn("rate {task.fields[rate]}"),
+            TextColumn("eta {task.fields[eta]}"),
+            TimeElapsedColumn(),
+            console=shared_console,
+        ) as progress:
+            stage_tasks: dict[int, int] = {}
+            stage_started_at: dict[int, float] = {}
+            current_stage_done: dict[int, int | None] = {}
+            current_stage_total: dict[int, int | None] = {}
 
-        success = calculate_metrics(data, config_dict, _cli_progress)
-        if progress.tasks[task_id].total:
-            progress.update(
-                task_id,
-                completed=progress.tasks[task_id].total,
-                description="Pipeline complete",
-            )
+            def _get_or_create_task(
+                stage_index: int,
+                total_stages: int,
+                short_name: str,
+            ) -> int | None:
+                if stage_index <= 0:
+                    return None
+                existing = stage_tasks.get(stage_index)
+                if existing is not None:
+                    return existing
+                task = progress.add_task(
+                    f"{max(stage_index - 1, 0)}/{total_stages} - {short_name}",
+                    total=100,
+                    done_total="-/-",
+                    rate="-",
+                    eta="-",
+                )
+                stage_tasks[stage_index] = task
+                return task
+
+            def _cli_progress(event: dict) -> None:
+                event_type = event.get("type")
+                stage = str(event.get("stage", ""))
+                stage_index = int(event.get("stage_index", 0) or 0)
+                total_stages = int(event.get("total_stages", 0) or 0)
+                short_name = _short_stage_name(stage)
+                task_id = _get_or_create_task(stage_index, total_stages, short_name)
+                if task_id is None:
+                    return
+
+                if event_type == "stage_start":
+                    stage_started_at[stage_index] = time.perf_counter()
+                    current_stage_done[stage_index] = None
+                    current_stage_total[stage_index] = None
+                    progress.update(
+                        task_id,
+                        completed=0,
+                        description=f"{max(stage_index - 1, 0)}/{total_stages} - {short_name}",
+                        done_total="-/-",
+                        rate="-",
+                        eta="-",
+                    )
+                    return
+
+                if event_type == "stage_progress":
+                    current = int(event.get("current", 0) or 0)
+                    total = int(event.get("total", 0) or 0)
+                    current_stage_done[stage_index] = current if current >= 0 else None
+                    current_stage_total[stage_index] = total if total > 0 else None
+                    pct = int(round((current / total) * 100)) if total > 0 else 0
+                    pct = max(0, min(100, pct))
+                    started_at = stage_started_at.get(stage_index)
+                    elapsed_seconds = (
+                        time.perf_counter() - started_at
+                        if started_at is not None
+                        else None
+                    )
+                    left_count = (
+                        max(total - current, 0) if total > 0 and current >= 0 else None
+                    )
+                    rate = (
+                        (current / elapsed_seconds)
+                        if elapsed_seconds and elapsed_seconds > 0 and current > 0
+                        else None
+                    )
+                    eta_seconds = (
+                        (left_count / rate)
+                        if left_count is not None and rate and rate > 0
+                        else None
+                    )
+                    progress.update(
+                        task_id,
+                        completed=pct,
+                        description=f"{max(stage_index - 1, 0)}/{total_stages} - {short_name}",
+                        done_total=(
+                            f"{_format_count(current)}/{_format_count(total)}"
+                            if total > 0
+                            else "-/-"
+                        ),
+                        rate=(f"{rate:,.0f}/s" if rate is not None else "-"),
+                        eta=_format_seconds(eta_seconds),
+                    )
+                    return
+
+                if event_type == "stage_complete":
+                    done_total = "-/-"
+                    stage_total = current_stage_total.get(stage_index)
+                    stage_done = current_stage_done.get(stage_index)
+                    if stage_total is not None:
+                        done = stage_done
+                        if done is None or done < 0:
+                            done = stage_total
+                        done_total = f"{_format_count(done)}/{_format_count(stage_total)}"
+                    progress.update(
+                        task_id,
+                        completed=100,
+                        description=f"{stage_index}/{total_stages} - {short_name}",
+                        done_total=done_total,
+                        rate="-",
+                        eta="-",
+                    )
+                    return
+
+            success = calculate_metrics(data, config_dict, _cli_progress)
+            if success and stage_tasks:
+                last_stage_idx = max(stage_tasks.keys())
+                progress.update(
+                    stage_tasks[last_stage_idx],
+                    description=progress.tasks[stage_tasks[last_stage_idx]].description,
+                )
 
     if not success:
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)
-    logger.info(
-        "[bold][#B29EEE]Ligand Pro[/#B29EEE] thanks you for using "
-        "[#B29EEE]🦔 HEDGEHOG[/#B29EEE]![/bold]"
-    )
+    logger.info("Ligand Pro thanks you for using HEDGEHOG!")
 
 
 @app.command()
@@ -756,9 +862,9 @@ def report(
             final_count=final_count,
         )
         report_path = report_gen.generate()
-        logger.info("[bold green]Report generated:[/bold green] %s", report_path)
+        logger.info("[bold]Report generated:[/bold] %s", report_path)
         console.print(
-            f"\n[bold #B29EEE]Report saved to:[/bold #B29EEE] {report_path}\n"
+            f"\n[bold]Report saved to:[/bold] {report_path}\n"
         )
     except Exception as e:
         console.print(f"[red]Error generating report:[/red] {e}")
@@ -771,9 +877,9 @@ def info() -> None:
     table = Table(
         title="Available Pipeline Stages",
         show_header=True,
-        header_style="bold #B29EEE",
+        header_style="bold",
     )
-    table.add_column("Stage", style="#B29EEE", no_wrap=True)
+    table.add_column("Stage", style="bold", no_wrap=True)
     table.add_column("Description", style="white")
 
     for stage in Stage:
@@ -787,11 +893,14 @@ def info() -> None:
 @app.command()
 def version() -> None:
     """Display version information."""
-    console.print("[bold #B29EEE]🦔 HEDGEHOG[/bold #B29EEE] version [bold]1.0.0[/bold]")
+    if _plain_output_enabled():
+        console.print("HEDGEHOG version 1.0.0")
+    else:
+        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.0[/bold]")
     console.print(
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )
-    console.print("[dim]Developed by [bold #B29EEE]Ligand Pro[/bold #B29EEE][/dim]")
+    console.print("[dim]Developed by [bold]Ligand Pro[/bold][/dim]")
 
 
 @setup_app.command("aizynthfinder")
@@ -812,7 +921,7 @@ def setup_aizynthfinder(
     project_root = Path(__file__).resolve().parents[2]
     config_path = ensure_aizynthfinder(project_root)
     console.print(
-        f"[bold green]AiZynthFinder installed.[/bold green] Config: {config_path}"
+        f"[bold]AiZynthFinder installed.[/bold] Config: {config_path}"
     )
 
 
@@ -851,9 +960,6 @@ def tui() -> None:
                     candidate = parent / "tui"
                     if candidate.exists():
                         return candidate
-                candidate = parent / "tui"
-                if candidate.exists():
-                    return candidate
         return None
 
     tui_dir = _find_tui_dir()
