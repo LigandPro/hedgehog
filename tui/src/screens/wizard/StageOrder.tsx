@@ -29,9 +29,11 @@ export function StageOrder(): React.ReactElement {
   });
 
   const goNext = () => {
-    // Navigate to first selected stage config (Mol Prep is not configured in the wizard UI).
-    const firstStage = selectedStagesInOrder.find((s) => s !== 'mol_prep') || selectedStagesInOrder[0];
-    if (firstStage === 'descriptors') {
+    // Navigate to first selected stage config.
+    const firstStage = selectedStagesInOrder[0];
+    if (firstStage === 'mol_prep') {
+      setScreen('wizardConfigMolPrep');
+    } else if (firstStage === 'descriptors') {
       setScreen('wizardConfigDescriptors');
     } else if (firstStage === 'struct_filters') {
       setScreen('wizardConfigFilters');

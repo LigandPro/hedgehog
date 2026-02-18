@@ -1,4 +1,5 @@
 run: true
+n_jobs: -1
 
 columns:
   smiles: smiles
@@ -54,4 +55,3 @@ filters:
 
 output:
   write_duplicates_removed: true
-

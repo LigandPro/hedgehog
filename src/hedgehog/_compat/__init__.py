@@ -14,7 +14,7 @@ def _get_module(name: str) -> ModuleType | None:
 
 
 def ensure_pandas_adjustment() -> None:
-    """Expose pandas text adjustment helpers where legacy callers expect them."""
+    """Expose pandas helpers where legacy third-party callers still expect them."""
     pandas_format = _get_module("pandas.io.formats.format")
     pandas_printing = _get_module("pandas.io.formats.printing")
 
@@ -28,3 +28,13 @@ def ensure_pandas_adjustment() -> None:
         pandas_printing, "_get_adjustment"
     ):
         pandas_format._get_adjustment = pandas_printing._get_adjustment  # type: ignore[attr-defined]
+
+    # pandas 3 removed DataFrame.applymap in favor of DataFrame.map.
+    # Older RDKit PandasPatcher still accesses applymap at import time.
+    pandas_module = _get_module("pandas")
+    if pandas_module is None or not hasattr(pandas_module, "DataFrame"):
+        return
+
+    dataframe_class = pandas_module.DataFrame
+    if not hasattr(dataframe_class, "applymap") and hasattr(dataframe_class, "map"):
+        dataframe_class.applymap = dataframe_class.map  # type: ignore[attr-defined]

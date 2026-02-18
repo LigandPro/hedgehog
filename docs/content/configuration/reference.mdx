@@ -23,8 +23,8 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 | `save_sampled_mols` | bool | `true` | Whether to save the sampled molecule subset to disk |
 | `pains_file_path` | string | `data/wehi_pains.csv` | Path to the PAINS filter definitions file |
 | `mcf_file_path` | string | `data/mcf.csv` | Path to the MCF (medicinal chemistry filters) definitions file |
-| `ligand_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger LigPrep binary for ligand preparation |
-| `protein_preparation_tool` | string | _(Schrodinger path)_ | Absolute path to the Schrodinger PrepWizard binary for protein preparation |
+| `ligand_preparation_tool` | string | _(proprietary path)_ | Absolute path to an external ligand preparation binary |
+| `protein_preparation_tool` | string | _(proprietary path)_ | Absolute path to an external protein preparation binary |
 | `config_mol_prep` | string | `src/hedgehog/configs/config_mol_prep.yml` | Path to the Mol Prep stage config |
 | `config_descriptors` | string | `src/hedgehog/configs/config_descriptors.yml` | Path to the descriptors stage config |
 | `config_structFilters` | string | `src/hedgehog/configs/config_structFilters.yml` | Path to the structural filters stage config |
@@ -45,8 +45,8 @@ batch_size: 512
 save_sampled_mols: true
 pains_file_path: data/wehi_pains.csv
 mcf_file_path: data/mcf.csv
-ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
-protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+ligand_preparation_tool: /opt/proprietary_tools/ligand_prep/bin/ligand_prep
+protein_preparation_tool: /opt/proprietary_tools/protein_prep/bin/protein_prep
 config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
 config_structFilters: src/hedgehog/configs/config_structFilters.yml
@@ -551,6 +551,7 @@ Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, se
 | `receptor_pdb` | string | `data/test/7EW9_apo.pdb` | Path to the receptor PDB file |
 | `auto_run` | bool | `true` | Automatically start docking after ligand preparation |
 | `run_in_background` | bool | `false` | Run docking as a background process |
+| `prep_njobs` | int \| string | `auto` _(implicit)_ | Parallel worker hint for external ligand preparation. `auto` resolves to `SLURM_CPUS_PER_TASK`, then `MOLSCORE_NJOBS`, otherwise `1`. Applied only when an external ligand tool is configured and supports parallel execution |
 
 ### SMINA Configuration (`smina_config`)
 

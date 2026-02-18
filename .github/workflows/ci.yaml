@@ -79,8 +79,8 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
-  cli-smoke:
-    name: CLI Smoke
+  pipeline-smoke:
+    name: Pipeline Smoke (CLI + TUI)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,24 +96,6 @@ jobs:
           python-version: '3.12'
           architecture: 'x64'
 
-      - name: Install project
-        run: uv sync
-
-      - name: Smoke check (help/version)
-        run: |
-          uv run hedgehog --help
-          uv run hedge --help
-          uv run hedgehog run --help
-          uv run hedgehog setup --help
-          uv run hedgehog setup aizynthfinder --help
-          uv run hedgehog version
-
-  tui-build:
-    name: Build TUI
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -121,11 +103,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: tui/package-lock.json
 
-      - name: Install dependencies
-        run: cd tui && npm ci
+      - name: Install project
+        run: uv sync
 
-      - name: Build TUI
-        run: cd tui && npm run build
+      - name: Run unified smoke checks
+        run: uv run python scripts/check_pipeline.py --mode ci
 
   docs-build:
     name: Build Docs

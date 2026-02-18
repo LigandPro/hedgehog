@@ -68,6 +68,16 @@ def _identity(x):
     return x
 
 
+_INIT_VALUE = None
+def _set_init_value(value):
+    global _INIT_VALUE
+    _INIT_VALUE = value
+
+
+def _read_init_value(_):
+    return _INIT_VALUE
+
+
 class TestParallelMap:
     """Tests for the parallel_map function."""
 
@@ -101,3 +111,24 @@ class TestParallelMap:
         items = list(range(50))
         result = parallel_map(_identity, items, n_jobs=4)
         assert result == items
+
+    def test_initializer_sequential(self):
+        out = parallel_map(
+            _read_init_value,
+            [0, 0, 0],
+            n_jobs=1,
+            initializer=_set_init_value,
+            initargs=("seq",),
+        )
+        assert out == ["seq", "seq", "seq"]
+
+    def test_initializer_multiprocessing(self):
+        out = parallel_map(
+            _read_init_value,
+            [0, 0, 0, 0],
+            n_jobs=2,
+            chunksize=1,
+            initializer=_set_init_value,
+            initargs=("mp",),
+        )
+        assert out == ["mp", "mp", "mp", "mp"]

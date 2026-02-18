@@ -3,6 +3,7 @@ import { RpcClient, type NotificationHandler } from './rpc-client.js';
 import { logger } from '../utils/logger.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import type { PipelinePreflightResult } from '../types/index.js';
 
 // Find project root (where pyproject.toml is)
 function findProjectRoot(): string {
@@ -220,6 +221,10 @@ export class PythonBridge {
 
   async startPipeline(stages: string[]): Promise<string> {
     return this.call<string>('start_pipeline', { stages });
+  }
+
+  async preflightPipeline(stages: string[]): Promise<PipelinePreflightResult> {
+    return this.call<PipelinePreflightResult>('preflight_pipeline', { stages });
   }
 
   async getProgress(jobId: string): Promise<Record<string, unknown>> {

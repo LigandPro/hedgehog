@@ -367,6 +367,7 @@ class TestSaveConfigValidation:
         handler = ConfigHandler(server)
         # Point project root to tmp_path so config files are written there
         monkeypatch.setattr(handler, "_project_root", tmp_path)
+        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
 
         # Create the config directory structure expected by _get_config_path
         config_dir = tmp_path / "src" / "hedgehog" / "configs"
@@ -386,6 +387,7 @@ class TestSaveConfigValidation:
         server = _mock_server()
         handler = ConfigHandler(server)
         monkeypatch.setattr(handler, "_project_root", tmp_path)
+        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
 
         config_dir = tmp_path / "src" / "hedgehog" / "configs"
         config_dir.mkdir(parents=True)
@@ -400,9 +402,55 @@ class TestSaveConfigValidation:
         result = handler.save_config("main", valid_data)
         assert result is True
 
-        # Verify file was updated
-        saved = yaml.safe_load(config_file.read_text())
+        # Verify user config was updated (source template remains unchanged)
+        user_config_file = handler.get_config_path("main")
+        saved = yaml.safe_load(user_config_file.read_text())
         assert saved["folder_to_save"] == "results/run"
+        source_saved = yaml.safe_load(config_file.read_text())
+        assert source_saved["folder_to_save"] == "old"
+
+    def test_load_main_config_bootstraps_user_copy(self, tmp_path, monkeypatch):
+        from hedgehog.tui_backend.handlers.config import ConfigHandler
+
+        server = _mock_server()
+        handler = ConfigHandler(server)
+        monkeypatch.setattr(handler, "_project_root", tmp_path)
+        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
+
+        config_dir = tmp_path / "src" / "hedgehog" / "configs"
+        config_dir.mkdir(parents=True)
+        source_file = config_dir / "config.yml"
+        source_file.write_text("generated_mols_path: data/mols.csv\nfolder_to_save: results\n")
+
+        loaded = handler.load_config("main")
+        assert loaded["folder_to_save"] == "results"
+
+        user_file = handler.get_config_path("main")
+        assert user_file.exists()
+        assert user_file != source_file
+        assert source_file.read_text() == user_file.read_text()
+
+    def test_load_mol_prep_config_bootstraps_user_copy(self, tmp_path, monkeypatch):
+        from hedgehog.tui_backend.handlers.config import ConfigHandler
+
+        server = _mock_server()
+        handler = ConfigHandler(server)
+        monkeypatch.setattr(handler, "_project_root", tmp_path)
+        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
+
+        config_dir = tmp_path / "src" / "hedgehog" / "configs"
+        config_dir.mkdir(parents=True)
+        source_file = config_dir / "config_mol_prep.yml"
+        source_file.write_text("run: true\nn_jobs: -1\n")
+
+        loaded = handler.load_config("mol_prep")
+        assert loaded["run"] is True
+        assert loaded["n_jobs"] == -1
+
+        user_file = handler.get_config_path("mol_prep")
+        assert user_file.exists()
+        assert user_file != source_file
+        assert source_file.read_text() == user_file.read_text()
 
 
 # =====================================================================
@@ -536,6 +584,9 @@ class TestDisableUnrequestedStages:
         job = PipelineJob("test-id", ["descriptors"], server)
 
         # Create sub-config files with run: true
+        mol_prep_cfg = tmp_path / "config_mol_prep.yml"
+        mol_prep_cfg.write_text(yaml.dump({"run": True}))
+
         synthesis_cfg = tmp_path / "config_synthesis.yml"
         synthesis_cfg.write_text(yaml.dump({"run": True, "other": "value"}))
 
@@ -546,12 +597,18 @@ class TestDisableUnrequestedStages:
         descriptors_cfg.write_text(yaml.dump({"run": True}))
 
         config_dict = {
+            "config_mol_prep": str(mol_prep_cfg),
             "config_synthesis": str(synthesis_cfg),
             "config_docking": str(docking_cfg),
             "config_descriptors": str(descriptors_cfg),
         }
 
         job._disable_unrequested_stages(config_dict)
+
+        # Mol prep should now point to temp file with run: false
+        assert config_dict["config_mol_prep"] != str(mol_prep_cfg)
+        new_mol_prep = yaml.safe_load(Path(config_dict["config_mol_prep"]).read_text())
+        assert new_mol_prep["run"] is False
 
         # Synthesis and docking should now point to temp files with run: false
         assert config_dict["config_synthesis"] != str(synthesis_cfg)

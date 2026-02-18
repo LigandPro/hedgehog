@@ -192,7 +192,7 @@ def load_molecules_from_sdf(sdf_path: str | Path) -> list[Chem.Mol]:
 
     suppl = Chem.SDMolSupplier(str(sdf_path))
     mols = [mol for mol in suppl if mol is not None]
-    logger.info(f"Loaded {len(mols)} molecules from {sdf_path}")
+    logger.info("Loaded %d molecules from %s", len(mols), sdf_path)
     return mols
 
 
@@ -220,7 +220,9 @@ def apply_pose_quality_filter(
     max_strain = config.get("max_strain_energy", 10.0)
 
     logger.info(
-        f"Running pose quality filter (max_clashes={max_clashes}, max_strain={max_strain})"
+        "Running pose quality filter (max_clashes=%d, max_strain=%.1f)",
+        max_clashes,
+        max_strain,
     )
 
     pc = PoseCheck()
@@ -243,7 +245,9 @@ def apply_pose_quality_filter(
         df["strain_energy"] <= max_strain
     )
     logger.info(
-        f"Pose quality filter: {df['pass_pose_quality'].sum()}/{len(df)} passed"
+        "Pose quality filter: %d/%d passed",
+        int(df["pass_pose_quality"].sum()),
+        len(df),
     )
     return df
 
@@ -276,7 +280,7 @@ def apply_interaction_filter(
         "interaction_types", ["HBDonor", "HBAcceptor", "Hydrophobic", "VdWContact"]
     )
 
-    logger.info(f"Running interaction filter (min_hbonds={min_hbonds})")
+    logger.info("Running interaction filter (min_hbonds=%d)", min_hbonds)
 
     # Load protein
     u = mda.Universe(str(protein_pdb))
@@ -340,17 +344,19 @@ def apply_interaction_filter(
         )
 
     df = pd.DataFrame(results)
-    logger.info(f"Interaction filter: {df['pass_interactions'].sum()}/{len(df)} passed")
+    logger.info(
+        "Interaction filter: %d/%d passed",
+        int(df["pass_interactions"].sum()),
+        len(df),
+    )
     return df
 
 
-def _check_shepherd_score_single(args: tuple) -> dict[str, Any]:
+def _check_shepherd_score_single(mol: Chem.Mol) -> dict[str, Any]:
     """Compute shape Tanimoto score for a single molecule.
 
     Args:
-        args: Tuple of (mol, ref_positions_list, alpha, min_score).
-              ref_positions_list is a plain Python list-of-lists (not a tensor)
-              to ensure picklability across process boundaries.
+        mol: RDKit molecule.
 
     Returns:
         Dict with keys: score, passed, error.
@@ -358,8 +364,12 @@ def _check_shepherd_score_single(args: tuple) -> dict[str, Any]:
     import torch
     from shepherd_score.score.gaussian_overlap import shape_tanimoto
 
-    mol, ref_positions_list, alpha, min_score = args
+    ref_positions_list = _SHEPHERD_REF_POSITIONS_LIST
+    alpha = _SHEPHERD_ALPHA
+    min_score = _SHEPHERD_MIN_SCORE
     try:
+        if ref_positions_list is None:
+            raise RuntimeError("Shepherd-Score worker configuration was not initialized")
         ref_positions = torch.tensor(ref_positions_list, dtype=torch.float32)
 
         mol_h = Chem.AddHs(mol, addCoords=True)
@@ -371,6 +381,22 @@ def _check_shepherd_score_single(args: tuple) -> dict[str, Any]:
         return {"score": score, "passed": passed, "error": None}
     except Exception as e:
         return {"score": 0.0, "passed": False, "error": str(e)}
+
+
+_SHEPHERD_REF_POSITIONS_LIST: list[list[float]] | None = None
+_SHEPHERD_ALPHA: float = 0.81
+_SHEPHERD_MIN_SCORE: float = 0.5
+
+
+def _init_shepherd_score_worker(
+    ref_positions_list: list[list[float]],
+    alpha: float,
+    min_score: float,
+) -> None:
+    global _SHEPHERD_REF_POSITIONS_LIST, _SHEPHERD_ALPHA, _SHEPHERD_MIN_SCORE
+    _SHEPHERD_REF_POSITIONS_LIST = ref_positions_list
+    _SHEPHERD_ALPHA = float(alpha)
+    _SHEPHERD_MIN_SCORE = float(min_score)
 
 
 def apply_shepherd_score_filter(
@@ -393,7 +419,7 @@ def apply_shepherd_score_filter(
     min_shape_score = config.get("min_shape_score", 0.5)
     alpha = config.get("alpha", 0.81)
 
-    logger.info(f"Running Shepherd-Score filter (min_shape_score={min_shape_score})")
+    logger.info("Running Shepherd-Score filter (min_shape_score=%.2f)", min_shape_score)
 
     # Get reference coordinates as plain Python list for picklability
     ref_h = Chem.AddHs(reference_mol, addCoords=True)
@@ -401,15 +427,19 @@ def apply_shepherd_score_filter(
     ref_positions_list = ref_conf.GetPositions().tolist()
 
     n_jobs = resolve_n_jobs(config)
-    items = [(mol, ref_positions_list, alpha, min_shape_score) for mol in mols]
     raw_results = parallel_map(
-        _check_shepherd_score_single, items, n_jobs, progress=progress_cb
+        _check_shepherd_score_single,
+        mols,
+        n_jobs,
+        progress=progress_cb,
+        initializer=_init_shepherd_score_worker,
+        initargs=(ref_positions_list, alpha, min_shape_score),
     )
 
     results = []
     for i, res in enumerate(raw_results):
         if res["error"]:
-            logger.warning(f"Shepherd-Score failed for mol {i}: {res['error']}")
+            logger.warning("Shepherd-Score failed for mol %d: %s", i, res["error"])
         results.append(
             {
                 "mol_idx": i,
@@ -420,7 +450,9 @@ def apply_shepherd_score_filter(
 
     df = pd.DataFrame(results)
     logger.info(
-        f"Shepherd-Score filter: {df['pass_shepherd_score'].sum()}/{len(df)} passed"
+        "Shepherd-Score filter: %d/%d passed",
+        int(df["pass_shepherd_score"].sum()),
+        len(df),
     )
     return df
 
@@ -824,7 +856,9 @@ def apply_conformer_deviation_filter(
     method = config.get("conformer_method", "ETKDGv3")
 
     logger.info(
-        f"Running conformer deviation filter (max_rmsd={max_rmsd}, n_confs={num_conformers})"
+        "Running conformer deviation filter (max_rmsd=%.1f, n_confs=%d)",
+        max_rmsd,
+        num_conformers,
     )
 
     n_jobs = resolve_n_jobs(config)
@@ -836,7 +870,7 @@ def apply_conformer_deviation_filter(
     results = []
     for i, res in enumerate(raw_results):
         if res["error"]:
-            logger.warning(f"Conformer deviation failed for mol {i}: {res['error']}")
+            logger.warning("Conformer deviation failed for mol %d: %s", i, res["error"])
         results.append(
             {
                 "mol_idx": i,
@@ -848,6 +882,8 @@ def apply_conformer_deviation_filter(
 
     df = pd.DataFrame(results)
     logger.info(
-        f"Conformer deviation filter: {df['pass_conformer_deviation'].sum()}/{len(df)} passed"
+        "Conformer deviation filter: %d/%d passed",
+        int(df["pass_conformer_deviation"].sum()),
+        len(df),
     )
     return df

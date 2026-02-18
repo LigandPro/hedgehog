@@ -15,6 +15,31 @@ from hedgehog.main import (
 )
 
 
+class _FakeProgress:
+    """Minimal Progress replacement for testing CLI event rendering."""
+
+    instances: list["_FakeProgress"] = []
+
+    def __init__(self, *args, **kwargs):
+        self.add_calls: list[dict] = []
+        self.update_calls: list[dict] = []
+        _FakeProgress.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def add_task(self, description: str, **kwargs) -> int:
+        task_id = len(self.add_calls) + 1
+        self.add_calls.append({"task_id": task_id, "description": description, **kwargs})
+        return task_id
+
+    def update(self, task_id: int, **kwargs) -> None:
+        self.update_calls.append({"task_id": task_id, **kwargs})
+
+
 class TestCanonicalizeSmiles:
     """Tests for _canonicalize_smiles function."""
 
@@ -89,14 +114,14 @@ class TestGetUniqueResultsFolder:
     """Tests for _get_unique_results_folder function."""
 
     def test_empty_folder(self, tmp_path):
-        """If no numbered folders exist, return base_1."""
+        """If base folder is available, keep it without suffix."""
         result = _get_unique_results_folder(tmp_path / "results")
-        assert result == tmp_path / "results_1"
+        assert result == tmp_path / "results"
 
     def test_nonexistent_folder(self, tmp_path):
-        """If parent folder doesn't exist, return base_1."""
+        """If base folder doesn't exist, keep the base name."""
         result = _get_unique_results_folder(tmp_path / "new_results")
-        assert result == tmp_path / "new_results_1"
+        assert result == tmp_path / "new_results"
 
     def test_folder_exists_with_content(self, tmp_path):
         """If folder exists with content but no numbered folders, return _1."""
@@ -108,21 +133,21 @@ class TestGetUniqueResultsFolder:
         assert result == tmp_path / "results_1"
 
     def test_multiple_existing_folders(self, tmp_path):
-        """If multiple numbered folders exist, return next available."""
+        """If base folder is free, use it even when numbered folders exist."""
         # Create results_1 and results_2
         (tmp_path / "results_1").mkdir()
         (tmp_path / "results_2").mkdir()
 
         result = _get_unique_results_folder(tmp_path / "results")
-        assert result == tmp_path / "results_3"
+        assert result == tmp_path / "results"
 
     def test_folder_already_numbered(self, tmp_path):
-        """Sequential numbering continues from highest existing number."""
+        """Base folder is still preferred when available."""
         # Create results_5
         (tmp_path / "results_5").mkdir()
 
         result = _get_unique_results_folder(tmp_path / "results")
-        assert result == tmp_path / "results_6"
+        assert result == tmp_path / "results"
 
 
 class TestValidateInputPath:
@@ -208,8 +233,8 @@ class TestPreprocessInputWithRdkit:
         result = preprocess_input_with_rdkit("*.csv", tmp_path, mock_logger)
         assert result is None
 
-    def test_invalid_smiles_filtered(self, tmp_path, mock_logger):
-        """Invalid SMILES should be filtered out."""
+    def test_invalid_smiles_preserved_for_molprep_stage(self, tmp_path, mock_logger):
+        """Invalid SMILES are preserved; MolPrep handles structural validation later."""
         input_file = tmp_path / "input.csv"
         input_file.write_text(
             "smiles,model_name\nCCO,test\ninvalid,test\nc1ccccc1,test"
@@ -221,7 +246,7 @@ class TestPreprocessInputWithRdkit:
         )
 
         output_df = pd.read_csv(result)
-        assert len(output_df) == 2  # Invalid SMILES filtered
+        assert len(output_df) == 3
 
 
 class TestStageEnum:
@@ -242,3 +267,129 @@ class TestStageEnum:
         assert "filter" in Stage.struct_filters.description.lower()
         assert "synth" in Stage.synthesis.description.lower()
         assert "docking" in Stage.docking.description.lower()
+
+
+def test_run_uses_single_progress_task_and_consistent_stage_numbers(tmp_path, monkeypatch):
+    """CLI progress should reuse one task and keep stage numbering monotonic."""
+    import hedgehog.main as main_mod
+
+    _FakeProgress.instances.clear()
+
+    results_dir = tmp_path / "results"
+    input_path = tmp_path / "input.csv"
+    input_path.write_text("smiles,model_name,mol_idx\nCCO,m1,0\n", encoding="utf-8")
+
+    base_config = {
+        "folder_to_save": str(results_dir),
+        "generated_mols_path": str(input_path),
+        "save_sampled_mols": False,
+    }
+    prepared_df = pd.DataFrame({"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]})
+
+    monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
+    monkeypatch.setattr(main_mod, "_plain_output_enabled", lambda: False)
+    monkeypatch.setattr(main_mod, "load_config", lambda *args, **kwargs: base_config.copy())
+    monkeypatch.setattr(main_mod, "_apply_cli_overrides", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod,
+        "_resolve_output_folder",
+        lambda *args, **kwargs: Path(base_config["folder_to_save"]),
+    )
+    monkeypatch.setattr(
+        main_mod.LoggerSingleton,
+        "configure_log_directory",
+        lambda self, folder_to_save: None,
+    )
+    monkeypatch.setattr(main_mod, "_preprocess_input", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod,
+        "prepare_input_data",
+        lambda *args, **kwargs: prepared_df.copy(),
+    )
+    monkeypatch.setattr(main_mod, "_save_sampled_molecules", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_mod, "Progress", _FakeProgress)
+
+    def _fake_calculate_metrics(data, config, progress_callback):
+        progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "mol_prep",
+                "stage_index": 1,
+                "total_stages": 2,
+                "message": "Mol Prep",
+            }
+        )
+        progress_callback(
+            {
+                "type": "stage_progress",
+                "stage": "mol_prep",
+                "stage_index": 1,
+                "total_stages": 2,
+                "current": 10,
+                "total": 10,
+                "message": "Mol Prep",
+            }
+        )
+        progress_callback(
+            {
+                "type": "stage_complete",
+                "stage": "mol_prep",
+                "stage_index": 1,
+                "total_stages": 2,
+                "message": "Mol Prep complete",
+            }
+        )
+        progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "descriptors",
+                "stage_index": 2,
+                "total_stages": 2,
+                "message": "Descriptors",
+            }
+        )
+        progress_callback(
+            {
+                "type": "stage_progress",
+                "stage": "descriptors",
+                "stage_index": 2,
+                "total_stages": 2,
+                "current": 5,
+                "total": 10,
+                "message": "Descriptors",
+            }
+        )
+        progress_callback(
+            {
+                "type": "stage_complete",
+                "stage": "descriptors",
+                "stage_index": 2,
+                "total_stages": 2,
+                "message": "Descriptors complete",
+            }
+        )
+        return True
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
+
+    main_mod.run(
+        config_path="unused.yml",
+        generated_mols_path=None,
+        out_dir=None,
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+    )
+
+    progress_instance = _FakeProgress.instances[-1]
+    assert len(progress_instance.add_calls) == 1
+
+    descriptions = [
+        call["description"]
+        for call in progress_instance.update_calls
+        if "description" in call
+    ]
+    assert any(desc.startswith("1/2 - Prep") for desc in descriptions)
+    assert any(desc.startswith("2/2 - Descriptors") for desc in descriptions)
+    assert not any(desc.startswith("0/2 - ") for desc in descriptions)

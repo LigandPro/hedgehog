@@ -1,5 +1,7 @@
 """Config handling for TUI backend."""
 
+import hashlib
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -10,15 +12,39 @@ from ..validators import ConfigValidator
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
 
-# Default config paths relative to project root
-CONFIG_PATHS = {
+# Default source config paths relative to project root
+CONFIG_SOURCE_PATHS = {
     "main": "src/hedgehog/configs/config.yml",
+    "mol_prep": "src/hedgehog/configs/config_mol_prep.yml",
     "descriptors": "src/hedgehog/configs/config_descriptors.yml",
     "filters": "src/hedgehog/configs/config_structFilters.yml",
     "synthesis": "src/hedgehog/configs/config_synthesis.yml",
     "retrosynthesis": "modules/retrosynthesis/aizynthfinder/public/config.yml",
     "docking": "src/hedgehog/configs/config_docking.yml",
     "docking_filters": "src/hedgehog/configs/config_docking_filters.yml",
+}
+
+# Workspace-local filenames for editable TUI copies
+CONFIG_WORKSPACE_FILES = {
+    "main": "config.yml",
+    "mol_prep": "config_mol_prep.yml",
+    "descriptors": "config_descriptors.yml",
+    "filters": "config_structFilters.yml",
+    "synthesis": "config_synthesis.yml",
+    "retrosynthesis": "config_retrosynthesis.yml",
+    "docking": "config_docking.yml",
+    "docking_filters": "config_docking_filters.yml",
+}
+
+# Mapping from master config keys to config types used by TUI
+RUNTIME_CONFIG_KEY_MAP = {
+    "config_mol_prep": "mol_prep",
+    "config_descriptors": "descriptors",
+    "config_structFilters": "filters",
+    "config_synthesis": "synthesis",
+    "config_docking": "docking",
+    "config_docking_filters": "docking_filters",
+    "config_retrosynthesis": "retrosynthesis",
 }
 
 
@@ -28,6 +54,7 @@ class ConfigHandler:
     def __init__(self, server: "JsonRpcServer"):
         self.server = server
         self._project_root = self._find_project_root()
+        self._user_config_root = self._build_user_config_root()
 
     def _find_project_root(self) -> Path:
         """Find project root by looking for pyproject.toml."""
@@ -37,15 +64,57 @@ class ConfigHandler:
                 return parent
         return current
 
-    def _get_config_path(self, config_type: str) -> Path:
-        """Get the path to a config file."""
-        if config_type not in CONFIG_PATHS:
+    def _build_user_config_root(self) -> Path:
+        """Return per-project user config directory for editable TUI copies."""
+        project = str(self._project_root.resolve())
+        digest = hashlib.sha1(project.encode("utf-8")).hexdigest()[:12]
+        workspace = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "_"
+            for ch in self._project_root.name
+        ).strip("_")
+        workspace = workspace or "workspace"
+        return Path.home() / ".hedgehog" / "tui" / "configs" / f"{workspace}-{digest}"
+
+    def _get_source_config_path(self, config_type: str) -> Path:
+        """Get source template config path from repository checkout."""
+        if config_type not in CONFIG_SOURCE_PATHS:
             raise ValueError(f"Unknown config type: {config_type}")
-        return self._project_root / CONFIG_PATHS[config_type]
+        return self._project_root / CONFIG_SOURCE_PATHS[config_type]
+
+    def _get_user_config_path(self, config_type: str) -> Path:
+        """Get editable user config path for a given type."""
+        if config_type not in CONFIG_WORKSPACE_FILES:
+            raise ValueError(f"Unknown config type: {config_type}")
+        return self._user_config_root / CONFIG_WORKSPACE_FILES[config_type]
+
+    def _ensure_user_config_exists(self, config_type: str) -> Path:
+        """Create editable user config from source template on first access."""
+        user_config_path = self._get_user_config_path(config_type)
+        if user_config_path.exists():
+            return user_config_path
+
+        source_config_path = self._get_source_config_path(config_type)
+        if not source_config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {source_config_path}")
+
+        user_config_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_config_path, user_config_path)
+        return user_config_path
+
+    def get_config_path(self, config_type: str) -> Path:
+        """Get editable config path used by TUI runtime."""
+        return self._ensure_user_config_exists(config_type)
+
+    def get_runtime_config_overrides(self) -> dict[str, str]:
+        """Get config key overrides so pipeline uses TUI-managed config copies."""
+        return {
+            config_key: str(self.get_config_path(config_type))
+            for config_key, config_type in RUNTIME_CONFIG_KEY_MAP.items()
+        }
 
     def load_config(self, config_type: str) -> dict[str, Any]:
         """Load a config file and return its contents."""
-        config_path = self._get_config_path(config_type)
+        config_path = self.get_config_path(config_type)
 
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -118,7 +187,7 @@ class ConfigHandler:
 
     def save_config(self, config_type: str, data: dict[str, Any]) -> bool:
         """Save data to a config file."""
-        config_path = self._get_config_path(config_type)
+        config_path = self.get_config_path(config_type)
 
         validation = ConfigValidator.validate(config_type, data)
         if not validation["valid"]:

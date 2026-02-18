@@ -22,9 +22,26 @@ interface ParamDef {
 interface StageConfigDef {
   stageName: string;
   displayName: string;
-  configType: 'descriptors' | 'filters' | 'synthesis' | 'docking' | 'docking_filters';
+  configType: 'mol_prep' | 'descriptors' | 'filters' | 'synthesis' | 'docking' | 'docking_filters';
   params: ParamDef[];
 }
+
+const MOL_PREP_PARAMS: ParamDef[] = [
+  { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable Datamol molecule preparation' },
+  { key: 'n_jobs', label: 'Parallel Jobs', type: 'number', description: '-1 uses all available CPU cores' },
+  { key: 'enabled', label: 'Fix Molecule', type: 'boolean', configPath: ['steps', 'fix_mol'], description: 'Apply Datamol fix_mol cleanup' },
+  { key: 'enabled', label: 'Remove Salts', type: 'boolean', configPath: ['steps', 'remove_salts_solvents'], description: 'Remove salts and solvents from structures' },
+  { key: 'keep_largest_fragment', label: 'Largest Fragment', type: 'boolean', configPath: ['steps'], description: 'Keep only the largest molecular fragment' },
+  { key: 'enabled', label: 'Standardize Mol', type: 'boolean', configPath: ['steps', 'standardize_mol'], description: 'Apply normalization/reionization/uncharging pipeline' },
+  { key: 'uncharge', label: 'Uncharge', type: 'boolean', configPath: ['steps', 'standardize_mol'], description: 'Convert charged species to neutral when possible' },
+  { key: 'stereo', label: 'Standardize Stereo', type: 'boolean', configPath: ['steps', 'standardize_mol'], description: 'Canonicalize stereochemistry during standardization' },
+  { key: 'remove_stereochemistry', label: 'Drop Stereo', type: 'boolean', configPath: ['steps'], description: 'Remove stereochemistry in final standardized molecules' },
+  { key: 'allowed_atoms', label: 'Allowed Atoms', type: 'text', configPath: ['filters'], description: 'Comma-separated whitelist of allowed atom symbols' },
+  { key: 'require_neutral', label: 'Require Neutral', type: 'boolean', configPath: ['filters'], description: 'Reject molecules with formal charge after prep' },
+  { key: 'reject_radicals', label: 'Reject Radicals', type: 'boolean', configPath: ['filters'], description: 'Reject molecules containing radicals' },
+  { key: 'reject_isotopes', label: 'Reject Isotopes', type: 'boolean', configPath: ['filters'], description: 'Reject isotopically labelled molecules' },
+  { key: 'require_single_fragment', label: 'Single Fragment', type: 'boolean', configPath: ['filters'], description: 'Reject molecules with multiple fragments' },
+];
 
 // Descriptors config params - all from config_descriptors.yml
 const DESCRIPTORS_PARAMS: ParamDef[] = [
@@ -83,6 +100,12 @@ const DOCKING_FILTERS_PARAMS: ParamDef[] = [
 ];
 
 const STAGE_CONFIGS: Record<string, StageConfigDef> = {
+  mol_prep: {
+    stageName: 'mol_prep',
+    displayName: 'Mol Prep',
+    configType: 'mol_prep',
+    params: MOL_PREP_PARAMS,
+  },
   descriptors: {
     stageName: 'descriptors',
     displayName: 'Descriptors',
@@ -393,6 +416,11 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
           <Text dimColor> for AiZynthFinder model paths.</Text>
         </Box>
       )}
+      {stageName === 'mol_prep' && (
+        <Box marginBottom={1}>
+          <Text dimColor>Datamol cleanup and strict molecule normalization before downstream stages.</Text>
+        </Box>
+      )}
       {stageName === 'descriptors' && (
         <Box marginBottom={1}>
           <Text dimColor>Molecular property calculation and filtering by descriptor ranges.</Text>
@@ -483,6 +511,10 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
 // Individual screen wrappers
 export function WizardConfigDescriptors(): React.ReactElement {
   return <QuickConfig stageName="descriptors" />;
+}
+
+export function WizardConfigMolPrep(): React.ReactElement {
+  return <QuickConfig stageName="mol_prep" />;
 }
 
 export function WizardConfigFilters(): React.ReactElement {

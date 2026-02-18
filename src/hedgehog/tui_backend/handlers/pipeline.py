@@ -8,17 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from .config import ConfigHandler
+
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
-
-
-def _find_project_root() -> Path:
-    """Find project root by looking for pyproject.toml."""
-    current = Path.cwd()
-    for parent in [current, *current.parents]:
-        if (parent / "pyproject.toml").exists():
-            return parent
-    return current
 
 
 class PipelineJob:
@@ -37,6 +30,7 @@ class PipelineJob:
 
     # Map TUI stage names to the config keys whose "run" flag they control
     TUI_STAGE_CONFIG_KEYS = {
+        "mol_prep": ["config_mol_prep"],
         "descriptors": ["config_descriptors"],
         "struct_filters": ["config_structFilters"],
         "synthesis": ["config_synthesis"],
@@ -188,8 +182,13 @@ class PipelineJob:
             from hedgehog.utils.data_prep import prepare_input_data
             from hedgehog.utils.mol_index import assign_mol_idx
 
-            config_path = _find_project_root() / "src/hedgehog/configs/config.yml"
-            config_dict = load_config(str(config_path))
+            config_handler = getattr(self.server, "config_handler", None)
+            if not isinstance(config_handler, ConfigHandler):
+                config_handler = ConfigHandler(self.server)
+
+            config_path = config_handler.get_config_path("main")
+            config_dict = load_config(str(config_path)) or {}
+            config_dict.update(config_handler.get_runtime_config_overrides())
             self._disable_unrequested_stages(config_dict)
 
             self._log("info", "Preparing input data...")

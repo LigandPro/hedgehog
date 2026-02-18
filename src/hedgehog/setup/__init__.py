@@ -19,7 +19,11 @@ def __getattr__(name: str):
         from hedgehog.setup._aizynthfinder import ensure_aizynthfinder
 
         return ensure_aizynthfinder
+    if name == "ensure_rascore_model":
+        from hedgehog.setup._rascore import ensure_rascore_model
+
+        return ensure_rascore_model
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["ensure_gnina", "ensure_aizynthfinder"]
+__all__ = ["ensure_gnina", "ensure_aizynthfinder", "ensure_rascore_model"]

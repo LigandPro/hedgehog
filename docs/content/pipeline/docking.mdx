@@ -42,21 +42,47 @@ When no external ligand preparation tool is configured, the pipeline uses built-
 
 This produces reasonable starting geometries but does not handle tautomer enumeration or stereoisomer expansion.
 
-### Schrodinger LigPrep (Optional)
+### External Ligand Preparation Tool (Optional)
 
 For production-quality ligand preparation, configure an external tool path in `config.yml`:
 
 ```yaml
-ligand_preparation_tool: /path/to/ligprep
+ligand_preparation_tool: /path/to/ligand_prep_tool
 ```
 
-LigPrep provides:
+An external preparation tool can provide:
 - Tautomer enumeration
 - Stereoisomer expansion
 - Ionization state prediction at physiological pH
 - Optimized 3D geometry with OPLS force field
 
 The pipeline auto-detects the input format (CSV or SMI) and calls the tool accordingly.
+
+#### Custom Handler Support
+
+`ligand_preparation_tool` and `protein_preparation_tool` can point to any executable (absolute path or command available in `PATH`).
+
+External handlers are optional:
+
+- If no external tool is configured, HEDGEHOG uses built-in behavior.
+- Ligands fall back to RDKit preparation.
+- Protein input is used as-is when no protein handler is configured.
+
+For custom handlers, ensure they run non-interactively and produce valid output files expected by the docking stage.
+
+You can request parallel ligand preparation in `config_docking.yml`:
+
+```yaml
+prep_njobs: auto
+```
+
+This setting is applied only when an external ligand preparation tool is configured and supports parallel execution.
+
+For pipeline input preprocessing before stages:
+
+- CSV input always uses built-in RDKit preprocessing.
+- SMI-like input may use `ligand_preparation_tool`.
+- The produced CSV must contain a `smiles` column (case-insensitive).
 
 ## Protein Preparation
 
@@ -66,7 +92,7 @@ The receptor PDB file is specified in the docking config:
 receptor_pdb: data/test/7EW9_apo.pdb
 ```
 
-For best results, prepare the receptor with tools like Schrodinger PrepWizard or PDB2PQR before docking. Key steps include:
+For best results, prepare the receptor with a dedicated structure-preparation tool (or PDB2PQR) before docking. Key steps include:
 - Removing water molecules and co-crystallized ligands
 - Adding hydrogens at physiological pH
 - Optimizing hydrogen-bond networks

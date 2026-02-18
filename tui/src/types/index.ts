@@ -13,6 +13,7 @@ export type Screen =
   | 'wizardInputSelection'
   | 'wizardStageSelection'
   | 'wizardStageOrder'
+  | 'wizardConfigMolPrep'
   | 'wizardConfigDescriptors'
   | 'wizardConfigFilters'
   | 'wizardConfigSynthesis'
@@ -69,6 +70,33 @@ export interface MainConfig {
   config_synthesis: string;
   config_docking: string;
   config_docking_filters: string;
+}
+
+export interface MolPrepConfig {
+  run: boolean;
+  n_jobs: number;
+  steps: {
+    keep_largest_fragment?: boolean;
+    remove_stereochemistry?: boolean;
+    fix_mol?: {
+      enabled?: boolean;
+    };
+    remove_salts_solvents?: {
+      enabled?: boolean;
+    };
+    standardize_mol?: {
+      enabled?: boolean;
+      uncharge?: boolean;
+      stereo?: boolean;
+    };
+  };
+  filters: {
+    allowed_atoms?: string[];
+    reject_radicals?: boolean;
+    require_neutral?: boolean;
+    reject_isotopes?: boolean;
+    require_single_fragment?: boolean;
+  };
 }
 
 export interface DescriptorBorder {
@@ -281,6 +309,31 @@ export interface ValidationResult {
   errors: string[];
 }
 
+// Pipeline preflight
+export type PreflightLevel = 'error' | 'warning' | 'info';
+
+export interface PreflightCheck {
+  code: string;
+  level: PreflightLevel;
+  stage?: string;
+  field?: string;
+  message: string;
+}
+
+export interface StagePreflightReport {
+  stage: string;
+  status: 'ok' | 'warning' | 'error';
+  checks: PreflightCheck[];
+}
+
+export interface PipelinePreflightResult {
+  valid: boolean;
+  molecule_count: number | null;
+  estimated_runtime: 'short' | 'medium' | 'long' | 'unknown';
+  checks: PreflightCheck[];
+  stage_reports: StagePreflightReport[];
+}
+
 // File browser
 export interface FileInfo {
   name: string;
@@ -325,6 +378,7 @@ export interface ScreenHelp {
 export type WizardStep =
   | 'stage-selection'
   | 'stage-order'
+  | 'config-mol-prep'
   | 'config-descriptors'
   | 'config-filters'
   | 'config-synthesis'
@@ -346,6 +400,7 @@ export interface WizardState {
   selectedStages: string[];
   stageOrder: string[];
   stageConfigs: Record<string, WizardStageConfig>;
+  preflight: PipelinePreflightResult | null;
   dependencies: WizardDependencies;
 }
 

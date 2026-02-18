@@ -21,6 +21,7 @@ const SCREEN_BREADCRUMBS: Record<Screen, string[]> = {
   wizardInputSelection: ['Home', 'Wizard', 'Input'],
   wizardStageSelection: ['Home', 'Wizard', 'Stages'],
   wizardStageOrder: ['Home', 'Wizard', 'Order'],
+  wizardConfigMolPrep: ['Home', 'Wizard', 'Mol Prep'],
   wizardConfigDescriptors: ['Home', 'Wizard', 'Descriptors'],
   wizardConfigFilters: ['Home', 'Wizard', 'Filters'],
   wizardConfigSynthesis: ['Home', 'Wizard', 'Synthesis'],

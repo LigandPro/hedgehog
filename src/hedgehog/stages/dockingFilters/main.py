@@ -186,7 +186,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     else:
         input_sdf = _resolve_existing_path(base_folder, input_sdf)
 
-    logger.info(f"Input SDF: {input_sdf}")
+    logger.info("Input SDF: %s", input_sdf)
 
     # Load docking config (optional; used as fallback for receptor path)
     docking_config: dict[str, Any] = {}
@@ -224,13 +224,13 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         if protein_pdb is None or not protein_pdb.exists():
             logger.error("No protein PDB found (required by enabled filters)")
             return None
-        logger.info(f"Protein PDB: {protein_pdb}")
+        logger.info("Protein PDB: %s", protein_pdb)
 
     # Load molecules
     try:
         mols = load_molecules_from_sdf(input_sdf)
     except Exception as e:
-        logger.error(f"Failed to load molecules: {e}")
+        logger.error("Failed to load molecules: %s", e)
         return None
 
     if not mols:
@@ -334,7 +334,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         results_df = results_df.merge(sb_df, on="mol_idx", how="left")
         filters_applied.append("search_box")
     except Exception as e:
-        logger.error(f"Search-box filter failed: {e}")
+        logger.error("Search-box filter failed: %s", e)
         results_df["pass_search_box"] = True
     finally:
         if reporter is not None:
@@ -377,7 +377,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 results_df = results_df.merge(pq_df, on="mol_idx", how="left")
                 filters_applied.append("pose_quality")
             except Exception as e:
-                logger.error(f"Pose quality filter failed: {e}")
+                logger.error("Pose quality filter failed: %s", e)
                 results_df["pass_pose_quality"] = True
         else:
             results_df["pass_pose_quality"] = False
@@ -416,7 +416,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 results_df = results_df.merge(int_df, on="mol_idx", how="left")
                 filters_applied.append("interactions")
             except Exception as e:
-                logger.error(f"Interaction filter failed: {e}")
+                logger.error("Interaction filter failed: %s", e)
                 results_df["pass_interactions"] = True
         else:
             results_df["pass_interactions"] = False
@@ -469,7 +469,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                     )
                     results_df["pass_shepherd_score"] = True
             except Exception as e:
-                logger.error(f"Shepherd-Score filter failed: {e}")
+                logger.error("Shepherd-Score filter failed: %s", e)
                 results_df["pass_shepherd_score"] = True
             finally:
                 if reporter is not None and ss_step_idx is not None:
@@ -511,7 +511,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 results_df = results_df.merge(cd_df, on="mol_idx", how="left")
                 filters_applied.append("conformer_deviation")
             except Exception as e:
-                logger.error(f"Conformer deviation filter failed: {e}")
+                logger.error("Conformer deviation filter failed: %s", e)
                 results_df["pass_conformer_deviation"] = True
         else:
             results_df["pass_conformer_deviation"] = False
@@ -537,14 +537,14 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     # Summary
     n_passed = results_df["pass"].sum()
     n_total = len(results_df)
-    logger.info(f"Docking filters complete: {n_passed}/{n_total} molecules passed")
-    logger.info(f"Filters applied: {', '.join(filters_applied)}")
+    logger.info("Docking filters complete: %d/%d molecules passed", n_passed, n_total)
+    logger.info("Filters applied: %s", ", ".join(filters_applied))
 
     # Save results
     if filter_config.get("aggregation", {}).get("save_metrics", True):
         metrics_path = output_dir / "metrics.csv"
         results_df.to_csv(metrics_path, index=False)
-        logger.info(f"Saved metrics to {metrics_path}")
+        logger.info("Saved metrics to %s", metrics_path)
 
     # Save filtered molecules (always create the file to make pipeline state explicit)
     filtered_df = results_df[results_df["pass"]].copy()
@@ -554,7 +554,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]).to_csv(
             filtered_path, index=False
         )
-        logger.info(f"Saved 0 filtered molecules to {filtered_path}")
+        logger.info("Saved 0 filtered molecules to %s", filtered_path)
     else:
         pose_indices = filtered_df["mol_idx"].tolist()
 
@@ -588,7 +588,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         # Save all passing poses to CSV (pose-level detail)
         all_poses_path = output_dir / "filtered_poses.csv"
         filtered_df.to_csv(all_poses_path, index=False)
-        logger.info(f"Saved {len(filtered_df)} filtered poses to {all_poses_path}")
+        logger.info("Saved %d filtered poses to %s", len(filtered_df), all_poses_path)
 
         # Deduplicate to unique molecules for downstream stages.
         # Keep the best pose per molecule (lowest minimizedAffinity).
@@ -598,8 +598,10 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         dedup_df = filtered_df.drop_duplicates(subset=["mol_idx"], keep="first")
         dedup_df[["smiles", "model_name", "mol_idx"]].to_csv(filtered_path, index=False)
         logger.info(
-            f"Saved {len(dedup_df)} unique molecules to {filtered_path} "
-            f"(from {len(filtered_df)} poses)"
+            "Saved %d unique molecules to %s (from %d poses)",
+            len(dedup_df),
+            filtered_path,
+            len(filtered_df),
         )
 
         # Save filtered SDF
@@ -609,7 +611,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             if 0 <= i < len(mols) and mols[i]:
                 writer.write(mols[i])
         writer.close()
-        logger.info(f"Saved filtered poses to {filtered_sdf_path}")
+        logger.info("Saved filtered poses to %s", filtered_sdf_path)
 
     # Save failed molecules if configured
     if filter_config.get("aggregation", {}).get("save_failed", False):
@@ -617,6 +619,6 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         if not failed_df.empty:
             failed_path = output_dir / "failed_molecules.csv"
             failed_df.to_csv(failed_path, index=False)
-            logger.info(f"Saved {len(failed_df)} failed molecules to {failed_path}")
+            logger.info("Saved %d failed molecules to %s", len(failed_df), failed_path)
 
     return results_df

@@ -132,3 +132,54 @@ def test_flags_enable_outputs_and_plots(tmp_path, monkeypatch):
     plot_stats_mock.assert_called_once()
     plot_ratio_mock.assert_called_once()
     fail_analysis_mock.assert_called_once()
+
+
+def test_progress_uses_real_molecule_totals(tmp_path, monkeypatch):
+    _mock_filter_processing(monkeypatch)
+
+    input_df = pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCC"],
+            "model_name": ["m1", "m1"],
+            "mol_idx": [0, 1],
+        }
+    )
+    input_csv = tmp_path / "input.csv"
+    input_df.to_csv(input_csv, index=False)
+
+    struct_cfg = tmp_path / "config_structFilters.yml"
+    _write_yaml(
+        struct_cfg,
+        {
+            "filter_data": False,
+            "calculate_bredt": True,
+            "parse_input_n_jobs": 1,
+            "write_per_filter_outputs": False,
+            "generate_plots": False,
+            "generate_failure_analysis": False,
+            "combine_in_memory": True,
+        },
+    )
+
+    config = {
+        "sample_size": None,
+        "folder_to_save": str(tmp_path),
+        "generated_mols_path": str(input_csv),
+        "config_structFilters": str(struct_cfg),
+    }
+
+    monkeypatch.setattr(
+        structfilters_main, "combine_filter_results_in_memory", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(structfilters_main, "_save_filter_results", lambda *args, **kwargs: None)
+
+    reporter = MagicMock()
+    structfilters_main.main(config, "StructFilters", reporter=reporter)
+
+    assert reporter.progress.call_count >= 2
+    totals = [call.args[1] for call in reporter.progress.call_args_list]
+    currents = [call.args[0] for call in reporter.progress.call_args_list]
+
+    assert all(total == 2 for total in totals)
+    assert 0 in currents
+    assert 2 in currents

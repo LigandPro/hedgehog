@@ -3,6 +3,7 @@ export { StageSelection } from './StageSelection.js';
 export { StageOrder } from './StageOrder.js';
 export {
   QuickConfig,
+  WizardConfigMolPrep,
   WizardConfigDescriptors,
   WizardConfigFilters,
   WizardConfigSynthesis,

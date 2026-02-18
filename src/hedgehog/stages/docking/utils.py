@@ -8,11 +8,41 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-import datamol as dm
 import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.input_paths import find_latest_input_source
+
+dm = import_datamol_quietly()
+
+
+def _validate_optional_tool_path(tool_path, tool_label):
+    """Validate optional external tool path and return usable value or None."""
+    if not tool_path:
+        return None
+
+    path = Path(str(tool_path))
+    if path.exists():
+        if not path.is_file() or not os.access(path, os.X_OK):
+            logger.warning(
+                "%s is not executable: %s. Falling back to built-in behavior.",
+                tool_label,
+                tool_path,
+            )
+            return None
+        return str(path)
+
+    resolved = shutil.which(str(tool_path))
+    if resolved:
+        return resolved
+
+    logger.warning(
+        "%s not found: %s. Falling back to built-in behavior.",
+        tool_label,
+        tool_path,
+    )
+    return None
 
 
 def _is_real_binary(path: str) -> bool:
@@ -908,6 +938,9 @@ def _prepare_protein_for_docking(receptor_pdb, ligands_dir, protein_preparation_
         Tuple of (prepared_receptor_path, preparation_cmd) or (original_path, None)
         Note: prepared_receptor_path is where the file WILL be after preparation, not where it currently is
     """
+    protein_preparation_tool = _validate_optional_tool_path(
+        protein_preparation_tool, "Protein preparation tool"
+    )
     if not protein_preparation_tool:
         return receptor_pdb, None
 
@@ -966,6 +999,11 @@ def _prepare_ligands_for_docking(
         if not ligands_path.is_absolute():
             ligands_path = (ligands_dir / ligands_val).resolve()
         return str(ligands_path), None
+
+    ligand_preparation_tool = _validate_optional_tool_path(
+        ligand_preparation_tool, "Ligand preparation tool"
+    )
+
     if ligand_preparation_tool:
         ligands_val_lower = ligands_val.lower()
         if ligands_val_lower.endswith(".csv"):
@@ -991,21 +1029,21 @@ def _prepare_ligands_for_docking(
             "-WAIT",
         ]
 
-        ligprep_njobs_cfg = cfg.get("ligprep_njobs", "auto")
-        if str(ligprep_njobs_cfg).lower() == "auto":
+        prep_njobs_cfg = cfg.get("prep_njobs", "auto")
+        if str(prep_njobs_cfg).lower() == "auto":
             auto_njobs = (
                 os.environ.get("SLURM_CPUS_PER_TASK")
                 or os.environ.get("MOLSCORE_NJOBS")
                 or 1
             )
-            ligprep_njobs = _parse_positive_int(auto_njobs, 1)
+            prep_njobs = _parse_positive_int(auto_njobs, 1)
         else:
-            ligprep_njobs = _parse_positive_int(ligprep_njobs_cfg, 1)
+            prep_njobs = _parse_positive_int(prep_njobs_cfg, 1)
 
-        if ligprep_njobs > 1:
+        if prep_njobs > 1:
             cmd_args.append("-LOCAL")
-            cmd_args.extend(["-HOST", f"localhost:{ligprep_njobs}"])
-            cmd_args.extend(["-NJOBS", str(ligprep_njobs)])
+            cmd_args.extend(["-HOST", f"localhost:{prep_njobs}"])
+            cmd_args.extend(["-NJOBS", str(prep_njobs)])
         return str(prepared_output_path.resolve()), cmd_args
     else:
         ligands_path, _ = _convert_with_rdkit(ligands_csv, ligands_dir)
@@ -1733,7 +1771,7 @@ def _update_metadata_with_run_status(ligands_dir, run_status):
         with open(meta_path, "w") as f:
             json.dump(metadata, f, indent=2)
     except Exception as e:
-        logger.warning(f"Failed to update metadata with run status: {e}")
+        logger.warning("Failed to update metadata with run status: %s", e)
 
 
 def _count_lines(path: Path) -> int:
@@ -2193,8 +2231,12 @@ def run_docking(config, reporter=None):
         logger.error("Ligand preparation failed: %s", e)
         return False
 
-    ligand_preparation_tool = config.get("ligand_preparation_tool")
-    protein_preparation_tool = config.get("protein_preparation_tool")
+    ligand_preparation_tool = _validate_optional_tool_path(
+        config.get("ligand_preparation_tool"), "Ligand preparation tool"
+    )
+    protein_preparation_tool = _validate_optional_tool_path(
+        config.get("protein_preparation_tool"), "Protein preparation tool"
+    )
     tools_list = _parse_tools_config(cfg)
     logger.info("Docking tools configured: %s", tools_list)
 
@@ -2230,49 +2272,71 @@ def run_docking(config, reporter=None):
                             timeout=_PROTEIN_PREP_TIMEOUT,
                         )
                         if result.returncode != 0:
-                            logger.error(
-                                "Protein preparation command failed: %s", result.stderr
-                            )
-                            return False
-
-                        prepared_path = Path(prepared_receptor_path)
-                        max_wait = 300
-                        wait_interval = 2
-                        waited = 0
-                        while waited < max_wait:
+                            stderr = (result.stderr or "").strip()
+                            stdout = (result.stdout or "").strip()
                             if (
-                                prepared_path.exists()
-                                and prepared_path.stat().st_size > 0
+                                result.returncode == 127
+                                or "not found" in stderr.lower()
+                                or "no such file" in stderr.lower()
                             ):
-                                logger.info(
-                                    "Protein prepared successfully: %s",
+                                logger.warning(
+                                    "Protein preparation tool is unavailable at runtime. "
+                                    "Skipping receptor preprocessing and using original receptor: %s",
+                                    original_receptor,
+                                )
+                                cfg["receptor_pdb"] = str(original_receptor_path)
+                            else:
+                                logger.error(
+                                    "Protein preparation command failed: %s",
+                                    stderr or stdout,
+                                )
+                                return False
+                        else:
+                            prepared_path = Path(prepared_receptor_path)
+                            max_wait = 300
+                            wait_interval = 2
+                            waited = 0
+                            while waited < max_wait:
+                                if (
+                                    prepared_path.exists()
+                                    and prepared_path.stat().st_size > 0
+                                ):
+                                    logger.info(
+                                        "Protein prepared successfully: %s",
+                                        prepared_receptor_path,
+                                    )
+                                    cfg["receptor_pdb"] = prepared_receptor_path
+                                    break
+                                time.sleep(wait_interval)
+                                waited += wait_interval
+                                if waited % 60 == 0:
+                                    logger.info(
+                                        "Waiting for protein preparation... (%ds)",
+                                        waited,
+                                    )
+
+                            if not prepared_path.exists():
+                                logger.error(
+                                    "Protein preparation failed - output file not found after %ds: %s",
+                                    max_wait,
                                     prepared_receptor_path,
                                 )
-                                break
-                            time.sleep(wait_interval)
-                            waited += wait_interval
-                            if waited % 60 == 0:
-                                logger.info(
-                                    "Waiting for protein preparation... (%ds)", waited
+                                logger.error("Command output: %s", result.stdout)
+                                logger.error("Command error: %s", result.stderr)
+                                return False
+                            elif prepared_path.stat().st_size == 0:
+                                logger.error(
+                                    "Protein preparation failed - output file is empty: %s",
+                                    prepared_receptor_path,
                                 )
-
-                        if not prepared_path.exists():
-                            logger.error(
-                                "Protein preparation failed - output file not found after %ds: %s",
-                                max_wait,
-                                prepared_receptor_path,
-                            )
-                            logger.error("Command output: %s", result.stdout)
-                            logger.error("Command error: %s", result.stderr)
-                            return False
-                        elif prepared_path.stat().st_size == 0:
-                            logger.error(
-                                "Protein preparation failed - output file is empty: %s",
-                                prepared_receptor_path,
-                            )
-                            return False
-
-                        cfg["receptor_pdb"] = prepared_receptor_path
+                                return False
+                    except FileNotFoundError:
+                        logger.warning(
+                            "Protein preparation tool is unavailable at runtime. "
+                            "Skipping receptor preprocessing and using original receptor: %s",
+                            original_receptor,
+                        )
+                        cfg["receptor_pdb"] = str(original_receptor_path)
                     except Exception as e:
                         logger.error("Failed to prepare protein: %s", e)
                         import traceback
@@ -2439,13 +2503,15 @@ def run_docking(config, reporter=None):
                 )
 
             if failed_tools:
-                logger.error(f"Docking tools failed: {', '.join(failed_tools)}")
+                logger.error("Docking tools failed: %s", ", ".join(failed_tools))
 
             if len(completed_tools) == len(selected_tools):
                 return True
             elif len(completed_tools) > 0:
                 logger.warning(
-                    f"Only {len(completed_tools)}/{len(selected_tools)} docking tools completed successfully"
+                    "Only %d/%d docking tools completed successfully",
+                    len(completed_tools),
+                    len(selected_tools),
                 )
                 return False
             else:

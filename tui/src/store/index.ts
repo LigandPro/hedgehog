@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   Screen,
   MainConfig,
+  MolPrepConfig,
   DescriptorsConfig,
   FiltersConfig,
   SynthesisConfig,
@@ -18,10 +19,12 @@ import type {
   WizardState,
   WizardStep,
   WizardStageConfig,
+  PipelinePreflightResult,
 } from '../types/index.js';
 
 interface Configs {
   main: MainConfig | null;
+  mol_prep: MolPrepConfig | null;
   descriptors: DescriptorsConfig | null;
   filters: FiltersConfig | null;
   synthesis: SynthesisConfig | null;
@@ -64,6 +67,7 @@ interface AppState {
   error: string | null;
   notification: string | null;
   isBackendReady: boolean;
+  showPipelineLog: boolean;
 
   // Job history (Matcha pattern)
   jobHistory: JobHistoryRecord[];
@@ -103,6 +107,7 @@ interface AppState {
   setError: (error: string | null) => void;
   setNotification: (notification: string | null) => void;
   setBackendReady: (ready: boolean) => void;
+  togglePipelineLog: () => void;
   reset: () => void;
 
   // Elapsed timer actions
@@ -151,6 +156,7 @@ interface AppState {
   setWizardQuickParam: (stage: string, key: string, value: unknown) => void;
   applyWizardPreset: (stage: string, presetName: string, presetValues: Record<string, unknown>) => void;
   setWizardDependency: (key: keyof WizardState['dependencies'], value: boolean) => void;
+  setWizardPreflight: (result: PipelinePreflightResult | null) => void;
   resetWizard: () => void;
   getWizardSelectedStagesInOrder: () => string[];
 }
@@ -246,6 +252,7 @@ const initialWizardState: WizardState = {
       },
     },
   },
+  preflight: null,
   dependencies: {},
 };
 
@@ -255,6 +262,7 @@ export const useStore = create<AppState>((set, get) => ({
   previousScreen: null,
   configs: {
     main: null,
+    mol_prep: null,
     descriptors: null,
     filters: null,
     synthesis: null,
@@ -277,6 +285,7 @@ export const useStore = create<AppState>((set, get) => ({
   error: null,
   notification: null,
   isBackendReady: false,
+  showPipelineLog: false,
 
   // Job history (Matcha pattern)
   jobHistory: [],
@@ -344,6 +353,7 @@ export const useStore = create<AppState>((set, get) => ({
       currentJobId: jobId ?? null,
       stages: running ? { ...initialStages } : get().stages,
       pipelineProgress: running ? { ...initialPipelineProgress } : get().pipelineProgress,
+      logs: running ? [] : get().logs,
     });
   },
 
@@ -400,6 +410,8 @@ export const useStore = create<AppState>((set, get) => ({
   setNotification: (notification) => set({ notification }),
 
   setBackendReady: (ready) => set({ isBackendReady: ready }),
+
+  togglePipelineLog: () => set((state) => ({ showPipelineLog: !state.showPipelineLog })),
 
   reset: () => {
     get().stopElapsedTimer();
@@ -670,6 +682,13 @@ export const useStore = create<AppState>((set, get) => ({
         ...state.wizard.dependencies,
         [key]: value,
       },
+    },
+  })),
+
+  setWizardPreflight: (result) => set((state) => ({
+    wizard: {
+      ...state.wizard,
+      preflight: result,
     },
   })),
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,13 +13,23 @@ import yaml
 from rich.console import Console
 from rich.logging import RichHandler
 
-# Pattern to strip Rich markup tags like [#B29EEE], [bold], [/bold], etc.
-# Excludes standard log levels: [INFO], [WARNING], [ERROR], [DEBUG], [CRITICAL]
-_RICH_MARKUP_RE = re.compile(
-    r"\[/?(?!INFO\]|WARNING\]|ERROR\]|DEBUG\]|CRITICAL\])[^\]]+\]"
+# Rich tags that we intentionally emit in logger messages.
+# Keep this narrow to avoid stripping arbitrary bracketed content such as:
+# - chemical strings: [NH4+]
+# - Python list representations: ['smina', 'gnina']
+_RICH_HEX_COLOR_TAG_RE = re.compile(r"\[/?#[0-9a-fA-F]{3,8}\]")
+_RICH_STYLE_TAG_RE = re.compile(
+    r"\[/?(?:bold|dim|italic|underline|red|green|yellow|blue|magenta|cyan|white|black)\]"
 )
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config.yml"
+
+_PLAIN_OUTPUT_ENV = "HEDGEHOG_PLAIN_OUTPUT"
+
+
+def plain_output_enabled() -> bool:
+    """Return True when console output should be plain (no Rich, no colors)."""
+    return os.environ.get(_PLAIN_OUTPUT_ENV, "").strip() == "1"
 
 
 class LoggerSingleton:
@@ -37,7 +49,7 @@ class LoggerSingleton:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._console = Console()
+                    cls._console = Console(no_color=plain_output_enabled())
         return cls._instance
 
     def get_logger(self, name="run"):
@@ -92,18 +104,24 @@ class LoggerSingleton:
         logger.setLevel(logging.INFO)
         logger.handlers = []
 
-        # Rich console handler - beautiful colored output
-        console_handler = RichHandler(
-            rich_tracebacks=True,
-            tracebacks_show_locals=True,
-            markup=True,
-            show_time=True,
-            show_level=True,
-            show_path=False,
-            console=self._console,
-        )
-        console_handler.setLevel(logging.INFO)
-        logger.addHandler(console_handler)
+        if plain_output_enabled():
+            console_handler = logging.StreamHandler(stream=sys.stdout)
+            console_handler.setFormatter(_PlainTextFormatter())
+            console_handler.setLevel(logging.INFO)
+            logger.addHandler(console_handler)
+        else:
+            # Rich console handler - colored output + tracebacks
+            console_handler = RichHandler(
+                rich_tracebacks=True,
+                tracebacks_show_locals=True,
+                markup=True,
+                show_time=True,
+                show_level=True,
+                show_path=False,
+                console=self._console,
+            )
+            console_handler.setLevel(logging.INFO)
+            logger.addHandler(console_handler)
 
         # If a log directory was configured before the logger existed, attach the
         # file handler now so each run gets a persistent log file.
@@ -142,7 +160,8 @@ class _PlainTextFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         # Format first, then strip Rich markup from the final result
         result = super().format(record)
-        return _RICH_MARKUP_RE.sub("", result)
+        result = _RICH_HEX_COLOR_TAG_RE.sub("", result)
+        return _RICH_STYLE_TAG_RE.sub("", result)
 
 
 def setup_logger(name="run"):

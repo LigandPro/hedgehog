@@ -1,3 +1,4 @@
+import csv
 import shutil
 import time
 from datetime import datetime
@@ -90,6 +91,12 @@ DOCKING_RESULTS_DIR_TEMPLATE = {
 FILE_RUN_INCOMPLETE = ".RUN_INCOMPLETE"
 
 
+def _plain_output_enabled() -> bool:
+    import os
+
+    return os.environ.get("HEDGEHOG_PLAIN_OUTPUT", "").strip() == "1"
+
+
 class StageProgressReporter:
     """Emit structured progress events for a single pipeline stage."""
 
@@ -104,8 +111,15 @@ class StageProgressReporter:
         self.stage = stage
         self.stage_index = stage_index
         self.total_stages = total_stages
+        self._last_progress_signature: tuple[int, int, str | None] | None = None
 
-    def start(self, message: str | None = None) -> None:
+    def start(
+        self,
+        message: str | None = None,
+        molecules_in: int | None = None,
+        molecules_out: int | None = None,
+    ) -> None:
+        self._last_progress_signature = None
         self._emit_event(
             {
                 "type": "stage_start",
@@ -113,23 +127,46 @@ class StageProgressReporter:
                 "stage_index": self.stage_index,
                 "total_stages": self.total_stages,
                 "message": message,
+                "molecules_in": molecules_in,
+                "molecules_out": molecules_out,
             }
         )
 
-    def progress(self, current: int, total: int, message: str | None = None) -> None:
+    def progress(
+        self,
+        current: int,
+        total: int,
+        message: str | None = None,
+        molecules_in: int | None = None,
+        molecules_out: int | None = None,
+    ) -> None:
+        signature = (int(current), int(total), message)
+        if signature == self._last_progress_signature:
+            return
+        self._last_progress_signature = signature
         self._emit_event(
             {
                 "type": "stage_progress",
                 "stage": self.stage,
                 "stage_index": self.stage_index,
                 "total_stages": self.total_stages,
-                "current": int(current),
-                "total": int(total),
+                "current": signature[0],
+                "total": signature[1],
                 "message": message,
+                "molecules_in": molecules_in,
+                "molecules_out": molecules_out,
             }
         )
 
-    def complete(self, ok: bool = True, message: str | None = None) -> None:
+    def complete(
+        self,
+        ok: bool = True,
+        message: str | None = None,
+        molecules_in: int | None = None,
+        molecules_out: int | None = None,
+        elapsed_seconds: float | None = None,
+    ) -> None:
+        self._last_progress_signature = None
         self._emit_event(
             {
                 "type": "stage_complete",
@@ -138,16 +175,24 @@ class StageProgressReporter:
                 "total_stages": self.total_stages,
                 "ok": bool(ok),
                 "message": message,
+                "molecules_in": molecules_in,
+                "molecules_out": molecules_out,
+                "elapsed_seconds": elapsed_seconds,
             }
         )
 
 
 def _log_stage_header(stage_label: str) -> None:
     """Log a formatted stage header."""
-    separator = "[#B29EEE]" + "\u2500" * 59 + "[/#B29EEE]"
     logger.info("")
+    if _plain_output_enabled():
+        logger.info("=== %s ===", stage_label)
+        logger.info("")
+        return
+
+    separator = "[dim]" + "\u2500" * 59 + "[/dim]"
     logger.info(separator)
-    logger.info("[#B29EEE]  %s[/#B29EEE]", stage_label)
+    logger.info("[bold]  %s[/bold]", stage_label)
     logger.info(separator)
     logger.info("")
 
@@ -411,13 +456,7 @@ class PipelineStageRunner:
                 logger.info("Mol Prep disabled in config")
                 return False
 
-            if reporter is not None:
-                reporter.progress(0, 1, message="Mol Prep")
-
-            mol_prep_main(data, self.config, subfolder=subfolder)
-
-            if reporter is not None:
-                reporter.progress(1, 1, message="Mol Prep")
+            mol_prep_main(data, self.config, subfolder=subfolder, reporter=reporter)
             return True
         except Exception as exc:
             logger.error("Error running Mol Prep: %s", exc)
@@ -717,6 +756,78 @@ class MolecularAnalysisPipeline:
             except Exception:
                 return
 
+    def _count_csv_rows(self, path: Path) -> int | None:
+        """Count data rows in a CSV file (excluding header)."""
+        if not path.exists():
+            return None
+        try:
+            with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
+                reader = csv.reader(handle)
+                try:
+                    next(reader)
+                except StopIteration:
+                    return 0
+                return sum(1 for row in reader if any(cell.strip() for cell in row))
+        except OSError:
+            return None
+
+    def _resolve_stage_input_count(self, stage_name: str, args: tuple) -> int | None:
+        """Resolve molecule count entering a stage."""
+        for arg in args:
+            if isinstance(arg, pd.DataFrame):
+                return len(arg)
+
+        if stage_name == STAGE_FINAL_DESCRIPTORS:
+            final_data = self.get_latest_data(
+                skip_descriptors=True, fallback_on_empty=False
+            )
+            if final_data is not None:
+                return len(final_data)
+
+        source = _find_input(self.data_checker.base_path)
+        if source is not None and source.suffix.lower() == ".csv":
+            counted = self._count_csv_rows(source)
+            if counted is not None:
+                return counted
+
+        if self.current_data is not None:
+            return len(self.current_data)
+        return None
+
+    def _resolve_stage_output_count(
+        self,
+        stage_name: str,
+        completed: bool,
+        input_count: int | None,
+    ) -> int | None:
+        """Resolve molecule count after a stage completes."""
+        if not completed:
+            return None
+
+        base = self.data_checker.base_path
+        output_map = {
+            STAGE_MOL_PREP: base / DIR_MOL_PREP / FILE_FILTERED_MOLECULES,
+            STAGE_DESCRIPTORS: base
+            / DIR_DESCRIPTORS_INITIAL
+            / "filtered"
+            / FILE_FILTERED_MOLECULES,
+            STAGE_STRUCT_FILTERS: base / DIR_STRUCT_FILTERS_POST / FILE_FILTERED_MOLECULES,
+            STAGE_SYNTHESIS: base / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES,
+            STAGE_DOCKING_FILTERS: base / DIR_DOCKING_FILTERS / FILE_FILTERED_MOLECULES,
+            STAGE_FINAL_DESCRIPTORS: base
+            / DIR_DESCRIPTORS_FINAL
+            / "filtered"
+            / FILE_FILTERED_MOLECULES,
+        }
+
+        output_path = output_map.get(stage_name)
+        if output_path is None:
+            if stage_name == STAGE_DOCKING:
+                return input_count
+            return None
+
+        return self._count_csv_rows(output_path)
+
     def get_latest_data(
         self, skip_descriptors: bool = False, fallback_on_empty: bool = True
     ):
@@ -839,7 +950,8 @@ class MolecularAnalysisPipeline:
             stage_index=current_idx + 1,
             total_stages=len(enabled_stages),
         )
-        reporter.start()
+        input_count = self._resolve_stage_input_count(stage.name, args)
+        reporter.start(molecules_in=input_count)
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
         start_time = time.perf_counter()
@@ -848,9 +960,28 @@ class MolecularAnalysisPipeline:
         except TypeError:
             completed = runner_func(*args)
         elapsed = time.perf_counter() - start_time
+        output_count = self._resolve_stage_output_count(
+            stage.name, bool(completed), input_count
+        )
         self.stage_timings[stage.name] = elapsed
         logger.info("Stage %s completed in %.1f seconds", stage.name, elapsed)
-        reporter.complete(ok=bool(completed))
+        if input_count is not None and output_count is not None:
+            complete_message = (
+                f"Molecules: {input_count:,} -> {output_count:,}; {elapsed:.1f}s"
+            )
+        elif input_count is not None:
+            complete_message = f"Molecules in: {input_count:,}; {elapsed:.1f}s"
+        elif output_count is not None:
+            complete_message = f"Molecules out: {output_count:,}; {elapsed:.1f}s"
+        else:
+            complete_message = f"{elapsed:.1f}s"
+        reporter.complete(
+            ok=bool(completed),
+            message=complete_message,
+            molecules_in=input_count,
+            molecules_out=output_count,
+            elapsed_seconds=elapsed,
+        )
 
         if completed:
             return True, False
@@ -962,10 +1093,24 @@ class MolecularAnalysisPipeline:
 
     def _run_docking(self) -> tuple[bool, bool]:
         """Run molecular docking stage."""
+        source = _find_input(self.data_checker.base_path)
+        if source is None:
+            logger.info("No docking input found; skipping docking")
+            return False, False
+        if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
+            logger.info("No molecules available for docking; skipping docking")
+            return False, False
         return self._run_stage(STAGE_DOCKING, self.stage_runner.run_docking)
 
     def _run_docking_filters(self) -> tuple[bool, bool]:
         """Run docking filters stage."""
+        source = _find_input(self.data_checker.base_path)
+        if source is None:
+            logger.info("No docking input found; skipping docking filters")
+            return False, False
+        if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
+            logger.info("No molecules available for docking; skipping docking filters")
+            return False, False
         return self._run_stage(
             STAGE_DOCKING_FILTERS, self.stage_runner.run_docking_filters
         )
@@ -1025,6 +1170,14 @@ class MolecularAnalysisPipeline:
             return False
         if stage.completed:
             return False
+
+        if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
+            source = _find_input(self.data_checker.base_path)
+            if source is None:
+                return False
+            if source.suffix.lower() == ".csv":
+                return _csv_has_data_rows(source)
+            return _file_exists_and_not_empty(source)
 
         if stage.name == STAGE_FINAL_DESCRIPTORS:
             # Final descriptors depends on the latest non-descriptor stage output.
@@ -1142,10 +1295,57 @@ class MolecularAnalysisPipeline:
 
     def _get_stage_status(self, stage: PipelineStage) -> str:
         """Get display status for a stage."""
+        if _plain_output_enabled():
+            if not stage.enabled:
+                return "DISABLED"
+            if stage.completed:
+                return "COMPLETED"
+
+            if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
+                source = _find_input(self.data_checker.base_path)
+                if source is None:
+                    return "SKIPPED (no molecules)"
+                if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
+                    return "SKIPPED (no molecules)"
+
+            if stage.name == STAGE_FINAL_DESCRIPTORS:
+                sources = [
+                    DIR_DOCKING_FILTERS,
+                    DIR_SYNTHESIS,
+                    DIR_STRUCT_FILTERS_POST,
+                    DIR_MOL_PREP,
+                ]
+                latest = self._find_data_source(sources)
+                if not latest:
+                    return "SKIPPED (no molecules)"
+                try:
+                    latest_df = pd.read_csv(self._build_data_path(latest))
+                except Exception:
+                    return "FAILED"
+                if len(latest_df) == 0:
+                    return "SKIPPED (no molecules)"
+
+            skip_conditions = {
+                STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
+                STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
+            }
+            required_data = skip_conditions.get(stage.name)
+            if required_data and not self.data_checker.stage_has_molecules(required_data):
+                return "SKIPPED (no molecules)"
+
+            return "FAILED"
+
         if not stage.enabled:
             return "DISABLED"
         if stage.completed:
-            return "[#B29EEE]\u2713 COMPLETED[/#B29EEE]"
+            return "[bold]\u2713 COMPLETED[/bold]"
+
+        if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
+            source = _find_input(self.data_checker.base_path)
+            if source is None:
+                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
+            if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
+                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
 
         if stage.name == STAGE_FINAL_DESCRIPTORS:
             # Final descriptors can run on the latest available non-descriptor output
@@ -1159,13 +1359,13 @@ class MolecularAnalysisPipeline:
             ]
             latest = self._find_data_source(sources)
             if not latest:
-                return "[yellow]\u27c2 SKIPPED (no molecules)[/yellow]"
+                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
             try:
                 latest_df = pd.read_csv(self._build_data_path(latest))
             except Exception:
-                return "[red]\u2717 FAILED[/red]"
+                return "[bold]\u2717 FAILED[/bold]"
             if len(latest_df) == 0:
-                return "[yellow]\u27c2 SKIPPED (no molecules)[/yellow]"
+                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
 
         # Check for skipped conditions
         skip_conditions = {
@@ -1175,9 +1375,9 @@ class MolecularAnalysisPipeline:
 
         required_data = skip_conditions.get(stage.name)
         if required_data and not self.data_checker.stage_has_molecules(required_data):
-            return "[yellow]\u27c2 SKIPPED (no molecules)[/yellow]"
+            return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
 
-        return "[red]\u2717 FAILED[/red]"
+        return "[bold]\u2717 FAILED[/bold]"
 
 
 def _save_config_snapshot(config: dict) -> None:

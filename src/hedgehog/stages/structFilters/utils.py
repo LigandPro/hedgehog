@@ -1,7 +1,6 @@
 import contextlib
 import importlib
 import io
-import logging
 import os
 import warnings
 from pathlib import Path
@@ -38,21 +37,6 @@ _COMPLEXITY_FILTERS_CACHE = {}
 _MOLCOMPLEXITY_ALERT_NAMES: list[str] | None = None
 _ALERT_COMPILED_SMARTS: list[tuple[str, object, str]] | None = None
 _ALERT_RULESET_NAMES: list[str] | None = None
-_SUPPRESS_PANDASTOOLS_ENV = "HEDGEHOG_SHOW_PANDASTOOLS_WARNINGS"
-
-
-def _suppress_pandastools_warning() -> None:
-    if os.environ.get(_SUPPRESS_PANDASTOOLS_ENV, "").strip() == "1":
-        return
-    for logger_name in ("rdkit.Chem.PandasTools", "rdkit.Chem.PandasPatcher"):
-        rdkit_logger = logging.getLogger(logger_name)
-        rdkit_logger.setLevel(logging.ERROR)
-        rdkit_logger.propagate = False
-        if not any(
-            isinstance(handler, logging.NullHandler)
-            for handler in rdkit_logger.handlers
-        ):
-            rdkit_logger.addHandler(logging.NullHandler())
 
 
 def _import_medchem_quietly():
@@ -72,21 +56,15 @@ def _import_medchem_quietly():
         os.close(stderr_fd)
 
 
-def _run_with_suppressed_stdio(func, *args, **kwargs):
-    """Run callable while suppressing noisy stdout/stderr output."""
-    stdout_fd = os.dup(1)
-    stderr_fd = os.dup(2)
-    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+def _silence_worker_stdio() -> None:
+    """Redirect worker stdout/stderr to /dev/null."""
     try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull_fd, 1)
         os.dup2(devnull_fd, 2)
-        return func(*args, **kwargs)
-    finally:
-        os.dup2(stdout_fd, 1)
-        os.dup2(stderr_fd, 2)
         os.close(devnull_fd)
-        os.close(stdout_fd)
-        os.close(stderr_fd)
+    except OSError:
+        pass
 
 
 def _resolve_scheduler(config_structFilters, scheduler_key, default="processes"):
@@ -166,6 +144,11 @@ def _init_molcomplexity_worker(alert_names: list[str]) -> None:
     _MOLCOMPLEXITY_ALERT_NAMES = alert_names
 
 
+def _init_molcomplexity_worker_quiet(alert_names: list[str]) -> None:
+    _silence_worker_stdio()
+    _init_molcomplexity_worker(alert_names)
+
+
 def _split_indexed_mols(indexed_mols, n_chunks):
     """Split indexed molecules into near-equal chunks."""
     if not indexed_mols:
@@ -185,8 +168,7 @@ def _process_nibr_chunk(args):
     mol_chunk = [item[1] for item in indexed_chunk]
 
     nibr_filters = mc.structural.NIBRFilters()
-    chunk_df = _run_with_suppressed_stdio(
-        nibr_filters,
+    chunk_df = nibr_filters(
         mols=mol_chunk,
         n_jobs=1,
         scheduler="threads",
@@ -208,7 +190,6 @@ def _process_nibr_chunk(args):
     return chunk_df.to_dict("records")
 
 
-_suppress_pandastools_warning()
 mc = _import_medchem_quietly()
 
 try:
@@ -473,6 +454,9 @@ def prepare_structfilters_input(df, subsample, parse_n_jobs, progress_cb=None):
         parse_payload,
         n_jobs,
         progress=progress_cb,
+        initializer=_silence_worker_stdio
+        if n_jobs > 1 and len(parse_payload) > 1
+        else None,
     )
 
     valid_row_indices = []
@@ -794,6 +778,14 @@ def _init_alert_worker(
     _ALERT_RULESET_NAMES = rule_set_names
 
 
+def _init_alert_worker_quiet(
+    compiled_smarts: list[tuple[str, object, str]],
+    rule_set_names: list[str],
+) -> None:
+    _silence_worker_stdio()
+    _init_alert_worker(compiled_smarts, rule_set_names)
+
+
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_cb=None):
     logger.info("Calculating Common Alerts...")
 
@@ -825,14 +817,19 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
 
     # Parallel per-molecule alert checking.
     n_jobs = resolve_n_jobs(config_structFilters, config)
-    logger.info("Common Alerts workers: %d (scheduler=processes)", n_jobs)
+    logger.info("Common Alerts workers: %d", n_jobs)
     items = [(i, mol) for i, mol in enumerate(mols)]
+    worker_initializer = (
+        _init_alert_worker_quiet
+        if n_jobs > 1 and len(items) > 1
+        else _init_alert_worker
+    )
     results_list = parallel_map(
         _check_alerts_single_mol,
         items,
         n_jobs,
         progress=progress_cb,
-        initializer=_init_alert_worker,
+        initializer=worker_initializer,
         initargs=(compiled_smarts, rule_set_names),
     )
 
@@ -863,12 +860,11 @@ def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
     config_structFilters = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = _resolve_scheduler(config_structFilters, "molgraph_scheduler")
-    logger.info("MolGraph workers: %d (scheduler=%s)", n_jobs, scheduler)
+    logger.info("MolGraph workers: %d", n_jobs)
 
     results = {"mol": mols}
     for s in severities:
-        out = _run_with_suppressed_stdio(
-            mc.functional.molecular_graph_filter,
+        out = mc.functional.molecular_graph_filter(
             mols=mols,
             max_severity=s,
             n_jobs=n_jobs,
@@ -889,7 +885,7 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
     config_path = config.get("config_structFilters")
     config_structFilters = load_config(config_path) if config_path else {}
     n_jobs = resolve_n_jobs(config_structFilters, config)
-    logger.info("MolComplexity workers: %d (scheduler=processes)", n_jobs)
+    logger.info("MolComplexity workers: %d", n_jobs)
 
     alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
     items = [(i, mol) for i, mol in enumerate(mols)]
@@ -897,7 +893,11 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
         _compute_molcomplexity_one,
         items,
         n_jobs,
-        initializer=_init_molcomplexity_worker,
+        initializer=(
+            _init_molcomplexity_worker_quiet
+            if n_jobs > 1 and len(items) > 1
+            else _init_molcomplexity_worker
+        ),
         initargs=(alert_names,),
     )
     for row in rows:
@@ -915,9 +915,8 @@ def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
     config_structFilters = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = _resolve_scheduler(config_structFilters, "bredt_scheduler")
-    logger.info("Bredt workers: %d (scheduler=%s)", n_jobs, scheduler)
-    out = _run_with_suppressed_stdio(
-        mc.functional.bredt_filter,
+    logger.info("Bredt workers: %d", n_jobs)
+    out = mc.functional.bredt_filter(
         mols=mols,
         n_jobs=n_jobs,
         scheduler=scheduler,
@@ -935,9 +934,8 @@ def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
     config_structFilters = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = _resolve_scheduler(config_structFilters, "protecting_groups_scheduler")
-    logger.info("Protecting Groups workers: %d (scheduler=%s)", n_jobs, scheduler)
-    out = _run_with_suppressed_stdio(
-        mc.functional.protecting_groups_filter,
+    logger.info("Protecting Groups workers: %d", n_jobs)
+    out = mc.functional.protecting_groups_filter(
         mols=mols,
         n_jobs=n_jobs,
         scheduler=scheduler,
@@ -955,10 +953,9 @@ def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
     config_sf = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_sf, config)
     scheduler = _resolve_scheduler(config_sf, "ring_infraction_scheduler")
-    logger.info("Ring Infraction workers: %d (scheduler=%s)", n_jobs, scheduler)
+    logger.info("Ring Infraction workers: %d", n_jobs)
     min_size = config_sf.get("ring_infraction_hetcycle_min_size", 4)
-    out = _run_with_suppressed_stdio(
-        mc.functional.ring_infraction_filter,
+    out = mc.functional.ring_infraction_filter(
         mols=mols,
         hetcycle_min_size=min_size,
         n_jobs=n_jobs,
@@ -977,11 +974,10 @@ def apply_stereo_center(config, mols, smiles_modelName_mols=None):
     config_sf = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_sf, config)
     scheduler = _resolve_scheduler(config_sf, "stereo_center_scheduler")
-    logger.info("Stereo Center workers: %d (scheduler=%s)", n_jobs, scheduler)
+    logger.info("Stereo Center workers: %d", n_jobs)
     max_centers = config_sf.get("stereo_max_centers", 4)
     max_undefined = config_sf.get("stereo_max_undefined", 2)
-    out = _run_with_suppressed_stdio(
-        mc.functional.num_stereo_center_filter,
+    out = mc.functional.num_stereo_center_filter(
         mols=mols,
         max_stereo_centers=max_centers,
         max_undefined_stereo_centers=max_undefined,
@@ -1001,9 +997,8 @@ def apply_halogenicity(config, mols, smiles_modelName_mols=None):
     config_sf = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_sf, config)
     scheduler = _resolve_scheduler(config_sf, "halogenicity_scheduler")
-    logger.info("Halogenicity workers: %d (scheduler=%s)", n_jobs, scheduler)
-    out = _run_with_suppressed_stdio(
-        mc.functional.halogenicity_filter,
+    logger.info("Halogenicity workers: %d", n_jobs)
+    out = mc.functional.halogenicity_filter(
         mols=mols,
         thresh_F=config_sf.get("halogenicity_thresh_F", 6),
         thresh_Br=config_sf.get("halogenicity_thresh_Br", 3),
@@ -1024,10 +1019,9 @@ def apply_symmetry(config, mols, smiles_modelName_mols=None):
     config_sf = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_sf, config)
     scheduler = _resolve_scheduler(config_sf, "symmetry_scheduler")
-    logger.info("Symmetry workers: %d (scheduler=%s)", n_jobs, scheduler)
+    logger.info("Symmetry workers: %d", n_jobs)
     threshold = config_sf.get("symmetry_threshold", 0.8)
-    out = _run_with_suppressed_stdio(
-        mc.functional.symmetry_filter,
+    out = mc.functional.symmetry_filter(
         mols=mols,
         symmetry_threshold=threshold,
         n_jobs=n_jobs,
@@ -1046,7 +1040,7 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
     config_structFilters = load_config(config["config_structFilters"])
     n_jobs = resolve_n_jobs(config_structFilters, config)
     scheduler = _resolve_scheduler(config_structFilters, "nibr_scheduler")
-    logger.info("NIBR workers: %d (scheduler=%s)", n_jobs, scheduler)
+    logger.info("NIBR workers: %d", n_jobs)
 
     indexed_mols = list(enumerate(mols))
     n_workers = max(1, min(n_jobs, len(indexed_mols)))
@@ -1057,6 +1051,7 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
         chunk_payloads,
         n_workers,
         chunksize=1,
+        initializer=_silence_worker_stdio if n_workers > 1 else None,
     )
 
     rows = []
@@ -1073,8 +1068,7 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
             len(mols),
         )
         nibr_filters = mc.structural.NIBRFilters()
-        results = _run_with_suppressed_stdio(
-            nibr_filters,
+        results = nibr_filters(
             mols=mols,
             n_jobs=n_jobs,
             scheduler=scheduler,
@@ -1218,7 +1212,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             scheduler,
         )
         scheduler = "threads"
-    logger.info("Lilly workers: %d (scheduler=%s)", n_jobs, scheduler)
+    logger.info("Lilly workers: %d", n_jobs)
 
     if smiles_modelName_mols is not None:
         expected_len = len(smiles_modelName_mols)
@@ -1264,6 +1258,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             chunk_payloads,
             n_workers,
             chunksize=1,
+            initializer=_silence_worker_stdio if n_workers > 1 else None,
         )
         rows = []
         for chunk_rows in chunk_results:

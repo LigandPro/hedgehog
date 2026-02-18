@@ -102,7 +102,7 @@ class TestEnsureAizynthfinder:
                 aizynth = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder"
                 aizynth.mkdir(parents=True, exist_ok=True)
             # Simulate download creating config.yml
-            if "download_public_data" in cmd:
+            if any("download_public_data" in str(part) for part in cmd):
                 cfg = _config_path(tmp_path)
                 cfg.parent.mkdir(parents=True, exist_ok=True)
                 cfg.write_text("version: 1\n")
@@ -149,6 +149,10 @@ class TestEnsureAizynthfinder:
 
         def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
             subprocess_calls.append(cmd)
+            if any("download_public_data" in str(part) for part in cmd):
+                cfg = _config_path(tmp_path)
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                cfg.write_text("version: 1\n")
 
         monkeypatch.setattr("hedgehog.setup._aizynthfinder.subprocess.run", _mock_run)
 
@@ -177,6 +181,10 @@ class TestEnsureAizynthfinder:
 
         def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
             subprocess_calls.append(cmd)
+            if any("download_public_data" in str(part) for part in cmd):
+                cfg = _config_path(tmp_path)
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                cfg.write_text("version: 1\n")
 
         monkeypatch.setattr("hedgehog.setup._aizynthfinder.subprocess.run", _mock_run)
 

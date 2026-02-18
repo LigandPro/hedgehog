@@ -66,6 +66,10 @@ const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸'];
 // on all screens. Elapsed time is only shown in PipelineRunner screen.
 const RunningIndicator = memo(function RunningIndicator(): React.ReactElement | null {
   const isRunning = useStore((state) => state.isRunning);
+  const stages = useStore((state) => state.stages);
+  const selectedStages = useStore((state) =>
+    state.wizard.stageOrder.filter((stage) => state.wizard.selectedStages.includes(stage))
+  );
   const currentStage = useStore((state) => state.pipelineProgress.currentStage);
   const stageIndex = useStore((state) => state.pipelineProgress.stageIndex);
   const totalStages = useStore((state) => state.pipelineProgress.totalStages);
@@ -87,6 +91,11 @@ const RunningIndicator = memo(function RunningIndicator(): React.ReactElement | 
 
   if (!isRunning) return null;
 
+  const completedVisibleStages = selectedStages.filter(
+    (stage) => stages[stage]?.status === 'completed'
+  ).length;
+  const isFinalizing = selectedStages.length > 0 && completedVisibleStages === selectedStages.length;
+
   const stageName = STAGE_NAMES[currentStage] || currentStage;
   const progressText = totalStages > 0
     ? `${stageIndex}/${totalStages}`
@@ -99,8 +108,13 @@ const RunningIndicator = memo(function RunningIndicator(): React.ReactElement | 
     <Box marginLeft={1}>
       <Text color="gray"> | </Text>
       <Text color="yellow">{SPINNER_FRAMES[frameIndex]}</Text>
-      <Text color="yellow" bold> Running</Text>
-      {stageName && (
+      <Text color="yellow" bold> {isFinalizing ? 'Finalizing' : 'Running'}</Text>
+      {isFinalizing ? (
+        <>
+          <Text color="gray">: </Text>
+          <Text color="white">Writing outputs and report</Text>
+        </>
+      ) : stageName && (
         <>
           <Text color="gray">: </Text>
           <Text color="white">{progressText} {stageName}{percentText}</Text>

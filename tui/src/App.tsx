@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { useStore } from './store/index.js';
 import { getBridge, destroyBridge } from './services/python-bridge.js';
@@ -22,6 +22,7 @@ import {
   InputSelection,
   StageSelection,
   StageOrder,
+  WizardConfigMolPrep,
   WizardConfigDescriptors,
   WizardConfigFilters,
   WizardConfigSynthesis,
@@ -51,6 +52,7 @@ export const BACK_MAP: Record<Screen, Screen | null> = {
   wizardInputSelection: 'welcome',
   wizardStageSelection: 'wizardInputSelection',
   wizardStageOrder: 'wizardStageSelection',
+  wizardConfigMolPrep: 'wizardStageSelection',
   wizardConfigDescriptors: 'wizardStageSelection',
   wizardConfigFilters: 'wizardStageSelection',
   wizardConfigSynthesis: 'wizardStageSelection',
@@ -75,6 +77,7 @@ export const SCREEN_TITLES: Record<Screen, string> = {
   wizardInputSelection: 'Pipeline Wizard',
   wizardStageSelection: 'Pipeline Wizard',
   wizardStageOrder: 'Pipeline Wizard',
+  wizardConfigMolPrep: 'Pipeline Wizard',
   wizardConfigDescriptors: 'Pipeline Wizard',
   wizardConfigFilters: 'Pipeline Wizard',
   wizardConfigSynthesis: 'Pipeline Wizard',
@@ -164,6 +167,12 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
     { key: '→/Enter', label: 'Next' },
     { key: '←/Esc', label: 'Back' },
   ],
+  wizardConfigMolPrep: [
+    { key: '↑↓', label: 'Navigate' },
+    { key: 'Space', label: 'Edit' },
+    { key: 's', label: 'Save' },
+    { key: '←/→', label: 'Prev/Next' },
+  ],
   wizardConfigDescriptors: [
     { key: '↑↓', label: 'Navigate' },
     { key: 'Enter', label: 'Edit' },
@@ -203,6 +212,21 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
   ],
 };
 
+const STAGE_NAMES: Record<string, string> = {
+  mol_prep: 'Mol Prep',
+  descriptors: 'Descriptors',
+  struct_filters: 'Struct Filters',
+  synthesis: 'Synthesis',
+  docking: 'Docking',
+  docking_filters: 'Docking Filters',
+};
+
+const PROGRESS_LOG_THRESHOLDS = [10, 25, 50, 75, 90, 100] as const;
+
+function getStageName(stage: string): string {
+  return STAGE_NAMES[stage] || stage;
+}
+
 // ScreenRouter component (Matcha pattern)
 function ScreenRouter({ screen }: { screen: Screen }): React.ReactElement {
   // Each screen gets a unique key to force remount on screen change
@@ -235,6 +259,8 @@ function ScreenRouter({ screen }: { screen: Screen }): React.ReactElement {
         return <StageSelection />;
       case 'wizardStageOrder':
         return <StageOrder />;
+      case 'wizardConfigMolPrep':
+        return <WizardConfigMolPrep />;
       case 'wizardConfigDescriptors':
         return <WizardConfigDescriptors />;
       case 'wizardConfigFilters':
@@ -258,6 +284,7 @@ function ScreenRouter({ screen }: { screen: Screen }): React.ReactElement {
 
 export function App(): React.ReactElement {
   useApp();
+  const progressLogThresholdRef = useRef<Record<string, number>>({});
   const screen = useStore((state) => state.screen);
   const setBackendReady = useStore((state) => state.setBackendReady);
   const isBackendReady = useStore((state) => state.isBackendReady);
@@ -333,6 +360,26 @@ export function App(): React.ReactElement {
           stageProgress: progress,
           latestMessage: message,
         });
+
+        if (stage) {
+          const lastLoggedThreshold = progressLogThresholdRef.current[stage] ?? 0;
+          let reachedThreshold: number | null = null;
+
+          for (const threshold of PROGRESS_LOG_THRESHOLDS) {
+            if (progress >= threshold && threshold > lastLoggedThreshold) {
+              reachedThreshold = threshold;
+            }
+          }
+
+          if (reachedThreshold !== null) {
+            progressLogThresholdRef.current[stage] = reachedThreshold;
+            addLog({
+              timestamp: new Date(),
+              level: 'info',
+              message: `Stage progress: ${getStageName(stage)} ${reachedThreshold}%`,
+            });
+          }
+        }
         return;
       }
 
@@ -348,6 +395,7 @@ export function App(): React.ReactElement {
 
       if (method === 'stage_start') {
         const stage = (params as any).stage;
+        progressLogThresholdRef.current[stage] = 0;
         updateStage(stage, { status: 'running', progress: 0 });
         const stageIndex = selectedStages.indexOf(stage) + 1;
         updatePipelineProgress({
@@ -356,16 +404,35 @@ export function App(): React.ReactElement {
           totalStages: selectedStages.length,
           stageProgress: 0,
         });
+        addLog({
+          timestamp: new Date(),
+          level: 'info',
+          message: `Stage started: ${getStageName(stage)}`,
+        });
         return;
       }
 
       if (method === 'stage_complete') {
-        updateStage((params as any).stage, { status: 'completed', progress: 100 });
+        const stage = (params as any).stage;
+        progressLogThresholdRef.current[stage] = 100;
+        updateStage(stage, { status: 'completed', progress: 100 });
+        addLog({
+          timestamp: new Date(),
+          level: 'info',
+          message: `Stage completed: ${getStageName(stage)}`,
+        });
         return;
       }
 
       if (method === 'stage_error') {
-        updateStage((params as any).stage, { status: 'error', message: (params as any).message });
+        const stage = (params as any).stage;
+        const message = (params as any).message || 'Unknown error';
+        updateStage(stage, { status: 'error', message });
+        addLog({
+          timestamp: new Date(),
+          level: 'error',
+          message: `Stage failed: ${getStageName(stage)} - ${message}`,
+        });
         return;
       }
 
@@ -392,6 +459,7 @@ export function App(): React.ReactElement {
         if (state.screen === 'pipelineRunner') {
           setScreen('results');
         }
+        progressLogThresholdRef.current = {};
         return;
       }
 
@@ -399,6 +467,7 @@ export function App(): React.ReactElement {
         const message = (params as any).message;
         showToast('error', message);
         setRunning(false);
+        progressLogThresholdRef.current = {};
         const currentJobId = state.currentJobId;
         if (currentJobId) {
           updateJobInHistory(currentJobId, {

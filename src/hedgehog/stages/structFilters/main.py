@@ -14,10 +14,10 @@ from hedgehog.stages.structFilters.utils import (
     plot_filter_failures_analysis,
     plot_restriction_ratios,
     prepare_structfilters_input,
-    process_prepared_payload,
     process_one_dataframe,
     process_one_file,
     process_path,
+    process_prepared_payload,
 )
 from hedgehog.utils.input_paths import find_sampled_molecules
 from hedgehog.utils.parallel import resolve_n_jobs
@@ -379,7 +379,8 @@ def main(config, stage_dir, reporter=None):
 
     is_csv = input_path.lower().endswith(".csv")
     filter_names = list(filters_to_calculate)
-    stage_total = max(1, len(filter_names) * 100)
+    molecule_total = max(1, len(input_df))
+    stage_total = max(1, len(filter_names) * molecule_total)
     timings: dict[str, float] = {}
     stage_started = perf_counter()
 
@@ -396,7 +397,7 @@ def main(config, stage_dir, reporter=None):
     pass_mask_by_filter: dict[str, pd.DataFrame] = {}
 
     for idx, filter_name in enumerate(filter_names):
-        base = idx * 100
+        base = idx * molecule_total
         if reporter is not None:
             reporter.progress(
                 base, stage_total, message=f"StructFilters: {filter_name}"
@@ -410,12 +411,12 @@ def main(config, stage_dir, reporter=None):
                 done: int, total: int, base_value: int = base, name: str = filter_name
             ) -> None:
                 if total <= 0:
-                    pct = 0
+                    stage_done = 0
                 else:
-                    pct = int(round((done / total) * 100))
-                pct = max(0, min(100, pct))
+                    stage_done = int(round((done / total) * molecule_total))
+                stage_done = max(0, min(molecule_total, stage_done))
                 reporter.progress(
-                    base_value + pct,
+                    base_value + stage_done,
                     stage_total,
                     message=f"StructFilters: {name}",
                 )
@@ -451,7 +452,9 @@ def main(config, stage_dir, reporter=None):
         timings[f"filter_post:{filter_name}"] = perf_counter() - post_started
         if reporter is not None:
             reporter.progress(
-                base + 100, stage_total, message=f"StructFilters: {filter_name}"
+                base + molecule_total,
+                stage_total,
+                message=f"StructFilters: {filter_name}",
             )
 
     combine_started = perf_counter()

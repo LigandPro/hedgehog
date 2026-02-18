@@ -657,11 +657,8 @@ def run(
             total_stages: int,
             short_name: str,
             message: str | None = None,
-            *,
-            completed: bool = False,
         ) -> str:
-            shown_stage = stage_index if completed else max(stage_index - 1, 0)
-            base = f"{shown_stage}/{total_stages} - {short_name}"
+            base = f"{stage_index}/{total_stages} - {short_name}"
             short_message = _short_progress_message(message)
             if short_message:
                 return f"{base} · {short_message}"
@@ -674,46 +671,51 @@ def run(
             refresh_per_second=4,
             console=shared_console,
         ) as progress:
-            stage_tasks: dict[int, int] = {}
-            stage_started_at: dict[int, float] = {}
-            current_stage_done: dict[int, int | None] = {}
-            current_stage_total: dict[int, int | None] = {}
+            active_task_id: int | None = None
+            stage_started_at: float | None = None
+            current_stage_done: int | None = None
+            current_stage_total: int | None = None
 
             def _get_or_create_task(
                 stage_index: int,
                 total_stages: int,
                 short_name: str,
+                message: str | None = None,
             ) -> int | None:
+                nonlocal active_task_id
                 if stage_index <= 0:
                     return None
-                existing = stage_tasks.get(stage_index)
-                if existing is not None:
-                    return existing
-                task = progress.add_task(
-                    _progress_description(stage_index, total_stages, short_name),
-                    total=100,
-                    done_total="-/-",
-                    rate="-",
-                    eta="-",
-                )
-                stage_tasks[stage_index] = task
-                return task
+                if active_task_id is None:
+                    active_task_id = progress.add_task(
+                        _progress_description(stage_index, total_stages, short_name, message),
+                        total=100,
+                        done_total="-/-",
+                        rate="-",
+                        eta="-",
+                    )
+                return active_task_id
 
             def _cli_progress(event: dict) -> None:
+                nonlocal stage_started_at, current_stage_done, current_stage_total
                 event_type = event.get("type")
                 stage = str(event.get("stage", ""))
                 stage_index = int(event.get("stage_index", 0) or 0)
                 total_stages = int(event.get("total_stages", 0) or 0)
                 short_name = _short_stage_name(stage)
-                task_id = _get_or_create_task(stage_index, total_stages, short_name)
+                message = event.get("message")
+                task_id = _get_or_create_task(
+                    stage_index,
+                    total_stages,
+                    short_name,
+                    message,
+                )
                 if task_id is None:
                     return
-                message = event.get("message")
 
                 if event_type == "stage_start":
-                    stage_started_at[stage_index] = time.perf_counter()
-                    current_stage_done[stage_index] = None
-                    current_stage_total[stage_index] = None
+                    stage_started_at = time.perf_counter()
+                    current_stage_done = None
+                    current_stage_total = None
                     progress.update(
                         task_id,
                         completed=0,
@@ -732,14 +734,13 @@ def run(
                 if event_type == "stage_progress":
                     current = int(event.get("current", 0) or 0)
                     total = int(event.get("total", 0) or 0)
-                    current_stage_done[stage_index] = current if current >= 0 else None
-                    current_stage_total[stage_index] = total if total > 0 else None
+                    current_stage_done = current if current >= 0 else None
+                    current_stage_total = total if total > 0 else None
                     pct = int(round((current / total) * 100)) if total > 0 else 0
                     pct = max(0, min(100, pct))
-                    started_at = stage_started_at.get(stage_index)
                     elapsed_seconds = (
-                        time.perf_counter() - started_at
-                        if started_at is not None
+                        time.perf_counter() - stage_started_at
+                        if stage_started_at is not None
                         else None
                     )
                     left_count = (
@@ -776,8 +777,8 @@ def run(
 
                 if event_type == "stage_complete":
                     done_total = "-/-"
-                    stage_total = current_stage_total.get(stage_index)
-                    stage_done = current_stage_done.get(stage_index)
+                    stage_total = current_stage_total
+                    stage_done = current_stage_done
                     if stage_total is not None:
                         done = stage_done
                         if done is None or done < 0:
@@ -791,7 +792,6 @@ def run(
                             total_stages,
                             short_name,
                             message,
-                            completed=True,
                         ),
                         done_total=done_total,
                         rate="-",
@@ -800,12 +800,6 @@ def run(
                     return
 
             success = calculate_metrics(data, config_dict, _cli_progress)
-            if success and stage_tasks:
-                last_stage_idx = max(stage_tasks.keys())
-                progress.update(
-                    stage_tasks[last_stage_idx],
-                    description=progress.tasks[stage_tasks[last_stage_idx]].description,
-                )
 
     if not success:
         logger.error("Pipeline completed with failures")

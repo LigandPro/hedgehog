@@ -1,14 +1,14 @@
 generated_mols_path: data/test/moses_1000.csv
 target_mols_path: data/test/target_mols.csv
 folder_to_save: results/run
-n_jobs: 62
+n_jobs: -1
 sample_size: 1000
 batch_size: 512
 save_sampled_mols: true
 pains_file_path: data/wehi_pains.csv
 mcf_file_path: data/mcf.csv
-ligand_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/ligprep
-protein_preparation_tool: /mnt/ligandpro/soft/drug_design/schrodinger/utilities/prepwizard
+ligand_preparation_tool: /opt/proprietary_tools/ligand_prep/bin/ligand_prep
+protein_preparation_tool: /opt/proprietary_tools/protein_prep/bin/protein_prep
 config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
 config_structFilters: src/hedgehog/configs/config_structFilters.yml

@@ -58,3 +58,8 @@ Notes:
 - If you add/change CLI commands, options, defaults, or error behavior, update `docs/content/cli.mdx` accordingly.
 - If README examples become inaccurate, update `README.md` as well.
 
+### CI Verification
+
+- Always check CI status before considering a task complete.
+- For PR work, verify the latest remote CI checks for the current branch/PR.
+- If CI is failing, treat it as an active issue and fix it or clearly report the blocker.

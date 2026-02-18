@@ -94,6 +94,7 @@ export function ReviewRun(): React.ReactElement {
   };
 
   const getStageScreen = (stageName: string): Screen => {
+    if (stageName === 'mol_prep') return 'wizardConfigMolPrep';
     if (stageName === 'descriptors') return 'wizardConfigDescriptors';
     if (stageName === 'struct_filters') return 'wizardConfigFilters';
     if (stageName === 'synthesis') return 'wizardConfigSynthesis';

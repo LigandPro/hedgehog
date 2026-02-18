@@ -2,6 +2,7 @@
 name = "hedgehog"
 version = "1.0.0"
 description = "Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0.0",
@@ -44,6 +45,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 "*" = ["*.yml", "*.yaml", "*.csv", "*.json", "*.html"]
+"hedgehog.vendor.moleval.metrics.NP_Score" = ["publicnp.model.gz"]
+"hedgehog.vendor.moleval.metrics.SA_Score" = ["fpscores.pkl.gz"]
+"hedgehog.vendor.moleval.metrics.fcd_torch" = ["ChemNet_v0.13_pretrained.pt"]
 
 [tool.ruff]
 target-version = "py310"

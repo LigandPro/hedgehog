@@ -16,6 +16,15 @@ For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the
 
 ## Installation
 
+Install from PyPI:
+
+```bash
+python -m pip install hedgehog
+hedgehog --help
+```
+
+Or install from source:
+
 ```bash
 # Clone the repository
 git clone https://github.com/LigandPro/hedgehog.git
@@ -58,7 +67,7 @@ uv run hedge run
 
 This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `data/test/`. Each stage runs in sequence, filtering molecules that fail its criteria.
 
-Note: the default `config.yml` contains absolute paths for optional proprietary tools (e.g. Schrodinger LigPrep/PrepWizard). If you do not have these tools, set `ligand_preparation_tool` / `protein_preparation_tool` to empty values (or disable the affected stages) before your first run.
+Note: the default `config.yml` contains absolute paths for optional external preparation tools. If you do not have these tools, set `ligand_preparation_tool` / `protein_preparation_tool` to empty values (or disable the affected stages) before your first run.
 
 ## Expected Output
 

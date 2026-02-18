@@ -24,7 +24,7 @@ def _save_ordered_csv(df: pd.DataFrame, path: Path) -> None:
 
 
 def _get_aizynthfinder_config() -> Path:
-    """Get path to AiZynthFinder config file."""
+    """Get default path to AiZynthFinder config file."""
     project_root = Path(__file__).resolve().parents[4]
     return (
         project_root
@@ -34,6 +34,20 @@ def _get_aizynthfinder_config() -> Path:
         / "public"
         / "config.yml"
     )
+
+
+def _get_aizynthfinder_root() -> Path:
+    """Get path to AiZynthFinder project directory."""
+    project_root = Path(__file__).resolve().parents[4]
+    return project_root / "modules" / "retrosynthesis" / "aizynthfinder"
+
+
+def _resolve_retrosynthesis_config(config: dict) -> Path:
+    """Resolve retrosynthesis config path from runtime config or default."""
+    custom_path = config.get("config_retrosynthesis")
+    if custom_path:
+        return Path(custom_path)
+    return _get_aizynthfinder_config()
 
 
 def _log_aizynthfinder_setup_instructions(config_path: Path) -> None:
@@ -125,7 +139,8 @@ def main(config: dict, reporter=None) -> None:
             reporter.progress(stage_total, stage_total, message="Synthesis complete")
         return
 
-    aizynth_config = _get_aizynthfinder_config()
+    aizynthfinder_root = _get_aizynthfinder_root()
+    aizynth_config = _resolve_retrosynthesis_config(config)
     if not aizynth_config.exists():
         from hedgehog.setup import ensure_aizynthfinder
 
@@ -144,7 +159,10 @@ def main(config: dict, reporter=None) -> None:
             300, stage_total, message="Running retrosynthesis (AiZynthFinder)"
         )
     if not run_aizynthfinder(
-        output_folder / "input_smiles.smi", output_json, aizynth_config
+        output_folder / "input_smiles.smi",
+        output_json,
+        aizynth_config,
+        aizynthfinder_dir=aizynthfinder_root,
     ):
         logger.error("Retrosynthesis analysis failed")
         raise RuntimeError("Retrosynthesis analysis failed")

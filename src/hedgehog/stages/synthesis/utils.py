@@ -1,5 +1,6 @@
 import json
 import os
+import pickle
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -57,20 +58,23 @@ def prepare_input_smiles(input_df, output_file):
     return len(smiles_list)
 
 
-def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
+def run_aizynthfinder(
+    input_smiles_file, output_json_file, config_file, aizynthfinder_dir=None
+):
     """Run AiZynthFinder CLI to perform retrosynthesis analysis.
 
     Args:
         input_smiles_file: Path to input SMILES file
         output_json_file: Path to output JSON file
         config_file: Path to AiZynthFinder config file
+        aizynthfinder_dir: Optional working directory for AiZynthFinder CLI
 
     Returns:
         True if successful, False otherwise
     """
     output_json_file.parent.mkdir(parents=True, exist_ok=True)
 
-    aizynthfinder_dir = config_file.parent.parent
+    run_dir = Path(aizynthfinder_dir) if aizynthfinder_dir else config_file.parent.parent
     input_abs = input_smiles_file.resolve()
     output_abs = output_json_file.resolve()
     config_abs = config_file.resolve()
@@ -86,9 +90,9 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
         "--output",
         str(output_abs),
     ]
-    nproc = os.environ.get("AIZYNTH_NPROC")
-    if nproc:
-        cmd.extend(["--nproc", str(int(nproc))])
+    nproc = _resolve_aizynth_nproc(os.environ.get("AIZYNTH_NPROC"))
+    if nproc is not None:
+        cmd.extend(["--nproc", str(nproc)])
 
     try:
         logger.info("Running retrosynthesis analysis...")
@@ -100,7 +104,7 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
             capture_output=True,
             text=True,
             check=True,
-            cwd=str(aizynthfinder_dir),
+            cwd=str(run_dir),
         )
 
         logger.info("Retrosynthesis analysis completed successfully")
@@ -114,6 +118,32 @@ def run_aizynthfinder(input_smiles_file, output_json_file, config_file):
     except Exception as e:
         logger.error("Unexpected error running retrosynthesis analysis: %s", e)
         return False
+
+
+def _resolve_aizynth_nproc(raw_value: str | None) -> int | None:
+    """Resolve AIZYNTH_NPROC value to a valid positive worker count.
+
+    Semantics:
+      - unset/empty: do not pass ``--nproc`` (AiZynthFinder default behavior)
+      - positive int: pass as-is
+      - ``0`` or negative: resolve like other stages (all available CPUs)
+      - invalid value: ignore and continue without ``--nproc``
+    """
+    if not raw_value:
+        return None
+
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning("Invalid AIZYNTH_NPROC=%r, ignoring", raw_value)
+        return None
+
+    if parsed > 0:
+        return parsed
+
+    resolved = resolve_n_jobs({"n_jobs": parsed})
+    logger.info("Resolved AIZYNTH_NPROC=%s to %d workers", raw_value, resolved)
+    return resolved
 
 
 def parse_retrosynthesis_results(json_file):
@@ -268,18 +298,34 @@ def _load_rascore_impl():
     """Load RAScore XGBoost model."""
     model_path = _get_rascore_model_path()
     if not model_path.exists():
-        logger.warning(
-            "RAScore model not found at %s. RA scores will be set to np.nan",
-            model_path,
-        )
-        return False
+        pkl_path = _get_rascore_pickle_model_path()
+        if pkl_path.exists():
+            model_path = pkl_path
+        else:
+            try:
+                from hedgehog.setup import ensure_rascore_model
+
+                project_root = Path(__file__).resolve().parents[4]
+                model_path = ensure_rascore_model(project_root)
+            except Exception as e:
+                logger.warning(
+                    "RAScore model is unavailable (%s). RA scores will be set to np.nan",
+                    e,
+                )
+                return False
     try:
+        if model_path.suffix.lower() == ".pkl":
+            with open(model_path, "rb") as f:
+                model = pickle.load(f)
+            logger.debug("RAScore pickle model loaded successfully")
+            return {"kind": "pickle_classifier", "model": model}
+
         import xgboost as xgb
 
         booster = xgb.Booster()
         booster.load_model(str(model_path))
-        logger.debug("RAScore model loaded successfully")
-        return booster
+        logger.debug("RAScore xgboost model loaded successfully")
+        return {"kind": "xgboost_booster", "model": booster}
     except Exception as e:
         logger.warning("Failed to load RAScore model: %s", e)
         return False
@@ -404,6 +450,22 @@ def _get_rascore_model_path() -> Path:
     )
 
 
+def _get_rascore_pickle_model_path() -> Path:
+    """Get path to RAScore model file in MolScore upstream pickle format."""
+    molscore_path = (
+        Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
+    )
+    return (
+        molscore_path
+        / "molscore"
+        / "data"
+        / "models"
+        / "RAScore"
+        / "XGB_chembl_ecfp_counts"
+        / "model.pkl"
+    )
+
+
 def _get_ecfp6_counts(smiles: str, n_bits: int = 2048) -> np.ndarray | None:
     """Compute ECFP6 count fingerprint for a SMILES string."""
     mol = Chem.MolFromSmiles(smiles)
@@ -428,12 +490,10 @@ def _calculate_ra_scores_batch(
     Returns:
         List of RA scores (0-1, higher is better), with np.nan for failed calculations
     """
-    import xgboost as xgb
-
     nan_list = [np.nan] * len(smiles_list)
 
-    booster = _load_rascore()
-    if not booster:
+    rascore_model = _load_rascore()
+    if not rascore_model:
         return nan_list
 
     fps = []
@@ -448,8 +508,14 @@ def _calculate_ra_scores_batch(
         return nan_list
 
     try:
-        dmatrix = xgb.DMatrix(np.array(fps))
-        probs = booster.predict(dmatrix)
+        fps_array = np.array(fps)
+        if rascore_model.get("kind") == "pickle_classifier":
+            probs = rascore_model["model"].predict_proba(fps_array)[:, 1]
+        else:
+            import xgboost as xgb
+
+            dmatrix = xgb.DMatrix(fps_array)
+            probs = rascore_model["model"].predict(dmatrix)
         scores = [np.nan] * len(smiles_list)
         for idx, prob in zip(valid_indices, probs):
             scores[idx] = float(prob)

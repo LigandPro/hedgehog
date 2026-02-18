@@ -1,5 +1,7 @@
 """Tests for docking/utils.py."""
 
+import os
+
 import pandas as pd
 
 from hedgehog.stages.docking.utils import (
@@ -7,6 +9,8 @@ from hedgehog.stages.docking.utils import (
     _find_latest_input_source,
     _prepare_ligands_dataframe,
     _split_sdf_to_molecules,
+    _validate_optional_tool_path,
+    run_docking,
 )
 
 
@@ -272,6 +276,105 @@ class TestLigandNaming:
         assert "smiles" in result.columns
         assert "model_name" in result.columns
         assert "mol_idx" in result.columns
+
+
+class TestToolValidation:
+    """Tests for optional external tool path validation."""
+
+    def test_non_executable_path_falls_back(self, tmp_path):
+        """Non-executable file path should be treated as unavailable."""
+        tool_path = tmp_path / "tool.bin"
+        tool_path.write_text("echo test\n")
+        os.chmod(tool_path, 0o644)
+
+        result = _validate_optional_tool_path(
+            str(tool_path), "Protein preparation tool"
+        )
+        assert result is None
+
+
+class TestRunDockingProteinPrepFallback:
+    """Tests for protein preparation fallback behavior."""
+
+    def test_missing_prep_tool_runtime_does_not_fail_docking(self, tmp_path, monkeypatch):
+        """Missing protein prep executable at runtime should not fail docking."""
+        receptor = tmp_path / "receptor.pdb"
+        receptor.write_text("ATOM\n")
+        input_csv = tmp_path / "input.csv"
+        pd.DataFrame(
+            {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": ["m1-1"]}
+        ).to_csv(input_csv, index=False)
+
+        docking_cfg = tmp_path / "config_docking.yml"
+        docking_cfg.write_text(
+            "run: true\n"
+            "tools: smina\n"
+            "auto_run: true\n"
+            f"receptor_pdb: {receptor}\n"
+        )
+
+        run_config = {
+            "config_docking": str(docking_cfg),
+            "folder_to_save": str(tmp_path),
+            "protein_preparation_tool": "/fake/prep_tool",
+            "ligand_preparation_tool": None,
+        }
+
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._find_latest_input_source",
+            lambda *_: input_csv,
+        )
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._prepare_ligands_dataframe",
+            lambda *_args, **_kwargs: {"total": 1, "written": 1, "skipped": 0},
+        )
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._validate_optional_tool_path",
+            lambda path, label: path if label == "Protein preparation tool" else None,
+        )
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._prepare_receptor_if_needed",
+            lambda *_, **__: None,
+        )
+
+        prepared = tmp_path / "stages" / "05_docking" / "_workdir" / "protein_prepared.pdb"
+        prep_cmd = ["/missing/prep_tool", str(receptor), str(prepared), "-WAIT"]
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._prepare_protein_for_docking",
+            lambda *_args, **_kwargs: (str(prepared), prep_cmd),
+        )
+
+        script_path = tmp_path / "stages" / "05_docking" / "_workdir" / "run_smina.sh"
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+        script_path.write_text("#!/usr/bin/env bash\n")
+
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._setup_smina",
+            lambda *_args, **_kwargs: script_path,
+        )
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._save_job_metadata",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._save_job_ids",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._run_smina",
+            lambda *_args, **_kwargs: {"status": "completed"},
+        )
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils._update_metadata_with_run_status",
+            lambda *_args, **_kwargs: None,
+        )
+
+        def _raise_not_found(*_args, **_kwargs):
+            raise FileNotFoundError("No such file or directory")
+
+        monkeypatch.setattr("hedgehog.stages.docking.utils.subprocess.run", _raise_not_found)
+
+        assert run_docking(run_config) is True
 
 
 class TestPerMoleculeArchitecture:

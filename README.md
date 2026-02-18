@@ -22,6 +22,15 @@ Post-pipeline analysis: MolEval generative metrics
 
 ## Setup & Run
 
+### Install from PyPI
+
+```bash
+python -m pip install hedgehog
+hedgehog --help
+```
+
+### Install from source (recommended for development)
+
 ```bash
 # Clone repository
 git clone https://github.com/LigandPro/hedgehog.git
@@ -66,6 +75,25 @@ npm run tui
 ```
 
 See [tui/README.md](tui/README.md) for details.
+
+**Unified verification pipeline**
+
+Use one command entry point for local/CI checks:
+
+```bash
+# Quick local smoke (CLI + TUI build + TUI startup/quit in PTY)
+uv run python scripts/check_pipeline.py --mode quick
+
+# CI smoke profile (same checks, no full production run)
+uv run python scripts/check_pipeline.py --mode ci
+
+# Full local verification (quick checks + full production pipeline run)
+uv run python scripts/check_pipeline.py --mode full
+```
+
+`--mode full` runs `uv run hedgehog run` with the default production config,
+so it can be long-running and requires external stage dependencies (for example
+docking/synthesis tooling) to be installed in your local environment.
 
 **Documentation Site**
 

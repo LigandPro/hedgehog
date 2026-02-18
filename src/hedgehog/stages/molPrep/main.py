@@ -7,7 +7,7 @@ from hedgehog.stages.molPrep.utils import run_mol_prep
 from hedgehog.stages.structFilters.utils import process_path
 
 
-def main(data, config: dict, subfolder: str | None = None):
+def main(data, config: dict, subfolder: str | None = None, reporter=None):
     """Run Datamol-based molecule preparation (MolPrep).
 
     This stage standardizes molecules before descriptor calculation:
@@ -34,4 +34,4 @@ def main(data, config: dict, subfolder: str | None = None):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = load_config(config["config_mol_prep"])
-    return run_mol_prep(data, cfg, out_dir)
+    return run_mol_prep(data, cfg, out_dir, reporter=reporter)

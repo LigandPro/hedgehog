@@ -47,6 +47,18 @@ npm run tui
 ./run-tui.sh
 ```
 
+### Smoke checks
+
+From project root:
+
+```bash
+# Build + startup smoke (starts TUI in PTY and exits automatically)
+uv run python scripts/check_pipeline.py --mode quick
+```
+
+This is the recommended way to verify that the TUI can start and connect to
+the Python backend in automation-friendly environments.
+
 ## Project Structure
 
 ```

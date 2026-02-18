@@ -1,11 +1,14 @@
 """Tests for synthesis/utils.py."""
 
 import json
+import pickle
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
+import hedgehog.stages.synthesis.utils as synthesis_utils
 from hedgehog.stages.synthesis.utils import (
     _build_score_filter_mask,
     _calculate_ra_scores_batch,
@@ -17,7 +20,19 @@ from hedgehog.stages.synthesis.utils import (
     merge_retrosynthesis_results,
     parse_retrosynthesis_results,
     prepare_input_smiles,
+    run_aizynthfinder,
 )
+
+
+class _DummyRascoreClassifier:
+    """Simple picklable classifier stub with scikit-like API."""
+
+    def predict_proba(self, fps):
+        n = len(fps)
+        out = np.zeros((n, 2), dtype=float)
+        out[:, 1] = 0.8
+        out[:, 0] = 0.2
+        return out
 
 
 class TestCalculateSaScore:
@@ -307,6 +322,71 @@ class TestPrepareInputSmiles:
         assert count == 2
 
 
+class TestRunAizynthfinder:
+    """Tests for run_aizynthfinder nproc handling."""
+
+    def test_minus_one_resolves_to_slurm_cpus(self, tmp_path, monkeypatch):
+        """AIZYNTH_NPROC=-1 should resolve to available CPU count."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return None
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setenv("AIZYNTH_NPROC", "-1")
+        monkeypatch.delenv("MOLSCORE_NJOBS", raising=False)
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "12")
+
+        config = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder" / "public" / "config.yml"
+        ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
+
+        assert ok is True
+        cmd = captured["cmd"]
+        assert "--nproc" in cmd
+        assert cmd[cmd.index("--nproc") + 1] == "12"
+
+    def test_zero_resolves_to_molscore_njobs(self, tmp_path, monkeypatch):
+        """AIZYNTH_NPROC=0 should follow MOLSCORE_NJOBS when set."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return None
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setenv("AIZYNTH_NPROC", "0")
+        monkeypatch.setenv("MOLSCORE_NJOBS", "20")
+
+        config = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder" / "public" / "config.yml"
+        ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
+
+        assert ok is True
+        cmd = captured["cmd"]
+        assert "--nproc" in cmd
+        assert cmd[cmd.index("--nproc") + 1] == "20"
+
+    def test_invalid_nproc_is_ignored(self, tmp_path, monkeypatch):
+        """Invalid AIZYNTH_NPROC should not break run and is ignored."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return None
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setenv("AIZYNTH_NPROC", "not-a-number")
+
+        config = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder" / "public" / "config.yml"
+        ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
+
+        assert ok is True
+        assert "--nproc" not in captured["cmd"]
+
+
 class TestParseRetrosynthesisResults:
     """Tests for parse_retrosynthesis_results function."""
 
@@ -451,3 +531,48 @@ class TestCalculateRaScores:
         scores = _calculate_ra_scores_batch(["CC(=O)Oc1ccccc1C(O)=O"])  # aspirin
         assert len(scores) == 1
         assert scores[0] > 0.9
+
+
+class TestRascoreAutoInstall:
+    """Tests for RAScore auto-download/load behavior."""
+
+    def test_load_rascore_auto_downloads_pickle_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When local model is missing, helper should auto-provide pickle model."""
+        model_path = tmp_path / "model.pkl"
+        with open(model_path, "wb") as f:
+            pickle.dump(_DummyRascoreClassifier(), f)
+
+        missing_json = tmp_path / "missing_model.json"
+        missing_pkl = tmp_path / "missing_model.pkl"
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: missing_json
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_pickle_model_path", lambda: missing_pkl
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._rascore.ensure_rascore_model",
+            lambda _project_root: model_path,
+        )
+        synthesis_utils._lazy_cache["rascore_booster"] = None
+
+        loaded = synthesis_utils._load_rascore_impl()
+        assert loaded
+        assert loaded["kind"] == "pickle_classifier"
+
+    def test_calculate_ra_scores_with_pickle_classifier(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """RA score batch should use predict_proba when pickle model is loaded."""
+        monkeypatch.setattr(
+            synthesis_utils,
+            "_load_rascore",
+            lambda: {"kind": "pickle_classifier", "model": _DummyRascoreClassifier()},
+        )
+        scores = _calculate_ra_scores_batch(["CCO", "invalid_smiles"])
+
+        assert len(scores) == 2
+        assert scores[0] == pytest.approx(0.8)
+        assert np.isnan(scores[1])

@@ -10,9 +10,11 @@ import statistics
 import warnings
 from typing import Any
 
-import datamol as dm
-
+from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.mce18 import compute_mce18
+from hedgehog.utils.parallel import resolve_n_jobs
+
+dm = import_datamol_quietly()
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +76,7 @@ def compute_stage_metrics(
 
     from hedgehog.vendor.moleval.metrics.metrics import GetMetrics
 
-    n_jobs = config.get("n_jobs", 1)
+    n_jobs = resolve_n_jobs(stage_config=config, default=-1)
     device = config.get("device", "cpu")
     max_molecules = config.get("max_molecules", 2000)
 

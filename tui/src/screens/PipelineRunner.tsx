@@ -7,6 +7,7 @@ import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import { formatDuration } from '../utils/format.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import type { LogEntry } from '../types/index.js';
 
 const STAGE_NAMES: Record<string, string> = {
   mol_prep: 'Mol Prep',
@@ -16,6 +17,40 @@ const STAGE_NAMES: Record<string, string> = {
   docking: 'Docking',
   docking_filters: 'Docking Filters',
 };
+
+const MIN_LOG_PANEL_TERMINAL_WIDTH = 120;
+
+function formatLogTimestamp(timestamp: Date): string {
+  const value = new Date(timestamp);
+  const hours = String(value.getHours()).padStart(2, '0');
+  const minutes = String(value.getMinutes()).padStart(2, '0');
+  const seconds = String(value.getSeconds()).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function trimText(value: string, maxWidth: number): string {
+  if (value.length <= maxWidth) {
+    return value;
+  }
+  if (maxWidth <= 1) {
+    return value.slice(0, maxWidth);
+  }
+  return `${value.slice(0, maxWidth - 1)}…`;
+}
+
+function getLevelColor(level: LogEntry['level']): 'gray' | 'cyan' | 'yellow' | 'red' | 'magenta' {
+  if (level === 'warn') return 'yellow';
+  if (level === 'error') return 'red';
+  if (level === 'debug') return 'magenta';
+  return 'cyan';
+}
+
+function getMessageColor(level: LogEntry['level']): 'gray' | 'yellow' | 'red' | 'magenta' {
+  if (level === 'warn') return 'yellow';
+  if (level === 'error') return 'red';
+  if (level === 'debug') return 'magenta';
+  return 'gray';
+}
 
 // Overall progress display with current stage bar
 const PipelineProgress = memo(function PipelineProgress({
@@ -104,6 +139,47 @@ const RunningStatus = memo(function RunningStatus(): React.ReactElement | null {
   );
 });
 
+const LiveLogPanel = memo(function LiveLogPanel({
+  panelWidth,
+  terminalHeight,
+}: {
+  panelWidth: number;
+  terminalHeight: number;
+}): React.ReactElement {
+  const logs = useStore((state) => state.logs);
+
+  const visibleLineCount = useMemo(() => (
+    Math.max(6, Math.min(24, terminalHeight - 20))
+  ), [terminalHeight]);
+
+  const messageWidth = Math.max(12, panelWidth - 24);
+  const visibleLogs = logs.slice(-visibleLineCount);
+
+  return (
+    <Box flexDirection="column" marginLeft={2} width={panelWidth}>
+      <Text color="cyan" bold>Live Log</Text>
+      <Text color="gray">{'─'.repeat(Math.max(10, panelWidth - 1))}</Text>
+      {visibleLogs.length === 0 ? (
+        <Text dimColor>No log events yet.</Text>
+      ) : (
+        visibleLogs.map((entry, index) => {
+          const timestamp = formatLogTimestamp(entry.timestamp);
+          const level = entry.level.toUpperCase();
+          const message = trimText(entry.message, messageWidth);
+
+          return (
+            <Text key={`${entry.timestamp.getTime()}-${index}`}>
+              <Text color="gray">[{timestamp}] </Text>
+              <Text color={getLevelColor(entry.level)}>[{level}]</Text>
+              <Text color={getMessageColor(entry.level)}> {message}</Text>
+            </Text>
+          );
+        })
+      )}
+    </Box>
+  );
+});
+
 export function PipelineRunner(): React.ReactElement {
   const setScreen = useStore((state) => state.setScreen);
   const isRunning = useStore((state) => state.isRunning);
@@ -117,12 +193,17 @@ export function PipelineRunner(): React.ReactElement {
   const showToast = useStore((state) => state.showToast);
   const wizardStageOrder = useStore((state) => state.wizard.stageOrder);
   const wizardSelectedStages = useStore((state) => state.wizard.selectedStages);
+  const showPipelineLog = useStore((state) => state.showPipelineLog);
+  const togglePipelineLog = useStore((state) => state.togglePipelineLog);
 
-  const { width: terminalWidth } = useTerminalSize();
+  const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
 
   const selectedStages = useMemo(() => (
     wizardStageOrder.filter((stage) => wizardSelectedStages.includes(stage))
   ), [wizardStageOrder, wizardSelectedStages]);
+
+  const canShowRightLogPanel = showPipelineLog && terminalWidth >= MIN_LOG_PANEL_TERMINAL_WIDTH;
+  const logPanelWidth = Math.max(36, Math.min(52, Math.floor(terminalWidth * 0.35)));
 
   const doCancelPipeline = async () => {
     if (!currentJobId) return;
@@ -159,7 +240,9 @@ export function PipelineRunner(): React.ReactElement {
   };
 
   useInput((input, key) => {
-    if (key.escape || key.leftArrow) {
+    if (input === 'l') {
+      togglePipelineLog();
+    } else if (key.escape || key.leftArrow) {
       // Navigate back - pipeline continues in background
       setScreen('welcome');
     } else if (input === 'c' && isRunning) {
@@ -170,45 +253,65 @@ export function PipelineRunner(): React.ReactElement {
   const shortcuts = isRunning
     ? [
         { key: 'c', label: 'Cancel' },
+        { key: 'l', label: showPipelineLog ? 'Hide Log' : 'Show Log' },
         { key: '←/Esc', label: 'Back (keeps running)' },
       ]
-    : [{ key: '←/Esc', label: 'Back' }];
+    : [
+        { key: 'l', label: showPipelineLog ? 'Hide Log' : 'Show Log' },
+        { key: '←/Esc', label: 'Back' },
+      ];
 
   return (
     <Box flexDirection="column" padding={1}>
       <Header title="Pipeline Runner" />
 
-      {!isBackendReady && (
-        <Box marginY={1}>
-          <Text color="yellow">Warning: Backend not connected</Text>
-        </Box>
-      )}
+      <Box flexDirection="row">
+        <Box flexDirection="column" flexGrow={1}>
+          {!isBackendReady && (
+            <Box marginY={1}>
+              <Text color="yellow">Warning: Backend not connected</Text>
+            </Box>
+          )}
 
-      {/* Input/Output info */}
-      {config && (
-        <Box flexDirection="column" marginY={1}>
-          <Box>
-            <Text dimColor>Input:  </Text>
-            <Text color="cyan">{config.generated_mols_path}</Text>
-          </Box>
-          <Box>
-            <Text dimColor>Output: </Text>
-            <Text color="cyan">{config.folder_to_save}</Text>
-          </Box>
-        </Box>
-      )}
+          {/* Input/Output info */}
+          {config && (
+            <Box flexDirection="column" marginY={1}>
+              <Box>
+                <Text dimColor>Input:  </Text>
+                <Text color="cyan">{config.generated_mols_path}</Text>
+              </Box>
+              <Box>
+                <Text dimColor>Output: </Text>
+                <Text color="cyan">{config.folder_to_save}</Text>
+              </Box>
+            </Box>
+          )}
 
-      {/* Running status */}
-      {isRunning ? (
-        <>
-          <RunningStatus />
-          <PipelineProgress selectedStages={selectedStages} />
-        </>
-      ) : (
-        <Box marginY={2}>
-          <Text dimColor>Pipeline not running. Use [n] from Welcome screen to start a new run.</Text>
+          {/* Running status */}
+          {isRunning ? (
+            <>
+              <RunningStatus />
+              <PipelineProgress selectedStages={selectedStages} />
+            </>
+          ) : (
+            <Box marginY={2}>
+              <Text dimColor>Pipeline not running. Use [n] from Welcome screen to start a new run.</Text>
+            </Box>
+          )}
+
+          {showPipelineLog && !canShowRightLogPanel && (
+            <Box marginTop={1}>
+              <Text color="yellow">
+                Live Log panel requires terminal width {'>='} {MIN_LOG_PANEL_TERMINAL_WIDTH} columns.
+              </Text>
+            </Box>
+          )}
         </Box>
-      )}
+
+        {canShowRightLogPanel && (
+          <LiveLogPanel panelWidth={logPanelWidth} terminalHeight={terminalHeight} />
+        )}
+      </Box>
 
       {/* Separator */}
       <Box marginTop={1}>

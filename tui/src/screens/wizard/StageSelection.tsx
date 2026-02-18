@@ -6,7 +6,7 @@ import { useStore } from '../../store/index.js';
 import type { Screen } from '../../types/index.js';
 
 const STAGES: Array<{ key: string; name: string; description: string; configScreen?: Screen }> = [
-  { key: 'mol_prep', name: 'Mol Prep', description: 'Standardize molecules (Datamol)' },
+  { key: 'mol_prep', name: 'Mol Prep', description: 'Standardize molecules (Datamol)', configScreen: 'wizardConfigMolPrep' as Screen },
   { key: 'descriptors', name: 'Descriptors', description: 'Calculate molecular descriptors', configScreen: 'wizardConfigDescriptors' as Screen },
   { key: 'struct_filters', name: 'Struct Filters', description: 'Apply structural filters', configScreen: 'wizardConfigFilters' as Screen },
   { key: 'synthesis', name: 'Synthesis', description: 'Score synthesizability', configScreen: 'wizardConfigSynthesis' as Screen },
@@ -27,7 +27,7 @@ export function StageSelection(): React.ReactElement {
   const openConfig = () => {
     const stage = STAGES[focusedIndex];
     if (!stage.configScreen) {
-      showToast('info', 'Mol Prep is configured via config_mol_prep.yml');
+      showToast('warning', `No config screen for stage: ${stage.name}`);
       return;
     }
     // Enable the stage if not already enabled

@@ -45,8 +45,8 @@ class ConfigValidator:
 
         if "n_jobs" in data:
             n_jobs = data["n_jobs"]
-            if not isinstance(n_jobs, int) or n_jobs < 1:
-                result["errors"].append("n_jobs must be a positive integer")
+            if not isinstance(n_jobs, int) or (n_jobs != -1 and n_jobs < 1):
+                result["errors"].append("n_jobs must be -1 or a positive integer")
 
         if "sample_size" in data:
             sample_size = data["sample_size"]
@@ -65,6 +65,15 @@ class ConfigValidator:
         for key in numeric_keys:
             if key in borders and not isinstance(borders[key], (int, float)):
                 result["errors"].append(f"{key} must be a number")
+
+    @staticmethod
+    def _validate_mol_prep(data: dict[str, Any], result: dict[str, Any]) -> None:
+        """Validate Mol Prep configuration."""
+        n_jobs = data.get("n_jobs")
+        if n_jobs is not None and (
+            not isinstance(n_jobs, int) or (n_jobs != -1 and n_jobs < 1)
+        ):
+            result["errors"].append("n_jobs must be -1 or a positive integer")
 
     @staticmethod
     def _validate_filters(data: dict[str, Any], result: dict[str, Any]) -> None:
