@@ -1,6 +1,7 @@
 import contextlib
 import importlib
 import io
+import logging
 import os
 import warnings
 from pathlib import Path
@@ -37,6 +38,21 @@ _COMPLEXITY_FILTERS_CACHE = {}
 _MOLCOMPLEXITY_ALERT_NAMES: list[str] | None = None
 _ALERT_COMPILED_SMARTS: list[tuple[str, object, str]] | None = None
 _ALERT_RULESET_NAMES: list[str] | None = None
+_SUPPRESS_PANDASTOOLS_ENV = "HEDGEHOG_SHOW_PANDASTOOLS_WARNINGS"
+
+
+def _suppress_pandastools_warning() -> None:
+    if os.environ.get(_SUPPRESS_PANDASTOOLS_ENV, "").strip() == "1":
+        return
+    for logger_name in ("rdkit.Chem.PandasTools", "rdkit.Chem.PandasPatcher"):
+        rdkit_logger = logging.getLogger(logger_name)
+        rdkit_logger.setLevel(logging.ERROR)
+        rdkit_logger.propagate = False
+        if not any(
+            isinstance(handler, logging.NullHandler)
+            for handler in rdkit_logger.handlers
+        ):
+            rdkit_logger.addHandler(logging.NullHandler())
 
 
 def _import_medchem_quietly():
@@ -174,6 +190,7 @@ def _process_nibr_chunk(args):
     return chunk_df.to_dict("records")
 
 
+_suppress_pandastools_warning()
 mc = _import_medchem_quietly()
 
 try:
