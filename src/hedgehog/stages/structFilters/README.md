@@ -2,7 +2,7 @@
 
 Run medicinal chemistry and structural alert filters on generated molecules, before and/or after descriptors. 
 
-The stage reads [config_structFilters](/src/hedgehog/configs/config_structFilters.yml) file.
+The stage reads [config_structFilters](../../configs/config_structFilters.yml) file.
 
 Structural Filters:
   - Common structural alerts using `data/common_alerts_collection.csv` with selectable `include_rulesets` and `exclude_descriptions` (e.g., Dundee, BMS, Glaxo, PAINS, etc.).

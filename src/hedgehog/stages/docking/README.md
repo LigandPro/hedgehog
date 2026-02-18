@@ -9,7 +9,7 @@ Please extend config with proper information, fitting your task in
 
 
 **Run docking stage within entire pipeline:**\
-Set `run: True` and adjust if needed [config_docking.yml](/src/hedgehog/configs/config_docking.yml).
+Set `run: True` and adjust if needed [config_docking.yml](../../configs/config_docking.yml).
 
 **Run docking stage only:**
 ```bash
