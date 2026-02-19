@@ -12,6 +12,10 @@ from hedgehog.setup._shepherd_worker import ensure_shepherd_worker
 class TestEnsureShepherdWorker:
     """Tests for the ensure_shepherd_worker function."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_uv_env(self, monkeypatch) -> None:
+        monkeypatch.delenv("UV", raising=False)
+
     def test_raises_when_uv_is_missing(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr(
             "hedgehog.setup._shepherd_worker.shutil.which", lambda _: None
@@ -53,7 +57,7 @@ class TestEnsureShepherdWorker:
                 bin_dir = venv_dir / "bin"
                 bin_dir.mkdir(parents=True, exist_ok=True)
                 (bin_dir / "python").write_text("#!/bin/sh\n", encoding="utf-8")
-            if cmd[:3] == ["uv", "pip", "install"]:
+            if cmd[:3] == ["/usr/bin/uv", "pip", "install"]:
                 venv_python = Path(cmd[cmd.index("--python") + 1])
                 worker_entry = venv_python.parent / "hedgehog-shepherd-worker"
                 worker_entry.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -67,7 +71,7 @@ class TestEnsureShepherdWorker:
             == tmp_path / ".venv-shepherd-worker" / "bin" / "hedgehog-shepherd-worker"
         )
         assert calls[0][:3] == [str(explicit_python), "-m", "venv"]
-        assert calls[1][:3] == ["uv", "pip", "install"]
+        assert calls[1][:3] == ["/usr/bin/uv", "pip", "install"]
         assert ".[shepherd]" in calls[1]
 
     def test_selects_first_available_python(self, tmp_path: Path, monkeypatch) -> None:
@@ -97,7 +101,7 @@ class TestEnsureShepherdWorker:
                 bin_dir = venv_dir / "bin"
                 bin_dir.mkdir(parents=True, exist_ok=True)
                 (bin_dir / "python").write_text("#!/bin/sh\n", encoding="utf-8")
-            if cmd[:3] == ["uv", "pip", "install"]:
+            if cmd[:3] == ["/usr/bin/uv", "pip", "install"]:
                 venv_python = Path(cmd[cmd.index("--python") + 1])
                 worker_entry = venv_python.parent / "hedgehog-shepherd-worker"
                 worker_entry.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -106,3 +110,37 @@ class TestEnsureShepherdWorker:
 
         ensure_shepherd_worker(tmp_path)
         assert calls[0][:3] == ["/usr/local/bin/python3.12", "-m", "venv"]
+
+    def test_uses_uv_from_environment(self, tmp_path: Path, monkeypatch) -> None:
+        uv_bin = tmp_path / "custom-bin" / "uv"
+        uv_bin.parent.mkdir(parents=True, exist_ok=True)
+        uv_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setenv("UV", str(uv_bin))
+        monkeypatch.setattr("hedgehog.setup._shepherd_worker.os.access", lambda *_: True)
+        monkeypatch.setattr(
+            "hedgehog.setup._shepherd_worker.shutil.which",
+            lambda name: "/usr/local/bin/python3.12" if name == "python3.12" else None,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._shepherd_worker.confirm_download",
+            lambda *_a, **_kw: True,
+        )
+
+        calls: list[list[str]] = []
+
+        def _mock_run(cmd, cwd=None, check=False, timeout=None):
+            calls.append([str(x) for x in cmd])
+            if cmd[:3] == ["/usr/local/bin/python3.12", "-m", "venv"]:
+                venv_dir = Path(cmd[3])
+                bin_dir = venv_dir / "bin"
+                bin_dir.mkdir(parents=True, exist_ok=True)
+                (bin_dir / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+            if cmd[:3] == [str(uv_bin), "pip", "install"]:
+                venv_python = Path(cmd[cmd.index("--python") + 1])
+                worker_entry = venv_python.parent / "hedgehog-shepherd-worker"
+                worker_entry.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        monkeypatch.setattr("hedgehog.setup._shepherd_worker.subprocess.run", _mock_run)
+
+        ensure_shepherd_worker(tmp_path)
+        assert calls[1][:3] == [str(uv_bin), "pip", "install"]

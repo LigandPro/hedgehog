@@ -32,6 +32,10 @@ def _make_config(root: Path) -> Path:
 class TestEnsureAizynthfinder:
     """Tests for the ensure_aizynthfinder function."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_uv_env(self, monkeypatch):
+        monkeypatch.delenv("UV", raising=False)
+
     def test_already_installed(self, tmp_path: Path, monkeypatch):
         """If config.yml already exists, return immediately."""
         cfg = _make_config(tmp_path)
@@ -75,6 +79,41 @@ class TestEnsureAizynthfinder:
         with pytest.raises(RuntimeError, match="declined"):
             ensure_aizynthfinder(tmp_path)
 
+    def test_uses_uv_from_environment(self, tmp_path: Path, monkeypatch):
+        """UV env var should be accepted when uv is not on PATH."""
+        uv_bin = tmp_path / "custom-bin" / "uv"
+        uv_bin.parent.mkdir(parents=True, exist_ok=True)
+        uv_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setenv("UV", str(uv_bin))
+        monkeypatch.setattr("hedgehog.setup._aizynthfinder.os.access", lambda *_: True)
+        monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.shutil.which",
+            lambda name: "/usr/bin/git" if name == "git" else None,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.confirm_download",
+            lambda *_a, **_kw: True,
+        )
+
+        calls: list[list[str]] = []
+
+        def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
+            calls.append([str(x) for x in cmd])
+            if "clone" in cmd:
+                aizynth = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder"
+                aizynth.mkdir(parents=True, exist_ok=True)
+            if any("download_public_data" in str(part) for part in cmd):
+                cfg = _config_path(tmp_path)
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                cfg.write_text("version: 1\n")
+
+        monkeypatch.setattr("hedgehog.setup._aizynthfinder.subprocess.run", _mock_run)
+
+        ensure_aizynthfinder(tmp_path)
+
+        assert calls[1][:2] == [str(uv_bin), "sync"]
+        assert calls[2][0] == str(uv_bin)
+
     def test_full_install_cycle(self, tmp_path: Path, monkeypatch):
         """Full flow: clone, sync, download, copy logging, return config."""
         monkeypatch.setattr(
@@ -116,7 +155,7 @@ class TestEnsureAizynthfinder:
         cmds = [c for c, _cwd in subprocess_calls]
         assert len(cmds) == 3
         assert "clone" in cmds[0]
-        assert cmds[1] == ["uv", "sync"]
+        assert cmds[1] == ["/usr/bin/uv", "sync"]
         assert "aizynthfinder.tools.download_public_data" in cmds[2]
 
         # Logging.yml should be copied

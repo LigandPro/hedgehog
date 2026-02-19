@@ -12,7 +12,7 @@ smina_config:
   exhaustiveness: 8
   num_modes: 1
 gnina_config:
-  bin: /mnt/ligandpro/soft/docking/gnina/gnina
+  bin: gnina
   autobox_ligand: data/test/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32

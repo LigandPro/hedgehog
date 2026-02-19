@@ -11,6 +11,21 @@ from pathlib import Path
 from hedgehog.setup._download import confirm_download
 
 
+def _resolve_uv_binary() -> str:
+    """Resolve uv executable in normal and `uv run` environments."""
+    uv_env = os.environ.get("UV")
+    if uv_env:
+        uv_path = Path(uv_env).expanduser()
+        if uv_path.is_file() and os.access(uv_path, os.X_OK):
+            return str(uv_path)
+
+    path_uv = shutil.which("uv")
+    if path_uv:
+        return path_uv
+
+    raise RuntimeError("uv is not installed. Please install uv first.")
+
+
 def _venv_python(venv_dir: Path) -> Path:
     if os.name == "nt":
         return venv_dir / "Scripts" / "python.exe"
@@ -60,8 +75,7 @@ def _verify_worker(worker_entry: Path, venv_python: Path, cwd: Path) -> None:
 
 def ensure_shepherd_worker(project_root: Path, python_bin: str | None = None) -> Path:
     """Ensure shepherd worker virtualenv exists and return worker entry path."""
-    if not shutil.which("uv"):
-        raise RuntimeError("uv is not installed. Please install uv first.")
+    uv_bin = _resolve_uv_binary()
 
     selected_python = _resolve_python_binary(python_bin)
     venv_dir = project_root / ".venv-shepherd-worker"
@@ -86,7 +100,7 @@ def ensure_shepherd_worker(project_root: Path, python_bin: str | None = None) ->
         raise RuntimeError(f"Failed to create virtualenv at {venv_dir}")
 
     install_cmd = [
-        "uv",
+        uv_bin,
         "pip",
         "install",
         "--python",
