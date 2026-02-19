@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ _GNINA_RELEASES_API_LATEST = "https://api.github.com/repos/gnina/gnina/releases/
 _GNINA_RELEASES_API_TAG = "https://api.github.com/repos/gnina/gnina/releases/tags"
 _GNINA_FALLBACK_TAG = "v1.1"
 _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES = 800 * 1024 * 1024
+_GNINA_DEFAULT_MAX_DOWNLOAD_BYTES_GPU = 3 * 1024 * 1024 * 1024
 _GNINA_ARCHIVE_SUFFIXES = (
     ".tar.gz",
     ".tgz",
@@ -66,7 +68,9 @@ def ensure_gnina() -> str:
         )
 
     # 4. Download with user confirmation
-    size_hint = f"up to {_format_size(_gnina_max_download_bytes())}"
+    variant = _gnina_variant()
+    select_mode = _select_mode_for_variant(variant)
+    size_hint = f"up to {_format_size(_gnina_max_download_bytes(select_mode))}"
     if not confirm_download("GNINA", size_hint):
         raise RuntimeError("GNINA download declined by user.")
 
@@ -110,12 +114,16 @@ def _resolve_gnina_download() -> str:
     Raises:
         RuntimeError: If the API call fails or no suitable asset is found.
     """
-    max_bytes = _gnina_max_download_bytes()
+    variant = _gnina_variant()
+    select_mode = _select_mode_for_variant(variant)
+    max_bytes = _gnina_max_download_bytes(select_mode)
     release_urls = [
         _GNINA_RELEASES_API_LATEST,
         f"{_GNINA_RELEASES_API_TAG}/{_GNINA_FALLBACK_TAG}",
     ]
     query_errors: list[str] = []
+    saw_any_asset = False
+    saw_cuda_asset = False
     saw_non_cuda_asset = False
     oversize_assets: list[int] = []
 
@@ -126,30 +134,53 @@ def _resolve_gnina_download() -> str:
             query_errors.append(str(exc))
             continue
 
-        for asset in _iter_ranked_non_cuda_assets(data):
-            saw_non_cuda_asset = True
+        for asset in _iter_ranked_assets(data, select_mode):
+            saw_any_asset = True
+            is_cuda = _is_cuda_asset_name(str(asset.get("name", "")))
+            if is_cuda:
+                saw_cuda_asset = True
+            else:
+                saw_non_cuda_asset = True
             size = _asset_size_bytes(asset)
             if size > 0 and size > max_bytes:
                 oversize_assets.append(size)
                 continue
             return str(asset["browser_download_url"])
 
-    if not saw_non_cuda_asset:
+    if not saw_any_asset:
         if query_errors and len(query_errors) == len(release_urls):
             raise RuntimeError(
                 f"Failed to query GNINA releases from GitHub: {'; '.join(query_errors)}"
             )
-        raise RuntimeError(
-            "No suitable GNINA release asset found on GitHub (all assets appear CUDA-specific)."
-        )
+        if select_mode == "gpu":
+            raise RuntimeError(
+                "No suitable GNINA CUDA release asset found on GitHub. "
+                "Set HEDGEHOG_GNINA_VARIANT=auto or cpu to allow CPU fallback."
+            )
+        if select_mode == "cpu":
+            raise RuntimeError(
+                "No suitable GNINA release asset found on GitHub (all assets appear CUDA-specific)."
+            )
+        raise RuntimeError("No suitable GNINA release asset found on GitHub.")
 
     if oversize_assets:
         smallest = min(oversize_assets)
+        asset_label = (
+            "CUDA-compatible asset"
+            if select_mode in ("gpu", "auto_gpu")
+            else "non-CUDA asset"
+        )
         raise RuntimeError(
             "No suitable GNINA release asset found on GitHub under auto-install size "
-            f"limit ({_format_size(max_bytes)}). Smallest non-CUDA asset was "
+            f"limit ({_format_size(max_bytes)}). Smallest {asset_label} was "
             f"{_format_size(smallest)}. Set HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES to "
             "override or install GNINA manually."
+        )
+
+    if select_mode == "gpu" and saw_non_cuda_asset and not saw_cuda_asset:
+        raise RuntimeError(
+            "GNINA GPU mode requested, but no CUDA asset was selected. "
+            "Set HEDGEHOG_GNINA_VARIANT=auto or cpu to allow CPU fallback."
         )
 
     if query_errors:
@@ -167,9 +198,17 @@ def _query_release_json(api_url: str) -> dict[str, Any]:
         return json.loads(resp.read())
 
 
-def _iter_ranked_non_cuda_assets(release_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return non-CUDA assets ranked by CPU-like naming and smaller size."""
-    assets: list[dict[str, Any]] = []
+def _iter_ranked_assets(
+    release_data: dict[str, Any], mode: str
+) -> list[dict[str, Any]]:
+    """Return Linux assets ranked according to selection mode.
+
+    Modes:
+      - ``cpu``: non-CUDA assets only
+      - ``gpu``: CUDA assets only (prefer newest CUDA variant)
+      - ``auto_gpu``: prefer CUDA assets first, then CPU fallback
+    """
+    assets: list[tuple[dict[str, Any], bool, tuple[int, int]]] = []
     for raw in release_data.get("assets", []):
         if not isinstance(raw, dict):
             continue
@@ -178,20 +217,38 @@ def _iter_ranked_non_cuda_assets(release_data: dict[str, Any]) -> list[dict[str,
         if not name or not url:
             continue
         lowered = name.lower()
-        if "cuda" in lowered:
-            continue
         if not _asset_is_linux_binary(lowered):
             continue
-        assets.append(raw)
+        is_cuda = _is_cuda_asset_name(lowered)
+        if mode == "cpu" and is_cuda:
+            continue
+        if mode == "gpu" and not is_cuda:
+            continue
+        assets.append((raw, is_cuda, _extract_cuda_version(lowered)))
 
-    def _rank_key(asset: dict[str, Any]) -> tuple[int, int, str]:
+    def _rank_key(item: tuple[dict[str, Any], bool, tuple[int, int]]) -> tuple:
+        asset, is_cuda, cuda_version = item
         name = str(asset.get("name", "")).lower()
         cpu_hint = 0 if any(tok in name for tok in ("cpu", "nocuda", "no_cuda")) else 1
         size = _asset_size_bytes(asset)
         size_key = size if size > 0 else sys.maxsize
+        if mode == "gpu":
+            # Prefer higher CUDA version first, then smaller binaries.
+            return (-cuda_version[0], -cuda_version[1], size_key, name)
+        if mode == "auto_gpu":
+            # Prefer CUDA variants first; among CUDA assets prefer newer.
+            cuda_rank = 0 if is_cuda else 1
+            return (
+                cuda_rank,
+                -cuda_version[0],
+                -cuda_version[1],
+                cpu_hint,
+                size_key,
+                name,
+            )
         return (cpu_hint, size_key, name)
 
-    return sorted(assets, key=_rank_key)
+    return [item[0] for item in sorted(assets, key=_rank_key)]
 
 
 def _asset_size_bytes(asset: dict[str, Any]) -> int:
@@ -215,10 +272,12 @@ def _asset_is_linux_binary(name: str) -> bool:
     return True
 
 
-def _gnina_max_download_bytes() -> int:
+def _gnina_max_download_bytes(mode: str) -> int:
     """Resolve GNINA auto-install size limit from environment."""
     raw = os.environ.get("HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES")
     if not raw:
+        if mode in ("gpu", "auto_gpu"):
+            return _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES_GPU
         return _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES
     try:
         value = int(raw)
@@ -226,6 +285,8 @@ def _gnina_max_download_bytes() -> int:
             return value
     except ValueError:
         pass
+    if mode in ("gpu", "auto_gpu"):
+        return _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES_GPU
     return _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES
 
 
@@ -242,6 +303,66 @@ def _format_size(size_bytes: int) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024.0
     return f"{size_bytes} B"
+
+
+def _gnina_variant() -> str:
+    """Resolve requested GNINA install variant from environment.
+
+    Supported values:
+      - ``cpu``: CPU/non-CUDA assets only
+      - ``gpu``: CUDA assets only
+      - ``auto``: prefer CUDA assets when a GPU is detected
+    """
+    raw = str(os.environ.get("HEDGEHOG_GNINA_VARIANT", "cpu")).strip().lower()
+    if raw in {"cpu", "gpu", "auto"}:
+        return raw
+    return "cpu"
+
+
+def _select_mode_for_variant(variant: str) -> str:
+    """Map user variant selection to internal asset selection mode."""
+    if variant == "cpu":
+        return "cpu"
+    if variant == "gpu":
+        return "gpu"
+    return "auto_gpu" if _has_nvidia_gpu() else "cpu"
+
+
+def _has_nvidia_gpu() -> bool:
+    """Return True when a visible NVIDIA GPU is detected via nvidia-smi."""
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return False
+    try:
+        result = subprocess.run(
+            [nvidia_smi, "-L"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _is_cuda_asset_name(name: str) -> bool:
+    """Return True if release asset name indicates a CUDA build."""
+    return "cuda" in name.lower()
+
+
+def _extract_cuda_version(name: str) -> tuple[int, int]:
+    """Extract CUDA major/minor version from an asset name.
+
+    Examples:
+      - ``gnina.1.3.2.cuda12.8`` -> ``(12, 8)``
+      - ``gnina.cuda11`` -> ``(11, 0)``
+    """
+    match = re.search(r"cuda(\d+)(?:\.(\d+))?", name.lower())
+    if not match:
+        return (0, 0)
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    return (major, minor)
 
 
 def _gnina_env() -> dict[str, str]:

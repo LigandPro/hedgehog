@@ -495,6 +495,81 @@ class TestResolveGninaDownload:
         with pytest.raises(RuntimeError, match="size limit"):
             _resolve_gnina_download()
 
+    def test_gpu_variant_prefers_cuda_asset(self, monkeypatch):
+        """GPU variant should select a CUDA-labeled Linux asset when present."""
+        import json
+
+        fake_response = {
+            "assets": [
+                {
+                    "name": "gnina.1.3.2",
+                    "size": 1_426_790_536,
+                    "browser_download_url": "https://example.com/cpu",
+                },
+                {
+                    "name": "gnina.1.3.2.cuda12.8",
+                    "size": 2_052_029_472,
+                    "browser_download_url": "https://example.com/cuda12.8",
+                },
+            ]
+        }
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(fake_response).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "gpu")
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.urllib.request.urlopen",
+            lambda *a, **kw: FakeResponse(),
+        )
+
+        assert _resolve_gnina_download() == "https://example.com/cuda12.8"
+
+    def test_auto_variant_uses_gpu_when_detected(self, monkeypatch):
+        """Auto variant should prefer CUDA asset when NVIDIA GPU is detected."""
+        import json
+
+        fake_response = {
+            "assets": [
+                {
+                    "name": "gnina.1.3.2",
+                    "size": 1_426_790_536,
+                    "browser_download_url": "https://example.com/cpu",
+                },
+                {
+                    "name": "gnina.1.3.2.cuda12.8",
+                    "size": 2_052_029_472,
+                    "browser_download_url": "https://example.com/cuda12.8",
+                },
+            ]
+        }
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(fake_response).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "auto")
+        monkeypatch.setattr("hedgehog.setup._gnina._has_nvidia_gpu", lambda: True)
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.urllib.request.urlopen",
+            lambda *a, **kw: FakeResponse(),
+        )
+
+        assert _resolve_gnina_download() == "https://example.com/cuda12.8"
+
 
 class TestResolveDockingBinaryGninaFallback:
     """Tests for gnina fallback in _resolve_docking_binary()."""
