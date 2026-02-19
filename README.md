@@ -82,8 +82,17 @@ uv run hedgehog run
 # Alternatively, using the short-name alias:
 uv run hedge run
 
+# Run full pipeline on your own molecule file
+uv run hedge run --mols data/my_molecules.csv
+
+# Run full pipeline on your own molecule files via glob
+uv run hedge run --mols "data/generated/*.csv"
+
 # Run specific stage
 uv run hedge run --stage descriptors
+
+# Run a specific stage on your own molecule file
+uv run hedge run --stage descriptors --mols data/my_molecules.csv
 
 # Auto-install missing optional external tools during a run
 uv run hedge run --auto-install
