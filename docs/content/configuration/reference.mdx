@@ -562,7 +562,6 @@ Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, se
 | `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
 | `cpu` | int | `32` | Number of CPU threads for docking |
 | `seed` | int | `42` | Random seed for reproducibility |
-| `no_gpu` | bool | `true` | Disable GPU acceleration by default for maximum compatibility across hosts |
 | `exhaustiveness` | int | `8` | Search exhaustiveness (higher = more thorough, slower) |
 | `num_modes` | int | `9` | Maximum number of binding modes to generate per ligand |
 
@@ -575,6 +574,7 @@ Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, se
 | `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
 | `cpu` | int | `32` | Number of CPU threads for docking |
 | `seed` | int | `42` | Random seed for reproducibility |
+| `no_gpu` | bool | `false` | Disable GPU acceleration (`false` keeps GPU enabled when available) |
 
 ### Default YAML
 
@@ -598,7 +598,7 @@ gnina_config:
   autobox_add: 4
   cpu: 32
   seed: 42
-  no_gpu: true
+  no_gpu: false
 ```
 
 ---

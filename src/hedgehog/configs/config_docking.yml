@@ -17,5 +17,5 @@ gnina_config:
   autobox_add: 4
   cpu: 32
   seed: 42
-  no_gpu: true
+  no_gpu: false
   num_modes: 1
