@@ -6,6 +6,8 @@ import pandas as pd
 
 from hedgehog.stages.docking.utils import (
     _aggregate_docking_results,
+    _build_gnina_command_template,
+    _create_per_molecule_configs,
     _find_latest_input_source,
     _prepare_ligands_dataframe,
     _split_sdf_to_molecules,
@@ -518,6 +520,47 @@ class TestPerMoleculeArchitecture:
         assert "mol1_best" in names
         assert "mol1_worse" not in names
         assert "mol2_only" in names
+
+
+class TestGninaNoGpuFlag:
+    """Tests for no_gpu command/config behavior."""
+
+    def test_build_gnina_command_adds_no_gpu_flag(self, tmp_path):
+        cfg = {"gnina_config": {"no_gpu": True}}
+        cmd = _build_gnina_command_template(cfg, "/usr/bin/gnina", tmp_path)
+        assert cmd == "/usr/bin/gnina --config __GNINA_CONFIG__ --no_gpu"
+
+    def test_build_gnina_command_without_no_gpu_flag(self, tmp_path):
+        cfg = {"gnina_config": {"no_gpu": False}}
+        cmd = _build_gnina_command_template(cfg, "/usr/bin/gnina", tmp_path)
+        assert cmd == "/usr/bin/gnina --config __GNINA_CONFIG__"
+
+    def test_per_molecule_gnina_config_omits_no_gpu_key(self, tmp_path):
+        receptor = tmp_path / "receptor.pdb"
+        receptor.write_text("ATOM\n")
+        mol_file = tmp_path / "molecules" / "000000_test.sdf"
+        mol_file.parent.mkdir(parents=True)
+        mol_file.write_text("")
+
+        cfg = {
+            "gnina_config": {
+                "cpu": 4,
+                "no_gpu": True,
+            }
+        }
+
+        entries = _create_per_molecule_configs(
+            cfg=cfg,
+            ligands_dir=tmp_path,
+            receptor=receptor,
+            molecule_files=[mol_file],
+            tool_name="gnina",
+        )
+
+        _, config_path, _ = entries[0]
+        config_text = config_path.read_text()
+        assert "no_gpu" not in config_text
+        assert "cpu = 4" in config_text
 
     def test_aggregate_with_invalid_files(self, tmp_path):
         """Should skip invalid SDF files during aggregation."""

@@ -439,7 +439,9 @@ def _create_docking_config_file(
 
     skip_keys = {"bin", "center", "size"}
     if tool_name == "gnina":
-        skip_keys.update({"env_path", "ld_library_path", "activate", "output_dir"})
+        skip_keys.update(
+            {"env_path", "ld_library_path", "activate", "output_dir", "no_gpu"}
+        )
 
     for key, value in tool_config.items():
         if value is None or key in skip_keys:
@@ -502,7 +504,9 @@ def _create_per_molecule_configs(
 
     skip_keys = {"bin", "center", "size"}
     if tool_name == "gnina":
-        skip_keys.update({"env_path", "ld_library_path", "activate", "output_dir"})
+        skip_keys.update(
+            {"env_path", "ld_library_path", "activate", "output_dir", "no_gpu"}
+        )
 
     config_entries = []
 
@@ -759,8 +763,21 @@ def _build_gnina_command_template(cfg: dict, gnina_bin: str, ligands_dir: Path) 
     The returned command must contain the ``__GNINA_CONFIG__`` placeholder that
     is replaced at script generation time.
     """
+
+    def _enabled(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
     placeholder = "__GNINA_CONFIG__"
-    host_cmd = f"{shlex.quote(str(gnina_bin))} --config {placeholder}"
+    gnina_cfg = cfg.get("gnina_config", {}) or {}
+    no_gpu_enabled = _enabled(gnina_cfg.get("no_gpu"))
+    no_gpu_flag = " --no_gpu" if no_gpu_enabled else ""
+    host_cmd = f"{shlex.quote(str(gnina_bin))} --config {placeholder}{no_gpu_flag}"
 
     container_cfg = cfg.get("gnina_container", {}) or {}
     if not container_cfg.get("enabled", False):
@@ -806,6 +823,8 @@ def _build_gnina_command_template(cfg: dict, gnina_bin: str, ligands_dir: Path) 
     cmd_parts.append(shlex.quote(str(image)))
     cmd_parts.append(shlex.quote(container_bin))
     cmd_parts.append(f"--config {placeholder}")
+    if no_gpu_enabled:
+        cmd_parts.append("--no_gpu")
     return " ".join(cmd_parts)
 
 
