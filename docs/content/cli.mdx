@@ -152,15 +152,16 @@ uv run hedgehog version
 ## `hedgehog setup aizynthfinder`
 
 Installs the AiZynthFinder retrosynthesis tool and its public data into `modules/retrosynthesis/`.
+Downloads are auto-accepted by default.
 
 ```bash
 uv run hedgehog setup aizynthfinder
 ```
 
-To auto-accept the download prompt:
+If you explicitly want interactive confirmation:
 
 ```bash
-uv run hedgehog setup aizynthfinder --yes
+uv run hedgehog setup aizynthfinder --no-yes
 ```
 
 ## `hedgehog setup shepherd-worker`

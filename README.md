@@ -62,7 +62,7 @@ cd hedgehog
 
 
 # Install AiZynthFinder (for synthesis stage) - recommended CLI flow
-uv run hedgehog setup aizynthfinder --yes
+uv run hedgehog setup aizynthfinder
 
 # Legacy helper script (alternative)
 ./modules/install_aizynthfinder.sh
@@ -123,7 +123,9 @@ GNINA is auto-resolved during the docking stage:
 - If `gnina` is already on `PATH`, HEDGEHOG uses it.
 - Otherwise it auto-downloads a compatible Linux GNINA binary to `~/.hedgehog/bin/gnina`.
 
-By default, auto-install prefers the CPU variant. To prefer CUDA builds:
+By default, auto-install uses `HEDGEHOG_GNINA_VARIANT=auto` behavior
+(prefer CUDA build when NVIDIA GPU is detected, otherwise CPU fallback).
+If needed, you can override explicitly:
 
 ```bash
 export HEDGEHOG_GNINA_VARIANT=auto   # or: gpu

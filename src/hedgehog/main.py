@@ -970,15 +970,17 @@ def version() -> None:
 @setup_app.command("aizynthfinder")
 def setup_aizynthfinder(
     yes: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Auto-accept downloads (no prompt).",
+        True,
+        "--yes/--no-yes",
+        "-y/-n",
+        help="Auto-accept downloads (default: yes). Use --no-yes to prompt.",
     ),
 ) -> None:
     """Install AiZynthFinder retrosynthesis tooling into modules/."""
     if yes:
         os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+    else:
+        os.environ.pop("HEDGEHOG_AUTO_INSTALL", None)
 
     from hedgehog.setup import ensure_aizynthfinder
 

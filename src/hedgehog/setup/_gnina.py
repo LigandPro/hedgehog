@@ -314,10 +314,10 @@ def _gnina_variant() -> str:
       - ``gpu``: CUDA assets only
       - ``auto``: prefer CUDA assets when a GPU is detected
     """
-    raw = str(os.environ.get("HEDGEHOG_GNINA_VARIANT", "cpu")).strip().lower()
+    raw = str(os.environ.get("HEDGEHOG_GNINA_VARIANT", "auto")).strip().lower()
     if raw in {"cpu", "gpu", "auto"}:
         return raw
-    return "cpu"
+    return "auto"
 
 
 def _select_mode_for_variant(variant: str) -> str:
