@@ -41,8 +41,12 @@ def test_inmemory_combine_matches_legacy_filtered_output(tmp_path):
 
     (legacy_stage_path / "filter_a").mkdir(parents=True, exist_ok=True)
     (legacy_stage_path / "filter_b").mkdir(parents=True, exist_ok=True)
-    filter1.to_csv(legacy_stage_path / "filter_a" / "filtered_molecules.csv", index=False)
-    filter2.to_csv(legacy_stage_path / "filter_b" / "filtered_molecules.csv", index=False)
+    filter1.to_csv(
+        legacy_stage_path / "filter_a" / "filtered_molecules.csv", index=False
+    )
+    filter2.to_csv(
+        legacy_stage_path / "filter_b" / "filtered_molecules.csv", index=False
+    )
 
     struct_cfg = legacy_root / "config_structFilters.yml"
     _write_yaml(struct_cfg, {"calculate_filter_a": True, "calculate_filter_b": True})

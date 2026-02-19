@@ -60,10 +60,14 @@ def main(data, config, subfolder=None, reporter=None):
 
     if config_descriptors["filter_data"]:
         if reporter is not None:
-            reporter.progress(filter_start, stage_total, message="Applying descriptor filters")
+            reporter.progress(
+                filter_start, stage_total, message="Applying descriptor filters"
+            )
         filter_molecules(metrics_df, config_descriptors["borders"], filtered_folder)
         if reporter is not None:
-            reporter.progress(filter_done, stage_total, message="Saving descriptor outputs")
+            reporter.progress(
+                filter_done, stage_total, message="Saving descriptor outputs"
+            )
 
             def _plot_progress(done: int, total: int) -> None:
                 if total <= 0:
@@ -71,7 +75,9 @@ def main(data, config, subfolder=None, reporter=None):
                 else:
                     ratio = min(1.0, max(0.0, done / total))
                     mapped = plots_start + int(round((plots_end - plots_start) * ratio))
-                reporter.progress(mapped, stage_total, message="Rendering descriptor plots")
+                reporter.progress(
+                    mapped, stage_total, message="Rendering descriptor plots"
+                )
 
         else:
             _plot_progress = None

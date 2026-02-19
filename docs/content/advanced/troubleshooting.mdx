@@ -165,6 +165,18 @@ ls modules/retrosynthesis/aizynthfinder/aizynthfinder/data/
 
 3. If the installer fails during the clone step, ensure you have SSH access to the LigandPro GitHub organization, or switch to HTTPS in the script.
 
+## Shepherd-Score on Python 3.13
+
+`open3d` (required by `shepherd-score`) does not publish wheels for some Python ABIs (notably `cp313`), so installing Shepherd dependencies in the main environment can fail.
+
+HEDGEHOG base install is now decoupled from Shepherd/legacy PoseCheck dependencies. For Shepherd, use an isolated worker environment:
+
+```bash
+uv run hedgehog setup shepherd-worker --yes
+```
+
+If Shepherd backend is unavailable at runtime, docking filters soft-skip Shepherd and log a warning with setup instructions.
+
 ## TUI Port Conflicts
 
 The TUI (Text User Interface) uses a JSON-RPC protocol over stdio to communicate between the Node.js frontend and the Python backend. The backend is launched as a child process — it does **not** bind to a network port by default.

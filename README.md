@@ -34,6 +34,25 @@ python -m pip install hedgehog
 hedgehog --help
 ```
 
+Base install is intentionally lightweight and works on modern Python versions
+(including Python 3.13) without optional heavy docking extras.
+
+Optional extras:
+
+```bash
+# Legacy PoseCheck backend for docking filters
+python -m pip install 'hedgehog[docking-legacy]'
+
+# Shepherd-Score Python dependency only (may be unavailable on some ABIs, e.g. cp313)
+python -m pip install 'hedgehog[shepherd]'
+```
+
+Recommended Shepherd setup is an isolated worker environment:
+
+```bash
+uv run hedgehog setup shepherd-worker --yes
+```
+
 ### Install from source (recommended for development)
 
 ```bash

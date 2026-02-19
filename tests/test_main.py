@@ -33,7 +33,9 @@ class _FakeProgress:
 
     def add_task(self, description: str, **kwargs) -> int:
         task_id = len(self.add_calls) + 1
-        self.add_calls.append({"task_id": task_id, "description": description, **kwargs})
+        self.add_calls.append(
+            {"task_id": task_id, "description": description, **kwargs}
+        )
         return task_id
 
     def update(self, task_id: int, **kwargs) -> None:
@@ -269,7 +271,9 @@ class TestStageEnum:
         assert "docking" in Stage.docking.description.lower()
 
 
-def test_run_uses_single_progress_task_and_consistent_stage_numbers(tmp_path, monkeypatch):
+def test_run_uses_single_progress_task_and_consistent_stage_numbers(
+    tmp_path, monkeypatch
+):
     """CLI progress should reuse one task and keep stage numbering monotonic."""
     import hedgehog.main as main_mod
 
@@ -284,11 +288,15 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(tmp_path, mo
         "generated_mols_path": str(input_path),
         "save_sampled_mols": False,
     }
-    prepared_df = pd.DataFrame({"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]})
+    prepared_df = pd.DataFrame(
+        {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]}
+    )
 
     monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
     monkeypatch.setattr(main_mod, "_plain_output_enabled", lambda: False)
-    monkeypatch.setattr(main_mod, "load_config", lambda *args, **kwargs: base_config.copy())
+    monkeypatch.setattr(
+        main_mod, "load_config", lambda *args, **kwargs: base_config.copy()
+    )
     monkeypatch.setattr(main_mod, "_apply_cli_overrides", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         main_mod,
@@ -306,7 +314,9 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(tmp_path, mo
         "prepare_input_data",
         lambda *args, **kwargs: prepared_df.copy(),
     )
-    monkeypatch.setattr(main_mod, "_save_sampled_molecules", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod, "_save_sampled_molecules", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr(main_mod, "Progress", _FakeProgress)
 
     def _fake_calculate_metrics(data, config, progress_callback):
@@ -409,11 +419,15 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
         "generated_mols_path": str(input_path),
         "save_sampled_mols": False,
     }
-    prepared_df = pd.DataFrame({"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]})
+    prepared_df = pd.DataFrame(
+        {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]}
+    )
 
     monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
     monkeypatch.setattr(main_mod, "_plain_output_enabled", lambda: False)
-    monkeypatch.setattr(main_mod, "load_config", lambda *args, **kwargs: base_config.copy())
+    monkeypatch.setattr(
+        main_mod, "load_config", lambda *args, **kwargs: base_config.copy()
+    )
     monkeypatch.setattr(main_mod, "_apply_cli_overrides", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         main_mod,
@@ -431,10 +445,14 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
         "prepare_input_data",
         lambda *args, **kwargs: prepared_df.copy(),
     )
-    monkeypatch.setattr(main_mod, "_save_sampled_molecules", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod, "_save_sampled_molecules", lambda *args, **kwargs: None
+    )
 
     def _progress_should_not_be_created(*args, **kwargs):
-        raise AssertionError("Progress should not be initialized when --progress is not set")
+        raise AssertionError(
+            "Progress should not be initialized when --progress is not set"
+        )
 
     monkeypatch.setattr(main_mod, "Progress", _progress_should_not_be_created)
 

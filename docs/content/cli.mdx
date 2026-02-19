@@ -163,6 +163,31 @@ To auto-accept the download prompt:
 uv run hedgehog setup aizynthfinder --yes
 ```
 
+## `hedgehog setup shepherd-worker`
+
+Creates an isolated virtual environment at `.venv-shepherd-worker` and installs the optional Shepherd-Score backend there.
+
+```bash
+uv run hedgehog setup shepherd-worker
+```
+
+Options:
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--yes` | `-y` | `FLAG` | `False` | Auto-accept dependency download prompt. |
+| `--python` | | `TEXT` | `None` | Python interpreter for worker venv. Resolution order: explicit value, then `python3.12`, `python3.11`, `python3.10`. |
+
+Examples:
+
+```bash
+# Auto-install worker dependencies
+uv run hedgehog setup shepherd-worker --yes
+
+# Force worker venv to use Python 3.11
+uv run hedgehog setup shepherd-worker --python python3.11 --yes
+```
+
 ## `hedgehog tui`
 
 Launches the interactive Terminal User Interface for visual pipeline configuration and management. Requires Node.js to be installed. If the TUI has not been built yet, it will automatically run `npm install` and `npm run build` on first launch.

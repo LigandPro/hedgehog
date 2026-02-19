@@ -12,9 +12,7 @@ def _write_yaml(path: Path, payload: dict) -> None:
 
 
 def _build_base_config(tmp_path: Path, struct_cfg_payload: dict) -> dict:
-    input_df = pd.DataFrame(
-        {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]}
-    )
+    input_df = pd.DataFrame({"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]})
     input_csv = tmp_path / "input.csv"
     input_df.to_csv(input_csv, index=False)
 
@@ -33,7 +31,9 @@ def _mock_filter_processing(monkeypatch):
     prepared_payload = {
         "mols": [object()],
         "smiles_model_mols": [("CCO", None, object(), 0)],
-        "base_df": pd.DataFrame({"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]}),
+        "base_df": pd.DataFrame(
+            {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]}
+        ),
     }
     filter_df = pd.DataFrame(
         {
@@ -44,13 +44,19 @@ def _mock_filter_processing(monkeypatch):
             "pass": [True],
         }
     )
-    metrics_df = pd.DataFrame({"model_name": ["m1"], "num_mol": [1], "banned_ratio": [0.0]})
+    metrics_df = pd.DataFrame(
+        {"model_name": ["m1"], "num_mol": [1], "banned_ratio": [0.0]}
+    )
 
     monkeypatch.setattr(
-        structfilters_main, "prepare_structfilters_input", lambda *args, **kwargs: prepared_payload
+        structfilters_main,
+        "prepare_structfilters_input",
+        lambda *args, **kwargs: prepared_payload,
     )
     monkeypatch.setattr(
-        structfilters_main, "process_prepared_payload", lambda *args, **kwargs: filter_df.copy()
+        structfilters_main,
+        "process_prepared_payload",
+        lambda *args, **kwargs: filter_df.copy(),
     )
     monkeypatch.setattr(
         structfilters_main,
@@ -58,7 +64,9 @@ def _mock_filter_processing(monkeypatch):
         lambda *args, **kwargs: (metrics_df.copy(), filter_df.copy()),
     )
     monkeypatch.setattr(
-        structfilters_main, "inject_identity_columns_to_all_csvs", lambda *args, **kwargs: None
+        structfilters_main,
+        "inject_identity_columns_to_all_csvs",
+        lambda *args, **kwargs: None,
     )
 
 
@@ -86,8 +94,12 @@ def test_flags_disable_outputs_and_plots(tmp_path, monkeypatch):
     monkeypatch.setattr(structfilters_main, "_save_filter_results", save_mock)
     monkeypatch.setattr(structfilters_main, "plot_calculated_stats", plot_stats_mock)
     monkeypatch.setattr(structfilters_main, "plot_restriction_ratios", plot_ratio_mock)
-    monkeypatch.setattr(structfilters_main, "plot_filter_failures_analysis", fail_analysis_mock)
-    monkeypatch.setattr(structfilters_main, "combine_filter_results_in_memory", combine_mock)
+    monkeypatch.setattr(
+        structfilters_main, "plot_filter_failures_analysis", fail_analysis_mock
+    )
+    monkeypatch.setattr(
+        structfilters_main, "combine_filter_results_in_memory", combine_mock
+    )
 
     structfilters_main.main(config, "StructFilters")
 
@@ -121,9 +133,13 @@ def test_flags_enable_outputs_and_plots(tmp_path, monkeypatch):
     monkeypatch.setattr(structfilters_main, "_save_filter_results", save_mock)
     monkeypatch.setattr(structfilters_main, "plot_calculated_stats", plot_stats_mock)
     monkeypatch.setattr(structfilters_main, "plot_restriction_ratios", plot_ratio_mock)
-    monkeypatch.setattr(structfilters_main, "plot_filter_failures_analysis", fail_analysis_mock)
     monkeypatch.setattr(
-        structfilters_main, "combine_filter_results_in_memory", lambda *args, **kwargs: None
+        structfilters_main, "plot_filter_failures_analysis", fail_analysis_mock
+    )
+    monkeypatch.setattr(
+        structfilters_main,
+        "combine_filter_results_in_memory",
+        lambda *args, **kwargs: None,
     )
 
     structfilters_main.main(config, "StructFilters")
@@ -169,9 +185,13 @@ def test_progress_uses_real_molecule_totals(tmp_path, monkeypatch):
     }
 
     monkeypatch.setattr(
-        structfilters_main, "combine_filter_results_in_memory", lambda *args, **kwargs: None
+        structfilters_main,
+        "combine_filter_results_in_memory",
+        lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(structfilters_main, "_save_filter_results", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        structfilters_main, "_save_filter_results", lambda *args, **kwargs: None
+    )
 
     reporter = MagicMock()
     structfilters_main.main(config, "StructFilters", reporter=reporter)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -385,6 +387,227 @@ class TestBackendDispatch:
 
             mock_naive.assert_called_once()
             mock_sr.assert_not_called()
+
+
+class TestShepherdBackends:
+    """Tests for shepherd backend selection and soft-skip behavior."""
+
+    def test_shepherd_auto_uses_worker_and_parses_output(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from hedgehog.stages.dockingFilters.utils import apply_shepherd_score_filter
+
+        mols = [_mol_with_3d("CCO"), _mol_with_3d("CCN")]
+        ref = _mol_with_3d("CCO")
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils._resolve_shepherd_worker_command",
+            lambda: ["fake-worker"],
+        )
+
+        def _fake_run(cmd, check, capture_output, text, timeout):
+            output_json = Path(cmd[cmd.index("--output-json") + 1])
+            output_json.write_text(
+                json.dumps(
+                    [
+                        {
+                            "mol_idx": 0,
+                            "shape_score": 0.91,
+                            "pass_shepherd_score": True,
+                            "error": None,
+                        },
+                        {
+                            "mol_idx": 1,
+                            "shape_score": 0.22,
+                            "pass_shepherd_score": False,
+                            "error": None,
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils.subprocess.run", _fake_run
+        )
+
+        df = apply_shepherd_score_filter(
+            mols,
+            ref,
+            {"backend": "auto", "min_shape_score": 0.5, "alpha": 0.81},
+        )
+
+        assert len(df) == 2
+        assert list(df["mol_idx"]) == [0, 1]
+        assert df["shape_score"].iloc[0] == 0.91
+        assert bool(df["pass_shepherd_score"].iloc[0]) is True
+        assert bool(df["pass_shepherd_score"].iloc[1]) is False
+
+    def test_shepherd_worker_missing_soft_skips(self, monkeypatch) -> None:
+        from hedgehog.stages.dockingFilters.utils import apply_shepherd_score_filter
+
+        mols = [_mol_with_3d("CCO"), _mol_with_3d("CCN")]
+        ref = _mol_with_3d("CCO")
+
+        def _missing_worker():
+            raise RuntimeError("worker command not found")
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils._resolve_shepherd_worker_command",
+            _missing_worker,
+        )
+
+        df = apply_shepherd_score_filter(
+            mols, ref, {"backend": "worker", "auto_install_worker": False}
+        )
+        assert len(df) == 2
+        assert df["pass_shepherd_score"].all()
+        assert df["shape_score"].isna().all()
+
+    def test_shepherd_auto_attempts_worker_auto_install(self, monkeypatch) -> None:
+        from hedgehog.stages.dockingFilters.utils import apply_shepherd_score_filter
+
+        mols = [_mol_with_3d("CCO")]
+        ref = _mol_with_3d("CCO")
+        calls = {"resolve": 0, "install": 0}
+
+        def _resolve_cmd():
+            calls["resolve"] += 1
+            if calls["resolve"] == 1:
+                raise RuntimeError("worker missing")
+            return ["fake-worker"]
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils._resolve_shepherd_worker_command",
+            _resolve_cmd,
+        )
+
+        def _fake_install(_project_root, python_bin=None):
+            calls["install"] += 1
+            assert python_bin == "python3.12"
+            return Path("/tmp/fake-worker")
+
+        monkeypatch.setattr("hedgehog.setup.ensure_shepherd_worker", _fake_install)
+
+        def _fake_run(cmd, check, capture_output, text, timeout):
+            output_json = Path(cmd[cmd.index("--output-json") + 1])
+            output_json.write_text(
+                json.dumps(
+                    [
+                        {
+                            "mol_idx": 0,
+                            "shape_score": 0.77,
+                            "pass_shepherd_score": True,
+                            "error": None,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils.subprocess.run", _fake_run
+        )
+
+        df = apply_shepherd_score_filter(
+            mols,
+            ref,
+            {
+                "backend": "auto",
+                "auto_install_worker": True,
+                "worker_python": "python3.12",
+                "min_shape_score": 0.5,
+            },
+        )
+
+        assert calls["install"] == 1
+        assert calls["resolve"] >= 2
+        assert len(df) == 1
+        assert bool(df["pass_shepherd_score"].iloc[0]) is True
+
+    def test_shepherd_auto_repairs_broken_worker_and_retries(self, monkeypatch) -> None:
+        from hedgehog.stages.dockingFilters.utils import apply_shepherd_score_filter
+
+        mols = [_mol_with_3d("CCO")]
+        ref = _mol_with_3d("CCO")
+        calls = {"install": 0, "run": 0}
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils._resolve_shepherd_worker_command",
+            lambda: ["fake-worker"],
+        )
+
+        def _fake_install(_project_root, python_bin=None):
+            calls["install"] += 1
+            assert python_bin == "python3.12"
+            return Path("/tmp/fake-worker")
+
+        monkeypatch.setattr("hedgehog.setup.ensure_shepherd_worker", _fake_install)
+
+        def _fake_run(cmd, check, capture_output, text, timeout):
+            calls["run"] += 1
+            if calls["run"] == 1:
+                return subprocess.CompletedProcess(
+                    cmd, 1, "", "ModuleNotFoundError: No module named 'hedgehog'"
+                )
+            output_json = Path(cmd[cmd.index("--output-json") + 1])
+            output_json.write_text(
+                json.dumps(
+                    [
+                        {
+                            "mol_idx": 0,
+                            "shape_score": 0.88,
+                            "pass_shepherd_score": True,
+                            "error": None,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils.subprocess.run", _fake_run
+        )
+
+        df = apply_shepherd_score_filter(
+            mols,
+            ref,
+            {
+                "backend": "auto",
+                "auto_install_worker": True,
+                "worker_python": "python3.12",
+                "min_shape_score": 0.5,
+            },
+        )
+
+        assert calls["run"] == 2
+        assert calls["install"] == 1
+        assert len(df) == 1
+        assert bool(df["pass_shepherd_score"].iloc[0]) is True
+
+    def test_shepherd_inprocess_missing_dependency_soft_skips(
+        self, monkeypatch
+    ) -> None:
+        from hedgehog.stages.dockingFilters.utils import apply_shepherd_score_filter
+
+        mols = [_mol_with_3d("CCO")]
+        ref = _mol_with_3d("CCO")
+
+        def _raise_import(*_args, **_kwargs):
+            raise ModuleNotFoundError("No module named 'shepherd_score'")
+
+        monkeypatch.setattr(
+            "hedgehog.stages.dockingFilters.utils._apply_shepherd_score_filter_inprocess",
+            _raise_import,
+        )
+
+        df = apply_shepherd_score_filter(mols, ref, {"backend": "inprocess"})
+        assert len(df) == 1
+        assert bool(df["pass_shepherd_score"].iloc[0]) is True
+        assert pd.isna(df["shape_score"].iloc[0])
 
 
 class TestSinglePoseCollapse:

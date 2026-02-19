@@ -110,6 +110,7 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
 
     # 6. Download public data
     public_dir.mkdir(parents=True, exist_ok=True)
+
     def _download_public_data() -> None:
         logger.info("Downloading AiZynthFinder public data (models)...")
         subprocess.run(
@@ -134,11 +135,15 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
     # If the directory already had content but config.yml is missing (partial
     # manual copy, interrupted download), try running it again.
     if not config_yml.exists():
-        logger.warning("AiZynthFinder config.yml is missing; re-running public data setup.")
+        logger.warning(
+            "AiZynthFinder config.yml is missing; re-running public data setup."
+        )
         _download_public_data()
 
     if not config_yml.exists():
-        raise RuntimeError(f"AiZynthFinder config.yml not found after setup: {config_yml}")
+        raise RuntimeError(
+            f"AiZynthFinder config.yml not found after setup: {config_yml}"
+        )
 
     # 7. Copy logging.yml
     logging_src = (

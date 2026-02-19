@@ -172,9 +172,9 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
 
         output_df = df[["smiles", "model_name"]].dropna(subset=["smiles"]).copy()
         initial_count = len(output_df)
-        output_df = output_df.drop_duplicates(subset=["smiles", "model_name"]).reset_index(
-            drop=True
-        )
+        output_df = output_df.drop_duplicates(
+            subset=["smiles", "model_name"]
+        ).reset_index(drop=True)
 
         duplicates_removed = initial_count - len(output_df)
         if duplicates_removed > 0:
@@ -341,8 +341,7 @@ def _resolve_output_folder(
         folder = _get_unique_results_folder(original_folder)
         if folder != original_folder:
             logger.info(
-                "[bold]Folder mode:[/bold] Creating new folder '%s' "
-                "(--force-new flag)",
+                "[bold]Folder mode:[/bold] Creating new folder '%s' (--force-new flag)",
                 folder,
             )
         return folder
@@ -696,7 +695,9 @@ def run(
                     return None
                 if active_task_id is None:
                     active_task_id = progress.add_task(
-                        _progress_description(stage_index, total_stages, short_name, message),
+                        _progress_description(
+                            stage_index, total_stages, short_name, message
+                        ),
                         total=100,
                         done_total="-/-",
                         rate="-",
@@ -792,7 +793,9 @@ def run(
                         done = stage_done
                         if done is None or done < 0:
                             done = stage_total
-                        done_total = f"{_format_count(done)}/{_format_count(stage_total)}"
+                        done_total = (
+                            f"{_format_count(done)}/{_format_count(stage_total)}"
+                        )
                     progress.update(
                         task_id,
                         completed=100,
@@ -926,9 +929,7 @@ def report(
         )
         report_path = report_gen.generate()
         logger.info("[bold]Report generated:[/bold] %s", report_path)
-        console.print(
-            f"\n[bold]Report saved to:[/bold] {report_path}\n"
-        )
+        console.print(f"\n[bold]Report saved to:[/bold] {report_path}\n")
     except Exception as e:
         console.print(f"[red]Error generating report:[/red] {e}")
         raise typer.Exit(code=1) from e
@@ -983,9 +984,32 @@ def setup_aizynthfinder(
 
     project_root = Path(__file__).resolve().parents[2]
     config_path = ensure_aizynthfinder(project_root)
-    console.print(
-        f"[bold]AiZynthFinder installed.[/bold] Config: {config_path}"
-    )
+    console.print(f"[bold]AiZynthFinder installed.[/bold] Config: {config_path}")
+
+
+@setup_app.command("shepherd-worker")
+def setup_shepherd_worker(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Auto-accept downloads (no prompt).",
+    ),
+    python_bin: str | None = typer.Option(
+        None,
+        "--python",
+        help="Python interpreter for worker venv (default: python3.12 -> 3.11 -> 3.10).",
+    ),
+) -> None:
+    """Install isolated Shepherd-Score worker environment in .venv-shepherd-worker."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    from hedgehog.setup import ensure_shepherd_worker
+
+    project_root = Path(__file__).resolve().parents[2]
+    worker_path = ensure_shepherd_worker(project_root, python_bin=python_bin)
+    console.print(f"[bold]Shepherd worker installed.[/bold] Entry: {worker_path}")
 
 
 @app.command()

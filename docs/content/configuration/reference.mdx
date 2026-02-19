@@ -653,10 +653,15 @@ Evaluates protein-ligand interactions using ProLIF.
 ### Filter 3: Shepherd-Score (`shepherd_score`)
 
 3D molecular shape comparison to a reference ligand using Gaussian overlap.
+The default `backend: auto` tries isolated worker first, then in-process import,
+and soft-skips the filter if neither backend is available.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable this filter (requires a reference ligand) |
+| `backend` | string | `auto` | Backend mode: `auto`, `worker`, or `inprocess` |
+| `auto_install_worker` | bool | `true` | If worker command is missing, attempt `hedgehog setup shepherd-worker` automatically |
+| `worker_python` | string \| null | `null` | Optional Python interpreter passed to worker setup (e.g. `python3.12`) |
 | `reference_ligand` | string \| null | `null` | Path to reference ligand SDF (required if enabled) |
 | `min_shape_score` | float | `0.5` | Minimum Gaussian overlap Tanimoto score |
 | `alpha` | float | `0.81` | Gaussian width parameter |
@@ -718,6 +723,9 @@ interactions:
 
 shepherd_score:
   enabled: false
+  backend: "auto"
+  auto_install_worker: true
+  worker_python: null
   reference_ligand: null
   min_shape_score: 0.5
   alpha: 0.81

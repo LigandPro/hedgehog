@@ -88,7 +88,9 @@ def _get_complexity_filter(metric_name):
     """Get cached complexity filter instance for worker process."""
     complexity_filter = _COMPLEXITY_FILTERS_CACHE.get(metric_name)
     if complexity_filter is None:
-        complexity_filter = mc.complexity.ComplexityFilter(complexity_metric=metric_name)
+        complexity_filter = mc.complexity.ComplexityFilter(
+            complexity_metric=metric_name
+        )
         _COMPLEXITY_FILTERS_CACHE[metric_name] = complexity_filter
     return complexity_filter
 
@@ -442,9 +444,7 @@ def prepare_structfilters_input(df, subsample, parse_n_jobs, progress_cb=None):
             )
         )
     )
-    parse_payload = [
-        (row_idx, item[0], item[1], item[2]) for row_idx, item in items
-    ]
+    parse_payload = [(row_idx, item[0], item[1], item[2]) for row_idx, item in items]
 
     n_jobs = int(parse_n_jobs)
     if n_jobs <= 0:
@@ -1060,7 +1060,9 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
     results = pd.DataFrame(rows)
 
     expected_indices = set(range(len(mols)))
-    observed_indices = set(results["_mol_idx"].tolist()) if "_mol_idx" in results else set()
+    observed_indices = (
+        set(results["_mol_idx"].tolist()) if "_mol_idx" in results else set()
+    )
     if len(results) != len(mols) or observed_indices != expected_indices:
         logger.warning(
             "NIBR chunked processing mismatch (got %d/%d rows). Falling back to medchem native parallel call.",
@@ -1161,7 +1163,9 @@ def _process_lilly_chunk(args):
 
     if len(chunk_result) != len(indexed_chunk):
         template = chunk_result.iloc[-1].to_dict() if len(chunk_result) > 0 else None
-        chunk_result = _ensure_dataframe_length(chunk_result, len(indexed_chunk), template)
+        chunk_result = _ensure_dataframe_length(
+            chunk_result, len(indexed_chunk), template
+        )
 
     chunk_result = chunk_result.reset_index(drop=True)
     if "mol" in chunk_result.columns:
@@ -1278,7 +1282,9 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
     else:
         expected_indices = set(valid_indices)
         observed_indices = (
-            set(results["_mol_idx"].tolist()) if "_mol_idx" in results.columns else set()
+            set(results["_mol_idx"].tolist())
+            if "_mol_idx" in results.columns
+            else set()
         )
         if len(results) != len(valid_mols) or observed_indices != expected_indices:
             logger.warning(
@@ -1888,7 +1894,9 @@ def combine_filter_results_in_memory(output_dir, input_df, pass_mask_by_filter):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    identity_cols = [c for c in ["smiles", "model_name", "mol_idx"] if c in input_df.columns]
+    identity_cols = [
+        c for c in ["smiles", "model_name", "mol_idx"] if c in input_df.columns
+    ]
     combined = input_df[identity_cols].copy()
 
     pass_columns = []
@@ -1917,7 +1925,9 @@ def combine_filter_results_in_memory(output_dir, input_df, pass_mask_by_filter):
             continue
 
         cols_to_take = merge_cols + [pass_col]
-        local_df = local_df[cols_to_take].drop_duplicates(subset=merge_cols, keep="last")
+        local_df = local_df[cols_to_take].drop_duplicates(
+            subset=merge_cols, keep="last"
+        )
         local_df = local_df.rename(columns={pass_col: col_name})
         combined = combined.merge(local_df, on=merge_cols, how="left")
         combined[col_name] = combined[col_name].fillna(False).astype(bool)

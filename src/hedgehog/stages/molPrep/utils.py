@@ -263,7 +263,7 @@ def _molprep_one(
 
 
 def _process_molprep_item(
-    item: tuple[str, str | None, str | None]
+    item: tuple[str, str | None, str | None],
 ) -> tuple[dict[str, Any] | None, MolPrepFailure | None]:
     global _DATAMOL_WORKER_WARMED
     if not _DATAMOL_WORKER_WARMED:

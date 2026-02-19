@@ -150,3 +150,11 @@ class ConfigValidator:
             result["errors"].append(
                 "conformer_deviation.max_rmsd_to_conformer must be a non-negative number"
             )
+
+        shepherd_cfg = data.get("shepherd_score", {}) or {}
+        shepherd_backend = shepherd_cfg.get("backend", "auto")
+        valid_shepherd_backends = {"auto", "worker", "inprocess"}
+        if shepherd_backend not in valid_shepherd_backends:
+            result["errors"].append(
+                "shepherd_score.backend must be one of: auto, worker, inprocess"
+            )

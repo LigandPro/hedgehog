@@ -57,6 +57,7 @@ pyrightconfig.json
 # Environments
 .env
 .venv/
+.venv-shepherd-worker/
 env/
 venv/
 ENV/

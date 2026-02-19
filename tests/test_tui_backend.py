@@ -367,7 +367,9 @@ class TestSaveConfigValidation:
         handler = ConfigHandler(server)
         # Point project root to tmp_path so config files are written there
         monkeypatch.setattr(handler, "_project_root", tmp_path)
-        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
+        monkeypatch.setattr(
+            handler, "_user_config_root", tmp_path / ".hedgehog" / "tui"
+        )
 
         # Create the config directory structure expected by _get_config_path
         config_dir = tmp_path / "src" / "hedgehog" / "configs"
@@ -387,7 +389,9 @@ class TestSaveConfigValidation:
         server = _mock_server()
         handler = ConfigHandler(server)
         monkeypatch.setattr(handler, "_project_root", tmp_path)
-        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
+        monkeypatch.setattr(
+            handler, "_user_config_root", tmp_path / ".hedgehog" / "tui"
+        )
 
         config_dir = tmp_path / "src" / "hedgehog" / "configs"
         config_dir.mkdir(parents=True)
@@ -415,12 +419,16 @@ class TestSaveConfigValidation:
         server = _mock_server()
         handler = ConfigHandler(server)
         monkeypatch.setattr(handler, "_project_root", tmp_path)
-        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
+        monkeypatch.setattr(
+            handler, "_user_config_root", tmp_path / ".hedgehog" / "tui"
+        )
 
         config_dir = tmp_path / "src" / "hedgehog" / "configs"
         config_dir.mkdir(parents=True)
         source_file = config_dir / "config.yml"
-        source_file.write_text("generated_mols_path: data/mols.csv\nfolder_to_save: results\n")
+        source_file.write_text(
+            "generated_mols_path: data/mols.csv\nfolder_to_save: results\n"
+        )
 
         loaded = handler.load_config("main")
         assert loaded["folder_to_save"] == "results"
@@ -436,7 +444,9 @@ class TestSaveConfigValidation:
         server = _mock_server()
         handler = ConfigHandler(server)
         monkeypatch.setattr(handler, "_project_root", tmp_path)
-        monkeypatch.setattr(handler, "_user_config_root", tmp_path / ".hedgehog" / "tui")
+        monkeypatch.setattr(
+            handler, "_user_config_root", tmp_path / ".hedgehog" / "tui"
+        )
 
         config_dir = tmp_path / "src" / "hedgehog" / "configs"
         config_dir.mkdir(parents=True)
@@ -786,7 +796,9 @@ class TestPipelinePreflight:
 
     def test_preflight_blocks_invalid_docking_receptor(self, preflight_env):
         project_root = preflight_env["paths"]["project_root"]
-        docking_cfg = project_root / "src" / "hedgehog" / "configs" / "config_docking.yml"
+        docking_cfg = (
+            project_root / "src" / "hedgehog" / "configs" / "config_docking.yml"
+        )
         docking_cfg.write_text(
             yaml.safe_dump(
                 {
@@ -821,7 +833,9 @@ class TestPipelinePreflight:
             for check in result["checks"]
         )
 
-    def test_preflight_requires_input_sdf_for_manual_docking_filters(self, preflight_env):
+    def test_preflight_requires_input_sdf_for_manual_docking_filters(
+        self, preflight_env
+    ):
         project_root = preflight_env["paths"]["project_root"]
         filters_cfg = (
             project_root / "src" / "hedgehog" / "configs" / "config_docking_filters.yml"

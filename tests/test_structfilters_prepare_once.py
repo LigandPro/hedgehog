@@ -73,7 +73,9 @@ def test_prepare_payload_called_once_for_multiple_filters(tmp_path, monkeypatch)
             }
         )
 
-    def fake_get_basic_stats(config_struct_filters, filter_results, model_name, filter_name):
+    def fake_get_basic_stats(
+        config_struct_filters, filter_results, model_name, filter_name
+    ):
         del config_struct_filters, model_name, filter_name
         metrics = pd.DataFrame({"model_name": ["m1"], "num_mol": [len(filter_results)]})
         return metrics, filter_results.copy()
@@ -81,8 +83,14 @@ def test_prepare_payload_called_once_for_multiple_filters(tmp_path, monkeypatch)
     monkeypatch.setattr(structfilters_main, "prepare_structfilters_input", fake_prepare)
     monkeypatch.setattr(structfilters_main, "process_prepared_payload", fake_process)
     monkeypatch.setattr(structfilters_main, "get_basic_stats", fake_get_basic_stats)
-    monkeypatch.setattr(structfilters_main, "_save_filter_results", lambda *args, **kwargs: None)
-    monkeypatch.setattr(structfilters_main, "inject_identity_columns_to_all_csvs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        structfilters_main, "_save_filter_results", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        structfilters_main,
+        "inject_identity_columns_to_all_csvs",
+        lambda *args, **kwargs: None,
+    )
 
     structfilters_main.main(config, "stages/03_structural_filters_post")
 

@@ -31,7 +31,9 @@ class TestEnsureRascoreModel:
         result = ensure_rascore_model(tmp_path)
         assert result == model_path
 
-    def test_downloads_when_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_downloads_when_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Download model into the expected MolScore path when missing."""
         calls: list[tuple[str, Path, str]] = []
 
@@ -49,8 +51,11 @@ class TestEnsureRascoreModel:
         assert result.name == "model.pkl"
         assert calls, "download_with_progress should be called"
 
-    def test_raises_on_invalid_download(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_raises_on_invalid_download(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Raise when downloaded file is too small/corrupt."""
+
         def _fake_download(url: str, dest: Path, description: str) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"tiny")

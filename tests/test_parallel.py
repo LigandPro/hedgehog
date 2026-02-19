@@ -69,6 +69,8 @@ def _identity(x):
 
 
 _INIT_VALUE = None
+
+
 def _set_init_value(value):
     global _INIT_VALUE
     _INIT_VALUE = value

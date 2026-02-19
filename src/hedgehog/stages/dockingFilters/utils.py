@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
+import shlex
+import subprocess
+import tempfile
 import warnings
 from pathlib import Path
 from typing import Any
@@ -369,7 +374,9 @@ def _check_shepherd_score_single(mol: Chem.Mol) -> dict[str, Any]:
     min_score = _SHEPHERD_MIN_SCORE
     try:
         if ref_positions_list is None:
-            raise RuntimeError("Shepherd-Score worker configuration was not initialized")
+            raise RuntimeError(
+                "Shepherd-Score worker configuration was not initialized"
+            )
         ref_positions = torch.tensor(ref_positions_list, dtype=torch.float32)
 
         mol_h = Chem.AddHs(mol, addCoords=True)
@@ -399,7 +406,210 @@ def _init_shepherd_score_worker(
     _SHEPHERD_MIN_SCORE = float(min_score)
 
 
-def apply_shepherd_score_filter(
+def _soft_skip_shepherd_filter(mols: list[Chem.Mol], reason: str) -> pd.DataFrame:
+    logger.warning(
+        "Shepherd-Score backend unavailable (%s). Skipping filter. "
+        "To enable it, run: uv run hedgehog setup shepherd-worker --yes",
+        reason,
+    )
+    return pd.DataFrame(
+        {
+            "mol_idx": range(len(mols)),
+            "shape_score": [float("nan")] * len(mols),
+            "pass_shepherd_score": [True] * len(mols),
+        }
+    )
+
+
+def _resolve_shepherd_worker_command() -> list[str]:
+    raw_cmd = os.environ.get("HEDGEHOG_SHEPHERD_WORKER_CMD", "").strip()
+    if raw_cmd:
+        parts = shlex.split(raw_cmd)
+        if not parts:
+            raise RuntimeError("HEDGEHOG_SHEPHERD_WORKER_CMD is empty")
+        return parts
+
+    project_root = _project_root()
+    if os.name == "nt":
+        worker_entry = (
+            project_root
+            / ".venv-shepherd-worker"
+            / "Scripts"
+            / "hedgehog-shepherd-worker.exe"
+        )
+        venv_python = project_root / ".venv-shepherd-worker" / "Scripts" / "python.exe"
+    else:
+        worker_entry = (
+            project_root / ".venv-shepherd-worker" / "bin" / "hedgehog-shepherd-worker"
+        )
+        venv_python = project_root / ".venv-shepherd-worker" / "bin" / "python"
+
+    if worker_entry.exists():
+        return [str(worker_entry)]
+    if venv_python.exists():
+        return [str(venv_python), "-m", "hedgehog.workers.shepherd_worker"]
+
+    raise RuntimeError(
+        "No shepherd worker command found. "
+        "Set HEDGEHOG_SHEPHERD_WORKER_CMD or run: "
+        "uv run hedgehog setup shepherd-worker --yes"
+    )
+
+
+def _write_sdf(path: Path, mols: list[Chem.Mol]) -> None:
+    writer = Chem.SDWriter(str(path))
+    writer.SetKekulize(False)
+    for i, mol in enumerate(mols):
+        current = Chem.Mol(mol)
+        current.SetProp("_Name", f"mol_{i}")
+        writer.write(current)
+    writer.close()
+
+
+def _apply_shepherd_score_filter_worker(
+    mols: list[Chem.Mol],
+    reference_mol: Chem.Mol,
+    config: dict[str, Any],
+    progress_cb=None,
+) -> pd.DataFrame:
+    def _auto_install_worker() -> None:
+        from hedgehog.setup import ensure_shepherd_worker
+
+        project_root = _project_root()
+        old_auto = os.environ.get("HEDGEHOG_AUTO_INSTALL")
+        try:
+            os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+            ensure_shepherd_worker(project_root, python_bin=worker_python)
+        finally:
+            if old_auto is None:
+                os.environ.pop("HEDGEHOG_AUTO_INSTALL", None)
+            else:
+                os.environ["HEDGEHOG_AUTO_INSTALL"] = old_auto
+
+    auto_install_worker = bool(config.get("auto_install_worker", True))
+    worker_python = config.get("worker_python")
+    try:
+        worker_cmd = _resolve_shepherd_worker_command()
+    except Exception as exc:
+        if not auto_install_worker:
+            raise
+        logger.info(
+            "Shepherd worker command was not found, attempting auto-install "
+            "(python=%s): %s",
+            worker_python or "auto",
+            exc,
+        )
+        _auto_install_worker()
+        worker_cmd = _resolve_shepherd_worker_command()
+
+    min_shape_score = float(config.get("min_shape_score", 0.5))
+    alpha = float(config.get("alpha", 0.81))
+    timeout_sec = int(config.get("worker_timeout_sec", 900))
+
+    def _run_worker(worker_cmd: list[str]) -> pd.DataFrame:
+        with tempfile.TemporaryDirectory(prefix="hedgehog_shepherd_worker_") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_sdf = tmp_path / "input.sdf"
+            reference_sdf = tmp_path / "reference.sdf"
+            params_json = tmp_path / "params.json"
+            output_json = tmp_path / "output.json"
+            meta_json = tmp_path / "meta.json"
+
+            _write_sdf(input_sdf, mols)
+            _write_sdf(reference_sdf, [reference_mol])
+            params_json.write_text(
+                json.dumps(
+                    {
+                        "alpha": alpha,
+                        "min_shape_score": min_shape_score,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            cmd = [
+                *worker_cmd,
+                "--input-sdf",
+                str(input_sdf),
+                "--reference-sdf",
+                str(reference_sdf),
+                "--params-json",
+                str(params_json),
+                "--output-json",
+                str(output_json),
+                "--meta-json",
+                str(meta_json),
+            ]
+
+            proc = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+            if proc.returncode != 0:
+                stderr = proc.stderr.strip()
+                stdout = proc.stdout.strip()
+                detail = stderr or stdout or "worker exited with non-zero status"
+                raise RuntimeError(
+                    f"Shepherd worker failed (code={proc.returncode}): {detail}"
+                )
+
+            if not output_json.exists():
+                raise RuntimeError("Shepherd worker did not produce output.json")
+
+            payload = json.loads(output_json.read_text(encoding="utf-8"))
+            if not isinstance(payload, list):
+                raise RuntimeError("Shepherd worker output.json has invalid format")
+
+            results: list[dict[str, Any]] = []
+            for i in range(len(mols)):
+                item = (
+                    payload[i]
+                    if i < len(payload) and isinstance(payload[i], dict)
+                    else {}
+                )
+                score = float(item.get("shape_score", 0.0))
+                passed = bool(item.get("pass_shepherd_score", score >= min_shape_score))
+                err = item.get("error")
+                if err:
+                    logger.warning("Shepherd-Score failed for mol %d: %s", i, err)
+                results.append(
+                    {
+                        "mol_idx": i,
+                        "shape_score": score,
+                        "pass_shepherd_score": passed,
+                    }
+                )
+
+        if progress_cb is not None:
+            progress_cb(len(mols), len(mols))
+
+        df = pd.DataFrame(results)
+        logger.info(
+            "Shepherd-Score filter: %d/%d passed",
+            int(df["pass_shepherd_score"].sum()),
+            len(df),
+        )
+        return df
+
+    try:
+        return _run_worker(worker_cmd)
+    except Exception as exc:
+        if not auto_install_worker:
+            raise
+        logger.info(
+            "Shepherd worker execution failed, attempting auto-repair (python=%s): %s",
+            worker_python or "auto",
+            exc,
+        )
+        _auto_install_worker()
+        worker_cmd = _resolve_shepherd_worker_command()
+        return _run_worker(worker_cmd)
+
+
+def _apply_shepherd_score_filter_inprocess(
     mols: list[Chem.Mol],
     reference_mol: Chem.Mol,
     config: dict[str, Any],
@@ -455,6 +665,53 @@ def apply_shepherd_score_filter(
         len(df),
     )
     return df
+
+
+def apply_shepherd_score_filter(
+    mols: list[Chem.Mol],
+    reference_mol: Chem.Mol,
+    config: dict[str, Any],
+    progress_cb=None,
+) -> pd.DataFrame:
+    """Apply Shepherd-Score filter with backend fallback model."""
+    backend = str(config.get("backend", "auto")).lower()
+    valid_backends = {"auto", "worker", "inprocess"}
+    if backend not in valid_backends:
+        logger.warning(
+            "Unknown shepherd_score.backend=%r, using 'auto'. Valid values: auto|worker|inprocess",
+            backend,
+        )
+        backend = "auto"
+
+    min_shape_score = float(config.get("min_shape_score", 0.5))
+    logger.info(
+        "Running Shepherd-Score filter (backend=%s, min_shape_score=%.2f)",
+        backend,
+        min_shape_score,
+    )
+
+    if backend in {"auto", "worker"}:
+        try:
+            return _apply_shepherd_score_filter_worker(
+                mols, reference_mol, config, progress_cb=progress_cb
+            )
+        except Exception as exc:  # noqa: BLE001
+            if backend == "worker":
+                return _soft_skip_shepherd_filter(mols, str(exc))
+            logger.warning(
+                "Shepherd worker backend failed, trying in-process backend: %s",
+                exc,
+            )
+
+    if backend in {"auto", "inprocess"}:
+        try:
+            return _apply_shepherd_score_filter_inprocess(
+                mols, reference_mol, config, progress_cb=progress_cb
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _soft_skip_shepherd_filter(mols, str(exc))
+
+    return _soft_skip_shepherd_filter(mols, "no backend available")
 
 
 def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:

@@ -74,7 +74,9 @@ def run_aizynthfinder(
     """
     output_json_file.parent.mkdir(parents=True, exist_ok=True)
 
-    run_dir = Path(aizynthfinder_dir) if aizynthfinder_dir else config_file.parent.parent
+    run_dir = (
+        Path(aizynthfinder_dir) if aizynthfinder_dir else config_file.parent.parent
+    )
     input_abs = input_smiles_file.resolve()
     output_abs = output_json_file.resolve()
     config_abs = config_file.resolve()

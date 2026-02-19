@@ -811,7 +811,9 @@ class MolecularAnalysisPipeline:
             / DIR_DESCRIPTORS_INITIAL
             / "filtered"
             / FILE_FILTERED_MOLECULES,
-            STAGE_STRUCT_FILTERS: base / DIR_STRUCT_FILTERS_POST / FILE_FILTERED_MOLECULES,
+            STAGE_STRUCT_FILTERS: base
+            / DIR_STRUCT_FILTERS_POST
+            / FILE_FILTERED_MOLECULES,
             STAGE_SYNTHESIS: base / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES,
             STAGE_DOCKING_FILTERS: base / DIR_DOCKING_FILTERS / FILE_FILTERED_MOLECULES,
             STAGE_FINAL_DESCRIPTORS: base
@@ -1330,7 +1332,9 @@ class MolecularAnalysisPipeline:
                 STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
             }
             required_data = skip_conditions.get(stage.name)
-            if required_data and not self.data_checker.stage_has_molecules(required_data):
+            if required_data and not self.data_checker.stage_has_molecules(
+                required_data
+            ):
                 return "SKIPPED (no molecules)"
 
             return "FAILED"

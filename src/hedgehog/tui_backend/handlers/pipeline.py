@@ -369,9 +369,16 @@ class PipelineHandler:
             try:
                 input_validation = validation_handler.validate_input_file(input_path)
                 for msg in input_validation.get("errors", []):
-                    add_global("MAIN_INPUT_INVALID", "error", msg, field="generated_mols_path")
+                    add_global(
+                        "MAIN_INPUT_INVALID", "error", msg, field="generated_mols_path"
+                    )
                 for msg in input_validation.get("warnings", []):
-                    add_global("MAIN_INPUT_WARNING", "warning", msg, field="generated_mols_path")
+                    add_global(
+                        "MAIN_INPUT_WARNING",
+                        "warning",
+                        msg,
+                        field="generated_mols_path",
+                    )
             except Exception as exc:
                 add_global(
                     "MAIN_INPUT_CHECK_FAILED",
@@ -406,9 +413,13 @@ class PipelineHandler:
                     output_path
                 )
                 for msg in output_validation.get("errors", []):
-                    add_global("MAIN_OUTPUT_INVALID", "error", msg, field="folder_to_save")
+                    add_global(
+                        "MAIN_OUTPUT_INVALID", "error", msg, field="folder_to_save"
+                    )
                 for msg in output_validation.get("warnings", []):
-                    add_global("MAIN_OUTPUT_WARNING", "warning", msg, field="folder_to_save")
+                    add_global(
+                        "MAIN_OUTPUT_WARNING", "warning", msg, field="folder_to_save"
+                    )
             except Exception as exc:
                 add_global(
                     "MAIN_OUTPUT_CHECK_FAILED",

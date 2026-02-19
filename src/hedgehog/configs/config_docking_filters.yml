@@ -49,12 +49,18 @@ interactions:
 
 # Filter 3: Shepherd-Score (3D Similarity)
 # Compares molecular shape to reference ligand
+# backend: "auto" (worker -> in-process -> skip), "worker", or "inprocess"
+# shepherd-score is optional and should be installed in isolated worker venv:
+#   uv run hedgehog setup shepherd-worker --yes
 shepherd_score:
   enabled: false  # Requires reference ligand
+  backend: "auto"
+  auto_install_worker: true  # If worker command is missing, attempt setup automatically
+  worker_python: null  # Optional override, e.g. "python3.12"
   reference_ligand: null  # Required: path to reference SDF
   min_shape_score: 0.5  # Minimum Gaussian overlap Tanimoto
   alpha: 0.81  # Gaussian width parameter (default from paper)
-  align_before_scoring: true  # Align molecules before scoring
+  align_before_scoring: true  # Reserved for compatibility
 
 # Filter 4: Conformer Deviation
 # backend: "symmetry_rmsd" (correct, default) or "naive" (legacy)

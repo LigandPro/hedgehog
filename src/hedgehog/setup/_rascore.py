@@ -45,4 +45,3 @@ def ensure_rascore_model(project_root: Path) -> Path:
 
     logger.info("RAScore model downloaded successfully: %s", model_path)
     return model_path
-

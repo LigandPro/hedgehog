@@ -339,7 +339,9 @@ def compute_metrics(
                     round(ratio * progress_completed_span)
                 )
                 mapped_total = progress_stage_total
-            reporter.progress(mapped_done, mapped_total, message="Computing descriptors")
+            reporter.progress(
+                mapped_done, mapped_total, message="Computing descriptors"
+            )
 
         progress_cb = _progress_cb
 

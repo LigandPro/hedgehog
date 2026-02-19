@@ -29,7 +29,9 @@ def suppress_pandastools_warning() -> None:
     for logger_name in _PANDASTOOLS_LOGGERS:
         ext_logger = logging.getLogger(logger_name)
         ext_logger.setLevel(logging.ERROR)
-        if not any(isinstance(handler, logging.NullHandler) for handler in ext_logger.handlers):
+        if not any(
+            isinstance(handler, logging.NullHandler) for handler in ext_logger.handlers
+        ):
             ext_logger.addHandler(logging.NullHandler())
 
 

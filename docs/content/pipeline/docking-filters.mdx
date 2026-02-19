@@ -58,11 +58,21 @@ Compares the 3D molecular shape of each pose to a reference ligand using Gaussia
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `enabled` | `false` | Disabled by default (requires reference ligand) |
+| `backend` | `auto` | `auto` = worker -> in-process -> soft-skip, `worker` = worker only, `inprocess` = in-process only |
+| `auto_install_worker` | `true` | If worker command is missing, try auto-installing `.venv-shepherd-worker` |
+| `worker_python` | `null` | Optional interpreter for auto-install (`python3.12`, `python3.11`, `python3.10`) |
 | `reference_ligand` | `null` | Path to reference ligand SDF |
 | `min_shape_score` | `0.5` | Minimum shape Tanimoto score |
 | `alpha` | `0.81` | Gaussian width parameter |
 
 This filter is disabled by default because it requires a known reference ligand for comparison. Enable it when you have a co-crystallized ligand or known active compound and want to ensure poses adopt a similar shape.
+For reproducible setup, install an isolated worker environment:
+
+```bash
+uv run hedgehog setup shepherd-worker --yes
+```
+
+If no Shepherd backend is available at runtime, HEDGEHOG soft-skips this filter (logs a warning and marks `pass_shepherd_score=true`).
 
 ### Filter 4: Conformer Deviation
 
@@ -139,6 +149,9 @@ interactions:
 
 shepherd_score:
   enabled: false
+  backend: "auto"
+  auto_install_worker: true
+  worker_python: null
   reference_ligand: null
   min_shape_score: 0.5
   alpha: 0.81

@@ -288,9 +288,7 @@ def _resolve_parse_input_n_jobs(config_structFilters: dict, config: dict) -> int
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        logger.warning(
-            "Invalid parse_input_n_jobs=%r. Falling back to auto.", raw
-        )
+        logger.warning("Invalid parse_input_n_jobs=%r. Falling back to auto.", raw)
         value = -1
 
     if value > 0:
@@ -471,9 +469,7 @@ def main(config, stage_dir, reporter=None):
         plot_calculated_stats(config, stage_dir)
         plot_restriction_ratios(config, stage_dir)
     elif generate_plots and not write_per_filter_outputs:
-        logger.info(
-            "Skipping plots because write_per_filter_outputs is disabled."
-        )
+        logger.info("Skipping plots because write_per_filter_outputs is disabled.")
     timings["plots"] = perf_counter() - plot_started
 
     fail_analysis_started = perf_counter()

@@ -339,7 +339,14 @@ class TestRunAizynthfinder:
         monkeypatch.delenv("MOLSCORE_NJOBS", raising=False)
         monkeypatch.setenv("SLURM_CPUS_PER_TASK", "12")
 
-        config = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder" / "public" / "config.yml"
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
         ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
 
         assert ok is True
@@ -360,7 +367,14 @@ class TestRunAizynthfinder:
         monkeypatch.setenv("AIZYNTH_NPROC", "0")
         monkeypatch.setenv("MOLSCORE_NJOBS", "20")
 
-        config = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder" / "public" / "config.yml"
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
         ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
 
         assert ok is True
@@ -380,7 +394,14 @@ class TestRunAizynthfinder:
         monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
         monkeypatch.setenv("AIZYNTH_NPROC", "not-a-number")
 
-        config = tmp_path / "modules" / "retrosynthesis" / "aizynthfinder" / "public" / "config.yml"
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
         ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
 
         assert ok is True

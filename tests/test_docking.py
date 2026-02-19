@@ -296,7 +296,9 @@ class TestToolValidation:
 class TestRunDockingProteinPrepFallback:
     """Tests for protein preparation fallback behavior."""
 
-    def test_missing_prep_tool_runtime_does_not_fail_docking(self, tmp_path, monkeypatch):
+    def test_missing_prep_tool_runtime_does_not_fail_docking(
+        self, tmp_path, monkeypatch
+    ):
         """Missing protein prep executable at runtime should not fail docking."""
         receptor = tmp_path / "receptor.pdb"
         receptor.write_text("ATOM\n")
@@ -307,10 +309,7 @@ class TestRunDockingProteinPrepFallback:
 
         docking_cfg = tmp_path / "config_docking.yml"
         docking_cfg.write_text(
-            "run: true\n"
-            "tools: smina\n"
-            "auto_run: true\n"
-            f"receptor_pdb: {receptor}\n"
+            f"run: true\ntools: smina\nauto_run: true\nreceptor_pdb: {receptor}\n"
         )
 
         run_config = {
@@ -337,7 +336,9 @@ class TestRunDockingProteinPrepFallback:
             lambda *_, **__: None,
         )
 
-        prepared = tmp_path / "stages" / "05_docking" / "_workdir" / "protein_prepared.pdb"
+        prepared = (
+            tmp_path / "stages" / "05_docking" / "_workdir" / "protein_prepared.pdb"
+        )
         prep_cmd = ["/missing/prep_tool", str(receptor), str(prepared), "-WAIT"]
         monkeypatch.setattr(
             "hedgehog.stages.docking.utils._prepare_protein_for_docking",
@@ -372,7 +373,9 @@ class TestRunDockingProteinPrepFallback:
         def _raise_not_found(*_args, **_kwargs):
             raise FileNotFoundError("No such file or directory")
 
-        monkeypatch.setattr("hedgehog.stages.docking.utils.subprocess.run", _raise_not_found)
+        monkeypatch.setattr(
+            "hedgehog.stages.docking.utils.subprocess.run", _raise_not_found
+        )
 
         assert run_docking(run_config) is True
 
