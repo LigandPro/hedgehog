@@ -65,7 +65,7 @@ def main() -> int:
     meta_json = Path(args.meta_json)
 
     try:
-        with open(params_json, "r", encoding="utf-8") as f:
+        with open(params_json, encoding="utf-8") as f:
             params = json.load(f)
         alpha = float(params.get("alpha", 0.81))
         min_shape_score = float(params.get("min_shape_score", 0.5))
