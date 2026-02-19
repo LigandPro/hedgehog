@@ -2,6 +2,7 @@ import contextlib
 import importlib
 import io
 import os
+import threading
 import warnings
 from pathlib import Path
 
@@ -819,18 +820,97 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
     n_jobs = resolve_n_jobs(config_structFilters, config)
     logger.info("Common Alerts workers: %d", n_jobs)
     items = [(i, mol) for i, mol in enumerate(mols)]
+    total_items = len(items)
+
+    progress_log_step = max(1, min(500, total_items // 20)) if total_items else 1
+    heartbeat_interval_seconds = 30.0
+    logger.info(
+        "Common Alerts progress logging: step=%d molecules, heartbeat=%.0fs",
+        progress_log_step,
+        heartbeat_interval_seconds,
+    )
+
+    done_count = 0
+    next_progress_log = progress_log_step
+    progress_lock = threading.Lock()
+    heartbeat_stop = threading.Event()
+
+    def _progress_wrapper(done: int, total: int) -> None:
+        nonlocal done_count, next_progress_log
+        with progress_lock:
+            done_count = done
+
+        should_log = done == total or done >= next_progress_log
+        if should_log:
+            logger.info(
+                "Common Alerts progress: %d/%d molecules (%.1f%%)",
+                done,
+                total,
+                100.0 * done / max(1, total),
+            )
+            while next_progress_log <= done:
+                next_progress_log += progress_log_step
+
+        if progress_cb is not None:
+            progress_cb(done, total)
+
+    def _heartbeat_logger() -> None:
+        while not heartbeat_stop.wait(heartbeat_interval_seconds):
+            with progress_lock:
+                current_done = done_count
+            if total_items == 0:
+                break
+            if current_done == 0:
+                logger.info(
+                    "Common Alerts still running: 0/%d molecules complete; waiting for first worker batch",
+                    total_items,
+                )
+                continue
+            logger.info(
+                "Common Alerts still running: %d/%d molecules (%.1f%%)",
+                current_done,
+                total_items,
+                100.0 * current_done / max(1, total_items),
+            )
+
+    logger.info(
+        "Common Alerts progress: 0/%d molecules (0.0%%)",
+        total_items,
+    )
+
+    heartbeat_thread = None
+    if total_items > 1:
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat_logger,
+            name="common-alerts-heartbeat",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+
     worker_initializer = (
         _init_alert_worker_quiet
         if n_jobs > 1 and len(items) > 1
         else _init_alert_worker
     )
-    results_list = parallel_map(
-        _check_alerts_single_mol,
-        items,
-        n_jobs,
-        progress=progress_cb,
-        initializer=worker_initializer,
-        initargs=(compiled_smarts, rule_set_names),
+    try:
+        results_list = parallel_map(
+            _check_alerts_single_mol,
+            items,
+            n_jobs,
+            progress=_progress_wrapper,
+            initializer=worker_initializer,
+            initargs=(compiled_smarts, rule_set_names),
+        )
+    finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=0.1)
+
+    logger.info(
+        "Common Alerts completed: %d/%d molecules (%.1f%%)",
+        total_items,
+        total_items,
+        100.0 if total_items else 0.0,
     )
 
     # Restore mol column (RDKit Mol objects are not picklable across processes).

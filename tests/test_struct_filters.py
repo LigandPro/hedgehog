@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from rdkit import Chem
 
+from hedgehog.stages.structFilters import utils as structfilters_utils
 from hedgehog.stages.structFilters.utils import (
     apply_halogenicity,
     apply_lilly_filter,
@@ -552,6 +553,48 @@ class TestCommonAlertsContract:
         assert row["pass_RulesetB"] == True  # noqa: E712
         assert row["pass"] == True  # noqa: E712
         assert row["pass_any"] == True  # noqa: E712
+
+    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
+    @patch("hedgehog.stages.structFilters.utils.load_config")
+    def test_progress_logs_are_emitted(
+        self, mock_load_config, mock_filter_alerts, monkeypatch, caplog
+    ):
+        """Common Alerts should emit visible progress logs during processing."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {"RulesetA": [("[#7]", "nitrogen atom")]}
+        )
+
+        def _fake_parallel_map(
+            func,
+            items,
+            n_jobs,
+            chunksize=None,
+            progress=None,
+            initializer=None,
+            initargs=(),
+        ):
+            if initializer is not None:
+                initializer(*initargs)
+            out = []
+            total = len(items)
+            for idx, item in enumerate(items, start=1):
+                out.append(func(item))
+                if progress is not None:
+                    progress(idx, total)
+            return out
+
+        monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
+
+        mols = [Chem.MolFromSmiles("CCO"), Chem.MolFromSmiles("c1ccccc1")]
+        config = {"config_structFilters": "dummy.yml"}
+
+        with caplog.at_level("INFO"):
+            apply_structural_alerts(config, mols)
+
+        assert "Common Alerts progress: 0/2 molecules (0.0%)" in caplog.text
+        assert "Common Alerts progress: 2/2 molecules (100.0%)" in caplog.text
+        assert "Common Alerts completed: 2/2 molecules (100.0%)" in caplog.text
 
 
 class TestGetBasicStatsCommonAlerts:
