@@ -1,5 +1,6 @@
 """Tests for main.py utilities."""
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -269,6 +270,46 @@ class TestStageEnum:
         assert "filter" in Stage.struct_filters.description.lower()
         assert "synth" in Stage.synthesis.description.lower()
         assert "docking" in Stage.docking.description.lower()
+
+
+def test_setup_aizynthfinder_auto_accepts_by_default(monkeypatch, tmp_path):
+    """setup aizynthfinder should auto-accept downloads without extra flags."""
+    import hedgehog.main as main_mod
+    import hedgehog.setup as setup_mod
+
+    captured: dict[str, str | None] = {"auto": None}
+
+    def _fake_ensure(_project_root):
+        captured["auto"] = os.environ.get("HEDGEHOG_AUTO_INSTALL")
+        return tmp_path / "config.yml"
+
+    monkeypatch.setattr(setup_mod, "ensure_aizynthfinder", _fake_ensure)
+    monkeypatch.setattr(main_mod.console, "print", lambda *args, **kwargs: None)
+    monkeypatch.delenv("HEDGEHOG_AUTO_INSTALL", raising=False)
+
+    main_mod.setup_aizynthfinder()
+
+    assert captured["auto"] == "1"
+
+
+def test_setup_aizynthfinder_no_yes_restores_prompt(monkeypatch, tmp_path):
+    """--no-yes should avoid forcing auto-install confirmations."""
+    import hedgehog.main as main_mod
+    import hedgehog.setup as setup_mod
+
+    captured: dict[str, str | None] = {"auto": "unexpected"}
+
+    def _fake_ensure(_project_root):
+        captured["auto"] = os.environ.get("HEDGEHOG_AUTO_INSTALL")
+        return tmp_path / "config.yml"
+
+    monkeypatch.setattr(setup_mod, "ensure_aizynthfinder", _fake_ensure)
+    monkeypatch.setattr(main_mod.console, "print", lambda *args, **kwargs: None)
+    monkeypatch.setenv("HEDGEHOG_AUTO_INSTALL", "1")
+
+    main_mod.setup_aizynthfinder(yes=False)
+
+    assert captured["auto"] is None
 
 
 def test_run_uses_single_progress_task_and_consistent_stage_numbers(
