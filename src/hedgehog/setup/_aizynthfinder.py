@@ -2,28 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
 
 from hedgehog.configs.logger import logger
-from hedgehog.setup._download import confirm_download
-
-
-def _resolve_uv_binary() -> str:
-    """Resolve uv executable in normal and `uv run` environments."""
-    uv_env = os.environ.get("UV")
-    if uv_env:
-        uv_path = Path(uv_env).expanduser()
-        if uv_path.is_file() and os.access(uv_path, os.X_OK):
-            return str(uv_path)
-
-    path_uv = shutil.which("uv")
-    if path_uv:
-        return path_uv
-
-    raise RuntimeError("uv is not installed. Please install uv to set up AiZynthFinder.")
+from hedgehog.setup._download import confirm_download, resolve_uv_binary
 
 
 def ensure_aizynthfinder(project_root: Path) -> Path:
@@ -65,7 +49,7 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
         raise RuntimeError(
             "git is not installed. Please install git to set up AiZynthFinder."
         )
-    uv_bin = _resolve_uv_binary()
+    uv_bin = resolve_uv_binary()
 
     # 3. User confirmation
     if not confirm_download("AiZynthFinder", "~800 MB (repo + models)"):

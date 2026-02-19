@@ -1,0 +1,27 @@
+min_version: 1.6.0
+
+pre-commit:
+  parallel: true
+  commands:
+    ruff-format-staged:
+      glob: '*.{py,pyi}'
+      run: uv run --extra lint ruff format --check {staged_files}
+    ruff-check-staged:
+      glob: '*.{py,pyi}'
+      run: uv run --extra lint ruff check {staged_files}
+    git-diff-check:
+      run: git diff --check --cached
+
+pre-push:
+  parallel: false
+  commands:
+    ruff-format:
+      run: uv run --extra lint ruff format --check .
+    ruff-check:
+      run: uv run --extra lint ruff check .
+    pytest:
+      run: uv run --extra test pytest
+    pipeline-smoke:
+      run: uv run python scripts/check_pipeline.py --mode ci
+    docs-build:
+      run: cd docs && pnpm install --frozen-lockfile && pnpm build

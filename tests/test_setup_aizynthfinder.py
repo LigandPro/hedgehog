@@ -63,6 +63,10 @@ class TestEnsureAizynthfinder:
             "hedgehog.setup._aizynthfinder.shutil.which",
             lambda name: "/usr/bin/git" if name == "git" else None,
         )
+        monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.resolve_uv_binary",
+            lambda: (_ for _ in ()).throw(RuntimeError("uv is not installed")),
+        )
         with pytest.raises(RuntimeError, match="uv is not installed"):
             ensure_aizynthfinder(tmp_path)
 
@@ -71,6 +75,10 @@ class TestEnsureAizynthfinder:
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.shutil.which",
             lambda name: "/usr/bin/" + name,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.resolve_uv_binary",
+            lambda: "/usr/bin/uv",
         )
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.confirm_download",
@@ -84,11 +92,13 @@ class TestEnsureAizynthfinder:
         uv_bin = tmp_path / "custom-bin" / "uv"
         uv_bin.parent.mkdir(parents=True, exist_ok=True)
         uv_bin.write_text("#!/bin/sh\n", encoding="utf-8")
-        monkeypatch.setenv("UV", str(uv_bin))
-        monkeypatch.setattr("hedgehog.setup._aizynthfinder.os.access", lambda *_: True)
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.shutil.which",
             lambda name: "/usr/bin/git" if name == "git" else None,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.resolve_uv_binary",
+            lambda: str(uv_bin),
         )
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.confirm_download",
@@ -119,6 +129,10 @@ class TestEnsureAizynthfinder:
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.shutil.which",
             lambda name: "/usr/bin/" + name,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.resolve_uv_binary",
+            lambda: "/usr/bin/uv",
         )
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.confirm_download",
@@ -176,6 +190,10 @@ class TestEnsureAizynthfinder:
             lambda name: "/usr/bin/" + name,
         )
         monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.resolve_uv_binary",
+            lambda: "/usr/bin/uv",
+        )
+        monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.confirm_download",
             lambda *_a, **_kw: True,
         )
@@ -206,6 +224,10 @@ class TestEnsureAizynthfinder:
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.shutil.which",
             lambda name: "/usr/bin/" + name,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._aizynthfinder.resolve_uv_binary",
+            lambda: "/usr/bin/uv",
         )
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.confirm_download",

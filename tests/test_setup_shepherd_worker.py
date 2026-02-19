@@ -18,19 +18,21 @@ class TestEnsureShepherdWorker:
 
     def test_raises_when_uv_is_missing(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr(
-            "hedgehog.setup._shepherd_worker.shutil.which", lambda _: None
+            "hedgehog.setup._shepherd_worker.resolve_uv_binary",
+            lambda: (_ for _ in ()).throw(RuntimeError("uv is not installed")),
         )
 
         with pytest.raises(RuntimeError, match="uv is not installed"):
             ensure_shepherd_worker(tmp_path)
 
     def test_raises_when_no_supported_python(self, tmp_path: Path, monkeypatch) -> None:
-        def _which(name: str) -> str | None:
-            if name == "uv":
-                return "/usr/bin/uv"
-            return None
-
-        monkeypatch.setattr("hedgehog.setup._shepherd_worker.shutil.which", _which)
+        monkeypatch.setattr(
+            "hedgehog.setup._shepherd_worker.resolve_uv_binary",
+            lambda: "/usr/bin/uv",
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._shepherd_worker.shutil.which", lambda _: None
+        )
 
         with pytest.raises(RuntimeError, match="No supported Python interpreter found"):
             ensure_shepherd_worker(tmp_path)
@@ -40,8 +42,12 @@ class TestEnsureShepherdWorker:
         explicit_python.write_text("#!/bin/sh\n", encoding="utf-8")
 
         monkeypatch.setattr(
+            "hedgehog.setup._shepherd_worker.resolve_uv_binary",
+            lambda: "/usr/bin/uv",
+        )
+        monkeypatch.setattr(
             "hedgehog.setup._shepherd_worker.shutil.which",
-            lambda name: "/usr/bin/uv" if name == "uv" else None,
+            lambda name: None,
         )
         monkeypatch.setattr(
             "hedgehog.setup._shepherd_worker.confirm_download",
@@ -76,8 +82,6 @@ class TestEnsureShepherdWorker:
 
     def test_selects_first_available_python(self, tmp_path: Path, monkeypatch) -> None:
         def _which(name: str) -> str | None:
-            if name == "uv":
-                return "/usr/bin/uv"
             if name == "python3.12":
                 return "/usr/local/bin/python3.12"
             if name == "python3.11":
@@ -86,6 +90,10 @@ class TestEnsureShepherdWorker:
                 return "/usr/local/bin/python3.10"
             return None
 
+        monkeypatch.setattr(
+            "hedgehog.setup._shepherd_worker.resolve_uv_binary",
+            lambda: "/usr/bin/uv",
+        )
         monkeypatch.setattr("hedgehog.setup._shepherd_worker.shutil.which", _which)
         monkeypatch.setattr(
             "hedgehog.setup._shepherd_worker.confirm_download",
@@ -116,7 +124,11 @@ class TestEnsureShepherdWorker:
         uv_bin.parent.mkdir(parents=True, exist_ok=True)
         uv_bin.write_text("#!/bin/sh\n", encoding="utf-8")
         monkeypatch.setenv("UV", str(uv_bin))
-        monkeypatch.setattr("hedgehog.setup._shepherd_worker.os.access", lambda *_: True)
+        monkeypatch.setattr("hedgehog.setup._download.os.access", lambda *_: True)
+        monkeypatch.setattr(
+            "hedgehog.setup._download.shutil.which",
+            lambda name: None,
+        )
         monkeypatch.setattr(
             "hedgehog.setup._shepherd_worker.shutil.which",
             lambda name: "/usr/local/bin/python3.12" if name == "python3.12" else None,

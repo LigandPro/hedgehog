@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import urllib.request
 from pathlib import Path
 
@@ -13,6 +14,28 @@ from rich.progress import (
     TimeRemainingColumn,
     TransferSpeedColumn,
 )
+
+
+def resolve_uv_binary() -> str:
+    """Resolve uv executable in normal and ``uv run`` environments.
+
+    Checks the ``UV`` environment variable first (set automatically by
+    ``uv run``), then falls back to ``shutil.which``.
+
+    Raises:
+        RuntimeError: If uv cannot be found.
+    """
+    uv_env = os.environ.get("UV")
+    if uv_env:
+        uv_path = Path(uv_env).expanduser()
+        if uv_path.is_file() and os.access(uv_path, os.X_OK):
+            return str(uv_path)
+
+    path_uv = shutil.which("uv")
+    if path_uv:
+        return path_uv
+
+    raise RuntimeError("uv is not installed. Please install uv first.")
 
 
 def confirm_download(tool_name: str, size_hint: str) -> bool:

@@ -8,22 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from hedgehog.setup._download import confirm_download
-
-
-def _resolve_uv_binary() -> str:
-    """Resolve uv executable in normal and `uv run` environments."""
-    uv_env = os.environ.get("UV")
-    if uv_env:
-        uv_path = Path(uv_env).expanduser()
-        if uv_path.is_file() and os.access(uv_path, os.X_OK):
-            return str(uv_path)
-
-    path_uv = shutil.which("uv")
-    if path_uv:
-        return path_uv
-
-    raise RuntimeError("uv is not installed. Please install uv first.")
+from hedgehog.setup._download import confirm_download, resolve_uv_binary
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -75,7 +60,7 @@ def _verify_worker(worker_entry: Path, venv_python: Path, cwd: Path) -> None:
 
 def ensure_shepherd_worker(project_root: Path, python_bin: str | None = None) -> Path:
     """Ensure shepherd worker virtualenv exists and return worker entry path."""
-    uv_bin = _resolve_uv_binary()
+    uv_bin = resolve_uv_binary()
 
     selected_python = _resolve_python_binary(python_bin)
     venv_dir = project_root / ".venv-shepherd-worker"

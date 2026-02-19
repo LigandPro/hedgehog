@@ -325,6 +325,65 @@ class TestPrepareInputSmiles:
 class TestRunAizynthfinder:
     """Tests for run_aizynthfinder nproc handling."""
 
+    def test_uses_uv_binary_from_resolver(self, tmp_path, monkeypatch):
+        """run_aizynthfinder should use the binary returned by resolve_uv_binary."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return None
+
+        uv_bin = tmp_path / "bin" / "uv"
+        uv_bin.parent.mkdir(parents=True, exist_ok=True)
+        uv_bin.write_text("#!/bin/sh\n")
+        uv_bin.chmod(0o755)
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: str(uv_bin))
+
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
+        ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
+
+        assert ok is True
+        assert captured["cmd"][0] == str(uv_bin)
+
+    def test_returns_false_when_uv_unavailable(self, tmp_path, monkeypatch):
+        """Missing uv binary should be logged and prevent command execution."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return None
+
+        monkeypatch.setattr(
+            synthesis_utils,
+            "resolve_uv_binary",
+            lambda: (_ for _ in ()).throw(RuntimeError("uv missing")),
+        )
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
+        ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
+
+        assert ok is False
+        assert "cmd" not in captured
+
     def test_minus_one_resolves_to_slurm_cpus(self, tmp_path, monkeypatch):
         """AIZYNTH_NPROC=-1 should resolve to available CPU count."""
         captured = {}

@@ -8,7 +8,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from hedgehog.setup._download import confirm_download, download_with_progress
+from hedgehog.setup import _download
+from hedgehog.setup._download import (
+    confirm_download,
+    download_with_progress,
+    resolve_uv_binary,
+)
 
 # ---------------------------------------------------------------------------
 # confirm_download
@@ -135,3 +140,41 @@ class TestDownloadWithProgress:
 
         assert dest.exists()
         assert dest.read_bytes() == payload
+
+
+# ---------------------------------------------------------------------------
+# resolve_uv_binary
+# ---------------------------------------------------------------------------
+
+
+def _write_executable(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.chmod(0o755)
+
+
+def test_prefers_uv_env(monkeypatch, tmp_path: Path):
+    """Resolve uv from the UV env var when it points to an executable."""
+    uv_bin = tmp_path / "bin" / "uv"
+    _write_executable(uv_bin)
+    monkeypatch.setenv("UV", str(uv_bin))
+    monkeypatch.setattr(_download.shutil, "which", lambda name: "/usr/bin/uv")
+
+    assert resolve_uv_binary() == str(uv_bin)
+
+
+def test_falls_back_to_path_when_uv_env_invalid(monkeypatch):
+    """When UV points to a missing file, fall back to shutil.which."""
+    monkeypatch.setenv("UV", "/nonexistent/uv")
+    monkeypatch.setattr(_download.shutil, "which", lambda name: "/mock/path/uv")
+
+    assert resolve_uv_binary() == "/mock/path/uv"
+
+
+def test_raises_if_uv_absent(monkeypatch):
+    """Missing UV env and PATH should raise a RuntimeError."""
+    monkeypatch.delenv("UV", raising=False)
+    monkeypatch.setattr(_download.shutil, "which", lambda name: None)
+
+    with pytest.raises(RuntimeError, match="uv is not installed"):
+        resolve_uv_binary()

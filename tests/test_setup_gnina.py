@@ -239,6 +239,82 @@ class TestResolveGninaDownload:
 
         assert _resolve_gnina_download() == "https://example.com/gnina-cpu"
 
+    def test_skips_archive_like_assets(self, monkeypatch):
+        """Prefer a plain binary when archives are available."""
+        fake_response = {
+            "assets": [
+                {
+                    "name": "gnina-macosx.tar.gz",
+                    "browser_download_url": "https://example.com/macos",
+                },
+                {
+                    "name": "gnina-linux.tar.gz",
+                    "browser_download_url": "https://example.com/linux-archive",
+                },
+                {
+                    "name": "gnina.1.4.0",
+                    "browser_download_url": "https://example.com/linux-binary",
+                },
+            ]
+        }
+
+        import json
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(fake_response).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.urllib.request.urlopen",
+            lambda *a, **kw: FakeResponse(),
+        )
+
+        assert _resolve_gnina_download() == "https://example.com/linux-binary"
+
+    def test_skips_other_platform_builds(self, monkeypatch):
+        """Skip Mac/Windows builds even if they show up before Linux."""
+        fake_response = {
+            "assets": [
+                {
+                    "name": "gnina-mac",
+                    "browser_download_url": "https://example.com/macos",
+                },
+                {
+                    "name": "gnina-win64",
+                    "browser_download_url": "https://example.com/windows",
+                },
+                {
+                    "name": "gnina-linux",
+                    "browser_download_url": "https://example.com/linux",
+                },
+            ]
+        }
+
+        import json
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(fake_response).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.urllib.request.urlopen",
+            lambda *a, **kw: FakeResponse(),
+        )
+
+        assert _resolve_gnina_download() == "https://example.com/linux"
+
     def test_all_cuda_raises(self, monkeypatch):
         """RuntimeError if all assets contain 'cuda'."""
         fake_response = {
@@ -282,6 +358,141 @@ class TestResolveGninaDownload:
         )
 
         with pytest.raises(RuntimeError, match="Failed to query"):
+            _resolve_gnina_download()
+
+    def test_falls_back_to_stable_tag_when_latest_too_large(self, monkeypatch):
+        """When latest non-CUDA asset is oversized, fallback tag should be used."""
+        import json
+
+        latest_response = {
+            "assets": [
+                {
+                    "name": "gnina.1.3.2",
+                    "size": 1_426_790_536,
+                    "browser_download_url": "https://example.com/latest-gnina",
+                }
+            ]
+        }
+        fallback_response = {
+            "assets": [
+                {
+                    "name": "gnina",
+                    "size": 306_470_832,
+                    "browser_download_url": "https://example.com/v1.1-gnina",
+                }
+            ]
+        }
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def read(self):
+                return json.dumps(self.payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, *a, **kw):
+            url = getattr(req, "full_url", str(req))
+            if url.endswith("/latest"):
+                return FakeResponse(latest_response)
+            if url.endswith("/tags/v1.1"):
+                return FakeResponse(fallback_response)
+            raise AssertionError(f"Unexpected URL: {url}")
+
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.urllib.request.urlopen",
+            fake_urlopen,
+        )
+
+        assert _resolve_gnina_download() == "https://example.com/v1.1-gnina"
+
+    def test_size_limit_override_allows_large_latest_asset(self, monkeypatch):
+        """Explicit size-limit override should allow selecting large latest asset."""
+        import json
+
+        latest_response = {
+            "assets": [
+                {
+                    "name": "gnina.1.3.2",
+                    "size": 1_426_790_536,
+                    "browser_download_url": "https://example.com/latest-gnina",
+                }
+            ]
+        }
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(latest_response).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        monkeypatch.setenv("HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES", "3000000000")
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.urllib.request.urlopen",
+            lambda *a, **kw: FakeResponse(),
+        )
+
+        assert _resolve_gnina_download() == "https://example.com/latest-gnina"
+
+    def test_oversized_assets_raise_size_limit_error(self, monkeypatch):
+        """Helpful error when all non-CUDA assets exceed max auto-install size."""
+        import json
+
+        latest_response = {
+            "assets": [
+                {
+                    "name": "gnina.1.3.2",
+                    "size": 1_426_790_536,
+                    "browser_download_url": "https://example.com/latest-gnina",
+                }
+            ]
+        }
+        fallback_response = {
+            "assets": [
+                {
+                    "name": "gnina",
+                    "size": 1_100_000_000,
+                    "browser_download_url": "https://example.com/v1.1-gnina",
+                }
+            ]
+        }
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def read(self):
+                return json.dumps(self.payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, *a, **kw):
+            url = getattr(req, "full_url", str(req))
+            if url.endswith("/latest"):
+                return FakeResponse(latest_response)
+            if url.endswith("/tags/v1.1"):
+                return FakeResponse(fallback_response)
+            raise AssertionError(f"Unexpected URL: {url}")
+
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.urllib.request.urlopen",
+            fake_urlopen,
+        )
+
+        with pytest.raises(RuntimeError, match="size limit"):
             _resolve_gnina_download()
 
 

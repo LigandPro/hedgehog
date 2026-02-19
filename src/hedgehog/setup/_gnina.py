@@ -9,10 +9,26 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from hedgehog.setup._download import confirm_download, download_with_progress
 
 _GNINA_CACHE_DIR = Path.home() / ".hedgehog" / "bin"
+_GNINA_RELEASES_API_LATEST = "https://api.github.com/repos/gnina/gnina/releases/latest"
+_GNINA_RELEASES_API_TAG = "https://api.github.com/repos/gnina/gnina/releases/tags"
+_GNINA_FALLBACK_TAG = "v1.1"
+_GNINA_DEFAULT_MAX_DOWNLOAD_BYTES = 800 * 1024 * 1024
+_GNINA_ARCHIVE_SUFFIXES = (
+    ".tar.gz",
+    ".tgz",
+    ".tar",
+    ".zip",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".7z",
+)
+_GNINA_OS_BLACKLIST = ("darwin", "mac", "osx", "win", "windows")
 
 
 def ensure_gnina() -> str:
@@ -50,7 +66,8 @@ def ensure_gnina() -> str:
         )
 
     # 4. Download with user confirmation
-    if not confirm_download("GNINA", "~200 MB"):
+    size_hint = f"up to {_format_size(_gnina_max_download_bytes())}"
+    if not confirm_download("GNINA", size_hint):
         raise RuntimeError("GNINA download declined by user.")
 
     url = _resolve_gnina_download()
@@ -83,33 +100,148 @@ def _is_working_gnina(path: str) -> bool:
 
 
 def _resolve_gnina_download() -> str:
-    """Query GitHub releases API for the latest GNINA download URL.
+    """Resolve a GNINA download URL from GitHub releases.
 
-    Returns the ``browser_download_url`` for the first release asset whose
-    name does **not** contain "cuda" (case-insensitive).
+    Selection strategy:
+      1. Check ``releases/latest`` first.
+      2. If all non-CUDA assets are too large, fallback to a stable tag.
+      3. Enforce a max auto-download size limit.
 
     Raises:
         RuntimeError: If the API call fails or no suitable asset is found.
     """
-    api_url = "https://api.github.com/repos/gnina/gnina/releases/latest"
-    req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
+    max_bytes = _gnina_max_download_bytes()
+    release_urls = [
+        _GNINA_RELEASES_API_LATEST,
+        f"{_GNINA_RELEASES_API_TAG}/{_GNINA_FALLBACK_TAG}",
+    ]
+    query_errors: list[str] = []
+    saw_non_cuda_asset = False
+    oversize_assets: list[int] = []
 
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-            data = json.loads(resp.read())
-    except Exception as exc:
+    for api_url in release_urls:
+        try:
+            data = _query_release_json(api_url)
+        except Exception as exc:
+            query_errors.append(str(exc))
+            continue
+
+        for asset in _iter_ranked_non_cuda_assets(data):
+            saw_non_cuda_asset = True
+            size = _asset_size_bytes(asset)
+            if size > 0 and size > max_bytes:
+                oversize_assets.append(size)
+                continue
+            return str(asset["browser_download_url"])
+
+    if not saw_non_cuda_asset:
+        if query_errors and len(query_errors) == len(release_urls):
+            raise RuntimeError(
+                f"Failed to query GNINA releases from GitHub: {'; '.join(query_errors)}"
+            )
         raise RuntimeError(
-            f"Failed to query GNINA releases from GitHub: {exc}"
-        ) from exc
+            "No suitable GNINA release asset found on GitHub (all assets appear CUDA-specific)."
+        )
 
-    for asset in data.get("assets", []):
-        name = asset.get("name", "")
-        if "cuda" not in name.lower():
-            return asset["browser_download_url"]
+    if oversize_assets:
+        smallest = min(oversize_assets)
+        raise RuntimeError(
+            "No suitable GNINA release asset found on GitHub under auto-install size "
+            f"limit ({_format_size(max_bytes)}). Smallest non-CUDA asset was "
+            f"{_format_size(smallest)}. Set HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES to "
+            "override or install GNINA manually."
+        )
 
-    raise RuntimeError(
-        "No suitable GNINA release asset found on GitHub (all assets appear CUDA-specific)."
-    )
+    if query_errors:
+        raise RuntimeError(
+            f"Failed to query GNINA releases from GitHub: {'; '.join(query_errors)}"
+        )
+
+    raise RuntimeError("No suitable GNINA release asset found on GitHub.")
+
+
+def _query_release_json(api_url: str) -> dict[str, Any]:
+    """Fetch a GNINA release object from GitHub API."""
+    req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        return json.loads(resp.read())
+
+
+def _iter_ranked_non_cuda_assets(release_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return non-CUDA assets ranked by CPU-like naming and smaller size."""
+    assets: list[dict[str, Any]] = []
+    for raw in release_data.get("assets", []):
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name", "")).strip()
+        url = raw.get("browser_download_url")
+        if not name or not url:
+            continue
+        lowered = name.lower()
+        if "cuda" in lowered:
+            continue
+        if not _asset_is_linux_binary(lowered):
+            continue
+        assets.append(raw)
+
+    def _rank_key(asset: dict[str, Any]) -> tuple[int, int, str]:
+        name = str(asset.get("name", "")).lower()
+        cpu_hint = 0 if any(tok in name for tok in ("cpu", "nocuda", "no_cuda")) else 1
+        size = _asset_size_bytes(asset)
+        size_key = size if size > 0 else sys.maxsize
+        return (cpu_hint, size_key, name)
+
+    return sorted(assets, key=_rank_key)
+
+
+def _asset_size_bytes(asset: dict[str, Any]) -> int:
+    """Parse release asset size in bytes (0 if missing/invalid)."""
+    try:
+        size = int(asset.get("size", 0))
+        return size if size > 0 else 0
+    except Exception:
+        return 0
+
+
+def _asset_is_linux_binary(name: str) -> bool:
+    """Heuristic that rejects archives and non-Linux builds."""
+    if not name:
+        return False
+    lower = name.lower()
+    if any(lower.endswith(suffix) for suffix in _GNINA_ARCHIVE_SUFFIXES):
+        return False
+    if any(os_tag in lower for os_tag in _GNINA_OS_BLACKLIST):
+        return False
+    return True
+
+
+def _gnina_max_download_bytes() -> int:
+    """Resolve GNINA auto-install size limit from environment."""
+    raw = os.environ.get("HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES")
+    if not raw:
+        return _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    return _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format byte size for user-facing messages."""
+    if size_bytes <= 0:
+        return "unknown size"
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(size_bytes)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit in ("B", "KB"):
+                return f"{int(round(value))} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{size_bytes} B"
 
 
 def _gnina_env() -> dict[str, str]:

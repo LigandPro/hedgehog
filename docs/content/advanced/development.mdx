@@ -1,0 +1,56 @@
+---
+title: Development Workflow
+---
+
+# Development Workflow
+
+Use local Git hooks to catch issues before pushing to GitHub CI.
+
+## Lefthook Setup
+
+Install Lefthook and register hooks from the repository config:
+
+```bash
+# macOS
+brew install lefthook
+
+# Linux
+# see https://lefthook.dev/installation/ for package-specific options
+
+# from repository root
+lefthook install
+```
+
+## Hook Policy in This Repository
+
+The repository ships a `lefthook.yml` policy with two levels:
+
+- `pre-commit` (fast):
+  - `ruff format --check` on staged Python files
+  - `ruff check` on staged Python files
+  - `git diff --check --cached` for whitespace/conflict-marker style issues
+- `pre-push` (strict, CI-oriented):
+  - `uv run --extra lint ruff format --check .`
+  - `uv run --extra lint ruff check .`
+  - `uv run --extra test pytest`
+  - `uv run python scripts/check_pipeline.py --mode ci`
+  - docs build: `cd docs && pnpm install --frozen-lockfile && pnpm build`
+
+This setup mirrors the main CI jobs and reduces "works locally, fails in CI" cases.
+
+## Running Hooks Manually
+
+```bash
+lefthook run pre-commit
+lefthook run pre-push
+```
+
+## Temporary Skip (Use Sparingly)
+
+You can skip a specific command once:
+
+```bash
+SKIP=docs-build git push
+```
+
+Use this only for exceptional cases; branch protection in GitHub should still require passing CI checks on pull requests.

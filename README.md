@@ -61,11 +61,11 @@ git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
 
 
-# Install AiZynthFinder (for synthesis stage)
+# Install AiZynthFinder (for synthesis stage) - recommended CLI flow
+uv run hedgehog setup aizynthfinder --yes
+
+# Legacy helper script (alternative)
 ./modules/install_aizynthfinder.sh
-#
-# Alternatively (recommended), install via CLI:
-# uv run hedgehog setup aizynthfinder --yes
 
 # Install package with uv
 uv sync
@@ -85,8 +85,24 @@ uv run hedge run
 # Run specific stage
 uv run hedge run --stage descriptors
 
+# Auto-install missing optional external tools during a run
+uv run hedge run --auto-install
+
+# Reuse the existing results folder
+uv run hedge run --reuse
+
+# Force a fresh results folder for stage reruns
+uv run hedge run --stage docking --force-new
+
 # Enable live progress bar in CLI
 uv run hedge run --progress
+
+# Regenerate HTML report from an existing run
+uv run hedge report results/run_10
+
+# Show pipeline stages and current version
+uv run hedge info
+uv run hedge version
 
 # Get help
 uv run hedge --help
@@ -96,12 +112,18 @@ uv run hedge --help
 
 For interactive configuration and pipeline management, use the TUI:
 ```bash
+uv run hedgehog tui
+```
+
+If the TUI has not been built yet, the CLI will install/build it automatically on first launch.
+You can also launch it directly from the TUI package:
+
+```bash
 cd tui
-npm install
 npm run tui
 ```
 
-See [tui/README.md](tui/README.md) for details.
+See [tui/README.md](tui/README.md) for details and developer workflow.
 
 **Unified verification pipeline**
 
@@ -121,6 +143,33 @@ uv run python scripts/check_pipeline.py --mode full
 `--mode full` runs `uv run hedgehog run` with the default production config,
 so it can be long-running and requires external stage dependencies (for example
 docking/synthesis tooling) to be installed in your local environment.
+
+**Git hooks with Lefthook (recommended)**
+
+Use Lefthook to block commits/pushes that would fail CI:
+
+```bash
+# Install Lefthook (macOS)
+brew install lefthook
+
+# Register git hooks from lefthook.yml
+lefthook install
+
+# Optional: run hooks manually
+lefthook run pre-commit
+lefthook run pre-push
+```
+
+Current local gates:
+
+- `pre-commit`: staged Python formatting/lint (`ruff`) and whitespace checks.
+- `pre-push`: repository-wide `ruff` checks, `pytest`, pipeline smoke (`scripts/check_pipeline.py --mode ci`), and docs build (`docs && pnpm build`).
+
+If you need to skip a specific hook command once (not recommended), use `SKIP`:
+
+```bash
+SKIP=docs-build git push
+```
 
 **Documentation Site**
 

@@ -11,6 +11,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
+from hedgehog.setup._download import resolve_uv_binary
 from hedgehog.stages.structFilters.utils import process_path
 from hedgehog.utils.input_paths import get_all_input_candidates
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
@@ -81,8 +82,17 @@ def run_aizynthfinder(
     output_abs = output_json_file.resolve()
     config_abs = config_file.resolve()
 
+    try:
+        uv_binary = resolve_uv_binary()
+    except RuntimeError as exc:
+        logger.error(
+            "Unable to start retrosynthesis: uv executable could not be resolved (%s)",
+            exc,
+        )
+        return False
+
     cmd = [
-        "uv",
+        uv_binary,
         "run",
         "aizynthcli",
         "--config",
