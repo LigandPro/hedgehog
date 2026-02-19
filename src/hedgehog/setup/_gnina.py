@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import site
 import subprocess
 import sys
 import urllib.request
@@ -372,6 +373,18 @@ def _gnina_env() -> dict[str, str]:
     that may live inside a PyTorch installation or a Conda environment.
     """
     env = os.environ.copy()
+    extra_paths = _collect_gnina_library_paths()
+    existing_parts = _split_library_path(env.get("LD_LIBRARY_PATH", ""))
+    all_parts = _dedupe_library_paths(extra_paths + existing_parts)
+
+    if all_parts:
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(all_parts)
+
+    return env
+
+
+def _collect_gnina_library_paths() -> list[str]:
+    """Collect candidate library directories required by GNINA."""
     extra_paths: list[str] = []
 
     # PyTorch bundled libraries
@@ -384,18 +397,82 @@ def _gnina_env() -> dict[str, str]:
     except ImportError:
         pass
 
-    # Conda environment library directories
-    _CONDA_ROOTS = ("miniforge3", "miniconda3", "mambaforge", "anaconda3")
+    # NVIDIA Python package libraries (e.g. nvidia/cudnn/lib, nvidia/cublas/lib)
+    for site_packages in _iter_site_packages_dirs():
+        nvidia_root = site_packages / "nvidia"
+        if not nvidia_root.is_dir():
+            continue
+        for child in sorted(nvidia_root.iterdir()):
+            lib_dir = child / "lib"
+            if lib_dir.is_dir():
+                extra_paths.append(str(lib_dir))
+
+    # Active conda environment first
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        conda_prefix_lib = Path(conda_prefix) / "lib"
+        if conda_prefix_lib.is_dir():
+            extra_paths.append(str(conda_prefix_lib))
+
+    # Common conda roots in home directory
+    conda_roots = ("miniforge", "miniforge3", "miniconda3", "mambaforge", "anaconda3")
     home = Path.home()
-    for root_name in _CONDA_ROOTS:
+    for root_name in conda_roots:
         lib_dir = home / root_name / "lib"
         if lib_dir.is_dir():
             extra_paths.append(str(lib_dir))
 
-    if extra_paths:
-        existing = env.get("LD_LIBRARY_PATH", "")
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(
-            extra_paths + ([existing] if existing else [])
-        )
+    return _dedupe_library_paths(extra_paths)
 
-    return env
+
+def _iter_site_packages_dirs() -> list[Path]:
+    """Return existing site-packages directories from interpreter search paths."""
+    candidates: list[Path] = []
+
+    for raw in sys.path:
+        if not raw:
+            continue
+        path = Path(raw)
+        if path.is_dir() and "site-packages" in path.parts:
+            candidates.append(path)
+
+    try:
+        for raw in site.getsitepackages():
+            path = Path(raw)
+            if path.is_dir():
+                candidates.append(path)
+    except Exception:
+        pass
+
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in candidates:
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _split_library_path(value: str) -> list[str]:
+    """Split and normalize a PATH-like string."""
+    if not value:
+        return []
+    return [part.strip() for part in value.split(os.pathsep) if part.strip()]
+
+
+def _dedupe_library_paths(paths: list[str]) -> list[str]:
+    """Keep only existing unique directories, preserving input order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in paths:
+        path = Path(raw).expanduser()
+        if not path.is_dir():
+            continue
+        normalized = str(path.resolve())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result

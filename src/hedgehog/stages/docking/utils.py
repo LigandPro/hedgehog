@@ -1343,19 +1343,24 @@ def _get_gnina_environment(cfg, base_folder):
 
     ld_library_path = cfg.get("gnina_ld_library_path")
     if not ld_library_path and env_path:
+        env_lib_paths: list[str] = []
         env_path_obj = Path(env_path)
         if env_path_obj.exists():
-            torch_libs = list(env_path_obj.glob("lib/python*/site-packages/torch/lib"))
-            if torch_libs and (torch_libs[0] / "libcudnn.so.9").exists():
-                ld_library_path = str(torch_libs[0])
-            else:
-                lib_dirs = list(env_path_obj.glob("lib"))
-                for lib_dir in lib_dirs:
-                    if (lib_dir / "libcudnn.so.9").exists() or list(
-                        lib_dir.glob("libcudnn.so*")
-                    ):
-                        ld_library_path = str(lib_dir)
-                        break
+            torch_libs = sorted(
+                env_path_obj.glob("lib/python*/site-packages/torch/lib")
+            )
+            env_lib_paths.extend(str(path) for path in torch_libs if path.is_dir())
+
+            nvidia_libs = sorted(
+                env_path_obj.glob("lib/python*/site-packages/nvidia/*/lib")
+            )
+            env_lib_paths.extend(str(path) for path in nvidia_libs if path.is_dir())
+
+            lib_dir = env_path_obj / "lib"
+            if lib_dir.is_dir():
+                env_lib_paths.append(str(lib_dir))
+
+        ld_library_path = _join_existing_library_paths(env_lib_paths)
 
     # Auto-detect from PyTorch or conda when no env_path is configured
     if not ld_library_path:
@@ -1364,38 +1369,33 @@ def _get_gnina_environment(cfg, base_folder):
     return gnina_activate, ld_library_path
 
 
+def _join_existing_library_paths(paths: list[str]) -> str | None:
+    """Join existing library directories into LD_LIBRARY_PATH string."""
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        path = Path(raw).expanduser()
+        if not path.is_dir():
+            continue
+        normalized = str(path.resolve())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        resolved.append(normalized)
+    if not resolved:
+        return None
+    return os.pathsep.join(resolved)
+
+
 def _auto_detect_cudnn_path() -> str | None:
     """Auto-detect LD_LIBRARY_PATH for GNINA from PyTorch or conda environments."""
-    # 1. Check PyTorch bundled libraries
     try:
-        import torch
-
-        torch_lib = Path(torch.__file__).parent / "lib"
-        if torch_lib.is_dir() and list(torch_lib.glob("libcudnn.so*")):
-            return str(torch_lib)
-    except ImportError:
+        from hedgehog.setup._gnina import _collect_gnina_library_paths
+    except Exception:
         pass
+        return None
 
-    # 2. Check common conda installation paths
-    for root_name in ("miniforge", "miniconda3", "mambaforge", "anaconda3"):
-        torch_glob = (
-            Path.home()
-            / root_name
-            / "lib"
-            / "python*"
-            / "site-packages"
-            / "torch"
-            / "lib"
-        )
-        import glob as _glob
-
-        matches = _glob.glob(str(torch_glob))
-        for match in matches:
-            match_path = Path(match)
-            if match_path.is_dir() and list(match_path.glob("libcudnn.so*")):
-                return str(match_path)
-
-    return None
+    return _join_existing_library_paths(_collect_gnina_library_paths())
 
 
 def _get_gnina_output_directory(cfg, base_folder):

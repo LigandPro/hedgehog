@@ -117,6 +117,23 @@ uv run hedge version
 uv run hedge --help
 ```
 
+**GNINA (CPU/GPU) notes**
+
+GNINA is auto-resolved during the docking stage:
+- If `gnina` is already on `PATH`, HEDGEHOG uses it.
+- Otherwise it auto-downloads a compatible Linux GNINA binary to `~/.hedgehog/bin/gnina`.
+
+By default, auto-install prefers the CPU variant. To prefer CUDA builds:
+
+```bash
+export HEDGEHOG_GNINA_VARIANT=auto   # or: gpu
+uv run hedge run --stage docking --auto-install
+```
+
+GNINA runtime now auto-discovers CUDA/PyTorch libraries from common locations
+(including `site-packages/nvidia/*/lib`, active conda env, and `~/miniforge/lib`)
+so manual `gnina_ld_library_path` is usually not required.
+
 **Terminal UI (TUI)**
 
 For interactive configuration and pipeline management, use the TUI:

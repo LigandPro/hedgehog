@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from hedgehog.setup._gnina import (
+    _collect_gnina_library_paths,
+    _gnina_env,
     _is_working_gnina,
     _resolve_gnina_download,
     ensure_gnina,
@@ -609,3 +611,59 @@ class TestResolveDockingBinaryGninaFallback:
 
         with pytest.raises(FileNotFoundError, match="smina"):
             _resolve_docking_binary("smina", "smina")
+
+
+class TestGninaEnvDiscovery:
+    """Tests for GNINA library path auto-discovery helpers."""
+
+    def test_collects_nvidia_site_packages_libs(self, monkeypatch, tmp_path):
+        """Should include nvidia/*/lib paths from discovered site-packages roots."""
+        site_packages = tmp_path / "venv" / "lib" / "python3.12" / "site-packages"
+        nvidia_lib = site_packages / "nvidia" / "cudnn" / "lib"
+        nvidia_lib.mkdir(parents=True)
+
+        monkeypatch.setattr("hedgehog.setup._gnina.sys.path", [str(site_packages)])
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.site.getsitepackages", lambda: [str(site_packages)]
+        )
+        monkeypatch.setattr("hedgehog.setup._gnina.Path.home", lambda: tmp_path)
+        monkeypatch.delenv("CONDA_PREFIX", raising=False)
+
+        paths = _collect_gnina_library_paths()
+        assert str(nvidia_lib.resolve()) in paths
+
+    def test_collects_miniforge_lib(self, monkeypatch, tmp_path):
+        """Should include ~/miniforge/lib in candidate library paths."""
+        miniforge_lib = tmp_path / "miniforge" / "lib"
+        miniforge_lib.mkdir(parents=True)
+
+        monkeypatch.setattr("hedgehog.setup._gnina.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("hedgehog.setup._gnina.sys.path", [])
+        monkeypatch.setattr("hedgehog.setup._gnina.site.getsitepackages", lambda: [])
+        monkeypatch.delenv("CONDA_PREFIX", raising=False)
+
+        paths = _collect_gnina_library_paths()
+        assert str(miniforge_lib.resolve()) in paths
+
+    def test_gnina_env_merges_existing_ld_library_path(self, monkeypatch, tmp_path):
+        """Discovered paths should be prepended while preserving existing entries."""
+        lib_a = tmp_path / "lib_a"
+        lib_b = tmp_path / "lib_b"
+        existing = tmp_path / "existing"
+        lib_a.mkdir()
+        lib_b.mkdir()
+        existing.mkdir()
+
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._collect_gnina_library_paths",
+            lambda: [str(lib_a), str(lib_b)],
+        )
+        monkeypatch.setenv("LD_LIBRARY_PATH", str(existing))
+
+        env = _gnina_env()
+        value = env.get("LD_LIBRARY_PATH", "")
+        parts = [p for p in value.split(":") if p]
+
+        assert parts[0] == str(lib_a.resolve())
+        assert parts[1] == str(lib_b.resolve())
+        assert str(existing.resolve()) in parts
