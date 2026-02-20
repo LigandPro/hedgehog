@@ -12,6 +12,8 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
 
+from hedgehog.utils.paths import process_path  # noqa: F401
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 from rdkit import Chem
@@ -287,20 +289,6 @@ def build_identity_map_from_descriptors(config):
         pass
 
     return {}, None
-
-
-def process_path(folder_to_save, key_word=None):
-    """Ensure path ends with '/' and create directory if needed."""
-    # Accept both str and Path-like inputs.
-    folder_to_save = str(folder_to_save)
-    if not folder_to_save.endswith("/"):
-        folder_to_save += "/"
-
-    if key_word:
-        folder_to_save += f"{key_word}/"
-
-    Path(folder_to_save).mkdir(parents=True, exist_ok=True)
-    return folder_to_save
 
 
 def sdf_to_mols(sdf_file, subsample):

@@ -4,23 +4,10 @@ import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.synthesis.utils import *
-
-IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
-
-
-def _order_identity_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Order dataframe columns with identity columns first."""
-    existing_id_cols = [c for c in IDENTITY_COLUMNS if c in df.columns]
-    ordered_cols = existing_id_cols + [
-        c for c in df.columns if c not in IDENTITY_COLUMNS
-    ]
-    return df[ordered_cols]
-
-
-def _save_ordered_csv(df: pd.DataFrame, path: Path) -> None:
-    """Save DataFrame with identity columns ordered first."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _order_identity_columns(df).to_csv(path, index=False)
+from hedgehog.utils.dataframe import (
+    IDENTITY_COLUMNS,
+    save_ordered_csv,
+)
 
 
 def _get_aizynthfinder_config() -> Path:
@@ -86,7 +73,7 @@ def main(config: dict, reporter=None) -> None:
     if len(input_df) == 0:
         logger.warning("No molecules to process for synthesis analysis")
         empty = pd.DataFrame(columns=IDENTITY_COLUMNS)
-        _save_ordered_csv(empty, filtered_output)
+        save_ordered_csv(empty, filtered_output)
         logger.info("Saved 0 molecules to %s", filtered_output)
         return
 
@@ -114,12 +101,12 @@ def main(config: dict, reporter=None) -> None:
     )
     if reporter is not None:
         reporter.progress(200, stage_total, message="Applying score filters")
-    _save_ordered_csv(scored_df, output_folder / "synthesis_scores.csv")
+    save_ordered_csv(scored_df, output_folder / "synthesis_scores.csv")
     score_filtered_df = apply_synthesis_score_filters(scored_df, config_synthesis)
 
     if len(score_filtered_df) == 0:
         logger.warning("No molecules passed synthesis score filters")
-        _save_ordered_csv(score_filtered_df, filtered_output)
+        save_ordered_csv(score_filtered_df, filtered_output)
         logger.info("Saved 0 molecules to %s", filtered_output)
         if reporter is not None:
             reporter.progress(stage_total, stage_total, message="Synthesis complete")
@@ -129,7 +116,7 @@ def main(config: dict, reporter=None) -> None:
     run_retrosynthesis = config_synthesis.get("run_retrosynthesis", True)
     if not run_retrosynthesis:
         logger.info("Retrosynthesis disabled (run_retrosynthesis=false)")
-        _save_ordered_csv(score_filtered_df, filtered_output)
+        save_ordered_csv(score_filtered_df, filtered_output)
         logger.info(
             "Saved %d molecules (scores only) to %s",
             len(score_filtered_df),
@@ -149,7 +136,7 @@ def main(config: dict, reporter=None) -> None:
             aizynth_config = ensure_aizynthfinder(project_root)
         except Exception:
             _log_aizynthfinder_setup_instructions(aizynth_config)
-            _save_ordered_csv(score_filtered_df, filtered_output)
+            save_ordered_csv(score_filtered_df, filtered_output)
             return
 
     prepare_input_smiles(score_filtered_df, output_folder / "input_smiles.smi")
@@ -175,7 +162,7 @@ def main(config: dict, reporter=None) -> None:
         return
 
     merged_df = merge_retrosynthesis_results(score_filtered_df, retrosynth_df)
-    _save_ordered_csv(merged_df, output_folder / "synthesis_extended.csv")
+    save_ordered_csv(merged_df, output_folder / "synthesis_extended.csv")
 
     filter_solved_only = config_synthesis.get("filter_solved_only", True)
     if filter_solved_only:
@@ -184,7 +171,7 @@ def main(config: dict, reporter=None) -> None:
         filtered_df = merged_df.copy()
         logger.info("Keeping all molecules (filter_solved_only=False)")
 
-    _save_ordered_csv(filtered_df, filtered_output)
+    save_ordered_csv(filtered_df, filtered_output)
 
     if "search_time" in merged_df.columns:
         avg_time = merged_df["search_time"].mean()

@@ -19,10 +19,9 @@ from hedgehog.stages.structFilters.utils import (
     process_path,
     process_prepared_payload,
 )
+from hedgehog.utils.dataframe import IDENTITY_COLUMNS, order_identity_columns
 from hedgehog.utils.input_paths import find_sampled_molecules
 from hedgehog.utils.parallel import resolve_n_jobs
-
-IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
 
 _FILTER_DESCRIPTIONS: dict[str, str] = {
     "common_alerts": "SMARTS-based structural alert screening using curated rule sets (PAINS, Dundee, BMS, Glaxo, etc.).",
@@ -42,15 +41,6 @@ _FILTER_DESCRIPTIONS: dict[str, str] = {
 def _is_post_descriptors_stage(stage_dir):
     """Check if stage directory indicates post-descriptors processing."""
     return "03_structural_filters_post" in stage_dir or stage_dir == "StructFilters"
-
-
-def _order_identity_columns(df):
-    """Order dataframe columns with identity columns first."""
-    existing_id_cols = [c for c in IDENTITY_COLUMNS if c in df.columns]
-    ordered_cols = existing_id_cols + [
-        c for c in df.columns if c not in IDENTITY_COLUMNS
-    ]
-    return df[ordered_cols]
 
 
 def _find_existing_file(paths):
@@ -181,15 +171,15 @@ def _save_filter_results(output_dir, filter_name, metrics_df, extended_df):
     filter_subdir = Path(output_dir) / filter_name
     filter_subdir.mkdir(parents=True, exist_ok=True)
 
-    metrics_df = _order_identity_columns(metrics_df)
+    metrics_df = order_identity_columns(metrics_df)
     metrics_df.to_csv(filter_subdir / "metrics.csv", index=False)
 
-    extended_df = _order_identity_columns(extended_df)
+    extended_df = order_identity_columns(extended_df)
     extended_df.to_csv(filter_subdir / "extended.csv", index=False)
 
     extended_df = _ensure_pass_column(extended_df, filter_name)
     filtered_mols = extended_df[extended_df["pass"]].copy()
-    filtered_mols = _order_identity_columns(filtered_mols)
+    filtered_mols = order_identity_columns(filtered_mols)
     filtered_mols.to_csv(filter_subdir / "filtered_molecules.csv", index=False)
 
 

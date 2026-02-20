@@ -13,30 +13,9 @@ import pandas as pd
 from jinja2 import Environment, PackageLoader
 
 from hedgehog.reporting import moleval_metrics, plots
+from hedgehog.utils.constants import STAGE_DIRS, STAGE_DISPLAY_NAMES
 
 logger = logging.getLogger(__name__)
-
-# Stage directory names
-STAGE_DIRS = {
-    "mol_prep": "stages/00_mol_prep",
-    "descriptors_initial": "stages/01_descriptors_initial",
-    "struct_filters_post": "stages/03_structural_filters_post",
-    "synthesis": "stages/04_synthesis",
-    "docking": "stages/05_docking",
-    "docking_filters": "stages/06_docking_filters",
-    "descriptors_final": "stages/07_descriptors_final",
-}
-
-# Stage display names
-STAGE_DISPLAY_NAMES = {
-    "mol_prep": "Mol Prep",
-    "descriptors_initial": "Initial Descriptors",
-    "struct_filters_post": "Post-Descriptors Filters",
-    "synthesis": "Synthesis Analysis",
-    "docking": "Molecular Docking",
-    "docking_filters": "Docking Filters",
-    "descriptors_final": "Final Descriptors",
-}
 
 # Key descriptors to show in report
 KEY_DESCRIPTORS = [

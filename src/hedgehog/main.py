@@ -23,6 +23,7 @@ from rich.table import Table
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
 from hedgehog.pipeline import calculate_metrics
 from hedgehog.utils.data_prep import prepare_input_data
+from hedgehog.utils.env import plain_output_enabled
 from hedgehog.utils.mol_index import assign_mol_idx
 
 mpl.use("Agg")
@@ -31,14 +32,8 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.yml")
 SAMPLED_MOLS_FILENAME = "sampled_molecules.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
-PLAIN_OUTPUT_ENV = "HEDGEHOG_PLAIN_OUTPUT"
-
 # Supported SMI-like file extensions for ligand preparation tool
 SMI_EXTENSIONS = {"smi", "ismi", "cmi", "txt"}
-
-
-def _plain_output_enabled() -> bool:
-    return os.environ.get(PLAIN_OUTPUT_ENV, "").strip() == "1"
 
 
 def _build_progress_columns(console_width: int):
@@ -281,7 +276,7 @@ def preprocess_input_with_tool(
 
 def _display_banner() -> None:
     """Display the HEDGEHOG banner."""
-    if _plain_output_enabled():
+    if plain_output_enabled():
         return
     banner_content = (
         "[bold]🦔 HEDGEHOG[/bold]\n"
@@ -437,7 +432,7 @@ app = typer.Typer(
 
 setup_app = typer.Typer(help="Install optional external tools and assets.")
 app.add_typer(setup_app, name="setup")
-console = Console(no_color=_plain_output_enabled())
+console = Console(no_color=plain_output_enabled())
 
 
 class Stage(str, Enum):
@@ -610,7 +605,7 @@ def run(
 
     shared_console = LoggerSingleton().console
 
-    if _plain_output_enabled() or not show_progress:
+    if plain_output_enabled() or not show_progress:
         success = calculate_metrics(data, config_dict, None)
     else:
         short_stage_names = {
@@ -957,7 +952,7 @@ def info() -> None:
 @app.command()
 def version() -> None:
     """Display version information."""
-    if _plain_output_enabled():
+    if plain_output_enabled():
         console.print("HEDGEHOG version 1.0.8")
     else:
         console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.8[/bold]")
@@ -1012,6 +1007,33 @@ def setup_shepherd_worker(
     project_root = Path(__file__).resolve().parents[2]
     worker_path = ensure_shepherd_worker(project_root, python_bin=python_bin)
     console.print(f"[bold]Shepherd worker installed.[/bold] Entry: {worker_path}")
+
+
+@setup_app.command("nvmolkit-worker")
+def setup_nvmolkit_worker(
+    yes: bool = typer.Option(
+        True,
+        "--yes/--no-yes",
+        "-y/-n",
+        help="Auto-accept downloads (default: yes). Use --no-yes to prompt.",
+    ),
+    python_bin: str | None = typer.Option(
+        None,
+        "--python",
+        help="Python interpreter for worker setup (default: python3.12 -> 3.11 -> 3.10).",
+    ),
+) -> None:
+    """Install isolated nvMolKit conformer worker environment in .venv-nvmolkit-worker."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+    else:
+        os.environ.pop("HEDGEHOG_AUTO_INSTALL", None)
+
+    from hedgehog.setup import ensure_nvmolkit_worker
+
+    project_root = Path(__file__).resolve().parents[2]
+    worker_path = ensure_nvmolkit_worker(project_root, python_bin=python_bin)
+    console.print(f"[bold]nvMolKit worker installed.[/bold] Entry: {worker_path}")
 
 
 @app.command()

@@ -10,6 +10,7 @@ from rdkit import Chem
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.utils.parallel import resolve_n_jobs
+from hedgehog.utils.paths import resolve_existing_path
 
 from .utils import (
     apply_conformer_deviation_filter,
@@ -28,29 +29,6 @@ apply_posecheck_fast_filter = apply_posebusters_fast_filter
 def _project_root() -> Path:
     # src/hedgehog/stages/dockingFilters/main.py -> project root
     return Path(__file__).resolve().parent.parent.parent.parent.parent
-
-
-def _resolve_existing_path(base: Path, path: str | Path) -> Path:
-    """Resolve a possibly-relative path to an existing absolute path.
-
-    Important: repository configs typically use paths relative to project root,
-    while runtime artifacts are relative to the results folder.
-    """
-    p = Path(path)
-    if p.is_absolute():
-        return p
-
-    candidates = [
-        (base / p).resolve(),
-        (_project_root() / p).resolve(),
-        (Path.cwd() / p).resolve(),
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-
-    # Fall back to base-relative absolute path for better error messages
-    return (base / p).resolve()
 
 
 def _get_first_prop_value(mol: Chem.Mol, canonical_names: set[str]) -> str | None:
@@ -184,7 +162,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             logger.error("No docking output found. Run docking stage first.")
             return None
     else:
-        input_sdf = _resolve_existing_path(base_folder, input_sdf)
+        input_sdf = resolve_existing_path(base_folder, input_sdf, _project_root())
 
     logger.info("Input SDF: %s", input_sdf)
 
@@ -212,7 +190,9 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             "receptor_pdb"
         )
         if protein_pdb_raw:
-            protein_pdb = _resolve_existing_path(base_folder, protein_pdb_raw)
+            protein_pdb = resolve_existing_path(
+                base_folder, protein_pdb_raw, _project_root()
+            )
         else:
             prepared_pdb = docking_dir / "_workdir" / "protein_prepared.pdb"
             if not prepared_pdb.exists():

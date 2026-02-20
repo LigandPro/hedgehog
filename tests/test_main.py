@@ -312,6 +312,46 @@ def test_setup_aizynthfinder_no_yes_restores_prompt(monkeypatch, tmp_path):
     assert captured["auto"] is None
 
 
+def test_setup_nvmolkit_worker_auto_accepts_by_default(monkeypatch, tmp_path):
+    """setup nvmolkit-worker should auto-accept downloads without extra flags."""
+    import hedgehog.main as main_mod
+    import hedgehog.setup as setup_mod
+
+    captured: dict[str, str | None] = {"auto": None}
+
+    def _fake_ensure(_project_root, python_bin=None):
+        captured["auto"] = os.environ.get("HEDGEHOG_AUTO_INSTALL")
+        return tmp_path / ".venv-nvmolkit-worker" / "bin" / "matcha-nvmolkit-worker"
+
+    monkeypatch.setattr(setup_mod, "ensure_nvmolkit_worker", _fake_ensure)
+    monkeypatch.setattr(main_mod.console, "print", lambda *args, **kwargs: None)
+    monkeypatch.delenv("HEDGEHOG_AUTO_INSTALL", raising=False)
+
+    main_mod.setup_nvmolkit_worker()
+
+    assert captured["auto"] == "1"
+
+
+def test_setup_nvmolkit_worker_no_yes_restores_prompt(monkeypatch, tmp_path):
+    """--no-yes should avoid forcing auto-install confirmations."""
+    import hedgehog.main as main_mod
+    import hedgehog.setup as setup_mod
+
+    captured: dict[str, str | None] = {"auto": "unexpected"}
+
+    def _fake_ensure(_project_root, python_bin=None):
+        captured["auto"] = os.environ.get("HEDGEHOG_AUTO_INSTALL")
+        return tmp_path / ".venv-nvmolkit-worker" / "bin" / "matcha-nvmolkit-worker"
+
+    monkeypatch.setattr(setup_mod, "ensure_nvmolkit_worker", _fake_ensure)
+    monkeypatch.setattr(main_mod.console, "print", lambda *args, **kwargs: None)
+    monkeypatch.setenv("HEDGEHOG_AUTO_INSTALL", "1")
+
+    main_mod.setup_nvmolkit_worker(yes=False)
+
+    assert captured["auto"] is None
+
+
 def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     tmp_path, monkeypatch
 ):
@@ -334,7 +374,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     )
 
     monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
-    monkeypatch.setattr(main_mod, "_plain_output_enabled", lambda: False)
+    monkeypatch.setattr(main_mod, "plain_output_enabled", lambda: False)
     monkeypatch.setattr(
         main_mod, "load_config", lambda *args, **kwargs: base_config.copy()
     )
@@ -465,7 +505,7 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
-    monkeypatch.setattr(main_mod, "_plain_output_enabled", lambda: False)
+    monkeypatch.setattr(main_mod, "plain_output_enabled", lambda: False)
     monkeypatch.setattr(
         main_mod, "load_config", lambda *args, **kwargs: base_config.copy()
     )

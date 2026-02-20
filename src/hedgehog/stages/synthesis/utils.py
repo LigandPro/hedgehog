@@ -12,9 +12,9 @@ from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
 from hedgehog.setup._download import resolve_uv_binary
-from hedgehog.stages.structFilters.utils import process_path
 from hedgehog.utils.input_paths import get_all_input_candidates
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
+from hedgehog.utils.paths import process_path
 
 # Lazy-loaded module cache
 _lazy_cache: dict[str, Any] = {
