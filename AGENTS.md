@@ -63,3 +63,26 @@ Notes:
 - Always check CI status before considering a task complete.
 - For PR work, verify the latest remote CI checks for the current branch/PR.
 - If CI is failing, treat it as an active issue and fix it or clearly report the blocker.
+
+### Final Runtime Validation (Gauss)
+
+- For installation/runtime tasks, verify the final end-to-end run on `Gauss` from a clean checkout.
+- Use the exact flow below:
+
+```bash
+ssh Gauss
+source ~/miniforge/etc/profile.d/conda.sh
+conda activate base
+
+cd ~/work/Projects
+git clone https://github.com/LigandPro/hedgehog.git
+cd hedgehog
+
+uv sync
+
+# --yes is no longer required (auto-accept by default)
+uv run hedgehog setup aizynthfinder
+
+# GNINA auto GPU mode is default
+uv run hedgehog run --auto-install --out results/run_gpu_verify
+```
