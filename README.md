@@ -62,7 +62,7 @@ cd hedgehog
 
 
 # Install AiZynthFinder (for synthesis stage) - recommended CLI flow
-uv run hedgehog setup aizynthfinder --yes
+uv run hedgehog setup aizynthfinder
 
 # Legacy helper script (alternative)
 ./modules/install_aizynthfinder.sh

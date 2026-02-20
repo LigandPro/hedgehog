@@ -970,8 +970,8 @@ def version() -> None:
 @setup_app.command("aizynthfinder")
 def setup_aizynthfinder(
     yes: bool = typer.Option(
-        False,
-        "--yes",
+        True,
+        "--yes/--no-yes",
         "-y",
         help="Auto-accept downloads (no prompt).",
     ),

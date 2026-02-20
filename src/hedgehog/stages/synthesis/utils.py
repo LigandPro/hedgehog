@@ -2,6 +2,7 @@ import json
 import os
 import pickle
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -490,6 +491,125 @@ def _get_ecfp6_counts(smiles: str, n_bits: int = 2048) -> np.ndarray | None:
     return arr
 
 
+def _predict_with_pickle_classifier(model: Any, fps_array: np.ndarray) -> np.ndarray:
+    """Predict RA probabilities from a pickled XGBClassifier-like model.
+
+    Primary path uses ``predict_proba``. When the pickled object is from an older
+    xgboost+sklearn combination and ``predict_proba`` is incompatible with the
+    current sklearn API, fall back to direct booster prediction.
+    """
+    try:
+        return model.predict_proba(fps_array)[:, 1]
+    except Exception as e:
+        logger.debug("RAScore predict_proba failed (%s). Trying booster fallback.", e)
+        import xgboost as xgb
+
+        if not hasattr(model, "get_booster"):
+            raise
+        booster = model.get_booster()
+        return booster.predict(xgb.DMatrix(fps_array))
+
+
+def _ensure_rascore_pickle_path() -> Path | None:
+    """Ensure pickle RAScore model exists and return its path."""
+    model_path = _get_rascore_pickle_model_path()
+    if model_path.exists():
+        return model_path
+    try:
+        from hedgehog.setup import ensure_rascore_model
+
+        project_root = Path(__file__).resolve().parents[4]
+        return ensure_rascore_model(project_root)
+    except Exception as e:
+        logger.warning(
+            "RAScore pickle model is unavailable (%s). RA scores will be set to np.nan",
+            e,
+        )
+        return None
+
+
+def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
+    """Calculate RA scores via legacy worker with xgboost 1.5 compatibility."""
+    nan_list = [np.nan] * len(smiles_list)
+    if not smiles_list:
+        return nan_list
+
+    model_path = _ensure_rascore_pickle_path()
+    if model_path is None:
+        return nan_list
+
+    try:
+        uv_binary = resolve_uv_binary()
+    except RuntimeError as e:
+        logger.warning(
+            "Unable to run legacy RAScore worker: uv executable could not be resolved (%s)",
+            e,
+        )
+        return nan_list
+
+    project_root = Path(__file__).resolve().parents[4]
+    with tempfile.TemporaryDirectory(prefix="rascore_worker_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        input_json = tmp_path / "rascore_input.json"
+        output_json = tmp_path / "rascore_output.json"
+        input_json.write_text(json.dumps({"smiles": smiles_list}), encoding="utf-8")
+
+        cmd = [
+            uv_binary,
+            "run",
+            "--with",
+            "xgboost==1.5.2",
+            "--with",
+            "setuptools<81",
+            "python",
+            "-m",
+            "hedgehog.workers.rascore_worker",
+            "--model-pkl",
+            str(model_path),
+            "--input-json",
+            str(input_json),
+            "--output-json",
+            str(output_json),
+        ]
+        env = os.environ.copy()
+        env.setdefault("UV_NO_SYNC", "1")
+
+        try:
+            subprocess.run(
+                cmd,
+                cwd=str(project_root),
+                env=env,
+                shell=False,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            payload = json.loads(output_json.read_text(encoding="utf-8"))
+            raw_scores = payload.get("scores", [])
+        except Exception as e:
+            logger.warning("Legacy RAScore worker failed: %s", e)
+            return nan_list
+
+    if len(raw_scores) != len(smiles_list):
+        logger.warning(
+            "Legacy RAScore worker returned %d scores for %d molecules",
+            len(raw_scores),
+            len(smiles_list),
+        )
+        return nan_list
+
+    scores: list[float] = []
+    for value in raw_scores:
+        if value is None:
+            scores.append(np.nan)
+        else:
+            try:
+                scores.append(float(value))
+            except (TypeError, ValueError):
+                scores.append(np.nan)
+    return scores
+
+
 def _calculate_ra_scores_batch(
     smiles_list: list, config: dict[str, Any] | None = None
 ) -> list:
@@ -506,7 +626,10 @@ def _calculate_ra_scores_batch(
 
     rascore_model = _load_rascore()
     if not rascore_model:
-        return nan_list
+        logger.info(
+            "RAScore local model load failed; falling back to legacy worker backend"
+        )
+        return _calculate_ra_scores_batch_legacy(smiles_list)
 
     fps = []
     valid_indices = []
@@ -522,7 +645,7 @@ def _calculate_ra_scores_batch(
     try:
         fps_array = np.array(fps)
         if rascore_model.get("kind") == "pickle_classifier":
-            probs = rascore_model["model"].predict_proba(fps_array)[:, 1]
+            probs = _predict_with_pickle_classifier(rascore_model["model"], fps_array)
         else:
             import xgboost as xgb
 

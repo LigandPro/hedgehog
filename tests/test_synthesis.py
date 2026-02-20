@@ -3,6 +3,7 @@
 import json
 import pickle
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -655,4 +656,32 @@ class TestRascoreAutoInstall:
 
         assert len(scores) == 2
         assert scores[0] == pytest.approx(0.8)
+        assert np.isnan(scores[1])
+
+    def test_calculate_ra_scores_legacy_worker_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When local model load fails, batch scorer should use legacy worker."""
+        called = {"run": False}
+
+        def _fake_run(cmd, **kwargs):
+            called["run"] = True
+            out_idx = cmd.index("--output-json") + 1
+            Path(cmd[out_idx]).write_text(
+                json.dumps({"scores": [0.42, None]}), encoding="utf-8"
+            )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(synthesis_utils, "_load_rascore", lambda: False)
+        monkeypatch.setattr(
+            synthesis_utils, "_ensure_rascore_pickle_path", lambda: Path("dummy.pkl")
+        )
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", _fake_run)
+
+        scores = _calculate_ra_scores_batch(["CCO", "invalid_smiles"])
+
+        assert called["run"] is True
+        assert len(scores) == 2
+        assert scores[0] == pytest.approx(0.42)
         assert np.isnan(scores[1])
