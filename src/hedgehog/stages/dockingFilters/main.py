@@ -52,7 +52,7 @@ def _get_prop_as_float(mol: Chem.Mol, prop_name: str) -> float | None:
         return None
     try:
         return float(mol.GetProp(prop_name))
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
@@ -172,7 +172,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     if docking_cfg_path:
         try:
             docking_config = load_config(docking_cfg_path)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.warning(
                 "Failed to load docking config (%s): %s", docking_cfg_path, e
             )
@@ -209,7 +209,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     # Load molecules
     try:
         mols = load_molecules_from_sdf(input_sdf)
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         logger.error("Failed to load molecules: %s", e)
         return None
 
@@ -313,7 +313,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         sb_df = apply_search_box_filter(mols, base_folder, docking_config, sb_config)
         results_df = results_df.merge(sb_df, on="mol_idx", how="left")
         filters_applied.append("search_box")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
         logger.error("Search-box filter failed: %s", e)
         results_df["pass_search_box"] = True
     finally:
@@ -356,7 +356,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 pq_df["mol_idx"] = [active_pose_indices[i] for i in pq_df["mol_idx"]]
                 results_df = results_df.merge(pq_df, on="mol_idx", how="left")
                 filters_applied.append("pose_quality")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
                 logger.error("Pose quality filter failed: %s", e)
                 results_df["pass_pose_quality"] = True
         else:
@@ -395,7 +395,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 int_df["mol_idx"] = [active_pose_indices[i] for i in int_df["mol_idx"]]
                 results_df = results_df.merge(int_df, on="mol_idx", how="left")
                 filters_applied.append("interactions")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
                 logger.error("Interaction filter failed: %s", e)
                 results_df["pass_interactions"] = True
         else:
@@ -448,7 +448,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                         "Failed to load reference molecule for Shepherd-Score"
                     )
                     results_df["pass_shepherd_score"] = True
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
                 logger.error("Shepherd-Score filter failed: %s", e)
                 results_df["pass_shepherd_score"] = True
             finally:
@@ -490,7 +490,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 cd_df["mol_idx"] = [active_pose_indices[i] for i in cd_df["mol_idx"]]
                 results_df = results_df.merge(cd_df, on="mol_idx", how="left")
                 filters_applied.append("conformer_deviation")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
                 logger.error("Conformer deviation filter failed: %s", e)
                 results_df["pass_conformer_deviation"] = True
         else:

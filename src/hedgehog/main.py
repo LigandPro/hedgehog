@@ -185,7 +185,7 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
             prepared_output,
         )
         return str(prepared_output)
-    except Exception as e:
+    except (OSError, ValueError, TypeError, RuntimeError) as e:
         log.debug("RDKit preprocessing failed: %s", e)
         return None
 
@@ -269,7 +269,7 @@ def preprocess_input_with_tool(
         df.to_csv(prepared_output, index=False)
 
         return str(prepared_output)
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
         log.debug("Ligand preparation failed: %s", e)
         return None
 
@@ -883,7 +883,7 @@ def report(
     if sampled_path.exists():
         try:
             initial_count = len(pd.read_csv(sampled_path))
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             pass
     if initial_count == 0:
         # Try first stage input CSV as fallback
@@ -893,7 +893,7 @@ def report(
                     try:
                         initial_count = len(pd.read_csv(csv_file))
                         break
-                    except Exception:
+                    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                         continue
             if initial_count > 0:
                 break
@@ -904,7 +904,7 @@ def report(
     if final_path.exists():
         try:
             final_count = len(pd.read_csv(final_path))
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             pass
 
     logger.info(
@@ -925,7 +925,7 @@ def report(
         report_path = report_gen.generate()
         logger.info("[bold]Report generated:[/bold] %s", report_path)
         console.print(f"\n[bold]Report saved to:[/bold] {report_path}\n")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — intentional: CLI report command must catch all
         console.print(f"[red]Error generating report:[/red] {e}")
         raise typer.Exit(code=1) from e
 

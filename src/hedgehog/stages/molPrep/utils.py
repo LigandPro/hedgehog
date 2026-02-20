@@ -75,7 +75,7 @@ def _is_single_fragment(mol: Chem.Mol) -> bool:
     try:
         frags = Chem.GetMolFrags(mol, asMols=False, sanitizeFrags=False)
         return len(frags) <= 1
-    except Exception:
+    except (ValueError, RuntimeError):
         return False
 
 
@@ -110,7 +110,7 @@ def _safe_to_mol(
             strict_cxsmiles=bool(to_mol_cfg.get("strict_cxsmiles", True)),
             remove_hs=bool(to_mol_cfg.get("remove_hs", True)),
         )
-    except Exception:
+    except (ValueError, TypeError, RuntimeError):
         return None
 
 
@@ -138,13 +138,13 @@ def _molprep_one(
                 largest_only=bool(fix_cfg.get("largest_only", False)),
                 inplace=False,
             )
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             return None, "fix_failed", "fix_mol"
 
     if _get_cfg(cfg, ["steps", "sanitize_mol", "enabled"], True):
         try:
             mol = dm.sanitize_mol(mol)
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             mol = None
         if mol is None:
             return None, "sanitize_failed", "sanitize_mol"
@@ -161,7 +161,7 @@ def _molprep_one(
                 ),
                 sanitize=bool(rss_cfg.get("sanitize", True)),
             )
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             return None, "remove_salts_failed", "remove_salts_solvents"
         if mol is None:
             return None, "remove_salts_failed", "remove_salts_solvents"
@@ -169,7 +169,7 @@ def _molprep_one(
     if bool(_get_cfg(cfg, ["steps", "keep_largest_fragment"], True)):
         try:
             mol = dm.keep_largest_fragment(mol)
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             return None, "largest_fragment_failed", "keep_largest_fragment"
 
         if mol is None:
@@ -192,7 +192,7 @@ def _molprep_one(
                 uncharge=bool(std_cfg.get("uncharge", True)),
                 stereo=bool(std_cfg.get("stereo", True)),
             )
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             return None, "standardize_mol_failed", "standardize_mol"
         if mol is None:
             return None, "standardize_mol_failed", "standardize_mol"
@@ -200,18 +200,18 @@ def _molprep_one(
     if bool(_get_cfg(cfg, ["steps", "remove_stereochemistry"], True)):
         try:
             Chem.RemoveStereochemistry(mol)
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             return None, "remove_stereo_failed", "remove_stereochemistry"
 
     try:
         smiles = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
-    except Exception:
+    except (ValueError, RuntimeError):
         return None, "to_smiles_failed", "to_smiles"
 
     if _get_cfg(cfg, ["steps", "standardize_smiles", "enabled"], True):
         try:
             smiles = dm.standardize_smiles(smiles)
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             return None, "standardize_smiles_failed", "standardize_smiles"
 
         if _is_missing_smiles_value(smiles):
@@ -247,7 +247,7 @@ def _molprep_one(
     # Normalize final SMILES once more after filters (canonical, no stereo)
     try:
         smiles_final = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
-    except Exception:
+    except (ValueError, RuntimeError):
         return None, "to_smiles_failed", "to_smiles_final"
 
     if _is_missing_smiles_value(smiles_final):
@@ -275,7 +275,7 @@ def _process_molprep_item(
             os.dup2(devnull_fd, 2)
             try:
                 dm.to_mol("C")
-            except Exception:
+            except (ValueError, TypeError, RuntimeError):
                 pass
         finally:
             os.dup2(stdout_fd, 1)

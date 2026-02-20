@@ -139,7 +139,7 @@ class FilesHandler:
                 # Unknown format - try counting lines
                 with open(file_path) as f:
                     count = sum(1 for line in f if line.strip())
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             return {"count": 0, "error": str(e)}
 
         return {"count": count, "path": str(file_path)}

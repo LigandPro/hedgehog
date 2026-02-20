@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 import warnings
@@ -21,6 +22,8 @@ from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # Suppress common warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+_GPU_AVAILABLE_CACHE: bool | None = None
 
 
 def _project_root() -> Path:
@@ -386,7 +389,7 @@ def _check_shepherd_score_single(mol: Chem.Mol) -> dict[str, Any]:
         score = shape_tanimoto(ref_positions, mol_positions, alpha=alpha).item()
         passed = score >= min_score
         return {"score": score, "passed": passed, "error": None}
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError) as e:
         return {"score": 0.0, "passed": False, "error": str(e)}
 
 
@@ -490,7 +493,7 @@ def _apply_shepherd_score_filter_worker(
     worker_python = config.get("worker_python")
     try:
         worker_cmd = _resolve_shepherd_worker_command()
-    except Exception as exc:
+    except (FileNotFoundError, RuntimeError) as exc:
         if not auto_install_worker:
             raise
         logger.info(
@@ -596,7 +599,7 @@ def _apply_shepherd_score_filter_worker(
 
     try:
         return _run_worker(worker_cmd)
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
         if not auto_install_worker:
             raise
         logger.info(
@@ -771,7 +774,7 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
             "passed": passed,
             "error": None,
         }
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError) as e:
         return {
             "no_clashes": False,
             "no_volume_clash": False,
@@ -872,6 +875,264 @@ def apply_posecheck_fast_filter(
     return apply_posebusters_fast_filter(mols, protein_pdb, config)
 
 
+def _to_positive_int(value: Any, default: int, *, field_name: str) -> int:
+    """Convert arbitrary value to a positive int with a safe default."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid %s=%r, using default %d", field_name, value, int(default)
+        )
+        return int(default)
+    if parsed <= 0:
+        logger.warning(
+            "Expected positive integer for %s=%r, using default %d",
+            field_name,
+            value,
+            int(default),
+        )
+        return int(default)
+    return parsed
+
+
+def _has_cuda_gpu() -> bool:
+    """Best-effort CUDA GPU detection with lightweight caching."""
+    global _GPU_AVAILABLE_CACHE  # noqa: PLW0603
+    if _GPU_AVAILABLE_CACHE is not None:
+        return _GPU_AVAILABLE_CACHE
+
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible_devices is not None and visible_devices.strip() in {"", "-1"}:
+        _GPU_AVAILABLE_CACHE = False
+        return False
+
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        _GPU_AVAILABLE_CACHE = False
+        return False
+
+    try:
+        proc = subprocess.run(
+            [nvidia_smi, "--query-gpu=name", "--format=csv,noheader"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        _GPU_AVAILABLE_CACHE = proc.returncode == 0 and bool(proc.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        _GPU_AVAILABLE_CACHE = False
+
+    return _GPU_AVAILABLE_CACHE
+
+
+def _resolve_conformer_worker_command() -> list[str]:
+    """Resolve command for external conformer worker process."""
+    raw_cmd = os.environ.get("HEDGEHOG_CONFORMER_WORKER_CMD", "").strip()
+    if raw_cmd:
+        cmd_parts = shlex.split(raw_cmd)
+        if not cmd_parts:
+            raise RuntimeError("HEDGEHOG_CONFORMER_WORKER_CMD is empty")
+        return cmd_parts
+
+    project_root = _project_root()
+    if os.name == "nt":
+        worker_entry = (
+            project_root
+            / ".venv-nvmolkit-worker"
+            / "Scripts"
+            / "matcha-nvmolkit-worker.exe"
+        )
+        venv_python = project_root / ".venv-nvmolkit-worker" / "Scripts" / "python.exe"
+    else:
+        worker_entry = (
+            project_root / ".venv-nvmolkit-worker" / "bin" / "matcha-nvmolkit-worker"
+        )
+        venv_python = project_root / ".venv-nvmolkit-worker" / "bin" / "python"
+
+    if worker_entry.exists():
+        return [str(worker_entry)]
+    if venv_python.exists():
+        # Module path used by Matcha's worker package.
+        return [str(venv_python), "-m", "matcha_nvmolkit_worker.cli"]
+
+    raise RuntimeError(
+        "No conformer worker command found. "
+        "Set HEDGEHOG_CONFORMER_WORKER_CMD or install worker in "
+        ".venv-nvmolkit-worker."
+    )
+
+
+def _auto_install_conformer_worker(config: dict[str, Any]) -> None:
+    from hedgehog.setup import ensure_nvmolkit_worker
+
+    project_root = _project_root()
+    worker_python = config.get("worker_python")
+    old_auto = os.environ.get("HEDGEHOG_AUTO_INSTALL")
+    try:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+        ensure_nvmolkit_worker(project_root, python_bin=worker_python)
+    finally:
+        if old_auto is None:
+            os.environ.pop("HEDGEHOG_AUTO_INSTALL", None)
+        else:
+            os.environ["HEDGEHOG_AUTO_INSTALL"] = old_auto
+
+
+def _prepare_reference_mol_for_symmetry(
+    mol: Chem.Mol, include_hydrogens: bool
+) -> Chem.Mol:
+    if include_hydrogens:
+        return Chem.AddHs(mol, addCoords=True)
+    return Chem.RemoveHs(Chem.Mol(mol), sanitize=False)
+
+
+def _generate_worker_conformers_batch(
+    reference_mols: list[Chem.Mol],
+    *,
+    num_conformers: int,
+    random_seed: int,
+    optimize: bool,
+    chunk_size: int,
+    timeout_sec: int,
+) -> list[Chem.Mol]:
+    """Generate conformers in an external worker and return multi-conformer mols."""
+    worker_cmd = _resolve_conformer_worker_command()
+    with tempfile.TemporaryDirectory(prefix="hedgehog_conformer_worker_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        input_sdf = tmp_path / "input.sdf"
+        params_json = tmp_path / "params.json"
+        output_sdf = tmp_path / "output.sdf"
+        meta_json = tmp_path / "meta.json"
+
+        writer = Chem.SDWriter(str(input_sdf))
+        writer.SetKekulize(False)
+        for i, mol in enumerate(reference_mols):
+            current = Chem.Mol(mol)
+            current.SetProp("_Name", f"mol_{i}")
+            writer.write(current)
+        writer.close()
+
+        params_json.write_text(
+            json.dumps(
+                {
+                    "confs_per_mol": int(num_conformers),
+                    "seed": int(random_seed),
+                    "optimize": bool(optimize),
+                    "chunk_size": int(chunk_size),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        cmd = [
+            *worker_cmd,
+            "--input-sdf",
+            str(input_sdf),
+            "--params-json",
+            str(params_json),
+            "--output-sdf",
+            str(output_sdf),
+            "--meta-json",
+            str(meta_json),
+        ]
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+        if proc.returncode != 0:
+            detail = (
+                proc.stderr.strip()
+                or proc.stdout.strip()
+                or "worker exited with non-zero status"
+            )
+            raise RuntimeError(
+                f"Conformer worker failed (code={proc.returncode}): {detail}"
+            )
+        if not output_sdf.exists():
+            raise RuntimeError("Conformer worker did not produce output.sdf")
+
+        grouped: dict[str, list[tuple[int, Chem.Mol]]] = {
+            f"mol_{i}": [] for i in range(len(reference_mols))
+        }
+        supplier = Chem.SDMolSupplier(str(output_sdf), sanitize=False, removeHs=False)
+        for out_mol in supplier:
+            if out_mol is None:
+                continue
+            uid = out_mol.GetProp("_Name") if out_mol.HasProp("_Name") else ""
+            if uid not in grouped:
+                continue
+            order = len(grouped[uid])
+            if out_mol.HasProp("conf_id"):
+                try:
+                    order = int(out_mol.GetProp("conf_id"))
+                except (TypeError, ValueError):
+                    pass
+            grouped[uid].append((order, out_mol))
+
+        generated_mols: list[Chem.Mol] = []
+        for i, reference_mol in enumerate(reference_mols):
+            uid = f"mol_{i}"
+            entries = sorted(grouped[uid], key=lambda x: x[0])
+            multi = Chem.Mol(reference_mol)
+            multi.RemoveAllConformers()
+            for _, conf_mol in entries:
+                if conf_mol.GetNumConformers() == 0:
+                    continue
+                for conf_id in range(conf_mol.GetNumConformers()):
+                    multi.AddConformer(conf_mol.GetConformer(conf_id), assignId=True)
+            generated_mols.append(multi)
+
+        return generated_mols
+
+
+def _check_symmetry_rmsd_single_precomputed(args: tuple) -> dict[str, Any]:
+    """Compute symmetry-RMSD against a pre-generated conformer set."""
+    from rdkit.Chem import rdMolAlign
+
+    reference_mol, generated_confs, max_rmsd, max_matches, early_stop_on_pass = args
+    try:
+        n_generated = generated_confs.GetNumConformers()
+        if n_generated == 0:
+            return {
+                "min_rmsd": float("inf"),
+                "n_conformers_generated": 0,
+                "passed": False,
+                "error": "no conformers generated",
+            }
+
+        rmsd_values = []
+        for conf_id in range(n_generated):
+            rmsd = rdMolAlign.GetBestRMS(
+                generated_confs,
+                reference_mol,
+                prbId=conf_id,
+                refId=0,
+                maxMatches=max_matches,
+            )
+            rmsd_values.append(rmsd)
+            if early_stop_on_pass and rmsd <= max_rmsd:
+                break
+
+        min_rmsd = min(rmsd_values)
+        return {
+            "min_rmsd": min_rmsd,
+            "n_conformers_generated": n_generated,
+            "passed": min_rmsd <= max_rmsd,
+            "error": None,
+        }
+    except (ValueError, TypeError, RuntimeError) as e:
+        return {
+            "min_rmsd": float("inf"),
+            "n_conformers_generated": 0,
+            "passed": False,
+            "error": str(e),
+        }
+
+
 def _check_symmetry_rmsd_single(args: tuple) -> dict[str, Any]:
     """Compute symmetry-corrected conformer RMSD for a single molecule.
 
@@ -947,7 +1208,7 @@ def _check_symmetry_rmsd_single(args: tuple) -> dict[str, Any]:
             "passed": min_rmsd <= max_rmsd,
             "error": None,
         }
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError) as e:
         return {
             "min_rmsd": float("inf"),
             "n_conformers_generated": 0,
@@ -982,30 +1243,161 @@ def apply_symmetry_rmsd_filter(
     include_hydrogens = bool(config.get("include_hydrogens", False))
     max_matches = int(config.get("max_matches", 10000))
     early_stop_on_pass = bool(config.get("early_stop_on_pass", True))
+    generation_backend = str(
+        config.get(
+            "conformer_generation_backend",
+            os.environ.get("HEDGEHOG_CONFORMER_BACKEND", "auto"),
+        )
+    ).lower()
+    if generation_backend not in {"auto", "rdkit", "worker"}:
+        logger.warning(
+            "Unknown conformer_generation_backend=%r, using 'rdkit'. "
+            "Valid values: auto|rdkit|worker",
+            generation_backend,
+        )
+        generation_backend = "rdkit"
 
     logger.info(
-        "Running symmetry-RMSD conformer filter (max_rmsd=%.1f, n_confs=%d)",
+        "Running symmetry-RMSD conformer filter "
+        "(gen_backend=%s, max_rmsd=%.1f, n_confs=%d)",
+        generation_backend,
         max_rmsd,
         num_conformers,
     )
 
     n_jobs = resolve_n_jobs(config)
-    items = [
-        (
-            mol,
-            num_conformers,
-            max_rmsd,
-            method,
-            random_seed,
-            include_hydrogens,
-            max_matches,
-            early_stop_on_pass,
+    raw_results: list[dict[str, Any]]
+    use_worker = generation_backend == "worker"
+    auto_install_worker = bool(config.get("auto_install_worker", True))
+    auto_install_enabled = os.environ.get("HEDGEHOG_AUTO_INSTALL") == "1"
+    if generation_backend == "auto":
+        if _has_cuda_gpu():
+            try:
+                _resolve_conformer_worker_command()
+                use_worker = True
+                logger.info(
+                    "Conformer backend auto-selection: using worker (CUDA GPU detected)"
+                )
+            except (FileNotFoundError, RuntimeError) as missing_exc:
+                use_worker = False
+                if auto_install_worker and auto_install_enabled:
+                    logger.info(
+                        "Conformer backend auto-selection: worker missing on CUDA host, "
+                        "attempting auto-install (python=%s)",
+                        config.get("worker_python") or "auto",
+                    )
+                    try:
+                        _auto_install_conformer_worker(config)
+                        _resolve_conformer_worker_command()
+                        use_worker = True
+                        logger.info(
+                            "Conformer backend auto-selection: worker auto-install succeeded"
+                        )
+                    except Exception as install_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Conformer worker auto-install failed, using RDKit fallback: %s",
+                            install_exc,
+                        )
+                else:
+                    logger.info(
+                        "Conformer backend auto-selection: worker unavailable (%s), using RDKit",
+                        missing_exc,
+                    )
+        else:
+            use_worker = False
+            logger.info(
+                "Conformer backend auto-selection: no CUDA GPU detected, using RDKit"
+            )
+
+    if use_worker:
+        worker_chunk_size = _to_positive_int(
+            config.get(
+                "conformer_worker_chunk_size",
+                os.environ.get("HEDGEHOG_CONFORMER_WORKER_CHUNK_SIZE", 128),
+            ),
+            128,
+            field_name="conformer_worker_chunk_size",
         )
-        for mol in mols
-    ]
-    raw_results = parallel_map(
-        _check_symmetry_rmsd_single, items, n_jobs, progress=progress_cb
-    )
+        worker_timeout_sec = _to_positive_int(
+            config.get(
+                "conformer_worker_timeout_sec",
+                os.environ.get("HEDGEHOG_CONFORMER_WORKER_TIMEOUT_SEC", 300),
+            ),
+            300,
+            field_name="conformer_worker_timeout_sec",
+        )
+        optimize_conformers = bool(config.get("optimize_conformers", False))
+        try:
+            reference_mols = [
+                _prepare_reference_mol_for_symmetry(mol, include_hydrogens)
+                for mol in mols
+            ]
+            generated_mols = _generate_worker_conformers_batch(
+                reference_mols,
+                num_conformers=int(num_conformers),
+                random_seed=int(random_seed),
+                optimize=optimize_conformers,
+                chunk_size=worker_chunk_size,
+                timeout_sec=worker_timeout_sec,
+            )
+            worker_items = [
+                (
+                    reference_mol,
+                    generated_confs,
+                    max_rmsd,
+                    max_matches,
+                    early_stop_on_pass,
+                )
+                for reference_mol, generated_confs in zip(
+                    reference_mols, generated_mols, strict=False
+                )
+            ]
+            raw_results = parallel_map(
+                _check_symmetry_rmsd_single_precomputed,
+                worker_items,
+                n_jobs,
+                progress=progress_cb,
+            )
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            if generation_backend == "worker":
+                raise RuntimeError(f"Conformer worker backend failed: {exc}") from exc
+            logger.warning(
+                "Conformer worker backend failed, using RDKit fallback: %s",
+                exc,
+            )
+            items = [
+                (
+                    mol,
+                    num_conformers,
+                    max_rmsd,
+                    method,
+                    random_seed,
+                    include_hydrogens,
+                    max_matches,
+                    early_stop_on_pass,
+                )
+                for mol in mols
+            ]
+            raw_results = parallel_map(
+                _check_symmetry_rmsd_single, items, n_jobs, progress=progress_cb
+            )
+    else:
+        items = [
+            (
+                mol,
+                num_conformers,
+                max_rmsd,
+                method,
+                random_seed,
+                include_hydrogens,
+                max_matches,
+                early_stop_on_pass,
+            )
+            for mol in mols
+        ]
+        raw_results = parallel_map(
+            _check_symmetry_rmsd_single, items, n_jobs, progress=progress_cb
+        )
 
     results = []
     for i, res in enumerate(raw_results):
@@ -1080,7 +1472,7 @@ def _check_conformer_deviation_single(args: tuple) -> dict[str, Any]:
             "passed": min_rmsd <= max_rmsd,
             "error": None,
         }
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError) as e:
         return {
             "min_rmsd": float("inf"),
             "n_conformers_generated": 0,

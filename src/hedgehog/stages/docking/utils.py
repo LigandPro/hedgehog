@@ -51,7 +51,7 @@ def _is_real_binary(path: str) -> bool:
         with open(path, "rb") as f:
             header = f.read(4)
         return header == b"\x7fELF"
-    except Exception:
+    except OSError:
         return False
 
 
@@ -120,7 +120,7 @@ def _prepare_ligands_dataframe(df, output_csv):
             if mol is None:
                 skipped_smiles.append(smi)
                 continue
-        except Exception:
+        except (ValueError, TypeError):
             skipped_smiles.append(smi)
             continue
 
@@ -196,7 +196,7 @@ def _pdb_atom_coordinates(pdb_path: Path) -> list[tuple[float, float, float]]:
                 x = float(line[30:38])
                 y = float(line[38:46])
                 z = float(line[46:54])
-            except Exception:
+            except (ValueError, IndexError):
                 continue
             coords.append((x, y, z))
     except OSError:
@@ -208,7 +208,7 @@ def _sdf_center(sdf_path: Path) -> tuple[float, float, float] | None:
     """Compute center of the first conformer in an SDF file (mean of atom positions)."""
     try:
         from rdkit import Chem
-    except Exception:
+    except ImportError:
         return None
 
     suppl = Chem.SDMolSupplier(str(sdf_path))
@@ -287,8 +287,7 @@ def _warn_if_autobox_far_from_receptor(cfg: dict, tool_name: str) -> None:
                 tool_name.upper(),
                 min_dist,
             )
-    except Exception:
-        # Never fail docking due to a warning-only heuristic.
+    except Exception:  # noqa: BLE001 — intentional: warning-only heuristic must never fail docking
         return
 
 
@@ -322,7 +321,7 @@ def _gnina_zero_affinity_count(output_sdf: Path) -> tuple[int, int]:
     """Count how many poses have minimizedAffinity == 0.0 in GNINA SDF output."""
     try:
         from rdkit import Chem
-    except Exception:
+    except ImportError:
         return (0, 0)
 
     total = 0
@@ -336,7 +335,7 @@ def _gnina_zero_affinity_count(output_sdf: Path) -> tuple[int, int]:
             try:
                 if float(mol.GetProp("minimizedAffinity")) == 0.0:
                     zero += 1
-            except Exception:
+            except (ValueError, TypeError):
                 continue
     return (zero, total)
 
@@ -368,8 +367,7 @@ def _emit_post_docking_warnings(
                     zero,
                     total,
                 )
-    except Exception:
-        # Warning-only logic must never fail docking.
+    except Exception:  # noqa: BLE001 — intentional: warning-only logic must never fail docking
         return
 
 
@@ -1124,7 +1122,7 @@ def _parse_positive_int(value, default: int) -> int:
         parsed = int(value)
         if parsed > 0:
             return parsed
-    except Exception:
+    except (ValueError, TypeError):
         pass
     return default
 
@@ -1141,7 +1139,7 @@ def _resolve_gnina_parallel_jobs(cfg: dict, cpu_per_process: int) -> int:
     scale_raw = cfg.get("gnina_parallel_jobs_scale", 1.0)
     try:
         scale = float(scale_raw)
-    except Exception:
+    except (ValueError, TypeError):
         scale = 1.0
     if scale <= 0:
         scale = 1.0
@@ -1236,7 +1234,7 @@ def _aggregate_docking_results(results_dir: Path, output_sdf: Path) -> int:
             if mol.HasProp(prop_name):
                 try:
                     return float(mol.GetProp(prop_name))
-                except Exception:
+                except (ValueError, TypeError):
                     continue
         return None
 
@@ -1262,7 +1260,7 @@ def _aggregate_docking_results(results_dir: Path, output_sdf: Path) -> int:
             if best_pose is not None:
                 writer.write(best_pose)
                 count += 1
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logger.warning("Failed to read result file %s: %s", result_file, e)
             continue
 
@@ -1305,12 +1303,12 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
             try:
                 AllChem.EmbedMolecule(mol, AllChem.ETKDG())
                 AllChem.UFFOptimizeMolecule(mol)
-            except Exception:
+            except (ValueError, RuntimeError):
                 pass
             mol.SetProp("_Name", name)
             writer.write(mol)
             written_count += 1
-        except Exception:
+        except (ValueError, TypeError, RuntimeError):
             continue
 
     writer.close()
@@ -1391,8 +1389,7 @@ def _auto_detect_cudnn_path() -> str | None:
     """Auto-detect LD_LIBRARY_PATH for GNINA from PyTorch or conda environments."""
     try:
         from hedgehog.setup._gnina import _collect_gnina_library_paths
-    except Exception:
-        pass
+    except ImportError:
         return None
 
     return _join_existing_library_paths(_collect_gnina_library_paths())
@@ -1774,7 +1771,7 @@ def _save_job_ids(ligands_dir, overall_job_id, job_ids):
             f.write(f"overall: {overall_job_id}\n")
             f.write(f"smina: {job_ids.get('smina', '')}\n")
             f.write(f"gnina: {job_ids.get('gnina', '')}\n")
-    except Exception as e:
+    except OSError as e:
         logger.warning("Failed to write job_ids.txt: %s", e)
 
 
@@ -1789,7 +1786,7 @@ def _update_metadata_with_run_status(ligands_dir, run_status):
         metadata["run_status"] = run_status
         with open(meta_path, "w") as f:
             json.dump(metadata, f, indent=2)
-    except Exception as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.warning("Failed to update metadata with run status: %s", e)
 
 
@@ -1907,7 +1904,7 @@ def _run_smina(ligands_dir, background, job_id, tick=None):
             count = _aggregate_docking_results(results_dir, output_sdf)
             status["aggregated_molecules"] = count
             logger.info("Aggregated %d SMINA docking results", count)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.warning("Failed to aggregate SMINA results: %s", e)
 
     smina_out_dir = ligands_dir / "smina_results"
@@ -1932,7 +1929,7 @@ def _run_gnina(ligands_dir, output_sdf, background, job_id, tick=None):
             count = _aggregate_docking_results(results_dir, output_sdf)
             status["aggregated_molecules"] = count
             logger.info("Aggregated %d GNINA docking results", count)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.warning("Failed to aggregate GNINA results: %s", e)
 
     status["output"] = str(output_sdf)
@@ -2063,7 +2060,7 @@ def _setup_smina(
         )
         logger.info("SMINA batch configuration prepared")
         return script_path
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, FileNotFoundError) as e:
         logger.error("Failed to setup SMINA: %s", e)
         import traceback
 
@@ -2215,7 +2212,7 @@ def _setup_gnina(
         )
         logger.info("GNINA batch configuration prepared")
         return script_path
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, FileNotFoundError) as e:
         logger.error("Failed to setup GNINA: %s", e)
         return None
 
@@ -2237,7 +2234,7 @@ def run_docking(config, reporter=None):
 
     try:
         df = pd.read_csv(source)
-    except Exception as e:
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
         logger.error("Failed to read docking input %s: %s", source, e)
         return False
 
@@ -2356,7 +2353,7 @@ def run_docking(config, reporter=None):
                             original_receptor,
                         )
                         cfg["receptor_pdb"] = str(original_receptor_path)
-                    except Exception as e:
+                    except (OSError, subprocess.SubprocessError) as e:
                         logger.error("Failed to prepare protein: %s", e)
                         import traceback
 
@@ -2393,7 +2390,7 @@ def run_docking(config, reporter=None):
             if script:
                 scripts_prepared.append(str(script))
                 job_ids["gnina"] = _generate_job_id("gnina")
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError, FileNotFoundError) as e:
             logger.warning("GNINA setup failed, continuing without GNINA: %s", e)
             tools_list = [t for t in tools_list if t != "gnina"]
 
@@ -2416,7 +2413,7 @@ def run_docking(config, reporter=None):
         )
         _save_job_ids(ligands_dir, overall_job_id, job_ids)
         logger.info("Docking job ID: %s", overall_job_id)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         logger.warning("Failed to save metadata: %s", e)
 
     auto_run = cfg.get("auto_run", True)
@@ -2494,13 +2491,13 @@ def run_docking(config, reporter=None):
                     _emit_post_docking_warnings(
                         "gnina", log_path, output_sdf=output_sdf
                     )
-            except Exception as e:
+            except (OSError, subprocess.SubprocessError, RuntimeError) as e:
                 logger.error("GNINA execution failed: %s", e)
                 run_status["gnina"] = {"status": "failed", "error": str(e)}
 
         try:
             _update_metadata_with_run_status(ligands_dir, run_status)
-        except Exception as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.warning("Failed to update metadata with run status: %s", e)
 
         if not background:
@@ -2552,7 +2549,7 @@ def run_docking(config, reporter=None):
                     ligands_dir / "_workdir" / "gnina_run.log",
                     output_sdf=gnina_dir / "gnina_out.sdf",
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 — intentional: post-docking warnings must never fail
             pass
 
     return True

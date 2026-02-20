@@ -102,7 +102,7 @@ class ValidationHandler:
                     "No protein atoms found (only HETATM records)"
                 )
 
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             result["errors"].append(f"Error reading PDB file: {e}")
             return result
 
@@ -134,7 +134,7 @@ class ValidationHandler:
             except PermissionError:
                 result["errors"].append(f"Directory is not writable: {path}")
                 return result
-            except Exception as e:
+            except OSError as e:
                 result["errors"].append(f"Cannot write to directory: {e}")
                 return result
 

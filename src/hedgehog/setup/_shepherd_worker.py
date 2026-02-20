@@ -71,7 +71,7 @@ def ensure_shepherd_worker(project_root: Path, python_bin: str | None = None) ->
         try:
             _verify_worker(worker_entry, venv_python, project_root)
             return worker_entry if worker_entry.exists() else venv_python
-        except Exception:
+        except (OSError, subprocess.SubprocessError, RuntimeError):
             pass
 
     if not confirm_download(

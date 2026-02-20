@@ -127,7 +127,7 @@ def run_aizynthfinder(
         if error_msg:
             logger.error("Error output: %s", error_msg[:1000])
         return False
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         logger.error("Unexpected error running retrosynthesis analysis: %s", e)
         return False
 
@@ -187,7 +187,7 @@ def parse_retrosynthesis_results(json_file):
             )
 
         return pd.DataFrame(results)
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, KeyError) as e:
         logger.error("Error parsing retrosynthesis results: %s", e)
         return pd.DataFrame(columns=["index", "SMILES", "solved", "search_time"])
 
@@ -285,7 +285,7 @@ def _load_sascorer_impl():
         import sascorer
 
         return sascorer
-    except Exception as e:
+    except (ImportError, OSError) as e:
         logger.warning("Failed to load SA Score module: %s", e)
         return False
 
@@ -300,7 +300,7 @@ def _load_syba_model_impl():
         model.fitDefaultScore()
         logger.debug("SYBA model loaded successfully")
         return model
-    except Exception as e:
+    except (ImportError, OSError, ValueError) as e:
         logger.error("Failed to load SYBA model: %s", e)
         logger.warning("SYBA scores will be set to np.nan")
         return False
@@ -319,7 +319,7 @@ def _load_rascore_impl():
 
                 project_root = Path(__file__).resolve().parents[4]
                 model_path = ensure_rascore_model(project_root)
-            except Exception as e:
+            except (ImportError, OSError, RuntimeError) as e:
                 logger.warning(
                     "RAScore model is unavailable (%s). RA scores will be set to np.nan",
                     e,
@@ -338,7 +338,7 @@ def _load_rascore_impl():
         booster.load_model(str(model_path))
         logger.debug("RAScore xgboost model loaded successfully")
         return {"kind": "xgboost_booster", "model": booster}
-    except Exception as e:
+    except (ImportError, OSError, ValueError) as e:
         logger.warning("Failed to load RAScore model: %s", e)
         return False
 
@@ -379,7 +379,7 @@ def _calculate_sa_score(smiles):
         if mol is None:
             return np.nan
         return sascorer.calculateScore(mol)
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError) as e:
         logger.debug("Failed to calculate SA score for %s: %s", smiles, e)
         return np.nan
 
@@ -405,7 +405,7 @@ def _calculate_syba_score(smiles):
         if mol is None:
             return np.nan
         return syba_model.predict(mol=mol)
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError) as e:
         logger.debug("Failed to calculate SYBA score for %s: %s", smiles, e)
         return np.nan
 
@@ -424,7 +424,7 @@ def _calculate_sa_score_single(smiles: str) -> float | None:
         if mol is None:
             return np.nan
         return sascorer.calculateScore(mol)
-    except Exception:
+    except (ValueError, TypeError, RuntimeError):
         return np.nan
 
 
@@ -442,7 +442,7 @@ def _calculate_syba_score_single(smiles: str) -> float | None:
         if mol is None:
             return np.nan
         return syba_model.predict(mol=mol)
-    except Exception:
+    except (ValueError, TypeError, RuntimeError):
         return np.nan
 
 
@@ -532,7 +532,7 @@ def _calculate_ra_scores_batch(
         for idx, prob in zip(valid_indices, probs):
             scores[idx] = float(prob)
         return scores
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError) as e:
         logger.debug("Failed to calculate RA scores in batch: %s", e)
         return nan_list
 

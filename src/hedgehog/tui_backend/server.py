@@ -121,7 +121,7 @@ class JsonRpcServer:
             self.send_response(request_id, error={"code": -32002, "message": str(e)})
         except ValueError as e:
             self.send_response(request_id, error={"code": -32602, "message": str(e)})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: JSON-RPC must catch all handler errors
             self.send_response(request_id, error={"code": -32000, "message": str(e)})
 
     def run(self):
@@ -165,7 +165,7 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         return 0
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — intentional: top-level server must catch all
         sys.stderr.write(f"Server error: {e}\n")
         return 1
 

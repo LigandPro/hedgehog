@@ -66,7 +66,7 @@ def compute_mce18(mol: Chem.Mol | None) -> float | None:
 
         return round(mce18, 4)
 
-    except Exception:
+    except (ValueError, TypeError, RuntimeError):
         return None
 
 

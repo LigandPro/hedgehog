@@ -112,7 +112,7 @@ def _parse_literal_list(value, label):
             parsed = ast.literal_eval(value)
             if isinstance(parsed, list):
                 return parsed
-        except Exception as e:
+        except (ValueError, SyntaxError) as e:
             logger.error("Error parsing %s: %s, %s", label, value, e)
             return []
     logger.error("Error parsing %s: %s, unsupported type", label, value)
@@ -134,7 +134,7 @@ def _parse_ring_size_column(series):
         sizes = _parse_literal_list(val, "ring sizes")
         try:
             parsed.extend([float(size) for size in sizes])
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             logger.error("Error parsing ring sizes: %s, %s", val, e)
     return parsed
 
@@ -243,7 +243,7 @@ def _compute_descriptors_for_row(args):
 
             uncharger = rdMolStandardize.Uncharger()
             mol_n = uncharger.uncharge(mol_n)
-        except Exception:
+        except (ImportError, ValueError, RuntimeError):
             # Best-effort: if uncharger isn't available, fall back to charge check only.
             pass
 
@@ -254,13 +254,13 @@ def _compute_descriptors_for_row(args):
     if remove_stereo:
         try:
             Chem.RemoveStereochemistry(mol_n)
-        except Exception:
+        except (ValueError, RuntimeError):
             pass
 
     if remove_charges or remove_radicals or remove_stereo:
         try:
             smiles = Chem.MolToSmiles(mol_n, canonical=True, isomericSmiles=False)
-        except Exception:
+        except (ValueError, RuntimeError):
             return None, (smiles, model_name, mol_idx)
 
     row_metrics = _compute_single_molecule_descriptors(mol_n, model_name, mol_idx)

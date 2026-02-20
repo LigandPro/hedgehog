@@ -81,7 +81,7 @@ class LoggerSingleton:
                 try:
                     self._logger.removeHandler(self._file_handler)
                     self._file_handler.close()
-                except Exception:
+                except Exception:  # noqa: BLE001 — intentional: cleanup must not raise
                     pass
             self._file_handler_added = False
             self._file_handler = None

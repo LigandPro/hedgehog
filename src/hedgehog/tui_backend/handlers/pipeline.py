@@ -105,7 +105,7 @@ class PipelineJob:
                     yaml.safe_dump(sub_cfg, tmp)
                     tmp.close()
                     config_dict[cfg_key] = tmp.name
-                except Exception:
+                except (OSError, yaml.YAMLError):
                     pass  # Best-effort; pipeline will use original config
 
     def _emit_stage_transition(self, tui_stage: str) -> None:
@@ -222,7 +222,7 @@ class PipelineJob:
 
         except InterruptedError:
             self._log("warn", "Pipeline was cancelled")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: TUI must catch all pipeline errors
             self._notify("error", {"message": str(e)})
             self._log("error", f"Pipeline error: {e}")
 
@@ -349,7 +349,7 @@ class PipelineHandler:
 
         try:
             main_config = config_handler.load_config("main")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — intentional: TUI validation must handle all errors
             add_global(
                 "MAIN_CONFIG_LOAD_FAILED",
                 "error",
@@ -379,7 +379,7 @@ class PipelineHandler:
                         msg,
                         field="generated_mols_path",
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — intentional: TUI validation
                 add_global(
                     "MAIN_INPUT_CHECK_FAILED",
                     "error",
@@ -398,7 +398,7 @@ class PipelineHandler:
                     )
                 else:
                     result["molecule_count"] = int(count_result.get("count", 0))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — intentional: TUI validation
                 add_global(
                     "MAIN_COUNT_FAILED",
                     "warning",
@@ -420,7 +420,7 @@ class PipelineHandler:
                     add_global(
                         "MAIN_OUTPUT_WARNING", "warning", msg, field="folder_to_save"
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — intentional: TUI validation
                 add_global(
                     "MAIN_OUTPUT_CHECK_FAILED",
                     "error",
@@ -448,7 +448,7 @@ class PipelineHandler:
 
             try:
                 stage_config = config_handler.load_config(config_type)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — intentional: TUI validation
                 add_stage(
                     "STAGE_CONFIG_LOAD_FAILED",
                     "error",
@@ -493,7 +493,7 @@ class PipelineHandler:
                                 msg,
                                 field="receptor_pdb",
                             )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — intentional: TUI validation
                         add_stage(
                             "DOCKING_RECEPTOR_CHECK_FAILED",
                             "error",
@@ -533,7 +533,7 @@ class PipelineHandler:
                                 msg,
                                 field="input_sdf",
                             )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — intentional: TUI validation
                         add_stage(
                             "DOCKING_FILTERS_INPUT_CHECK_FAILED",
                             "error",
@@ -560,7 +560,7 @@ class PipelineHandler:
                                 msg,
                                 field="receptor_pdb",
                             )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — intentional: TUI validation
                         add_stage(
                             "DOCKING_FILTERS_RECEPTOR_CHECK_FAILED",
                             "error",

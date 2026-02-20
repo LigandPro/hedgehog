@@ -2,6 +2,7 @@ from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
+import yaml
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.stages.structFilters.utils import (
@@ -74,7 +75,7 @@ def _get_input_path(config, stage_dir, folder_to_save):
         try:
             desc_config = load_config(config["config_descriptors"])
             descriptors_enabled = desc_config.get("run", False)
-        except Exception:
+        except (OSError, yaml.YAMLError, KeyError):
             pass
 
     is_post_descriptors = _is_post_descriptors_stage(stage_dir)
@@ -331,7 +332,7 @@ def main(config, stage_dir, reporter=None):
 
     try:
         input_df, model_name = _load_input_data(input_path)
-    except Exception as e:
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError, KeyError) as e:
         logger.error("Could not load input data from %s: %s", input_path, e)
         raise
 

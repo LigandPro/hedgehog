@@ -222,7 +222,7 @@ class ReportGenerator:
             with open(run_info_path, "w") as f:
                 f.write(content)
             logger.info("Updated run info with MolEval metrics: %s", run_info_path)
-        except Exception as e:
+        except (OSError, ValueError, ZeroDivisionError) as e:
             logger.debug("Failed to update RUN_INFO.md with MolEval metrics: %s", e)
 
     def _get_metadata(self) -> dict[str, Any]:
@@ -341,7 +341,7 @@ class ReportGenerator:
                 try:
                     df = pd.read_csv(path)
                     return len(df)
-                except Exception as e:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
                     logger.debug("Could not read %s: %s", path, e)
                     continue
         return None
@@ -375,7 +375,7 @@ class ReportGenerator:
                     if model_name and "model_name" in df.columns:
                         df = df[df["model_name"] == model_name]
                     return len(df)
-                except Exception as e:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
                     logger.debug("Could not read %s: %s", path, e)
                     continue
         return None
@@ -395,7 +395,7 @@ class ReportGenerator:
                 df = pd.read_csv(input_path)
                 if "model_name" in df.columns:
                     models.update(df["model_name"].dropna().unique())
-            except Exception as e:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
                 logger.debug("Could not read %s: %s", input_path, e)
 
         # Try output file
@@ -405,7 +405,7 @@ class ReportGenerator:
                 df = pd.read_csv(output_path)
                 if "model_name" in df.columns:
                     models.update(df["model_name"].dropna().unique())
-            except Exception as e:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
                 logger.debug("Could not read %s: %s", output_path, e)
 
         return sorted(models)
@@ -428,7 +428,7 @@ class ReportGenerator:
                 df = pd.read_csv(input_path)
                 if "model_name" in df.columns:
                     return len(df[df["model_name"] == model_name])
-            except Exception as e:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
                 logger.debug("Could not read %s: %s", input_path, e)
         return 0
 
@@ -502,13 +502,13 @@ class ReportGenerator:
             if passed_path.exists():
                 try:
                     passed = len(pd.read_csv(passed_path))
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     pass
 
             if failed_path.exists():
                 try:
                     failed = len(pd.read_csv(failed_path))
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     pass
 
             if passed > 0 or failed > 0:
@@ -532,7 +532,7 @@ class ReportGenerator:
 
         try:
             df = pd.read_csv(final_path)
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             return []
 
         if "model_name" not in df.columns:
@@ -566,7 +566,7 @@ class ReportGenerator:
             df = pd.read_csv(input_path)
             if "model_name" in df.columns:
                 return len(df[df["model_name"] == model])
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             pass
         return None
 
@@ -602,7 +602,7 @@ class ReportGenerator:
                         losses[loss_key] = len(df[df["model_name"] == model])
                     else:
                         losses[loss_key] = 0
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     losses[loss_key] = 0
             else:
                 losses[loss_key] = 0
@@ -631,7 +631,7 @@ class ReportGenerator:
                 try:
                     df = pd.read_csv(path)
                     break
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     continue
 
         if df is None:
@@ -719,7 +719,7 @@ class ReportGenerator:
                                 filter_stats["by_filter"][subdir.name] = {
                                     str(k): int(v) for k, v in model_counts.items()
                                 }
-                    except Exception:
+                    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                         continue
 
         return filter_stats
@@ -734,7 +734,7 @@ class ReportGenerator:
 
         try:
             df = pd.read_csv(scores_path)
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             return {}
 
         stats = {"distributions": {}, "scatter_data": {}}
@@ -779,7 +779,7 @@ class ReportGenerator:
                                 ):
                                     lookup[str(row[id_col])] = row["model_name"]
                             break
-            except Exception:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                 pass
         return lookup
 
@@ -898,7 +898,7 @@ class ReportGenerator:
 
             results = list(mol_best_scores.values())
 
-        except Exception as e:
+        except (OSError, ValueError, TypeError, RuntimeError) as e:
             logger.warning("Error parsing SDF file %s: %s", sdf_path, e)
 
         return results
@@ -936,7 +936,7 @@ class ReportGenerator:
                                 }
                                 csv_found = True
                                 break
-                    except Exception:
+                    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                         pass
                     if csv_found:
                         break
@@ -993,7 +993,7 @@ class ReportGenerator:
                 try:
                     df = pd.read_csv(path)
                     break
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     continue
 
         if df is None:
@@ -1195,7 +1195,7 @@ class ReportGenerator:
 
                 try:
                     df = pd.read_csv(metrics_path)
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     continue
 
                 if "model_name" not in df.columns:
@@ -1428,7 +1428,7 @@ class ReportGenerator:
                         if filter_metrics:
                             result["filter_metrics"][filter_name] = filter_metrics
 
-                    except Exception:
+                    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                         continue
 
                 # Check for common_alerts specific data
@@ -1454,7 +1454,11 @@ class ReportGenerator:
                                         str(k): int(v) for k, v in reasons.items()
                                     }
                                     break
-                        except Exception:
+                        except (
+                            OSError,
+                            pd.errors.ParserError,
+                            pd.errors.EmptyDataError,
+                        ):
                             pass
 
         return result
@@ -1476,7 +1480,7 @@ class ReportGenerator:
 
         try:
             df = pd.read_csv(scores_path)
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             return {}
 
         result = {
@@ -1626,7 +1630,7 @@ class ReportGenerator:
         try:
             with open(json_path) as f:
                 data = json.load(f)
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             return {}
 
         if "data" not in data:
@@ -1705,7 +1709,7 @@ class ReportGenerator:
                         img_data = base64.b64encode(f.read()).decode("utf-8")
                     plots_found[name] = f"data:image/png;base64,{img_data}"
                     logger.debug("Found plot: %s", name)
-                except Exception as e:
+                except OSError as e:
                     logger.warning("Failed to load plot %s: %s", name, e)
 
         return plots_found
@@ -1753,7 +1757,7 @@ class ReportGenerator:
                     try:
                         df = pd.read_csv(path)
                         break
-                    except Exception:
+                    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                         continue
 
             if df is not None:
@@ -1904,7 +1908,7 @@ class ReportGenerator:
 
         try:
             df = pd.read_csv(metrics_path)
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             return {}
 
         if df.empty:
@@ -1926,7 +1930,7 @@ class ReportGenerator:
             try:
                 fdf = pd.read_csv(filtered_path)
                 unique_molecules_passed = len(fdf)
-            except Exception:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                 pass
 
         # Read aggregation mode from pipeline config
@@ -2048,7 +2052,7 @@ class ReportGenerator:
                 moleval_config,
                 seed=moleval_config.get("seed", 42),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: MolEval may raise various errors
             logger.debug("MolEval metrics computation failed: %s", e)
             return {}
 
@@ -2082,7 +2086,7 @@ class ReportGenerator:
         try:
             with open(config_path) as f:
                 return yaml.safe_load(f) or {}
-        except Exception as e:
+        except (OSError, yaml.YAMLError) as e:
             logger.debug("Failed to load stage config %s: %s", config_key, e)
             return {}
 
@@ -2148,7 +2152,7 @@ class ReportGenerator:
             if smiles_col is None:
                 return []
             return df[smiles_col].dropna().astype(str).tolist()
-        except Exception as e:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
             logger.debug("Could not read SMILES from %s: %s", path, e)
             return []
 
@@ -2517,7 +2521,7 @@ class ReportGenerator:
                 autoescape=True,
             )
             template = env.get_template("report.html")
-        except Exception as e:
+        except (OSError, ImportError, ValueError) as e:
             logger.warning("Could not load template, using inline template: %s", e)
             return self._render_inline_template(data, plot_htmls)
 

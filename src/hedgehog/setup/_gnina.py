@@ -9,6 +9,7 @@ import shutil
 import site
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -131,7 +132,7 @@ def _resolve_gnina_download() -> str:
     for api_url in release_urls:
         try:
             data = _query_release_json(api_url)
-        except Exception as exc:
+        except (OSError, urllib.error.URLError, json.JSONDecodeError, KeyError) as exc:
             query_errors.append(str(exc))
             continue
 
@@ -257,7 +258,7 @@ def _asset_size_bytes(asset: dict[str, Any]) -> int:
     try:
         size = int(asset.get("size", 0))
         return size if size > 0 else 0
-    except Exception:
+    except (ValueError, TypeError):
         return 0
 
 
@@ -441,7 +442,7 @@ def _iter_site_packages_dirs() -> list[Path]:
             path = Path(raw)
             if path.is_dir():
                 candidates.append(path)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     seen: set[str] = set()

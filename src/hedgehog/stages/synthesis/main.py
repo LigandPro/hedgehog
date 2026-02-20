@@ -134,7 +134,7 @@ def main(config: dict, reporter=None) -> None:
         project_root = Path(__file__).resolve().parents[4]
         try:
             aizynth_config = ensure_aizynthfinder(project_root)
-        except Exception:
+        except Exception:  # noqa: BLE001 — intentional: auto-setup can fail in many ways
             _log_aizynthfinder_setup_instructions(aizynth_config)
             save_ordered_csv(score_filtered_df, filtered_output)
             return

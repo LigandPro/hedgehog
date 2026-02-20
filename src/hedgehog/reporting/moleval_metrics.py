@@ -101,7 +101,7 @@ def compute_stage_metrics(
                     calc_valid=True,
                     calc_unique=True,
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: MolEval can raise diverse errors
             logger.warning("MolEval failed for stage %s: %s", stage_name, e)
             continue
 

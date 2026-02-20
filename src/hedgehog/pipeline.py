@@ -243,7 +243,7 @@ def _extract_best_tool_scores(sdf_path: Path, tool_name: str) -> dict[str, dict]
     best_by_mol_idx: dict[str, dict] = {}
     try:
         supplier = Chem.SDMolSupplier(str(sdf_path))
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         logger.warning("Could not read %s docking SDF %s: %s", tool_name, sdf_path, e)
         return {}
 
@@ -427,7 +427,7 @@ class PipelineStageRunner:
 
             mol_prep_main(data, self.config, subfolder=subfolder, reporter=reporter)
             return True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — intentional: stage runner must catch all
             logger.error("Error running Mol Prep: %s", exc)
             return False
 
@@ -445,7 +445,7 @@ class PipelineStageRunner:
                 return False
             descriptors_main(data, self.config, subfolder=subfolder, reporter=reporter)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
             logger.error("Error running descriptors: %s", e)
             return False
 
@@ -461,7 +461,7 @@ class PipelineStageRunner:
 
             structural_filters_main(self.config, stage_dir, reporter=reporter)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
             logger.error("Error running structural filters: %s", e)
             return False
 
@@ -485,7 +485,7 @@ class PipelineStageRunner:
                 logger.error("Synthesis finished but no output file detected")
                 return False
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
             logger.error("Error running synthesis: %s", e)
             return False
 
@@ -527,7 +527,7 @@ class PipelineStageRunner:
         """Check if docking results exist for any configured tools."""
         try:
             cfg = load_config(self.config[CONFIG_DOCKING])
-        except Exception:
+        except (OSError, yaml.YAMLError, KeyError):
             return False
 
         base_folder = self.data_checker.base_path.resolve()
@@ -576,7 +576,7 @@ class PipelineStageRunner:
                 )
                 return False
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
             logger.error("Error running docking: %s", e)
             return False
 
@@ -607,7 +607,7 @@ class PipelineStageRunner:
             # Run docking filters
             result = docking_filters_main(self.config, reporter=reporter)
             return result is not None and len(result) > 0
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
             logger.error("Error running docking filters: %s", e)
             return False
 
@@ -667,7 +667,7 @@ class MolecularAnalysisPipeline:
                     stage.name,
                     "Enabled" if stage.enabled else "Disabled",
                 )
-            except Exception as e:
+            except (OSError, yaml.YAMLError, KeyError) as e:
                 logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
 
@@ -685,7 +685,7 @@ class MolecularAnalysisPipeline:
                             logger.info(
                                 "Single stage mode: also enabling %s", STAGE_MOL_PREP
                             )
-                except Exception:
+                except (OSError, yaml.YAMLError, KeyError):
                     pass
 
     def _emit_progress_event(self, event: dict) -> None:
@@ -722,7 +722,7 @@ class MolecularAnalysisPipeline:
                 elif event_type == "stage_complete":
                     total = int(event.get("total_stages", 0))
                     self.progress_callback(stage, total, total)
-            except Exception:
+            except (ValueError, TypeError, KeyError):
                 return
 
     def _count_csv_rows(self, path: Path) -> int | None:
@@ -818,7 +818,7 @@ class MolecularAnalysisPipeline:
             if len(data) == 0 and fallback_on_empty:
                 return self._try_fallback_sources(priority, latest_source, data)
             return data
-        except Exception as e:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
             logger.warning("Could not load data from %s: %s", latest_source, e)
             return self.current_data
 
@@ -858,7 +858,7 @@ class MolecularAnalysisPipeline:
                             len(data),
                         )
                         return data
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     continue
 
         logger.warning("All checked data sources are empty")
@@ -983,7 +983,7 @@ class MolecularAnalysisPipeline:
                         "No molecules left after MolPrep; ending pipeline early."
                     )
                     return True, True
-            except Exception as e:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
                 logger.warning("Could not load MolPrep output (%s): %s", out_path, e)
 
         return True, False
@@ -1004,7 +1004,7 @@ class MolecularAnalysisPipeline:
                     if len(prep_df) > 0:
                         descriptors_input = prep_df
                         self.current_data = prep_df
-                except Exception as e:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
                     logger.warning(
                         "Could not load MolPrep output (%s): %s",
                         prep_path,
@@ -1057,7 +1057,7 @@ class MolecularAnalysisPipeline:
             logger.warning(
                 "Synthesis stage failed but output file exists. Continuing with available molecules."
             )
-        except Exception:
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
             logger.warning("Synthesis stage failed. Check logs for details.")
 
         return False, False
@@ -1165,7 +1165,7 @@ class MolecularAnalysisPipeline:
                 return False
             try:
                 latest_df = pd.read_csv(self._build_data_path(latest))
-            except Exception:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                 # If the latest output exists but cannot be read, treat as failure.
                 return True
             return len(latest_df) > 0
@@ -1193,7 +1193,7 @@ class MolecularAnalysisPipeline:
             )
             report_path = report_generator.generate()
             logger.info("HTML report generated: %s", report_path)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — intentional: report generation must not fail pipeline
             logger.warning("Failed to generate HTML report: %s", e)
 
     def _log_molecule_summary(self, initial_count: int, final_count: int) -> None:
@@ -1291,7 +1291,7 @@ class MolecularAnalysisPipeline:
                     return "SKIPPED (no molecules)"
                 try:
                     latest_df = pd.read_csv(self._build_data_path(latest))
-                except Exception:
+                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                     return "FAILED"
                 if len(latest_df) == 0:
                     return "SKIPPED (no molecules)"
@@ -1335,7 +1335,7 @@ class MolecularAnalysisPipeline:
                 return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
             try:
                 latest_df = pd.read_csv(self._build_data_path(latest))
-            except Exception:
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
                 return "[bold]\u2717 FAILED[/bold]"
             if len(latest_df) == 0:
                 return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
@@ -1378,7 +1378,7 @@ def _save_config_snapshot(config: dict) -> None:
                 logger.warning("Could not copy config file for %s: %s", key, copy_err)
 
         logger.info("Saved run config snapshot to: %s", dest_dir)
-    except Exception as snapshot_err:
+    except OSError as snapshot_err:
         logger.warning("Config snapshot failed: %s", snapshot_err)
 
 
@@ -1469,7 +1469,7 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
                 tools = docking_cfg.get(CONFIG_TOOLS, "")
                 has_smina = tools in (DOCKING_TOOL_SMINA, DOCKING_TOOL_BOTH)
                 has_gnina = tools in (DOCKING_TOOL_GNINA, DOCKING_TOOL_BOTH)
-            except Exception:
+            except (OSError, yaml.YAMLError, KeyError):
                 has_smina = has_gnina = True  # Show both as fallback
 
     lines = [
@@ -1531,7 +1531,7 @@ def _count_stage_molecules(base_path: Path, stage_dir: str) -> int | None:
         # Count lines minus header for speed (avoid pandas overhead)
         with open(csv_path) as f:
             return max(sum(1 for _ in f) - 1, 0)
-    except Exception:
+    except OSError:
         return None
 
 
@@ -1712,7 +1712,7 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             f.write(content)
 
         logger.info("Generated run info: %s", readme_path)
-    except Exception as e:
+    except OSError as e:
         logger.warning("Failed to generate RUN_INFO.md: %s", e)
 
 
@@ -1745,6 +1745,6 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
         # Pipeline finished normally — remove the marker.
         incomplete_marker.unlink(missing_ok=True)
         return success
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — intentional: top-level pipeline runner must catch all
         logger.error("Pipeline execution failed: %s", e)
         return False

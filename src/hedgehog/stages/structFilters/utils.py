@@ -112,7 +112,7 @@ def _compute_molcomplexity_one(args):
 
     try:
         prepared_mol = Chem.RemoveHs(mol)
-    except Exception:
+    except (ValueError, RuntimeError):
         prepared_mol = mol
 
     passed_all = True
@@ -127,12 +127,12 @@ def _compute_molcomplexity_one(args):
             ):
                 try:
                     passed = bool(complexity_filter(prepared_mol))
-                except Exception:
+                except (ValueError, TypeError, RuntimeError):
                     passed = False
         else:
             try:
                 passed = bool(complexity_filter(prepared_mol))
-            except Exception:
+            except (ValueError, TypeError, RuntimeError):
                 passed = False
 
         row[f"pass_{name}"] = passed
@@ -285,7 +285,7 @@ def build_identity_map_from_descriptors(config):
                 for _, row in id_df.iterrows()
             }
             return identity_map, id_df
-    except Exception:
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError, KeyError):
         pass
 
     return {}, None
@@ -384,7 +384,7 @@ def _parse_smiles_item(args):
     row_idx, smiles_raw, model_name, mol_idx = args
     try:
         mol = dm.to_mol(smiles_raw, sanitize=True)
-    except Exception:
+    except (ValueError, TypeError):
         mol = None
     return row_idx, smiles_raw, model_name, mol_idx, mol
 
@@ -1169,7 +1169,7 @@ def _process_lilly_batch(dfilter, batch, n_jobs, scheduler):
             )
             batch_result = _ensure_dataframe_length(batch_result, len(batch), template)
         return batch_result
-    except Exception as batch_error:
+    except Exception as batch_error:  # noqa: BLE001 — intentional: Lilly filter raises various internal errors
         if "Length of values" in str(
             batch_error
         ) or "does not match length of index" in str(batch_error):
@@ -1193,7 +1193,7 @@ def _process_lilly_one_by_one(dfilter, batch, scheduler):
                 one_by_one_results.append(
                     _create_failed_row(smi, "unsupported_or_missing")
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 — intentional: Lilly filter raises various internal errors
             smi = dm.to_smiles(mol) if mol else None
             one_by_one_results.append(_create_failed_row(smi, "processing_failed"))
     return pd.DataFrame(one_by_one_results)
@@ -1308,7 +1308,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
                     valid_mols.append(mol)
                     valid_indexed.append((idx, mol))
                     valid_indices.append(idx)
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
     if not valid_mols:
@@ -1336,7 +1336,7 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
         for chunk_rows in chunk_results:
             rows.extend(chunk_rows)
         results = pd.DataFrame(rows)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — intentional: parallel Lilly may fail in various ways
         logger.warning(
             "Parallel Lilly execution failed (%s). Falling back to batched native mode.",
             error,
@@ -2085,7 +2085,7 @@ def filter_data(config, stage_dir):
                     from hedgehog.stages.structFilters.main import _get_input_path
 
                     input_path = _get_input_path(config, stage_dir, str(base_folder))
-                except Exception:
+                except (ImportError, OSError, KeyError):
                     input_path = None
     else:
         sampled_path = base_folder / "sampled_molecules.csv"
@@ -2096,7 +2096,7 @@ def filter_data(config, stage_dir):
                 from hedgehog.stages.structFilters.main import _get_input_path
 
                 input_path = _get_input_path(config, stage_dir, str(base_folder))
-            except Exception:
+            except (ImportError, OSError, KeyError):
                 input_path = None
 
     if input_path and Path(input_path).exists():
@@ -2144,7 +2144,7 @@ def filter_data(config, stage_dir):
                                         all_extended = all_extended.drop(
                                             columns=[f"{col}_dup"]
                                         )
-                    except Exception:
+                    except (KeyError, ValueError, TypeError):
                         continue
 
                 if all_extended is not None:
@@ -2175,7 +2175,7 @@ def filter_data(config, stage_dir):
                 fail_molecules[fail_cols].to_csv(
                     folder_to_save / "failed_molecules.csv", index=False
                 )
-        except Exception as e:
+        except (OSError, pd.errors.ParserError, KeyError) as e:
             logger.warning("Could not create failStructFiltersSMILES.csv: %s", e)
 
     return filtered_data
@@ -2199,7 +2199,7 @@ def inject_identity_columns_to_all_csvs(config, stage_dir):
             ]
             df = df[ordered]
             df.to_csv(path, index=False)
-        except Exception:
+        except (OSError, pd.errors.ParserError, KeyError):
             continue
 
 
@@ -2620,5 +2620,5 @@ def plot_filter_failures_analysis(config, stage_dir):
     for file_path in extended_files:
         try:
             analyze_filter_failures(file_path)
-        except Exception as e:
+        except (OSError, pd.errors.ParserError, KeyError, ValueError) as e:
             logger.debug("Error analyzing filter failures for %s: %s", file_path, e)
