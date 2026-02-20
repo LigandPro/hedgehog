@@ -987,6 +987,31 @@ def setup_aizynthfinder(
     console.print(f"[bold]AiZynthFinder installed.[/bold] Config: {config_path}")
 
 
+@setup_app.command("nvmolkit-worker")
+def setup_nvmolkit_worker(
+    yes: bool = typer.Option(
+        True,
+        "--yes/--no-yes",
+        "-y",
+        help="Auto-accept downloads (no prompt).",
+    ),
+    python_bin: str | None = typer.Option(
+        None,
+        "--python",
+        help="Python interpreter for worker venv (default: python3.12 -> 3.11 -> 3.10).",
+    ),
+) -> None:
+    """Install isolated nvMolKit worker environment in .venv-nvmolkit-worker."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    from hedgehog.setup import ensure_nvmolkit_worker
+
+    project_root = Path(__file__).resolve().parents[2]
+    worker_path = ensure_nvmolkit_worker(project_root, python_bin=python_bin)
+    console.print(f"[bold]nvMolKit worker installed.[/bold] Entry: {worker_path}")
+
+
 @setup_app.command("shepherd-worker")
 def setup_shepherd_worker(
     yes: bool = typer.Option(
