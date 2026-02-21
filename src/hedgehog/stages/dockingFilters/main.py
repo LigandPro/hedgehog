@@ -102,24 +102,17 @@ def _collapse_to_single_pose(
     return selected_mols, collapsed_df
 
 
-def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame | None:
-    """
-    Main entry point for docking filters stage.
+def _load_filter_inputs(
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Load and validate all inputs for docking filters.
 
-    Applies configured filters to docking poses and saves filtered results.
-
-    Args:
-        config: Full pipeline configuration dict containing:
-            - config_docking_filters: Filter settings
-            - folder_to_save: Output directory path
-            - config_docking: Docking configuration (for receptor path)
-
-    Returns:
-        DataFrame with filtered molecules and metrics, or None if no molecules pass
+    Returns a dict with keys: filter_config, output_dir, docking_dir,
+    docking_config, protein_pdb, mols, n_jobs, base_folder.
+    Returns None on error.
     """
     base_folder = Path(config["folder_to_save"]).resolve()
 
-    # Get filter config (pipeline config contains file paths, not dicts)
     filter_cfg_path = config.get("config_docking_filters")
     if not filter_cfg_path:
         logger.error("Docking filters config path is missing (config_docking_filters)")
@@ -130,7 +123,6 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         logger.info("Docking filters disabled in config")
         return None
 
-    # Resolve n_jobs once and propagate to sub-configs that don't override it
     n_jobs = resolve_n_jobs(filter_config, config)
     for sub_key in (
         "search_box",
@@ -143,7 +135,6 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         if isinstance(sub, dict) and "n_jobs" not in sub:
             sub["n_jobs"] = n_jobs
 
-    # Determine paths
     output_dir = base_folder / "stages" / "06_docking_filters"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,7 +143,6 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     # Find input SDF
     input_sdf = filter_config.get("input_sdf")
     if input_sdf is None:
-        # Try to find docking output from known locations
         candidates = [
             docking_dir / "smina" / "smina_out.sdf",
             docking_dir / "gnina" / "gnina_out.sdf",
@@ -217,7 +207,24 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         logger.warning("No molecules loaded from SDF")
         return None
 
-    # Extract identifiers (best-effort) from SDF properties
+    return {
+        "filter_config": filter_config,
+        "output_dir": output_dir,
+        "docking_dir": docking_dir,
+        "docking_config": docking_config,
+        "protein_pdb": protein_pdb,
+        "mols": mols,
+        "n_jobs": n_jobs,
+        "base_folder": base_folder,
+    }
+
+
+def _extract_pose_identifiers(mols: list[Chem.Mol]) -> pd.DataFrame:
+    """Extract identifiers and affinity data from SDF properties.
+
+    Returns DataFrame with columns: mol_idx, model_name, source_mol_idx,
+    gnina_minimizedAffinity, gnina_CNNscore, gnina_CNNaffinity.
+    """
     model_names: list[str] = []
     mol_idxs: list[str] = []
     gnina_min_aff: list[float | None] = []
@@ -238,8 +245,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         gnina_cnn_score.append(_get_prop_as_float(mol, "CNNscore"))
         gnina_cnn_aff.append(_get_prop_as_float(mol, "CNNaffinity"))
 
-    # Initialize results DataFrame
-    results_df = pd.DataFrame(
+    return pd.DataFrame(
         {
             "mol_idx": range(len(mols)),
             "model_name": model_names,
@@ -250,262 +256,48 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         }
     )
 
-    initial_pose_count = len(mols)
-    mols, results_df = _collapse_to_single_pose(mols, results_df)
-    if not mols:
-        logger.warning("No valid poses remained after single-pose collapse")
-        return None
-    logger.info(
-        "Collapsed docking poses to one pose per molecule: %d -> %d",
-        initial_pose_count,
-        len(mols),
-    )
 
-    # Apply filters
-    filters_applied = []
+def _run_single_filter(
+    filter_name: str,
+    filter_fn,
+    mols: list[Chem.Mol],
+    active_pose_indices: list[int],
+    results_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, bool]:
+    """Run one filter on active poses with standard error handling.
 
-    # Stage progress: map each enabled filter step to a 0-100 slot.
-    sb_config = filter_config.get("search_box", {})
-    ss_config = filter_config.get("shepherd_score", {})
-    cd_config = filter_config.get("conformer_deviation", {})
+    Args:
+        filter_name: Name for the pass_<name> column.
+        filter_fn: Callable(mols_active) -> DataFrame with mol_idx column.
+        mols: All molecules.
+        active_pose_indices: Indices of molecules to filter.
+        results_df: Existing results to merge into.
 
-    ref_path = ss_config.get("reference_ligand")
-    shepherd_enabled = bool(ss_config.get("enabled", False)) and bool(
-        ref_path and Path(ref_path).exists()
-    )
+    Returns:
+        (updated_results_df, filter_was_applied)
+    """
+    if not active_pose_indices:
+        results_df[f"pass_{filter_name}"] = False
+        return results_df, False
 
-    step_names: list[str] = ["search_box"]
-    if pq_config.get("enabled", True):
-        step_names.append("pose_quality")
-    if int_config.get("enabled", True):
-        step_names.append("interactions")
-    if shepherd_enabled:
-        step_names.append("shepherd_score")
-    if cd_config.get("enabled", True):
-        step_names.append("conformer_deviation")
-
-    stage_total = max(1, len(step_names) * 100)
-
-    def _step_progress(step_index: int, label: str):
-        if reporter is None:
-            return None
-
-        base = step_index * 100
-
-        def _progress(done: int, total: int) -> None:
-            if total <= 0:
-                pct = 0
-            else:
-                pct = int(round((done / total) * 100))
-            pct = max(0, min(100, pct))
-            reporter.progress(
-                base + pct, stage_total, message=f"DockingFilters: {label}"
-            )
-
-        return _progress
-
-    agg_mode = filter_config.get("aggregation", {}).get("mode", "all")
-
-    # Filter 0: Search-box containment (fast)
     try:
-        if reporter is not None:
-            reporter.progress(0, stage_total, message="DockingFilters: search_box")
-        sb_df = apply_search_box_filter(mols, base_folder, docking_config, sb_config)
-        results_df = results_df.merge(sb_df, on="mol_idx", how="left")
-        filters_applied.append("search_box")
+        mols_active = [mols[i] for i in active_pose_indices]
+        filter_df = filter_fn(mols_active)
+        filter_df["mol_idx"] = [active_pose_indices[i] for i in filter_df["mol_idx"]]
+        results_df = results_df.merge(filter_df, on="mol_idx", how="left")
+        return results_df, True
     except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
-        logger.error("Search-box filter failed: %s", e)
-        results_df["pass_search_box"] = True
-    finally:
-        if reporter is not None:
-            reporter.progress(100, stage_total, message="DockingFilters: search_box")
+        logger.error("%s filter failed: %s", filter_name, e)
+        results_df[f"pass_{filter_name}"] = True
+        return results_df, False
 
-    # Optional optimization: under aggregation mode "all", if a pose fails search-box
-    # containment it cannot pass the overall filter, so we can skip heavier checks.
-    sb_short_circuit = bool(sb_config.get("short_circuit", True)) and agg_mode == "all"
-    active_pose_indices = list(range(len(mols)))
-    if sb_short_circuit and "pass_search_box" in results_df.columns:
-        active_pose_indices = results_df.loc[
-            results_df["pass_search_box"] == True, "mol_idx"  # noqa: E712
-        ].tolist()
 
-    # Filter 1: Pose Quality — dispatch by backend
-    if pq_config.get("enabled", True):
-        pq_step_idx = step_names.index("pose_quality")
-        if reporter is not None:
-            reporter.progress(
-                pq_step_idx * 100,
-                stage_total,
-                message="DockingFilters: pose_quality",
-            )
-        if active_pose_indices:
-            try:
-                mols_active = [mols[i] for i in active_pose_indices]
-                pq_backend = pq_config.get("backend", "posebusters_fast")
-                if pq_backend == "posebusters_fast":
-                    pq_df = apply_posebusters_fast_filter(
-                        mols_active,
-                        protein_pdb,
-                        pq_config,
-                        progress_cb=_step_progress(pq_step_idx, "pose_quality"),
-                    )
-                else:  # "posecheck" (legacy)
-                    pq_df = apply_pose_quality_filter(
-                        mols_active, protein_pdb, pq_config
-                    )
-                pq_df["mol_idx"] = [active_pose_indices[i] for i in pq_df["mol_idx"]]
-                results_df = results_df.merge(pq_df, on="mol_idx", how="left")
-                filters_applied.append("pose_quality")
-            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
-                logger.error("Pose quality filter failed: %s", e)
-                results_df["pass_pose_quality"] = True
-        else:
-            results_df["pass_pose_quality"] = False
-        if reporter is not None:
-            reporter.progress(
-                (pq_step_idx + 1) * 100,
-                stage_total,
-                message="DockingFilters: pose_quality",
-            )
-
-    # Optional optimization: under aggregation mode "all", if a pose fails pose quality
-    # it cannot pass the overall filter, so we can skip heavier checks (interactions,
-    # conformer deviation, etc.) for those poses.
-    pq_short_circuit = bool(pq_config.get("short_circuit", True)) and agg_mode == "all"
-    if pq_short_circuit and "pass_pose_quality" in results_df.columns:
-        pq_mask = results_df["pass_pose_quality"].fillna(False) == True  # noqa: E712
-        if "pass_search_box" in results_df.columns:
-            sb_mask = results_df["pass_search_box"].fillna(False) == True  # noqa: E712
-            pq_mask = pq_mask & sb_mask
-        active_pose_indices = results_df.loc[pq_mask, "mol_idx"].tolist()
-
-    # Filter 2: Interactions
-    if int_config.get("enabled", True):
-        int_step_idx = step_names.index("interactions")
-        if reporter is not None:
-            reporter.progress(
-                int_step_idx * 100,
-                stage_total,
-                message="DockingFilters: interactions",
-            )
-        if active_pose_indices:
-            try:
-                mols_active = [mols[i] for i in active_pose_indices]
-                int_df = apply_interaction_filter(mols_active, protein_pdb, int_config)
-                int_df["mol_idx"] = [active_pose_indices[i] for i in int_df["mol_idx"]]
-                results_df = results_df.merge(int_df, on="mol_idx", how="left")
-                filters_applied.append("interactions")
-            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
-                logger.error("Interaction filter failed: %s", e)
-                results_df["pass_interactions"] = True
-        else:
-            results_df["pass_interactions"] = False
-        if reporter is not None:
-            reporter.progress(
-                (int_step_idx + 1) * 100,
-                stage_total,
-                message="DockingFilters: interactions",
-            )
-
-    # Filter 3: Shepherd-Score
-    if ss_config.get("enabled", False):
-        if ref_path and Path(ref_path).exists():
-            ss_step_idx = (
-                step_names.index("shepherd_score")
-                if "shepherd_score" in step_names
-                else None
-            )
-            if reporter is not None and ss_step_idx is not None:
-                reporter.progress(
-                    ss_step_idx * 100,
-                    stage_total,
-                    message="DockingFilters: shepherd_score",
-                )
-            try:
-                ref_mol = Chem.MolFromMolFile(str(ref_path))
-                if ref_mol:
-                    if not active_pose_indices:
-                        results_df["pass_shepherd_score"] = False
-                    else:
-                        mols_active = [mols[i] for i in active_pose_indices]
-                        ss_df = apply_shepherd_score_filter(
-                            mols_active,
-                            ref_mol,
-                            ss_config,
-                            progress_cb=_step_progress(
-                                ss_step_idx or 0, "shepherd_score"
-                            )
-                            if ss_step_idx is not None
-                            else None,
-                        )
-                        ss_df["mol_idx"] = [
-                            active_pose_indices[i] for i in ss_df["mol_idx"]
-                        ]
-                        results_df = results_df.merge(ss_df, on="mol_idx", how="left")
-                        filters_applied.append("shepherd_score")
-                else:
-                    logger.warning(
-                        "Failed to load reference molecule for Shepherd-Score"
-                    )
-                    results_df["pass_shepherd_score"] = True
-            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
-                logger.error("Shepherd-Score filter failed: %s", e)
-                results_df["pass_shepherd_score"] = True
-            finally:
-                if reporter is not None and ss_step_idx is not None:
-                    reporter.progress(
-                        (ss_step_idx + 1) * 100,
-                        stage_total,
-                        message="DockingFilters: shepherd_score",
-                    )
-        else:
-            logger.info("Shepherd-Score disabled (no reference ligand)")
-            results_df["pass_shepherd_score"] = True
-
-    # Filter 4: Conformer Deviation — dispatch by backend
-    if cd_config.get("enabled", True):
-        cd_step_idx = step_names.index("conformer_deviation")
-        if reporter is not None:
-            reporter.progress(
-                cd_step_idx * 100,
-                stage_total,
-                message="DockingFilters: conformer_deviation",
-            )
-        if active_pose_indices:
-            try:
-                mols_active = [mols[i] for i in active_pose_indices]
-                cd_backend = cd_config.get("backend", "symmetry_rmsd")
-                if cd_backend == "symmetry_rmsd":
-                    cd_df = apply_symmetry_rmsd_filter(
-                        mols_active,
-                        cd_config,
-                        progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
-                    )
-                else:  # "naive" (legacy)
-                    cd_df = apply_conformer_deviation_filter(
-                        mols_active,
-                        cd_config,
-                        progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
-                    )
-                cd_df["mol_idx"] = [active_pose_indices[i] for i in cd_df["mol_idx"]]
-                results_df = results_df.merge(cd_df, on="mol_idx", how="left")
-                filters_applied.append("conformer_deviation")
-            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
-                logger.error("Conformer deviation filter failed: %s", e)
-                results_df["pass_conformer_deviation"] = True
-        else:
-            results_df["pass_conformer_deviation"] = False
-        if reporter is not None:
-            reporter.progress(
-                (cd_step_idx + 1) * 100,
-                stage_total,
-                message="DockingFilters: conformer_deviation",
-            )
-
-    if reporter is not None:
-        reporter.progress(stage_total, stage_total, message="DockingFilters complete")
-
-    # Aggregate pass columns
+def _merge_filter_results(
+    results_df: pd.DataFrame,
+    agg_mode: str,
+    filters_applied: list[str],
+) -> pd.DataFrame:
+    """Aggregate per-filter pass columns into final pass/fail and log summary."""
     pass_cols = [c for c in results_df.columns if c.startswith("pass_")]
     results_df[pass_cols] = results_df[pass_cols].fillna(False)
 
@@ -514,13 +306,23 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     else:  # "any"
         results_df["pass"] = results_df[pass_cols].any(axis=1)
 
-    # Summary
     n_passed = results_df["pass"].sum()
     n_total = len(results_df)
     logger.info("Docking filters complete: %d/%d molecules passed", n_passed, n_total)
     logger.info("Filters applied: %s", ", ".join(filters_applied))
 
-    # Save results
+    return results_df
+
+
+def _save_filter_outputs(
+    results_df: pd.DataFrame,
+    mols: list[Chem.Mol],
+    output_dir: Path,
+    docking_dir: Path,
+    filter_config: dict[str, Any],
+) -> None:
+    """Save metrics, filtered molecules, SDF, and optionally failed molecules."""
+    # Save metrics
     if filter_config.get("aggregation", {}).get("save_metrics", True):
         metrics_path = output_dir / "metrics.csv"
         results_df.to_csv(metrics_path, index=False)
@@ -600,5 +402,259 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             failed_path = output_dir / "failed_molecules.csv"
             failed_df.to_csv(failed_path, index=False)
             logger.info("Saved %d failed molecules to %s", len(failed_df), failed_path)
+
+
+def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame | None:
+    """
+    Main entry point for docking filters stage.
+
+    Applies configured filters to docking poses and saves filtered results.
+
+    Args:
+        config: Full pipeline configuration dict containing:
+            - config_docking_filters: Filter settings
+            - folder_to_save: Output directory path
+            - config_docking: Docking configuration (for receptor path)
+
+    Returns:
+        DataFrame with filtered molecules and metrics, or None if no molecules pass
+    """
+    # Load and validate inputs
+    inputs = _load_filter_inputs(config)
+    if inputs is None:
+        return None
+
+    filter_config = inputs["filter_config"]
+    output_dir = inputs["output_dir"]
+    docking_dir = inputs["docking_dir"]
+    docking_config = inputs["docking_config"]
+    protein_pdb = inputs["protein_pdb"]
+    mols = inputs["mols"]
+    base_folder = inputs["base_folder"]
+
+    # Extract identifiers and collapse to single pose per molecule
+    results_df = _extract_pose_identifiers(mols)
+
+    initial_pose_count = len(mols)
+    mols, results_df = _collapse_to_single_pose(mols, results_df)
+    if not mols:
+        logger.warning("No valid poses remained after single-pose collapse")
+        return None
+    logger.info(
+        "Collapsed docking poses to one pose per molecule: %d -> %d",
+        initial_pose_count,
+        len(mols),
+    )
+
+    # Resolve filter configs
+    filters_applied: list[str] = []
+    pq_config = filter_config.get("pose_quality", {})
+    int_config = filter_config.get("interactions", {})
+    sb_config = filter_config.get("search_box", {})
+    ss_config = filter_config.get("shepherd_score", {})
+    cd_config = filter_config.get("conformer_deviation", {})
+    agg_mode = filter_config.get("aggregation", {}).get("mode", "all")
+
+    ref_path = ss_config.get("reference_ligand")
+    shepherd_enabled = bool(ss_config.get("enabled", False)) and bool(
+        ref_path and Path(ref_path).exists()
+    )
+
+    # Stage progress setup
+    step_names: list[str] = ["search_box"]
+    if pq_config.get("enabled", True):
+        step_names.append("pose_quality")
+    if int_config.get("enabled", True):
+        step_names.append("interactions")
+    if shepherd_enabled:
+        step_names.append("shepherd_score")
+    if cd_config.get("enabled", True):
+        step_names.append("conformer_deviation")
+
+    stage_total = max(1, len(step_names) * 100)
+
+    def _step_progress(step_index: int, label: str):
+        if reporter is None:
+            return None
+
+        base = step_index * 100
+
+        def _progress(done: int, total: int) -> None:
+            if total <= 0:
+                pct = 0
+            else:
+                pct = int(round((done / total) * 100))
+            pct = max(0, min(100, pct))
+            reporter.progress(
+                base + pct, stage_total, message=f"DockingFilters: {label}"
+            )
+
+        return _progress
+
+    def _report(value: int, msg: str) -> None:
+        if reporter is not None:
+            reporter.progress(value, stage_total, message=msg)
+
+    # Filter 0: Search-box containment (fast) — runs on all mols, no active_pose_indices
+    try:
+        _report(0, "DockingFilters: search_box")
+        sb_df = apply_search_box_filter(mols, base_folder, docking_config, sb_config)
+        results_df = results_df.merge(sb_df, on="mol_idx", how="left")
+        filters_applied.append("search_box")
+    except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
+        logger.error("Search-box filter failed: %s", e)
+        results_df["pass_search_box"] = True
+    finally:
+        _report(100, "DockingFilters: search_box")
+
+    # Short-circuit: under aggregation mode "all", skip heavier checks for failed poses
+    sb_short_circuit = bool(sb_config.get("short_circuit", True)) and agg_mode == "all"
+    active_pose_indices = list(range(len(mols)))
+    if sb_short_circuit and "pass_search_box" in results_df.columns:
+        active_pose_indices = results_df.loc[
+            results_df["pass_search_box"] == True, "mol_idx"  # noqa: E712
+        ].tolist()
+
+    # Filter 1: Pose Quality
+    if pq_config.get("enabled", True):
+        pq_step_idx = step_names.index("pose_quality")
+        _report(pq_step_idx * 100, "DockingFilters: pose_quality")
+
+        pq_backend = pq_config.get("backend", "posebusters_fast")
+
+        def _pose_quality_fn(mols_active):
+            if pq_backend == "posebusters_fast":
+                return apply_posebusters_fast_filter(
+                    mols_active,
+                    protein_pdb,
+                    pq_config,
+                    progress_cb=_step_progress(pq_step_idx, "pose_quality"),
+                )
+            else:  # "posecheck" (legacy)
+                return apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
+
+        results_df, applied = _run_single_filter(
+            "pose_quality", _pose_quality_fn, mols, active_pose_indices, results_df
+        )
+        if applied:
+            filters_applied.append("pose_quality")
+        _report((pq_step_idx + 1) * 100, "DockingFilters: pose_quality")
+
+    # Short-circuit after pose quality
+    pq_short_circuit = bool(pq_config.get("short_circuit", True)) and agg_mode == "all"
+    if pq_short_circuit and "pass_pose_quality" in results_df.columns:
+        pq_mask = results_df["pass_pose_quality"].fillna(False) == True  # noqa: E712
+        if "pass_search_box" in results_df.columns:
+            sb_mask = results_df["pass_search_box"].fillna(False) == True  # noqa: E712
+            pq_mask = pq_mask & sb_mask
+        active_pose_indices = results_df.loc[pq_mask, "mol_idx"].tolist()
+
+    # Filter 2: Interactions
+    if int_config.get("enabled", True):
+        int_step_idx = step_names.index("interactions")
+        _report(int_step_idx * 100, "DockingFilters: interactions")
+
+        def _interactions_fn(mols_active):
+            return apply_interaction_filter(mols_active, protein_pdb, int_config)
+
+        results_df, applied = _run_single_filter(
+            "interactions", _interactions_fn, mols, active_pose_indices, results_df
+        )
+        if applied:
+            filters_applied.append("interactions")
+        _report((int_step_idx + 1) * 100, "DockingFilters: interactions")
+
+    # Filter 3: Shepherd-Score
+    if ss_config.get("enabled", False):
+        if ref_path and Path(ref_path).exists():
+            ss_step_idx = (
+                step_names.index("shepherd_score")
+                if "shepherd_score" in step_names
+                else None
+            )
+            if reporter is not None and ss_step_idx is not None:
+                reporter.progress(
+                    ss_step_idx * 100,
+                    stage_total,
+                    message="DockingFilters: shepherd_score",
+                )
+            try:
+                ref_mol = Chem.MolFromMolFile(str(ref_path))
+                if ref_mol:
+                    if not active_pose_indices:
+                        results_df["pass_shepherd_score"] = False
+                    else:
+                        mols_active = [mols[i] for i in active_pose_indices]
+                        ss_df = apply_shepherd_score_filter(
+                            mols_active,
+                            ref_mol,
+                            ss_config,
+                            progress_cb=_step_progress(
+                                ss_step_idx or 0, "shepherd_score"
+                            )
+                            if ss_step_idx is not None
+                            else None,
+                        )
+                        ss_df["mol_idx"] = [
+                            active_pose_indices[i] for i in ss_df["mol_idx"]
+                        ]
+                        results_df = results_df.merge(ss_df, on="mol_idx", how="left")
+                        filters_applied.append("shepherd_score")
+                else:
+                    logger.warning(
+                        "Failed to load reference molecule for Shepherd-Score"
+                    )
+                    results_df["pass_shepherd_score"] = True
+            except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
+                logger.error("Shepherd-Score filter failed: %s", e)
+                results_df["pass_shepherd_score"] = True
+            finally:
+                if reporter is not None and ss_step_idx is not None:
+                    reporter.progress(
+                        (ss_step_idx + 1) * 100,
+                        stage_total,
+                        message="DockingFilters: shepherd_score",
+                    )
+        else:
+            logger.info("Shepherd-Score disabled (no reference ligand)")
+            results_df["pass_shepherd_score"] = True
+
+    # Filter 4: Conformer Deviation
+    if cd_config.get("enabled", True):
+        cd_step_idx = step_names.index("conformer_deviation")
+        _report(cd_step_idx * 100, "DockingFilters: conformer_deviation")
+
+        cd_backend = cd_config.get("backend", "symmetry_rmsd")
+
+        def _conformer_deviation_fn(mols_active):
+            if cd_backend == "symmetry_rmsd":
+                return apply_symmetry_rmsd_filter(
+                    mols_active,
+                    cd_config,
+                    progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
+                )
+            else:  # "naive" (legacy)
+                return apply_conformer_deviation_filter(
+                    mols_active,
+                    cd_config,
+                    progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
+                )
+
+        results_df, applied = _run_single_filter(
+            "conformer_deviation",
+            _conformer_deviation_fn,
+            mols,
+            active_pose_indices,
+            results_df,
+        )
+        if applied:
+            filters_applied.append("conformer_deviation")
+        _report((cd_step_idx + 1) * 100, "DockingFilters: conformer_deviation")
+
+    _report(stage_total, "DockingFilters complete")
+
+    # Aggregate and save
+    results_df = _merge_filter_results(results_df, agg_mode, filters_applied)
+    _save_filter_outputs(results_df, mols, output_dir, docking_dir, filter_config)
 
     return results_df
