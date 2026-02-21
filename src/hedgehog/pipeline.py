@@ -380,6 +380,56 @@ class PipelineStageRunner:
         self.progress_callback = progress_callback
         self.data_checker = data_checker
 
+    def _run_if_enabled(
+        self,
+        config_key: str,
+        stage_fn,
+        *args,
+        disabled_message: str,
+        error_message: str,
+        optional_config: bool = False,
+        missing_config_message: str | None = None,
+        missing_config_check=None,
+        pre_check=None,
+        before_run=None,
+        result_validator=None,
+        **kwargs,
+    ) -> bool:
+        """Run a stage function only when its config enables execution."""
+        try:
+            if pre_check and not pre_check():
+                return False
+
+            if optional_config:
+                config_path = self.config.get(config_key)
+                is_missing = (
+                    missing_config_check(config_path)
+                    if missing_config_check
+                    else not config_path
+                )
+                if is_missing:
+                    if missing_config_message:
+                        logger.info(missing_config_message)
+                    return False
+            else:
+                config_path = self.config[config_key]
+
+            cfg = load_config(config_path)
+            if not cfg.get(CONFIG_RUN_KEY, False):
+                logger.info(disabled_message)
+                return False
+
+            if before_run and not before_run():
+                return False
+
+            result = stage_fn(*args, **kwargs)
+            if result_validator:
+                return result_validator(result)
+            return True
+        except Exception as exc:  # noqa: BLE001 — intentional: stage runner must catch all
+            logger.error("%s: %s", error_message, exc)
+            return False
+
     def find_latest_data_source(self) -> str | None:
         """Find the most recent stage with available output data.
 
@@ -414,22 +464,18 @@ class PipelineStageRunner:
         reporter: StageProgressReporter | None = None,
     ) -> bool:
         """Run Datamol-based Mol Prep stage."""
-        try:
-            config_path = self.config.get(CONFIG_MOL_PREP)
-            if not config_path:
-                logger.info("Mol Prep config not specified, skipping")
-                return False
-
-            cfg = load_config(config_path)
-            if not cfg.get(CONFIG_RUN_KEY, False):
-                logger.info("Mol Prep disabled in config")
-                return False
-
-            mol_prep_main(data, self.config, subfolder=subfolder, reporter=reporter)
-            return True
-        except Exception as exc:  # noqa: BLE001 — intentional: stage runner must catch all
-            logger.error("Error running Mol Prep: %s", exc)
-            return False
+        return self._run_if_enabled(
+            CONFIG_MOL_PREP,
+            mol_prep_main,
+            data,
+            self.config,
+            subfolder=subfolder,
+            reporter=reporter,
+            optional_config=True,
+            missing_config_message="Mol Prep config not specified, skipping",
+            disabled_message="Mol Prep disabled in config",
+            error_message="Error running Mol Prep",
+        )
 
     def run_descriptors(
         self,
@@ -438,44 +484,35 @@ class PipelineStageRunner:
         reporter: StageProgressReporter | None = None,
     ) -> bool:
         """Run molecular descriptors calculation."""
-        try:
-            config_descriptors = load_config(self.config[CONFIG_DESCRIPTORS])
-            if not config_descriptors.get(CONFIG_RUN_KEY, False):
-                logger.info("Descriptors calculation disabled in config")
-                return False
-            descriptors_main(data, self.config, subfolder=subfolder, reporter=reporter)
-            return True
-        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
-            logger.error("Error running descriptors: %s", e)
-            return False
+        return self._run_if_enabled(
+            CONFIG_DESCRIPTORS,
+            descriptors_main,
+            data,
+            self.config,
+            subfolder=subfolder,
+            reporter=reporter,
+            disabled_message="Descriptors calculation disabled in config",
+            error_message="Error running descriptors",
+        )
 
     def run_structural_filters(
         self, stage_dir: str, reporter: StageProgressReporter | None = None
     ) -> bool:
         """Run structural filters on molecules."""
-        try:
-            config_struct_filters = load_config(self.config[CONFIG_STRUCT_FILTERS])
-            if not config_struct_filters.get(CONFIG_RUN_KEY, False):
-                logger.info("Structural filters disabled in config")
-                return False
-
-            structural_filters_main(self.config, stage_dir, reporter=reporter)
-            return True
-        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
-            logger.error("Error running structural filters: %s", e)
-            return False
+        return self._run_if_enabled(
+            CONFIG_STRUCT_FILTERS,
+            structural_filters_main,
+            self.config,
+            stage_dir,
+            reporter=reporter,
+            disabled_message="Structural filters disabled in config",
+            error_message="Error running structural filters",
+        )
 
     def run_synthesis(self, reporter: StageProgressReporter | None = None) -> bool:
         """Run synthesis analysis."""
-        try:
-            if not self._validate_synthesis_input():
-                return False
 
-            config_synthesis = load_config(self.config[CONFIG_SYNTHESIS])
-            if not config_synthesis.get(CONFIG_RUN_KEY, False):
-                logger.info("Synthesis disabled in config")
-                return False
-
+        def _run_stage() -> bool:
             synthesis_main(self.config, reporter=reporter)
 
             output_path = (
@@ -485,9 +522,15 @@ class PipelineStageRunner:
                 logger.error("Synthesis finished but no output file detected")
                 return False
             return True
-        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
-            logger.error("Error running synthesis: %s", e)
-            return False
+
+        return self._run_if_enabled(
+            CONFIG_SYNTHESIS,
+            _run_stage,
+            pre_check=self._validate_synthesis_input,
+            result_validator=bool,
+            disabled_message="Synthesis disabled in config",
+            error_message="Error running synthesis",
+        )
 
     def _validate_synthesis_input(self) -> bool:
         """Validate that input data exists for synthesis stage."""
@@ -561,12 +604,8 @@ class PipelineStageRunner:
 
     def run_docking(self, reporter: StageProgressReporter | None = None) -> bool:
         """Run molecular docking."""
-        try:
-            config_docking = load_config(self.config[CONFIG_DOCKING])
-            if not config_docking.get(CONFIG_RUN_KEY, False):
-                logger.info("Docking disabled in config")
-                return False
 
+        def _run_stage() -> bool:
             if not docking_main(self.config, reporter=reporter):
                 return False
 
@@ -576,40 +615,43 @@ class PipelineStageRunner:
                 )
                 return False
             return True
-        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
-            logger.error("Error running docking: %s", e)
-            return False
+
+        return self._run_if_enabled(
+            CONFIG_DOCKING,
+            _run_stage,
+            result_validator=bool,
+            disabled_message="Docking disabled in config",
+            error_message="Error running docking",
+        )
+
+    def _can_run_docking_filters(self) -> bool:
+        """Return whether docking filters have required docking outputs."""
+        if self.docking_results_present():
+            return True
+
+        logger.warning(
+            "No docking results found. Skipping docking filters. "
+            "Ensure docking stage completed successfully before running filters."
+        )
+        return False
 
     def run_docking_filters(
         self, reporter: StageProgressReporter | None = None
     ) -> bool:
         """Run docking filters stage."""
-        try:
-            # Check if config exists
-            config_path = self.config.get(CONFIG_DOCKING_FILTERS)
-            if config_path is None:
-                logger.info("Docking filters config not specified, skipping")
-                return False
-
-            config_filters = load_config(config_path)
-            if not config_filters.get(CONFIG_RUN_KEY, False):
-                logger.info("Docking filters disabled in config")
-                return False
-
-            # Check if docking results exist before running filters
-            if not self.docking_results_present():
-                logger.warning(
-                    "No docking results found. Skipping docking filters. "
-                    "Ensure docking stage completed successfully before running filters."
-                )
-                return False
-
-            # Run docking filters
-            result = docking_filters_main(self.config, reporter=reporter)
-            return result is not None and len(result) > 0
-        except Exception as e:  # noqa: BLE001 — intentional: stage runner must catch all
-            logger.error("Error running docking filters: %s", e)
-            return False
+        return self._run_if_enabled(
+            CONFIG_DOCKING_FILTERS,
+            docking_filters_main,
+            self.config,
+            reporter=reporter,
+            optional_config=True,
+            missing_config_message="Docking filters config not specified, skipping",
+            missing_config_check=lambda path: path is None,
+            before_run=self._can_run_docking_filters,
+            result_validator=lambda result: result is not None and len(result) > 0,
+            disabled_message="Docking filters disabled in config",
+            error_message="Error running docking filters",
+        )
 
 
 class MolecularAnalysisPipeline:
@@ -635,6 +677,20 @@ class MolecularAnalysisPipeline:
         STAGE_DOCKING: "Stage 5: Molecular Docking",
         STAGE_DOCKING_FILTERS: "Stage 6: Docking Filters",
         STAGE_FINAL_DESCRIPTORS: "Stage 7': Final Descriptors Calculation",
+    }
+    _OUTCOME_DISABLED = "disabled"
+    _OUTCOME_COMPLETED = "completed"
+    _OUTCOME_SKIPPED_NO_MOLECULES = "skipped_no_molecules"
+    _OUTCOME_FAILED = "failed"
+    _FINAL_DESCRIPTORS_SOURCE_PRIORITY = [
+        DIR_DOCKING_FILTERS,
+        DIR_SYNTHESIS,
+        DIR_STRUCT_FILTERS_POST,
+        DIR_MOL_PREP,
+    ]
+    _SKIP_IF_NO_MOLECULES = {
+        STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
+        STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
     }
 
     def __init__(self, config: dict, progress_callback=None):
@@ -1064,23 +1120,13 @@ class MolecularAnalysisPipeline:
 
     def _run_docking(self) -> tuple[bool, bool]:
         """Run molecular docking stage."""
-        source = _find_input(self.data_checker.base_path)
-        if source is None:
-            logger.info("No docking input found; skipping docking")
-            return False, False
-        if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
-            logger.info("No molecules available for docking; skipping docking")
+        if not self._has_docking_input("docking"):
             return False, False
         return self._run_stage(STAGE_DOCKING, self.stage_runner.run_docking)
 
     def _run_docking_filters(self) -> tuple[bool, bool]:
         """Run docking filters stage."""
-        source = _find_input(self.data_checker.base_path)
-        if source is None:
-            logger.info("No docking input found; skipping docking filters")
-            return False, False
-        if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
-            logger.info("No molecules available for docking; skipping docking filters")
+        if not self._has_docking_input("docking filters"):
             return False, False
         return self._run_stage(
             STAGE_DOCKING_FILTERS, self.stage_runner.run_docking_filters
@@ -1129,57 +1175,52 @@ class MolecularAnalysisPipeline:
         )
         self._generate_html_report(initial_count, final_count)
 
-        return not any(self._stage_is_failed(stage) for stage in self.stages)
+        return not any(
+            self._classify_stage_outcome(stage) == self._OUTCOME_FAILED
+            for stage in self.stages
+        )
 
-    def _stage_is_failed(self, stage: PipelineStage) -> bool:
-        """Return True if an enabled stage is considered a failure.
+    def _has_docking_input(self, stage_label: str) -> bool:
+        """Return whether docking-family stages have molecule input to process."""
+        source = _find_input(self.data_checker.base_path)
+        if source is None:
+            logger.info("No docking input found; skipping %s", stage_label)
+            return False
+        if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
+            logger.info("No molecules available for docking; skipping %s", stage_label)
+            return False
+        return True
 
-        Stages are not treated as failures when they are skipped due to having
-        no molecules available at their required input boundary.
-        """
+    def _classify_stage_outcome(self, stage: PipelineStage) -> str:
+        """Classify stage outcome as completed/failed/skipped/disabled."""
         if not stage.enabled:
-            return False
+            return self._OUTCOME_DISABLED
         if stage.completed:
-            return False
+            return self._OUTCOME_COMPLETED
 
         if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
             source = _find_input(self.data_checker.base_path)
             if source is None:
-                return False
-            if source.suffix.lower() == ".csv":
-                return _csv_has_data_rows(source)
-            return _file_exists_and_not_empty(source)
+                return self._OUTCOME_SKIPPED_NO_MOLECULES
+            if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
+                return self._OUTCOME_SKIPPED_NO_MOLECULES
 
         if stage.name == STAGE_FINAL_DESCRIPTORS:
-            # Final descriptors depends on the latest non-descriptor stage output.
-            # If that latest output is empty (0 molecules), we treat it as skipped,
-            # not as a pipeline failure.
-            sources = [
-                DIR_DOCKING_FILTERS,
-                DIR_SYNTHESIS,
-                DIR_STRUCT_FILTERS_POST,
-                DIR_MOL_PREP,
-            ]
-            latest = self._find_data_source(sources)
+            latest = self._find_data_source(self._FINAL_DESCRIPTORS_SOURCE_PRIORITY)
             if not latest:
-                return False
+                return self._OUTCOME_SKIPPED_NO_MOLECULES
             try:
                 latest_df = pd.read_csv(self._build_data_path(latest))
             except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
-                # If the latest output exists but cannot be read, treat as failure.
-                return True
-            return len(latest_df) > 0
+                return self._OUTCOME_FAILED
+            if len(latest_df) == 0:
+                return self._OUTCOME_SKIPPED_NO_MOLECULES
 
-        # Other stages are skippable when their required upstream output is absent/empty.
-        skip_conditions = {
-            STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
-            STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
-        }
-        required_data = skip_conditions.get(stage.name)
+        required_data = self._SKIP_IF_NO_MOLECULES.get(stage.name)
         if required_data and not self.data_checker.stage_has_molecules(required_data):
-            return False
+            return self._OUTCOME_SKIPPED_NO_MOLECULES
 
-        return True
+        return self._OUTCOME_FAILED
 
     def _generate_html_report(self, initial_count: int, final_count: int) -> None:
         """Generate HTML report for the pipeline run."""
@@ -1252,7 +1293,7 @@ class MolecularAnalysisPipeline:
         _log_stage_header("Pipeline Execution Summary")
 
         for stage in self.stages:
-            status = self._get_stage_status(stage)
+            status = self._format_stage_outcome(self._classify_stage_outcome(stage))
             timing = self.stage_timings.get(stage.name)
             if timing is not None:
                 logger.info("%s: %s (%.1fs)", stage.name, status, timing)
@@ -1264,93 +1305,24 @@ class MolecularAnalysisPipeline:
             total_time = sum(self.stage_timings.values())
             logger.info("Total pipeline time: %.1f seconds", total_time)
 
-    def _get_stage_status(self, stage: PipelineStage) -> str:
-        """Get display status for a stage."""
+    def _format_stage_outcome(self, outcome: str) -> str:
+        """Format internal stage outcome for terminal display."""
         if plain_output_enabled():
-            if not stage.enabled:
-                return "DISABLED"
-            if stage.completed:
-                return "COMPLETED"
-
-            if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
-                source = _find_input(self.data_checker.base_path)
-                if source is None:
-                    return "SKIPPED (no molecules)"
-                if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
-                    return "SKIPPED (no molecules)"
-
-            if stage.name == STAGE_FINAL_DESCRIPTORS:
-                sources = [
-                    DIR_DOCKING_FILTERS,
-                    DIR_SYNTHESIS,
-                    DIR_STRUCT_FILTERS_POST,
-                    DIR_MOL_PREP,
-                ]
-                latest = self._find_data_source(sources)
-                if not latest:
-                    return "SKIPPED (no molecules)"
-                try:
-                    latest_df = pd.read_csv(self._build_data_path(latest))
-                except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
-                    return "FAILED"
-                if len(latest_df) == 0:
-                    return "SKIPPED (no molecules)"
-
-            skip_conditions = {
-                STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
-                STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
+            plain_map = {
+                self._OUTCOME_DISABLED: "DISABLED",
+                self._OUTCOME_COMPLETED: "COMPLETED",
+                self._OUTCOME_SKIPPED_NO_MOLECULES: "SKIPPED (no molecules)",
+                self._OUTCOME_FAILED: "FAILED",
             }
-            required_data = skip_conditions.get(stage.name)
-            if required_data and not self.data_checker.stage_has_molecules(
-                required_data
-            ):
-                return "SKIPPED (no molecules)"
+            return plain_map[outcome]
 
-            return "FAILED"
-
-        if not stage.enabled:
-            return "DISABLED"
-        if stage.completed:
-            return "[bold]\u2713 COMPLETED[/bold]"
-
-        if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
-            source = _find_input(self.data_checker.base_path)
-            if source is None:
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-            if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-
-        if stage.name == STAGE_FINAL_DESCRIPTORS:
-            # Final descriptors can run on the latest available non-descriptor output
-            # (docking filters, synthesis, structural filters, etc.). Mark as skipped
-            # only if that latest output has no molecules.
-            sources = [
-                DIR_DOCKING_FILTERS,
-                DIR_SYNTHESIS,
-                DIR_STRUCT_FILTERS_POST,
-                DIR_MOL_PREP,
-            ]
-            latest = self._find_data_source(sources)
-            if not latest:
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-            try:
-                latest_df = pd.read_csv(self._build_data_path(latest))
-            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
-                return "[bold]\u2717 FAILED[/bold]"
-            if len(latest_df) == 0:
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-
-        # Check for skipped conditions
-        skip_conditions = {
-            STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
-            STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
+        rich_map = {
+            self._OUTCOME_DISABLED: "DISABLED",
+            self._OUTCOME_COMPLETED: "[bold]\u2713 COMPLETED[/bold]",
+            self._OUTCOME_SKIPPED_NO_MOLECULES: "[dim]\u27c2 SKIPPED (no molecules)[/dim]",
+            self._OUTCOME_FAILED: "[bold]\u2717 FAILED[/bold]",
         }
-
-        required_data = skip_conditions.get(stage.name)
-        if required_data and not self.data_checker.stage_has_molecules(required_data):
-            return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-
-        return "[bold]\u2717 FAILED[/bold]"
+        return rich_map[outcome]
 
 
 def _save_config_snapshot(config: dict) -> None:
