@@ -467,7 +467,6 @@ def _create_per_molecule_configs(
     molecule_files,
     tool_name,
     cpu_override: int | None = None,
-    gpu_count: int | None = None,
 ):
     """Create per-molecule docking config files.
 
@@ -511,13 +510,7 @@ def _create_per_molecule_configs(
 
     config_entries = []
 
-    use_device_round_robin = (
-        tool_name == "gnina"
-        and (gpu_count or 0) > 0
-        and tool_config.get("device") is None
-    )
-
-    for idx, mol_file in enumerate(molecule_files):
+    for mol_file in molecule_files:
         mol_id = mol_file.stem
         config_path = configs_dir / f"{tool_name}_{mol_id}.ini"
         output_sdf = results_dir / f"{mol_id}_out.sdf"
@@ -558,8 +551,6 @@ def _create_per_molecule_configs(
                 lines.append(f"{key} = {str(value).lower()}")
             else:
                 lines.append(f"{key} = {value}")
-        if use_device_round_robin:
-            lines.append(f"device = {idx % int(gpu_count)}")
 
         with open(config_path, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -2183,7 +2174,9 @@ def _setup_gnina(
         gpu_count = 0 if no_gpu_enabled else _count_visible_nvidia_gpus()
         parallel_jobs = _resolve_gnina_parallel_jobs(cfg, cpu_per_process)
         if gpu_count > 0 and cfg.get("gnina_parallel_jobs") is None:
-            parallel_jobs = min(parallel_jobs, gpu_count)
+            # GNINA's CNN backend is unstable with multi-process GPU execution
+            # on many systems (device mismatch/OOM). Keep default safe.
+            parallel_jobs = 1
 
         if per_molecule_mode:
             ligands_path_obj = Path(ligands_path)
@@ -2224,7 +2217,6 @@ def _setup_gnina(
                         molecule_files,
                         "gnina",
                         cpu_override=cpu_per_process,
-                        gpu_count=gpu_count,
                     )
 
                     # Create per-molecule script

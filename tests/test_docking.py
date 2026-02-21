@@ -608,31 +608,6 @@ class TestGninaNoGpuFlag:
         assert ":" not in filename
         assert "*" not in filename
 
-    def test_per_molecule_gnina_assigns_device_round_robin(self, tmp_path):
-        receptor = tmp_path / "receptor.pdb"
-        receptor.write_text("ATOM\n")
-        molecules = []
-        for idx in range(3):
-            mol_file = tmp_path / "molecules" / f"{idx:06d}_test.sdf"
-            mol_file.parent.mkdir(parents=True, exist_ok=True)
-            mol_file.write_text("")
-            molecules.append(mol_file)
-
-        cfg = {"gnina_config": {"cpu": 4}}
-        entries = _create_per_molecule_configs(
-            cfg=cfg,
-            ligands_dir=tmp_path,
-            receptor=receptor,
-            molecule_files=molecules,
-            tool_name="gnina",
-            gpu_count=2,
-        )
-
-        config_texts = [Path(config_path).read_text() for _, config_path, _ in entries]
-        assert "device = 0" in config_texts[0]
-        assert "device = 1" in config_texts[1]
-        assert "device = 0" in config_texts[2]
-
     def test_per_molecule_gnina_preserves_explicit_device(self, tmp_path):
         receptor = tmp_path / "receptor.pdb"
         receptor.write_text("ATOM\n")
@@ -647,7 +622,6 @@ class TestGninaNoGpuFlag:
             receptor=receptor,
             molecule_files=[mol_file],
             tool_name="gnina",
-            gpu_count=4,
         )
 
         _, config_path, _ = entries[0]
