@@ -1142,7 +1142,7 @@ def _setup_gnina(
         gnina_command_template = _build_gnina_command_template(
             cfg, gnina_bin, ligands_dir
         )
-        activate_cmd, ld_library_path = _get_gnina_environment(cfg, base_folder)
+        activate_cmd, ld_library_path = _get_gnina_environment(cfg)
 
         # Check if per-molecule mode is enabled (default: True)
         per_molecule_mode = cfg.get("per_molecule_docking", True)

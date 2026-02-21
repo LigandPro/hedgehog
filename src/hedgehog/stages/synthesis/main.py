@@ -3,11 +3,20 @@ from pathlib import Path
 import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.stages.synthesis.utils import *
+from hedgehog.stages.synthesis.utils import (
+    apply_synthesis_score_filters,
+    calculate_synthesis_scores,
+    get_input_path,
+    merge_retrosynthesis_results,
+    parse_retrosynthesis_results,
+    prepare_input_smiles,
+    run_aizynthfinder,
+)
 from hedgehog.utils.dataframe import (
     IDENTITY_COLUMNS,
     save_ordered_csv,
 )
+from hedgehog.utils.paths import process_path
 
 
 def _get_aizynthfinder_config() -> Path:

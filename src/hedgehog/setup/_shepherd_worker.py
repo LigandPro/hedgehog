@@ -97,7 +97,7 @@ def ensure_shepherd_worker(project_root: Path, python_bin: str | None = None) ->
 
     try:
         _verify_worker(worker_entry, venv_python, project_root)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — intentional: Shepherd verification may raise diverse errors
         raise RuntimeError(
             "Shepherd worker was installed but failed verification. "
             f"Command: {shlex.join([str(venv_python), '-m', 'hedgehog.workers.shepherd_worker', '--help'])}. "

@@ -67,6 +67,14 @@ def _collapse_to_single_pose(
     if results_df.empty:
         return [], results_df.copy()
 
+    required_cols = {"source_mol_idx", "mol_idx", "gnina_minimizedAffinity"}
+    missing = required_cols - set(results_df.columns)
+    if missing:
+        logger.warning(
+            "Cannot collapse to single pose: missing columns %s", sorted(missing)
+        )
+        return list(mols), results_df.copy()
+
     collapsed = results_df.copy()
     source_ids = collapsed["source_mol_idx"].astype(str).str.strip()
     fallback_ids = collapsed["mol_idx"].astype(str)
@@ -287,7 +295,9 @@ def _run_single_filter(
         results_df = results_df.merge(filter_df, on="mol_idx", how="left")
         return results_df, True
     except Exception as e:  # noqa: BLE001 — intentional: filter failure should not crash pipeline
-        logger.error("%s filter failed: %s", filter_name, e)
+        logger.warning(
+            "Filter '%s' failed, defaulting all poses to pass: %s", filter_name, e
+        )
         results_df[f"pass_{filter_name}"] = True
         return results_df, False
 
@@ -338,6 +348,10 @@ def _save_filter_outputs(
         )
         logger.info("Saved 0 filtered molecules to %s", filtered_path)
     else:
+        # mol_idx is always present (set by pipeline); smiles is added below
+        if "mol_idx" not in filtered_df.columns:
+            logger.warning("Cannot save filter outputs: missing 'mol_idx' column")
+            return
         pose_indices = filtered_df["mol_idx"].tolist()
 
         # Use original SMILES from ligands.csv (preserves 2D stereochemistry)
@@ -455,9 +469,12 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     cd_config = filter_config.get("conformer_deviation", {})
     agg_mode = filter_config.get("aggregation", {}).get("mode", "all")
 
-    ref_path = ss_config.get("reference_ligand")
+    ref_path_raw = ss_config.get("reference_ligand")
+    ref_path = None
+    if ref_path_raw:
+        ref_path = resolve_existing_path(base_folder, ref_path_raw, _project_root())
     shepherd_enabled = bool(ss_config.get("enabled", False)) and bool(
-        ref_path and Path(ref_path).exists()
+        ref_path and ref_path.exists()
     )
 
     # Stage progress setup
@@ -566,7 +583,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
     # Filter 3: Shepherd-Score
     if ss_config.get("enabled", False):
-        if ref_path and Path(ref_path).exists():
+        if ref_path and ref_path.exists():
             ss_step_idx = (
                 step_names.index("shepherd_score")
                 if "shepherd_score" in step_names

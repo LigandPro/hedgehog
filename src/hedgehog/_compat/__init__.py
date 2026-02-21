@@ -9,7 +9,7 @@ from types import ModuleType
 def _get_module(name: str) -> ModuleType | None:
     try:
         return import_module(name)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — intentional: optional dependency import may fail
         return None
 
 

@@ -55,7 +55,7 @@ def _create_docking_config_file(
             [f"size_x = {size[0]}", f"size_y = {size[1]}", f"size_z = {size[2]}"]
         )
 
-    autobox_ligand = tool_config.get("autobox_ligand")
+    autobox_ligand = tool_config.get("autobox_ligand") or cfg.get("autobox_ligand")
     if autobox_ligand:
         project_root = Path(__file__).parent.parent.parent.parent.parent
         autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
@@ -127,7 +127,7 @@ def _create_per_molecule_configs(
     center = tool_config.get("center") or cfg.get("center")
     size = tool_config.get("size") or cfg.get("size")
 
-    autobox_ligand = tool_config.get("autobox_ligand")
+    autobox_ligand = tool_config.get("autobox_ligand") or cfg.get("autobox_ligand")
     autobox_path = None
     if autobox_ligand:
         project_root = Path(__file__).parent.parent.parent.parent.parent

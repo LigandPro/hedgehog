@@ -278,6 +278,90 @@ def build_descriptor_comparison_data(
     return {"descriptors": list(comparison.keys()), "data": comparison}
 
 
+def build_synthesis_js_data(synth_detailed: dict[str, Any]) -> dict[str, Any]:
+    """Build synthesis JSON data for JavaScript model filtering.
+
+    Args:
+        synth_detailed: Detailed synthesis data dictionary.
+
+    Returns:
+        Dictionary with structure for JavaScript synthesis visualization.
+    """
+    if not synth_detailed:
+        return {}
+
+    synthesis_data = {
+        "all": {
+            "sa_scores": synth_detailed.get("sa_scores", []),
+            "syba_scores": synth_detailed.get("syba_scores", []),
+            "ra_scores": synth_detailed.get("ra_scores", []),
+            "solved_count": synth_detailed.get("solved_count", 0),
+            "unsolved_count": synth_detailed.get("unsolved_count", 0),
+            "summary": synth_detailed.get("summary", {}),
+        }
+    }
+    for model, model_data in synth_detailed.get("by_model", {}).items():
+        synthesis_data[model] = model_data
+
+    by_model = synth_detailed.get("by_model", {})
+    if by_model:
+        synthesis_data["__compare__"] = {
+            "is_comparison": True,
+            "models": list(by_model.keys()),
+            "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
+            "data": by_model,
+        }
+    return synthesis_data
+
+
+def build_docking_js_data(
+    data: dict[str, Any], docking_detailed: dict[str, Any]
+) -> dict[str, Any]:
+    """Build docking JSON data for JavaScript model filtering.
+
+    Args:
+        data: Full report data dictionary.
+        docking_detailed: Detailed docking data dictionary.
+
+    Returns:
+        Dictionary keyed by docking tool with structure for JavaScript visualization.
+    """
+    docking_js_data: dict[str, Any] = {}
+    for tool in ["gnina", "smina"]:
+        tool_data = docking_detailed.get(
+            tool, data.get("docking_detailed", {}).get(tool, {})
+        )
+        if not (tool_data.get("raw_data") or tool_data.get("by_model")):
+            continue
+
+        all_scores = [
+            item.get("affinity")
+            for item in tool_data.get("raw_data", [])
+            if item.get("affinity") is not None
+        ]
+        docking_tool_data: dict[str, Any] = {
+            "all": {
+                "scores": all_scores,
+                "summary": tool_data.get("summary", {}),
+                "top_molecules": tool_data.get("top_molecules", []),
+            }
+        }
+        for model, model_data in tool_data.get("by_model", {}).items():
+            docking_tool_data[model] = model_data
+
+        by_model = tool_data.get("by_model", {})
+        if by_model:
+            docking_tool_data["__compare__"] = {
+                "is_comparison": True,
+                "models": list(by_model.keys()),
+                "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
+                "data": by_model,
+            }
+        docking_js_data[f"docking_{tool}_data"] = docking_tool_data
+
+    return docking_js_data
+
+
 def build_model_options(models: list[str]) -> str:
     """Build HTML option elements for model dropdown.
 

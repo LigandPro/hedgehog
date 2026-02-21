@@ -12,6 +12,7 @@ from rdkit import Chem, RDLogger, rdBase
 from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.utils.dataframe import order_identity_columns
 from hedgehog.utils.mce18 import compute_mce18
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 from hedgehog.utils.paths import process_path
@@ -40,14 +41,6 @@ _DESCRIPTOR_KEY_MAP = {
 # Disable RDKit warnings
 RDLogger.DisableLog("rdApp.*")
 rdBase.DisableLog("rdApp.*")
-
-
-def order_identity_columns(df):
-    """Reorder dataframe columns with identity columns first."""
-    id_cols = ["smiles", "model_name", "mol_idx"]
-    existing_id_cols = [c for c in id_cols if c in df.columns]
-    ordered = existing_id_cols + [c for c in df.columns if c not in id_cols]
-    return df[ordered]
 
 
 def drop_false_rows(df, borders):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 import sys
 import threading
@@ -13,6 +12,8 @@ import yaml
 from rich.console import Console
 from rich.logging import RichHandler
 
+from hedgehog.utils.env import plain_output_enabled
+
 # Rich tags that we intentionally emit in logger messages.
 # Keep this narrow to avoid stripping arbitrary bracketed content such as:
 # - chemical strings: [NH4+]
@@ -23,13 +24,6 @@ _RICH_STYLE_TAG_RE = re.compile(
 )
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config.yml"
-
-_PLAIN_OUTPUT_ENV = "HEDGEHOG_PLAIN_OUTPUT"
-
-
-def plain_output_enabled() -> bool:
-    """Return True when console output should be plain (no Rich, no colors)."""
-    return os.environ.get(_PLAIN_OUTPUT_ENV, "").strip() == "1"
 
 
 class LoggerSingleton:

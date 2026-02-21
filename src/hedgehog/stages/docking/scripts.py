@@ -41,7 +41,7 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         ligands_dir: Directory for docking files
         tool_name: 'smina' or 'gnina' for log messages
     """
-    f.write(f"cd {ligands_dir}\n")
+    f.write(f'cd "{ligands_dir}"\n')
 
     if isinstance(protein_prep_cmd, (list, tuple)):
         protein_prep_cmd_str = " ".join(shlex.quote(str(p)) for p in protein_prep_cmd)
@@ -166,13 +166,13 @@ def _write_receptor_check_bash(f, receptor):
 
 def _write_docking_command_bash(f, ligands_dir, docking_bin, config_file, tool_name):
     """Write docking command bash code to script file."""
-    f.write(f"cd {ligands_dir}\n")
+    f.write(f'cd "{ligands_dir}"\n')
     try:
         config_rel = config_file.relative_to(ligands_dir)
     except ValueError:
         config_rel = config_file.name
     f.write(f'echo "Starting {tool_name.upper()} docking with config: {config_rel}"\n')
-    f.write(f"{docking_bin} --config {config_rel}\n")
+    f.write(f'"{docking_bin}" --config "{config_rel}"\n')
     f.write("if [ $? -eq 0 ]; then\n")
     f.write(f'  echo "{tool_name.upper()} docking completed successfully"\n')
     f.write("else\n")
@@ -303,7 +303,7 @@ def _create_smina_per_molecule_script(
         if protein_prep_cmd:
             _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, "smina")
 
-        f.write(f"cd {ligands_dir}\n")
+        f.write(f'cd "{ligands_dir}"\n')
         f.write(f'mkdir -p "{logs_dir}"\n\n')
 
         f.write("# Per-molecule docking with error handling\n")
@@ -318,7 +318,7 @@ def _create_smina_per_molecule_script(
         f.write('    echo "[$TOTAL] Processing $mol_id..."\n\n')
 
         f.write(
-            f'    if {smina_bin} --config "$config" 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
+            f'    if "{smina_bin}" --config "$config" 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
         )
         f.write('        echo "  $mol_id: SUCCESS"\n')
         f.write("        SUCCESS=$((SUCCESS + 1))\n")
@@ -441,7 +441,7 @@ def _create_gnina_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {ligands_dir}\n")
+        f.write(f'cd "{ligands_dir}"\n')
         try:
             config_rel = config_file.relative_to(ligands_dir)
         except ValueError:
@@ -500,7 +500,7 @@ def _create_gnina_per_molecule_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {ligands_dir}\n")
+        f.write(f'cd "{ligands_dir}"\n')
         f.write(f'mkdir -p "{logs_dir}"\n\n')
 
         f.write("# Per-molecule docking with bounded parallelism\n")

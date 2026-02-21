@@ -57,6 +57,8 @@ def _resolve_docking_binary(config_path: str, tool_name: str) -> str:
         FileNotFoundError: If the binary cannot be found.
     """
     if os.path.isabs(config_path) and os.path.isfile(config_path):
+        if not os.access(config_path, os.X_OK):
+            logger.warning("Binary exists but is not executable: %s", config_path)
         return config_path
 
     found = shutil.which(tool_name)
@@ -110,7 +112,7 @@ def _resolve_autobox_path(autobox_ligand, project_root):
     return None
 
 
-def _get_gnina_environment(cfg, base_folder):
+def _get_gnina_environment(cfg):
     """Get GNINA activation command and LD_LIBRARY_PATH."""
     gnina_config = cfg.get("gnina_config", {})
     env_path = gnina_config.get("env_path") or cfg.get("gnina_env_path")
@@ -199,12 +201,11 @@ def _get_gnina_output_directory(cfg, base_folder):
     return base_folder / "stages" / "05_docking" / "gnina"
 
 
-def _resolve_receptor_path(receptor_pdb, base_folder=None):
+def _resolve_receptor_path(receptor_pdb):
     """Resolve receptor path to absolute, checking multiple locations.
 
     Args:
         receptor_pdb: Original receptor path from config
-        base_folder: Base folder for relative path resolution
 
     Returns:
         Resolved Path object or None if not found

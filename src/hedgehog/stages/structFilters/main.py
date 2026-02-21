@@ -17,12 +17,12 @@ from hedgehog.stages.structFilters.utils import (
     prepare_structfilters_input,
     process_one_dataframe,
     process_one_file,
-    process_path,
     process_prepared_payload,
 )
 from hedgehog.utils.dataframe import IDENTITY_COLUMNS, order_identity_columns
 from hedgehog.utils.input_paths import find_sampled_molecules
 from hedgehog.utils.parallel import resolve_n_jobs
+from hedgehog.utils.paths import process_path
 
 _FILTER_DESCRIPTIONS: dict[str, str] = {
     "common_alerts": "SMARTS-based structural alert screening using curated rule sets (PAINS, Dundee, BMS, Glaxo, etc.).",

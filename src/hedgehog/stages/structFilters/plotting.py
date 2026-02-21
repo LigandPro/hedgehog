@@ -102,7 +102,7 @@ def plot_calculated_stats(config, stage_dir):
             )
         datas.append(data_filtered)
 
-        filter_name = path.split("/")[-1].replace("_metrics.csv", "")
+        filter_name = Path(path).parent.name
         filter_names.append(filter_name)
 
     model_name_set = sorted(list(all_model_names))
@@ -116,7 +116,7 @@ def plot_calculated_stats(config, stage_dir):
     for path in filters_to_find:
         try:
             filter_data = pd.read_csv(path)
-            filter_name = path.split("/")[-1].split("filteredMols.csv")[0].strip("_")
+            filter_name = Path(path).parent.name
 
             num_passed_by_model = None
             if "pass" in filter_data.columns:

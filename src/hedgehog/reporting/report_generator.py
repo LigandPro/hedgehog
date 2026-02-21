@@ -48,13 +48,6 @@ _PLOT_REGISTRY: dict[str, Callable[[dict[str, Any]], str]] = {
         if report_data.get("descriptors_detailed", {}).get("raw_data")
         else ""
     ),
-    "descriptors_hbd_hba": lambda report_data: (
-        plots.plot_descriptors_hbd_hba_box(
-            report_data["descriptors_detailed"]["raw_data"],
-        )
-        if report_data.get("descriptors_detailed", {}).get("raw_data")
-        else ""
-    ),
     "descriptors_table": lambda report_data: (
         plots.plot_descriptors_summary_table(
             report_data["descriptors_detailed"]["summary_by_model"],
@@ -70,25 +63,6 @@ _PLOT_REGISTRY: dict[str, Callable[[dict[str, Any]], str]] = {
     "filter_failures": lambda report_data: (
         plots.plot_top_filter_failures(report_data["filters"]["totals"])
         if report_data.get("filters", {}).get("totals")
-        else ""
-    ),
-    "filter_stacked_bar": lambda report_data: (
-        plots.plot_filter_stacked_bar(report_data["filters_detailed"]["by_filter"])
-        if report_data.get("filters_detailed", {}).get("by_filter")
-        else ""
-    ),
-    "filter_banned_heatmap": lambda report_data: (
-        plots.plot_filter_banned_ratio_heatmap(
-            report_data["filters_detailed"]["banned_ratios"],
-        )
-        if report_data.get("filters_detailed", {}).get("banned_ratios")
-        else ""
-    ),
-    "filter_top_reasons": lambda report_data: (
-        plots.plot_filter_top_reasons_bar(
-            report_data["filters_detailed"]["common_alerts_reasons"],
-        )
-        if report_data.get("filters_detailed", {}).get("common_alerts_reasons")
         else ""
     ),
     "synthesis_dist": lambda report_data: (
@@ -390,71 +364,13 @@ class ReportGenerator:
 
     def _build_synthesis_js_data(self, data: dict[str, Any]) -> dict[str, Any]:
         """Build synthesis JSON data for JavaScript model filtering."""
-        synth_detailed = data.get("synthesis_detailed", {})
-        if not synth_detailed:
-            return {}
-
-        synthesis_data = {
-            "all": {
-                "sa_scores": synth_detailed.get("sa_scores", []),
-                "syba_scores": synth_detailed.get("syba_scores", []),
-                "ra_scores": synth_detailed.get("ra_scores", []),
-                "solved_count": synth_detailed.get("solved_count", 0),
-                "unsolved_count": synth_detailed.get("unsolved_count", 0),
-                "summary": synth_detailed.get("summary", {}),
-            }
-        }
-        for model, model_data in synth_detailed.get("by_model", {}).items():
-            synthesis_data[model] = model_data
-
-        by_model = synth_detailed.get("by_model", {})
-        if by_model:
-            synthesis_data["__compare__"] = {
-                "is_comparison": True,
-                "models": list(by_model.keys()),
-                "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
-                "data": by_model,
-            }
-        return synthesis_data
+        return js_data.build_synthesis_js_data(data.get("synthesis_detailed", {}))
 
     def _build_docking_js_data(
         self, data: dict[str, Any], docking_detailed: dict[str, Any]
     ) -> dict[str, Any]:
         """Build docking JSON data for JavaScript model filtering."""
-        docking_js_data = {}
-        for tool in ["gnina", "smina"]:
-            tool_data = docking_detailed.get(
-                tool, data.get("docking_detailed", {}).get(tool, {})
-            )
-            if not (tool_data.get("raw_data") or tool_data.get("by_model")):
-                continue
-
-            all_scores = [
-                item.get("affinity")
-                for item in tool_data.get("raw_data", [])
-                if item.get("affinity") is not None
-            ]
-            docking_tool_data = {
-                "all": {
-                    "scores": all_scores,
-                    "summary": tool_data.get("summary", {}),
-                    "top_molecules": tool_data.get("top_molecules", []),
-                }
-            }
-            for model, model_data in tool_data.get("by_model", {}).items():
-                docking_tool_data[model] = model_data
-
-            by_model = tool_data.get("by_model", {})
-            if by_model:
-                docking_tool_data["__compare__"] = {
-                    "is_comparison": True,
-                    "models": list(by_model.keys()),
-                    "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
-                    "data": by_model,
-                }
-            docking_js_data[f"docking_{tool}_data"] = docking_tool_data
-
-        return docking_js_data
+        return js_data.build_docking_js_data(data, docking_detailed)
 
     def _build_docking_filters_plots(self, data: dict[str, Any]) -> dict[str, Any]:
         """Build docking filter plots and corresponding JavaScript data."""

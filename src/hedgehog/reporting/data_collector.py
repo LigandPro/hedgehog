@@ -1648,7 +1648,7 @@ def get_moleval_metrics(
         return moleval_metrics.compute_stage_metrics(
             stage_smiles, moleval_config, seed=moleval_config.get("seed", 42)
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — intentional: MolEval metrics may raise diverse errors
         logger.debug("MolEval metrics computation failed: %s", e)
         return {}
 
@@ -1824,17 +1824,3 @@ def get_config_summary(
                 if (stages_dir / dir_name).exists():
                     stages_enabled.append(display_name)
     return {"folder_to_save": folder, "stages_enabled": stages_enabled}
-
-
-def collect_data(
-    base_path: Path,
-    config: dict[str, Any],
-    stages: list[Any],
-    initial_count: int,
-    final_count: int,
-    output_dir: Path,
-) -> dict[str, Any]:
-    """Backward-compatible alias for collect_all_data."""
-    return collect_all_data(
-        base_path, config, stages, initial_count, final_count, output_dir
-    )

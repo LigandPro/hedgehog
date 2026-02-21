@@ -122,7 +122,7 @@ def ensure_nvmolkit_worker(project_root: Path, python_bin: str | None = None) ->
 
     try:
         _verify_worker(worker_entry, venv_python, project_root)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — intentional: NVMolKit verification may raise diverse errors
         raise RuntimeError(
             "nvMolKit worker was installed but failed verification. "
             f"Command: {shlex.join([str(venv_python), '-m', 'matcha_nvmolkit_worker.cli', '--help'])}. "

@@ -103,7 +103,7 @@ def main() -> int:
                         "error": None,
                     }
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — intentional: shape scoring may raise diverse errors
                 results.append(
                     {
                         "mol_idx": idx,
@@ -123,7 +123,7 @@ def main() -> int:
             },
         )
         return 0
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — intentional: top-level worker error must not crash subprocess
         _write_json(
             meta_json,
             {

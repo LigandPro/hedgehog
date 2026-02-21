@@ -62,6 +62,7 @@ from hedgehog.utils.constants import (  # noqa: F401
     STAGE_STRUCT_FILTERS,
     STAGE_SYNTHESIS,
 )
+from hedgehog.utils.dataframe import IDENTITY_COLUMNS
 from hedgehog.utils.env import plain_output_enabled
 from hedgehog.utils.input_paths import find_latest_input_source as _find_input
 
@@ -1253,8 +1254,7 @@ class MolecularAnalysisPipeline:
         )
         final_output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        id_cols = ["smiles", "model_name", "mol_idx"]
-        stable_empty_cols = [*id_cols, *DOCKING_SCORE_COLUMNS]
+        stable_empty_cols = [*IDENTITY_COLUMNS, *DOCKING_SCORE_COLUMNS]
 
         if final_data is None or len(final_data) == 0:
             # Always create the file so downstream tooling can rely on its presence.

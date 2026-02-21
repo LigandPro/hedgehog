@@ -698,7 +698,7 @@ def apply_shepherd_score_filter(
             return _apply_shepherd_score_filter_worker(
                 mols, reference_mol, config, progress_cb=progress_cb
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — intentional: Shepherd worker backend may raise diverse errors
             if backend == "worker":
                 return _soft_skip_shepherd_filter(mols, str(exc))
             logger.warning(
@@ -711,7 +711,7 @@ def apply_shepherd_score_filter(
             return _apply_shepherd_score_filter_inprocess(
                 mols, reference_mol, config, progress_cb=progress_cb
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — intentional: Shepherd in-process backend may raise diverse errors
             return _soft_skip_shepherd_filter(mols, str(exc))
 
     return _soft_skip_shepherd_filter(mols, "no backend available")
@@ -1293,7 +1293,7 @@ def apply_symmetry_rmsd_filter(
                         logger.info(
                             "Conformer backend auto-selection: worker auto-install succeeded"
                         )
-                    except Exception as install_exc:  # noqa: BLE001
+                    except Exception as install_exc:  # noqa: BLE001 — intentional: auto-install may fail in diverse ways
                         logger.warning(
                             "Conformer worker auto-install failed, using RDKit fallback: %s",
                             install_exc,
