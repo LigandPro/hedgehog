@@ -20,6 +20,155 @@ _PLOT_REGISTRY: dict[str, Callable[[dict[str, Any]], str]] = {
     "stage_summary": lambda report_data: plots.plot_stage_summary(
         report_data.get("stages", [])
     ),
+    "model_comparison": lambda report_data: (
+        plots.plot_model_comparison(report_data.get("models", []))
+        if report_data.get("models")
+        else ""
+    ),
+    "model_losses": lambda report_data: (
+        plots.plot_model_stacked_losses(report_data.get("models", []))
+        if report_data.get("models")
+        else ""
+    ),
+    "descriptors": lambda report_data: (
+        plots.plot_descriptor_distributions(
+            report_data["descriptors"]["distributions"],
+        )
+        if report_data.get("descriptors", {}).get("distributions")
+        else ""
+    ),
+    "descriptors_violin": lambda report_data: (
+        plots.plot_descriptors_violin_by_model(
+            report_data["descriptors_detailed"]["raw_data"],
+            report_data["descriptors_detailed"].get(
+                "key_descriptors",
+                ["MolWt", "LogP", "TPSA", "QED"],
+            ),
+        )
+        if report_data.get("descriptors_detailed", {}).get("raw_data")
+        else ""
+    ),
+    "descriptors_hbd_hba": lambda report_data: (
+        plots.plot_descriptors_hbd_hba_box(
+            report_data["descriptors_detailed"]["raw_data"],
+        )
+        if report_data.get("descriptors_detailed", {}).get("raw_data")
+        else ""
+    ),
+    "descriptors_table": lambda report_data: (
+        plots.plot_descriptors_summary_table(
+            report_data["descriptors_detailed"]["summary_by_model"],
+        )
+        if report_data.get("descriptors_detailed", {}).get("summary_by_model")
+        else ""
+    ),
+    "filter_heatmap": lambda report_data: (
+        plots.plot_filter_heatmap(report_data["filters"]["by_filter"])
+        if report_data.get("filters", {}).get("by_filter")
+        else ""
+    ),
+    "filter_failures": lambda report_data: (
+        plots.plot_top_filter_failures(report_data["filters"]["totals"])
+        if report_data.get("filters", {}).get("totals")
+        else ""
+    ),
+    "filter_stacked_bar": lambda report_data: (
+        plots.plot_filter_stacked_bar(report_data["filters_detailed"]["by_filter"])
+        if report_data.get("filters_detailed", {}).get("by_filter")
+        else ""
+    ),
+    "filter_banned_heatmap": lambda report_data: (
+        plots.plot_filter_banned_ratio_heatmap(
+            report_data["filters_detailed"]["banned_ratios"],
+        )
+        if report_data.get("filters_detailed", {}).get("banned_ratios")
+        else ""
+    ),
+    "filter_top_reasons": lambda report_data: (
+        plots.plot_filter_top_reasons_bar(
+            report_data["filters_detailed"]["common_alerts_reasons"],
+        )
+        if report_data.get("filters_detailed", {}).get("common_alerts_reasons")
+        else ""
+    ),
+    "synthesis_dist": lambda report_data: (
+        plots.plot_synthesis_distributions(report_data["synthesis"]["distributions"])
+        if report_data.get("synthesis", {}).get("distributions")
+        else ""
+    ),
+    "synthesis_scatter": lambda report_data: (
+        plots.plot_synthesis_scatter(
+            report_data["synthesis"]["scatter_data"]["sa_scores"],
+            report_data["synthesis"]["scatter_data"]["syba_scores"],
+            report_data["synthesis"]["scatter_data"].get("model_names", []),
+        )
+        if report_data.get("synthesis", {}).get("scatter_data", {}).get("sa_scores")
+        and report_data.get("synthesis", {}).get("scatter_data", {}).get("syba_scores")
+        else ""
+    ),
+    "synthesis_sa_hist": lambda report_data: (
+        plots.plot_synthesis_sa_histogram(
+            report_data["synthesis_detailed"]["sa_scores"]
+        )
+        if report_data.get("synthesis_detailed", {}).get("sa_scores")
+        else ""
+    ),
+    "synthesis_syba_hist": lambda report_data: (
+        plots.plot_synthesis_syba_histogram(
+            report_data["synthesis_detailed"]["syba_scores"]
+        )
+        if report_data.get("synthesis_detailed", {}).get("syba_scores")
+        else ""
+    ),
+    "synthesis_ra_hist": lambda report_data: (
+        plots.plot_synthesis_ra_histogram(
+            report_data["synthesis_detailed"]["ra_scores"]
+        )
+        if report_data.get("synthesis_detailed", {}).get("ra_scores")
+        else ""
+    ),
+    "synthesis_solved_pie": lambda report_data: (
+        plots.plot_synthesis_solved_pie(
+            report_data["synthesis_detailed"].get("solved_count", 0),
+            report_data["synthesis_detailed"].get("unsolved_count", 0),
+        )
+        if report_data.get("synthesis_detailed", {}).get("solved_count", 0) > 0
+        or report_data.get("synthesis_detailed", {}).get("unsolved_count", 0) > 0
+        else ""
+    ),
+    "synthesis_time_box": lambda report_data: (
+        plots.plot_synthesis_time_box(report_data["synthesis_detailed"]["raw_data"])
+        if report_data.get("synthesis_detailed", {}).get("raw_data")
+        else ""
+    ),
+    "retrosynthesis_route_score_hist": lambda report_data: (
+        plots.plot_retrosynthesis_route_score_histogram(
+            report_data["retrosynthesis"]["route_scores"]
+        )
+        if report_data.get("retrosynthesis", {}).get("route_scores")
+        else ""
+    ),
+    "retrosynthesis_steps_hist": lambda report_data: (
+        plots.plot_retrosynthesis_steps_histogram(
+            report_data["retrosynthesis"]["steps"]
+        )
+        if report_data.get("retrosynthesis", {}).get("steps")
+        else ""
+    ),
+    "docking_gnina": lambda report_data: (
+        plots.plot_docking_distribution(
+            report_data["docking"]["gnina"]["scores"], "gnina"
+        )
+        if report_data.get("docking", {}).get("gnina", {}).get("scores")
+        else ""
+    ),
+    "docking_smina": lambda report_data: (
+        plots.plot_docking_distribution(
+            report_data["docking"]["smina"]["scores"], "smina"
+        )
+        if report_data.get("docking", {}).get("smina", {}).get("scores")
+        else ""
+    ),
 }
 
 
@@ -224,6 +373,146 @@ class ReportGenerator:
             initial_detailed, final_detailed
         )
 
+    def _build_sankey_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build Sankey JSON data for all/models/compare modes."""
+        funnel_by_model = data.get("funnel_by_model", {})
+        available_models = data.get("available_models", [])
+
+        sankey_by_model = {"all": plots.plot_sankey_json(data.get("funnel", []))}
+        for model, model_funnel in funnel_by_model.items():
+            sankey_by_model[model] = plots.plot_sankey_json(model_funnel)
+
+        if available_models and funnel_by_model:
+            sankey_by_model["__compare__"] = plots.plot_sankey_compare_json(
+                funnel_by_model, available_models
+            )
+        return sankey_by_model
+
+    def _build_synthesis_js_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build synthesis JSON data for JavaScript model filtering."""
+        synth_detailed = data.get("synthesis_detailed", {})
+        if not synth_detailed:
+            return {}
+
+        synthesis_data = {
+            "all": {
+                "sa_scores": synth_detailed.get("sa_scores", []),
+                "syba_scores": synth_detailed.get("syba_scores", []),
+                "ra_scores": synth_detailed.get("ra_scores", []),
+                "solved_count": synth_detailed.get("solved_count", 0),
+                "unsolved_count": synth_detailed.get("unsolved_count", 0),
+                "summary": synth_detailed.get("summary", {}),
+            }
+        }
+        for model, model_data in synth_detailed.get("by_model", {}).items():
+            synthesis_data[model] = model_data
+
+        by_model = synth_detailed.get("by_model", {})
+        if by_model:
+            synthesis_data["__compare__"] = {
+                "is_comparison": True,
+                "models": list(by_model.keys()),
+                "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
+                "data": by_model,
+            }
+        return synthesis_data
+
+    def _build_docking_js_data(
+        self, data: dict[str, Any], docking_detailed: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Build docking JSON data for JavaScript model filtering."""
+        docking_js_data = {}
+        for tool in ["gnina", "smina"]:
+            tool_data = docking_detailed.get(
+                tool, data.get("docking_detailed", {}).get(tool, {})
+            )
+            if not (tool_data.get("raw_data") or tool_data.get("by_model")):
+                continue
+
+            all_scores = [
+                item.get("affinity")
+                for item in tool_data.get("raw_data", [])
+                if item.get("affinity") is not None
+            ]
+            docking_tool_data = {
+                "all": {
+                    "scores": all_scores,
+                    "summary": tool_data.get("summary", {}),
+                    "top_molecules": tool_data.get("top_molecules", []),
+                }
+            }
+            for model, model_data in tool_data.get("by_model", {}).items():
+                docking_tool_data[model] = model_data
+
+            by_model = tool_data.get("by_model", {})
+            if by_model:
+                docking_tool_data["__compare__"] = {
+                    "is_comparison": True,
+                    "models": list(by_model.keys()),
+                    "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
+                    "data": by_model,
+                }
+            docking_js_data[f"docking_{tool}_data"] = docking_tool_data
+
+        return docking_js_data
+
+    def _build_docking_filters_plots(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build docking filter plots and corresponding JavaScript data."""
+        docking_filter_plots = {}
+        df_detailed = data.get("docking_filters_detailed", {})
+
+        if df_detailed.get("per_filter"):
+            docking_filter_plots["docking_filters_pass_fail"] = (
+                plots.plot_docking_filters_pass_fail_bar(df_detailed["per_filter"])
+            )
+        if df_detailed.get("numeric_metrics"):
+            docking_filter_plots["docking_filters_metric_hists"] = (
+                plots.plot_docking_filters_metric_histograms(
+                    df_detailed["numeric_metrics"],
+                    df_detailed.get("thresholds", {}),
+                )
+            )
+        if df_detailed.get("by_model"):
+            docking_filter_plots["docking_filters_by_model"] = (
+                plots.plot_docking_filters_by_model_bar(df_detailed["by_model"])
+            )
+            df_by_model_js = {"all": df_detailed}
+            for model, model_data in df_detailed["by_model"].items():
+                df_by_model_js[model] = model_data
+            docking_filter_plots["docking_filters_data"] = df_by_model_js
+
+        return docking_filter_plots
+
+    def _build_synthesis_thresholds(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build synthesis threshold configuration for JavaScript overlays."""
+        synth_config = data_collector.load_stage_config(
+            self.base_path,
+            self.config,
+            self.stages,
+            self.initial_count,
+            self.final_count,
+            self.output_dir,
+            "config_synthesis",
+        )
+        if not synth_config:
+            return {}
+
+        score_keys = [
+            ("sa_scores", "sa_score"),
+            ("syba_scores", "syba_score"),
+            ("ra_scores", "ra_score"),
+        ]
+        thresholds = {}
+        for score_key, prefix in score_keys:
+            entry = {}
+            for bound in ["min", "max"]:
+                val = synth_config.get(f"{prefix}_{bound}")
+                if val is not None:
+                    entry[bound] = val
+            if entry:
+                thresholds[score_key] = entry
+        return thresholds
+
     def _generate_plots(self, data: dict[str, Any]) -> dict[str, Any]:
         """Generate all visualization plots.
 
@@ -234,278 +523,64 @@ class ReportGenerator:
             Dictionary mapping plot names to HTML strings
         """
         plot_htmls = {}
-
         for plot_name, plot_builder in _PLOT_REGISTRY.items():
-            plot_htmls[plot_name] = plot_builder(data)
+            result = plot_builder(data)
+            if result:
+                plot_htmls[plot_name] = result
 
-        # Sankey data for each model (for JavaScript filtering)
-        funnel_by_model = data.get("funnel_by_model", {})
-        available_models = data.get("available_models", [])
+        plot_htmls["sankey_data"] = self._build_sankey_data(data)
 
-        sankey_by_model = {"all": plots.plot_sankey_json(data.get("funnel", []))}
-        for model, model_funnel in funnel_by_model.items():
-            sankey_by_model[model] = plots.plot_sankey_json(model_funnel)
-
-        # Add comparison data for "Compare All" option
-        if available_models and funnel_by_model:
-            sankey_by_model["__compare__"] = plots.plot_sankey_compare_json(
-                funnel_by_model, available_models
-            )
-
-        plot_htmls["sankey_data"] = sankey_by_model
-
-        model_stats = data.get("models", [])
-        conditional_plot_registry: dict[str, tuple[Any, Callable[..., str]]] = {
-            "model_comparison": (model_stats, plots.plot_model_comparison),
-            "model_losses": (model_stats, plots.plot_model_stacked_losses),
-        }
-        for plot_name, (plot_input, plot_builder) in conditional_plot_registry.items():
-            if plot_input:
-                plot_htmls[plot_name] = plot_builder(plot_input)
-
-        # Descriptor distributions (original)
-        desc_data = data.get("descriptors", {})
-        if desc_data.get("distributions"):
-            plot_htmls["descriptors"] = plots.plot_descriptor_distributions(
-                desc_data["distributions"]
-            )
-
-        # Descriptors detailed (enhanced)
-        desc_detailed = data.get("descriptors_detailed", {})
-        if desc_detailed.get("raw_data"):
-            plot_htmls["descriptors_violin"] = plots.plot_descriptors_violin_by_model(
-                desc_detailed["raw_data"],
-                desc_detailed.get("key_descriptors", ["MolWt", "LogP", "TPSA", "QED"]),
-            )
-            plot_htmls["descriptors_hbd_hba"] = plots.plot_descriptors_hbd_hba_box(
-                desc_detailed["raw_data"]
-            )
-        if desc_detailed.get("summary_by_model"):
-            plot_htmls["descriptors_table"] = plots.plot_descriptors_summary_table(
-                desc_detailed["summary_by_model"]
-            )
-
-        # Filter analysis (original)
-        filter_data = data.get("filters", {})
-        if filter_data.get("by_filter"):
-            plot_htmls["filter_heatmap"] = plots.plot_filter_heatmap(
-                filter_data["by_filter"]
-            )
-        if filter_data.get("totals"):
-            plot_htmls["filter_failures"] = plots.plot_top_filter_failures(
-                filter_data["totals"]
-            )
-
-        # Filters detailed (enhanced)
-        filters_detailed = data.get("filters_detailed", {})
-        if filters_detailed.get("by_filter"):
-            plot_htmls["filter_stacked_bar"] = plots.plot_filter_stacked_bar(
-                filters_detailed["by_filter"]
-            )
-        if filters_detailed.get("banned_ratios"):
-            plot_htmls["filter_banned_heatmap"] = (
-                plots.plot_filter_banned_ratio_heatmap(
-                    filters_detailed["banned_ratios"]
-                )
-            )
-        if filters_detailed.get("common_alerts_reasons"):
-            plot_htmls["filter_top_reasons"] = plots.plot_filter_top_reasons_bar(
-                filters_detailed["common_alerts_reasons"]
-            )
-
-        # Synthesis scores (original)
-        synth_data = data.get("synthesis", {})
-        if synth_data.get("distributions"):
-            plot_htmls["synthesis_dist"] = plots.plot_synthesis_distributions(
-                synth_data["distributions"]
-            )
-        scatter = synth_data.get("scatter_data", {})
-        if scatter.get("sa_scores") and scatter.get("syba_scores"):
-            plot_htmls["synthesis_scatter"] = plots.plot_synthesis_scatter(
-                scatter["sa_scores"],
-                scatter["syba_scores"],
-                scatter.get("model_names", []),
-            )
-
-        # Synthesis detailed (enhanced)
-        synth_detailed = data.get("synthesis_detailed", {})
-        if synth_detailed.get("sa_scores"):
-            plot_htmls["synthesis_sa_hist"] = plots.plot_synthesis_sa_histogram(
-                synth_detailed["sa_scores"]
-            )
-        if synth_detailed.get("syba_scores"):
-            plot_htmls["synthesis_syba_hist"] = plots.plot_synthesis_syba_histogram(
-                synth_detailed["syba_scores"]
-            )
-        if synth_detailed.get("ra_scores"):
-            plot_htmls["synthesis_ra_hist"] = plots.plot_synthesis_ra_histogram(
-                synth_detailed["ra_scores"]
-            )
-        if (
-            synth_detailed.get("solved_count", 0) > 0
-            or synth_detailed.get("unsolved_count", 0) > 0
-        ):
-            plot_htmls["synthesis_solved_pie"] = plots.plot_synthesis_solved_pie(
-                synth_detailed.get("solved_count", 0),
-                synth_detailed.get("unsolved_count", 0),
-            )
-        if synth_detailed.get("raw_data"):
-            plot_htmls["synthesis_time_box"] = plots.plot_synthesis_time_box(
-                synth_detailed["raw_data"]
-            )
-
-        # Retrosynthesis (AiZynthFinder) plots
-        retrosynth = data.get("retrosynthesis", {})
-        if retrosynth.get("route_scores"):
-            plot_htmls["retrosynthesis_route_score_hist"] = (
-                plots.plot_retrosynthesis_route_score_histogram(
-                    retrosynth["route_scores"]
-                )
-            )
-        if retrosynth.get("steps"):
-            plot_htmls["retrosynthesis_steps_hist"] = (
-                plots.plot_retrosynthesis_steps_histogram(retrosynth["steps"])
-            )
-
-        # Docking scores (original)
-        docking_data = data.get("docking", {})
-        if docking_data.get("gnina", {}).get("scores"):
-            plot_htmls["docking_gnina"] = plots.plot_docking_distribution(
-                docking_data["gnina"]["scores"], "gnina"
-            )
-        if docking_data.get("smina", {}).get("scores"):
-            plot_htmls["docking_smina"] = plots.plot_docking_distribution(
-                docking_data["smina"]["scores"], "smina"
-            )
-
-        # Docking detailed (enhanced)
         docking_detailed = data.get("docking_detailed", {})
         for tool in ["gnina", "smina"]:
             tool_data = docking_detailed.get(tool, {})
-            if tool_data.get("raw_data"):
-                scores = [
-                    d.get("affinity")
-                    for d in tool_data["raw_data"]
-                    if d.get("affinity") is not None
-                ]
-                if scores:
-                    plot_htmls[f"docking_{tool}_affinity_hist"] = (
+            raw_data = tool_data.get("raw_data", [])
+            scores = [
+                d.get("affinity") for d in raw_data if d.get("affinity") is not None
+            ]
+            docking_plot_registry: dict[str, Callable[[], str]] = {
+                f"docking_{tool}_affinity_hist": (
+                    lambda tool=tool, scores=scores: (
                         plots.plot_docking_affinity_histogram(scores, tool)
+                        if scores
+                        else ""
                     )
-                plot_htmls[f"docking_{tool}_affinity_box"] = (
-                    plots.plot_docking_affinity_box(tool_data["raw_data"])
-                )
-            if tool_data.get("top_molecules"):
-                plot_htmls[f"docking_{tool}_top_molecules"] = (
-                    plots.plot_docking_top_molecules(tool_data["top_molecules"])
-                )
-
-        # Generate JSON data for JavaScript model filtering (Synthesis)
-        synth_detailed = data.get("synthesis_detailed", {})
-        if synth_detailed:
-            synthesis_data = {
-                "all": {
-                    "sa_scores": synth_detailed.get("sa_scores", []),
-                    "syba_scores": synth_detailed.get("syba_scores", []),
-                    "ra_scores": synth_detailed.get("ra_scores", []),
-                    "solved_count": synth_detailed.get("solved_count", 0),
-                    "unsolved_count": synth_detailed.get("unsolved_count", 0),
-                    "summary": synth_detailed.get("summary", {}),
-                }
+                ),
+                f"docking_{tool}_affinity_box": (
+                    lambda raw_data=raw_data: (
+                        plots.plot_docking_affinity_box(raw_data) if raw_data else ""
+                    )
+                ),
+                f"docking_{tool}_top_molecules": (
+                    lambda top_molecules=tool_data.get("top_molecules", []): (
+                        plots.plot_docking_top_molecules(top_molecules)
+                        if top_molecules
+                        else ""
+                    )
+                ),
             }
-            # Add per-model data
-            for model, model_data in synth_detailed.get("by_model", {}).items():
-                synthesis_data[model] = model_data
+            for plot_name, plot_builder in docking_plot_registry.items():
+                result = plot_builder()
+                if result:
+                    plot_htmls[plot_name] = result
 
-            # Add compare mode data
-            by_model = synth_detailed.get("by_model", {})
-            if by_model:
-                synthesis_data["__compare__"] = {
-                    "is_comparison": True,
-                    "models": list(by_model.keys()),
-                    "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
-                    "data": by_model,
-                }
-            plot_htmls["synthesis_data"] = synthesis_data
+        synthesis_js_data = self._build_synthesis_js_data(data)
+        if synthesis_js_data:
+            plot_htmls["synthesis_data"] = synthesis_js_data
 
-        # Generate JSON data for JavaScript descriptors visualization
         desc_detailed = data.get("descriptors_detailed", {})
         available_models = data.get("available_models", [])
         if desc_detailed.get("raw_data"):
-            descriptors_data = self._build_descriptors_js_data(
+            plot_htmls["descriptors_data"] = self._build_descriptors_js_data(
                 desc_detailed, available_models
             )
-            plot_htmls["descriptors_data"] = descriptors_data
-
-        # Generate JSON data for JavaScript filters visualization
-        filters_detailed = data.get("filters_detailed", {})
         if available_models:
             filters_js_data = self._build_filters_js_data(available_models)
             if filters_js_data.get("filter_data"):
                 plot_htmls["filters_data"] = filters_js_data
 
-        # Generate JSON data for JavaScript model filtering (Docking)
-        for tool in ["gnina", "smina"]:
-            tool_data = docking_detailed.get(tool, {})
-            if tool_data.get("raw_data") or tool_data.get("by_model"):
-                # Collect all scores for "all" view
-                all_scores = [
-                    d.get("affinity")
-                    for d in tool_data.get("raw_data", [])
-                    if d.get("affinity") is not None
-                ]
-                docking_tool_data = {
-                    "all": {
-                        "scores": all_scores,
-                        "summary": tool_data.get("summary", {}),
-                        "top_molecules": tool_data.get("top_molecules", []),
-                    }
-                }
-                # Add per-model data
-                for model, model_data in tool_data.get("by_model", {}).items():
-                    docking_tool_data[model] = model_data
+        plot_htmls.update(self._build_docking_js_data(data, docking_detailed))
+        plot_htmls.update(self._build_docking_filters_plots(data))
 
-                # Add compare mode data
-                by_model = tool_data.get("by_model", {})
-                if by_model:
-                    docking_tool_data["__compare__"] = {
-                        "is_comparison": True,
-                        "models": list(by_model.keys()),
-                        "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
-                        "data": by_model,
-                    }
-                plot_htmls[f"docking_{tool}_data"] = docking_tool_data
-
-        # =====================================================================
-        # Docking Filters (Stage 06)
-        # =====================================================================
-        df_detailed = data.get("docking_filters_detailed", {})
-        if df_detailed.get("per_filter"):
-            plot_htmls["docking_filters_pass_fail"] = (
-                plots.plot_docking_filters_pass_fail_bar(df_detailed["per_filter"])
-            )
-        if df_detailed.get("numeric_metrics"):
-            plot_htmls["docking_filters_metric_hists"] = (
-                plots.plot_docking_filters_metric_histograms(
-                    df_detailed["numeric_metrics"],
-                    df_detailed.get("thresholds", {}),
-                )
-            )
-        if df_detailed.get("by_model"):
-            plot_htmls["docking_filters_by_model"] = (
-                plots.plot_docking_filters_by_model_bar(df_detailed["by_model"])
-            )
-
-            # Build JSON data for JS model toggle
-            df_by_model_js = {"all": df_detailed}
-            for model, model_data in df_detailed["by_model"].items():
-                df_by_model_js[model] = model_data
-            plot_htmls["docking_filters_data"] = df_by_model_js
-
-        # =====================================================================
-        # Final Descriptors (Stage 07)
-        # =====================================================================
-        # Build initial vs final descriptor comparison data
         initial_desc = data.get("descriptors_detailed", {})
         final_desc = data.get("descriptors_final_detailed", {})
         if initial_desc.get("raw_data") and final_desc.get("raw_data"):
@@ -515,33 +590,9 @@ class ReportGenerator:
             if comparison:
                 plot_htmls["descriptors_comparison_data"] = comparison
 
-        # Synthesis thresholds from config
-        synth_config = data_collector.load_stage_config(
-            self.base_path,
-            self.config,
-            self.stages,
-            self.initial_count,
-            self.final_count,
-            self.output_dir,
-            "config_synthesis",
-        )
-        if synth_config:
-            score_keys = [
-                ("sa_scores", "sa_score"),
-                ("syba_scores", "syba_score"),
-                ("ra_scores", "ra_score"),
-            ]
-            thresholds = {}
-            for score_key, prefix in score_keys:
-                entry = {}
-                for bound in ["min", "max"]:
-                    val = synth_config.get(f"{prefix}_{bound}")
-                    if val is not None:
-                        entry[bound] = val
-                if entry:
-                    thresholds[score_key] = entry
-            if thresholds:
-                plot_htmls["synthesis_thresholds"] = thresholds
+        synthesis_thresholds = self._build_synthesis_thresholds(data)
+        if synthesis_thresholds:
+            plot_htmls["synthesis_thresholds"] = synthesis_thresholds
 
         return plot_htmls
 
