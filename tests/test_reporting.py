@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from hedgehog.reporting.report_generator import ReportGenerator
+from hedgehog.reporting import data_collector, js_data
 
 
 @pytest.fixture
@@ -32,36 +32,37 @@ def base_path(tmp_path):
 
 
 @pytest.fixture
-def report_gen(base_path):
-    """Create ReportGenerator with minimal config."""
-    return ReportGenerator(
-        base_path=base_path,
-        stages=[],
-        config={
-            "docking_filters": {
-                "aggregation": {"mode": "all"},
-                "pose_quality": {
-                    "max_clashes": 2,
-                    "max_strain_energy": 50.0,
-                },
-                "conformer_deviation": {"max_rmsd_to_conformer": 3.0},
-                "search_box": {"max_outside_fraction": 0.0},
-            }
-        },
-        initial_count=3,
-        final_count=1,
-    )
+def config():
+    """Create minimal config for docking filters."""
+    return {
+        "docking_filters": {
+            "aggregation": {"mode": "all"},
+            "pose_quality": {
+                "max_clashes": 2,
+                "max_strain_energy": 50.0,
+            },
+            "conformer_deviation": {"max_rmsd_to_conformer": 3.0},
+            "search_box": {"max_outside_fraction": 0.0},
+        }
+    }
 
 
 class TestGetDockingFiltersDetailed:
     """Tests for _get_docking_filters_detailed method."""
 
-    def test_returns_empty_when_no_files(self, report_gen):
+    def test_returns_empty_when_no_files(self, base_path, config):
         """Should return empty dict when metrics.csv doesn't exist."""
-        result = report_gen._get_docking_filters_detailed()
+        result = data_collector.get_docking_filters_detailed(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+        )
         assert result == {}
 
-    def test_returns_correct_structure(self, report_gen, base_path):
+    def test_returns_correct_structure(self, base_path, config):
         """Should return correct structure from mock metrics.csv."""
         df_dir = base_path / "stages" / "06_docking_filters"
 
@@ -92,7 +93,14 @@ class TestGetDockingFiltersDetailed:
         )
         filtered_df.to_csv(df_dir / "filtered_molecules.csv", index=False)
 
-        result = report_gen._get_docking_filters_detailed()
+        result = data_collector.get_docking_filters_detailed(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+        )
 
         assert result["total_poses"] == 5
         assert result["passed_poses"] == 3
@@ -127,15 +135,22 @@ class TestGetDockingFiltersDetailed:
         assert result["thresholds"]["strain_energy"]["max"] == 50.0
         assert result["thresholds"]["min_conformer_rmsd"]["max"] == 3.0
 
-    def test_handles_empty_csv(self, report_gen, base_path):
+    def test_handles_empty_csv(self, base_path, config):
         """Should return empty dict for empty CSV."""
         df_dir = base_path / "stages" / "06_docking_filters"
         pd.DataFrame().to_csv(df_dir / "metrics.csv", index=False)
 
-        result = report_gen._get_docking_filters_detailed()
+        result = data_collector.get_docking_filters_detailed(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+        )
         assert result == {}
 
-    def test_no_filtered_molecules_file(self, report_gen, base_path):
+    def test_no_filtered_molecules_file(self, base_path, config):
         """Should set unique_molecules_passed=0 when file is missing."""
         df_dir = base_path / "stages" / "06_docking_filters"
 
@@ -149,7 +164,14 @@ class TestGetDockingFiltersDetailed:
         )
         metrics_df.to_csv(df_dir / "metrics.csv", index=False)
 
-        result = report_gen._get_docking_filters_detailed()
+        result = data_collector.get_docking_filters_detailed(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+        )
         assert result["unique_molecules_passed"] == 0
         assert result["total_poses"] == 2
 
@@ -157,7 +179,7 @@ class TestGetDockingFiltersDetailed:
 class TestParametrizedDescriptors:
     """Tests for parametrized descriptor methods."""
 
-    def test_get_descriptor_stats_initial(self, report_gen, base_path):
+    def test_get_descriptor_stats_initial(self, base_path, config):
         """Should read from initial descriptors directory."""
         desc_dir = base_path / "stages" / "01_descriptors_initial" / "metrics"
         desc_dir.mkdir(parents=True, exist_ok=True)
@@ -171,11 +193,19 @@ class TestParametrizedDescriptors:
         )
         df.to_csv(desc_dir / "descriptors_all.csv", index=False)
 
-        result = report_gen._get_descriptor_stats("descriptors_initial")
+        result = data_collector.get_descriptor_stats(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+            stage_key="descriptors_initial",
+        )
         assert "MolWt" in result.get("distributions", {})
         assert "LogP" in result.get("distributions", {})
 
-    def test_get_descriptor_stats_final(self, report_gen, base_path):
+    def test_get_descriptor_stats_final(self, base_path, config):
         """Should read from final descriptors directory."""
         desc_dir = base_path / "stages" / "07_descriptors_final" / "metrics"
         desc_dir.mkdir(parents=True, exist_ok=True)
@@ -189,10 +219,18 @@ class TestParametrizedDescriptors:
         )
         df.to_csv(desc_dir / "descriptors_all.csv", index=False)
 
-        result = report_gen._get_descriptor_stats("descriptors_final")
+        result = data_collector.get_descriptor_stats(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+            stage_key="descriptors_final",
+        )
         assert "MolWt" in result.get("distributions", {})
 
-    def test_get_descriptors_detailed_final(self, report_gen, base_path):
+    def test_get_descriptors_detailed_final(self, base_path, config):
         """Should read from final descriptors directory."""
         desc_dir = base_path / "stages" / "07_descriptors_final"
 
@@ -207,13 +245,29 @@ class TestParametrizedDescriptors:
         )
         df.to_csv(desc_dir / "filtered_molecules.csv", index=False)
 
-        result = report_gen._get_descriptors_detailed("descriptors_final")
+        result = data_collector.get_descriptors_detailed(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+            stage_key="descriptors_final",
+        )
         assert len(result.get("raw_data", [])) == 2
         assert "ModelA" in result.get("summary_by_model", {})
 
-    def test_get_descriptors_detailed_missing_dir(self, report_gen):
+    def test_get_descriptors_detailed_missing_dir(self, base_path, config):
         """Should return empty for nonexistent stage directory."""
-        result = report_gen._get_descriptors_detailed("descriptors_final")
+        result = data_collector.get_descriptors_detailed(
+            base_path=base_path,
+            config=config,
+            stages=[],
+            initial_count=3,
+            final_count=1,
+            output_dir=base_path,
+            stage_key="descriptors_final",
+        )
         # If no CSV found, returns {}
         assert result == {} or result.get("raw_data") == []
 
@@ -221,7 +275,7 @@ class TestParametrizedDescriptors:
 class TestBuildDescriptorComparisonData:
     """Tests for _build_descriptor_comparison_data."""
 
-    def test_comparison_with_data(self, report_gen):
+    def test_comparison_with_data(self):
         """Should produce comparison data for common descriptors."""
         initial = {
             "raw_data": [
@@ -235,15 +289,15 @@ class TestBuildDescriptorComparisonData:
             ]
         }
 
-        result = report_gen._build_descriptor_comparison_data(initial, final)
+        result = js_data.build_descriptor_comparison_data(initial, final)
         assert "MolWt" in result["data"]
         assert "LogP" in result["data"]
         assert len(result["data"]["MolWt"]["initial_values"]) == 2
         assert len(result["data"]["MolWt"]["final_values"]) == 1
 
-    def test_comparison_empty_data(self, report_gen):
+    def test_comparison_empty_data(self):
         """Should return empty for missing raw_data."""
-        result = report_gen._build_descriptor_comparison_data(
+        result = js_data.build_descriptor_comparison_data(
             {"raw_data": []}, {"raw_data": []}
         )
         assert result == {}
