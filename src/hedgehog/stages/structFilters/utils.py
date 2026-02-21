@@ -787,6 +787,64 @@ def _init_alert_worker_quiet(
     _init_alert_worker(compiled_smarts, rule_set_names)
 
 
+def _resolve_common_alerts_n_jobs(
+    config_structFilters: dict, config: dict, total_items: int
+) -> int:
+    """Resolve workers for Common Alerts with size-aware defaults."""
+    base_n_jobs = resolve_n_jobs(config_structFilters, config)
+    auto_n_jobs = bool(config_structFilters.get("common_alerts_auto_n_jobs", True))
+    if not auto_n_jobs:
+        return base_n_jobs
+
+    threshold_raw = config_structFilters.get(
+        "common_alerts_small_input_threshold", 2000
+    )
+    small_jobs_raw = config_structFilters.get("common_alerts_small_input_n_jobs", 1)
+    large_jobs_raw = config_structFilters.get("common_alerts_large_input_n_jobs", 12)
+
+    try:
+        threshold = int(threshold_raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid common_alerts_small_input_threshold=%r. Using default 2000.",
+            threshold_raw,
+        )
+        threshold = 2000
+
+    try:
+        small_jobs = max(1, int(small_jobs_raw))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid common_alerts_small_input_n_jobs=%r. Using default 1.",
+            small_jobs_raw,
+        )
+        small_jobs = 1
+
+    try:
+        large_jobs = max(1, int(large_jobs_raw))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid common_alerts_large_input_n_jobs=%r. Using default 12.",
+            large_jobs_raw,
+        )
+        large_jobs = 12
+
+    if total_items <= max(0, threshold):
+        selected = small_jobs
+    else:
+        selected = large_jobs
+
+    logger.info(
+        "Common Alerts auto workers: %d (molecules=%d, threshold=%d, small=%d, large=%d)",
+        selected,
+        total_items,
+        threshold,
+        small_jobs,
+        large_jobs,
+    )
+    return selected
+
+
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_cb=None):
     logger.info("Calculating Common Alerts...")
 
@@ -817,10 +875,10 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
         compiled_smarts.append((ruleset, patt, str(desc)))
 
     # Parallel per-molecule alert checking.
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    logger.info("Common Alerts workers: %d", n_jobs)
     items = [(i, mol) for i, mol in enumerate(mols)]
     total_items = len(items)
+    n_jobs = _resolve_common_alerts_n_jobs(config_structFilters, config, total_items)
+    logger.info("Common Alerts workers: %d", n_jobs)
 
     progress_log_step = max(1, min(500, total_items // 20)) if total_items else 1
     heartbeat_interval_seconds = 30.0
