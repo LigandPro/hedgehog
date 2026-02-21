@@ -467,6 +467,7 @@ def _create_per_molecule_configs(
     molecule_files,
     tool_name,
     cpu_override: int | None = None,
+    gpu_count: int | None = None,
 ):
     """Create per-molecule docking config files.
 
@@ -510,7 +511,13 @@ def _create_per_molecule_configs(
 
     config_entries = []
 
-    for mol_file in molecule_files:
+    use_device_round_robin = (
+        tool_name == "gnina"
+        and (gpu_count or 0) > 0
+        and tool_config.get("device") is None
+    )
+
+    for idx, mol_file in enumerate(molecule_files):
         mol_id = mol_file.stem
         config_path = configs_dir / f"{tool_name}_{mol_id}.ini"
         output_sdf = results_dir / f"{mol_id}_out.sdf"
@@ -551,6 +558,8 @@ def _create_per_molecule_configs(
                 lines.append(f"{key} = {str(value).lower()}")
             else:
                 lines.append(f"{key} = {value}")
+        if use_device_round_robin:
+            lines.append(f"device = {idx % int(gpu_count)}")
 
         with open(config_path, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -1153,6 +1162,35 @@ def _resolve_gnina_parallel_jobs(cfg: dict, cpu_per_process: int) -> int:
     if jobs_max is not None:
         jobs = min(jobs, _parse_positive_int(jobs_max, jobs))
     return jobs
+
+
+def _count_visible_nvidia_gpus() -> int:
+    """Return count of visible NVIDIA GPUs available to this process."""
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if visible_devices:
+        tokens = [item.strip() for item in visible_devices.split(",") if item.strip()]
+        if any(
+            token in {"-1", "none", "void"} for token in (t.lower() for t in tokens)
+        ):
+            return 0
+        return len(tokens)
+
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return 0
+    try:
+        result = subprocess.run(
+            [nvidia_smi, "-L"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    if result.returncode != 0:
+        return 0
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    return len(lines)
 
 
 def _materialize_prepared_ligands(
@@ -2133,7 +2171,19 @@ def _setup_gnina(
         cpu_per_process = _parse_positive_int(
             cfg.get("gnina_per_process_cpu", gnina_cpu_default), 8
         )
+        no_gpu_raw = gnina_config.get("no_gpu", False)
+        if isinstance(no_gpu_raw, bool):
+            no_gpu_enabled = no_gpu_raw
+        elif isinstance(no_gpu_raw, (int, float)):
+            no_gpu_enabled = bool(no_gpu_raw)
+        elif isinstance(no_gpu_raw, str):
+            no_gpu_enabled = no_gpu_raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            no_gpu_enabled = bool(no_gpu_raw)
+        gpu_count = 0 if no_gpu_enabled else _count_visible_nvidia_gpus()
         parallel_jobs = _resolve_gnina_parallel_jobs(cfg, cpu_per_process)
+        if gpu_count > 0 and cfg.get("gnina_parallel_jobs") is None:
+            parallel_jobs = min(parallel_jobs, gpu_count)
 
         if per_molecule_mode:
             ligands_path_obj = Path(ligands_path)
@@ -2153,9 +2203,10 @@ def _setup_gnina(
                 )
             else:
                 logger.info(
-                    "GNINA per-molecule mode enabled: cpu_per_process=%d, parallel_jobs=%d",
+                    "GNINA per-molecule mode enabled: cpu_per_process=%d, parallel_jobs=%d, gpu_count=%d",
                     cpu_per_process,
                     parallel_jobs,
+                    gpu_count,
                 )
 
                 # Split SDF into per-molecule files
@@ -2173,6 +2224,7 @@ def _setup_gnina(
                         molecule_files,
                         "gnina",
                         cpu_override=cpu_per_process,
+                        gpu_count=gpu_count,
                     )
 
                     # Create per-molecule script
