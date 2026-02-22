@@ -163,6 +163,31 @@ Downloads are auto-accepted by default. To explicitly disable auto-accept:
 uv run hedgehog setup aizynthfinder --no-yes
 ```
 
+## `hedgehog setup nvmolkit-worker`
+
+Creates an isolated virtual environment at `.venv-nvmolkit-worker` and installs the optional nvMolKit worker there.
+
+```bash
+uv run hedgehog setup nvmolkit-worker
+```
+
+Options:
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--yes/--no-yes` | `-y` | `FLAG` | `True` | Auto-accept dependency download prompt. |
+| `--python` | | `TEXT` | `None` | Python interpreter for worker venv. Resolution order: explicit value, then `python3.12`, `python3.11`, `python3.10`. |
+
+Examples:
+
+```bash
+# Auto-install worker dependencies (default)
+uv run hedgehog setup nvmolkit-worker
+
+# Force worker venv to use Python 3.11
+uv run hedgehog setup nvmolkit-worker --python python3.11
+```
+
 ## `hedgehog setup shepherd-worker`
 
 Creates an isolated virtual environment at `.venv-shepherd-worker` and installs the optional Shepherd-Score backend there.
