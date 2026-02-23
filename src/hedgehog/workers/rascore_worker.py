@@ -72,7 +72,7 @@ def main() -> int:
 
         _write_output(output_path, {"scores": scores})
         return 0
-    except Exception as exc:  # noqa: BLE001 — intentional: RaSCORE computation may raise diverse errors
+    except Exception as exc:  # noqa: BLE001
         _write_output(output_path, {"scores": [], "error": str(exc)})
         return 1
 

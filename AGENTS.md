@@ -64,10 +64,9 @@ Notes:
 - For PR work, verify the latest remote CI checks for the current branch/PR.
 - If CI is failing, treat it as an active issue and fix it or clearly report the blocker.
 
-### Final Runtime Validation (Gauss)
+### Gauss Final Run Verification
 
-- For installation/runtime tasks, verify the final end-to-end run on `Gauss` from a clean checkout.
-- Use the exact flow below:
+When validating a fresh end-to-end run on the Gauss server, use this exact flow:
 
 ```bash
 ssh Gauss
@@ -80,9 +79,9 @@ cd hedgehog
 
 uv sync
 
-# --yes is no longer required (auto-accept by default)
+# --yes is not required (auto-accept by default)
 uv run hedgehog setup aizynthfinder
 
-# GNINA auto GPU mode is default
+# GNINA auto GPU is enabled by default
 uv run hedgehog run --auto-install --out results/run_gpu_verify
 ```

@@ -1,6 +1,7 @@
 """Tests for docking/utils.py."""
 
 import os
+from pathlib import Path
 
 import pandas as pd
 
@@ -604,3 +605,23 @@ class TestGninaNoGpuFlag:
         assert "/" not in filename
         assert ":" not in filename
         assert "*" not in filename
+
+    def test_per_molecule_gnina_preserves_explicit_device(self, tmp_path):
+        receptor = tmp_path / "receptor.pdb"
+        receptor.write_text("ATOM\n")
+        mol_file = tmp_path / "molecules" / "000000_test.sdf"
+        mol_file.parent.mkdir(parents=True)
+        mol_file.write_text("")
+
+        cfg = {"gnina_config": {"cpu": 4, "device": 7}}
+        entries = _create_per_molecule_configs(
+            cfg=cfg,
+            ligands_dir=tmp_path,
+            receptor=receptor,
+            molecule_files=[mol_file],
+            tool_name="gnina",
+        )
+
+        _, config_path, _ = entries[0]
+        config_text = Path(config_path).read_text()
+        assert "device = 7" in config_text
