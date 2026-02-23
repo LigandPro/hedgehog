@@ -81,9 +81,9 @@ lint.ignore = [
     "F401",
     "F403",
 ]
-"**/stages/structFilters/main.py" = ["F403", "F405"]
-"**/stages/structFilters/utils.py" = ["E402"]
-"**/stages/synthesis/main.py" = ["F403", "F405"]
+"**/struct_filters/main.py" = ["F403", "F405"]
+"**/struct_filters/utils.py" = ["E402"]
+"**/synthesis/main.py" = ["F403", "F405"]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true

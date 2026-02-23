@@ -217,7 +217,7 @@ def _resolve_receptor_path(receptor_pdb):
     if receptor_path.is_absolute() and receptor_path.exists():
         return receptor_path
 
-    project_root = Path(__file__).parent.parent.parent.parent.parent
+    project_root = Path(__file__).parent.parent.parent.parent
 
     if not receptor_path.is_absolute():
         candidate = (project_root / receptor_pdb).resolve()

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import yaml
 
-from hedgehog.stages.structFilters import main as structfilters_main
+from hedgehog.struct_filters import main as structfilters_main
 
 
 def _write_yaml(path: Path, payload: dict) -> None:

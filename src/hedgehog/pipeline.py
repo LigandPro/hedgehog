@@ -8,13 +8,13 @@ import pandas as pd
 import yaml
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.descriptors.main import main as descriptors_main
+from hedgehog.docking.utils import run_docking as docking_main
+from hedgehog.docking_filters.main import docking_filters_main
+from hedgehog.molprep.main import main as mol_prep_main
 from hedgehog.reporting import ReportGenerator
-from hedgehog.stages.descriptors.main import main as descriptors_main
-from hedgehog.stages.docking.utils import run_docking as docking_main
-from hedgehog.stages.dockingFilters.main import docking_filters_main
-from hedgehog.stages.molPrep.main import main as mol_prep_main
-from hedgehog.stages.structFilters.main import main as structural_filters_main
-from hedgehog.stages.synthesis.main import main as synthesis_main
+from hedgehog.struct_filters.main import main as structural_filters_main
+from hedgehog.synthesis.main import main as synthesis_main
 from hedgehog.utils.constants import (  # noqa: F401
     CONFIG_DESCRIPTORS,
     CONFIG_DOCKING,
@@ -64,7 +64,12 @@ from hedgehog.utils.constants import (  # noqa: F401
 )
 from hedgehog.utils.dataframe import IDENTITY_COLUMNS
 from hedgehog.utils.env import plain_output_enabled
-from hedgehog.utils.input_paths import find_latest_input_source as _find_input
+from hedgehog.utils.input_paths import (
+    _file_exists_and_not_empty,
+)
+from hedgehog.utils.input_paths import (
+    find_latest_input_source as _find_input,
+)
 
 
 class StageProgressReporter:
@@ -165,14 +170,6 @@ def _log_stage_header(stage_label: str) -> None:
     logger.info("[bold]  %s[/bold]", stage_label)
     logger.info(separator)
     logger.info("")
-
-
-def _file_exists_and_not_empty(file_path: Path) -> bool:
-    """Check if a file exists and is not empty."""
-    try:
-        return file_path.exists() and file_path.stat().st_size > 0
-    except OSError:
-        return False
 
 
 def _csv_has_data_rows(file_path: Path) -> bool:

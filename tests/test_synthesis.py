@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import hedgehog.stages.synthesis.utils as synthesis_utils
-from hedgehog.stages.synthesis.utils import (
+import hedgehog.synthesis.utils as synthesis_utils
+from hedgehog.synthesis.utils import (
     _build_score_filter_mask,
     _calculate_ra_scores_batch,
     _calculate_sa_score,

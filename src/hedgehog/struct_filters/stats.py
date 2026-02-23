@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from hedgehog.configs.logger import logger
-from hedgehog.stages.structFilters.filters import mc
+from hedgehog.struct_filters.filters import mc
 from hedgehog.utils.paths import process_path
 
 
@@ -314,7 +314,7 @@ def filter_data(config, stage_dir):
                 input_path = str(sampled_path)
             else:
                 try:
-                    from hedgehog.stages.structFilters.main import _get_input_path
+                    from hedgehog.struct_filters.main import _get_input_path
 
                     input_path = _get_input_path(config, stage_dir, str(base_folder))
                 except (ImportError, OSError, KeyError):
@@ -325,7 +325,7 @@ def filter_data(config, stage_dir):
             input_path = str(sampled_path)
         else:
             try:
-                from hedgehog.stages.structFilters.main import _get_input_path
+                from hedgehog.struct_filters.main import _get_input_path
 
                 input_path = _get_input_path(config, stage_dir, str(base_folder))
             except (ImportError, OSError, KeyError):

@@ -5,9 +5,9 @@ import numpy as np
 import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.stages.structFilters import filters as _filters
-from hedgehog.stages.structFilters import plotting as _plotting
-from hedgehog.stages.structFilters import stats as _stats
+from hedgehog.struct_filters import filters as _filters
+from hedgehog.struct_filters import plotting as _plotting
+from hedgehog.struct_filters import stats as _stats
 from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 from hedgehog.utils.paths import process_path  # noqa: F401
@@ -112,25 +112,6 @@ def _ensure_dataframe_length(df, expected_length, template_row=None):
 def camelcase(any_str):
     """Convert underscore-separated string to CamelCase."""
     return "".join(word.capitalize() for word in any_str.split("_"))
-
-
-def build_identity_map_from_descriptors(config):
-    """Build a map of (smiles, model_name) -> mol_idx from descriptors output."""
-    base_folder = Path(process_path(config["folder_to_save"]))
-    id_path = base_folder / "Descriptors" / "passDescriptorsSMILES.csv"
-
-    try:
-        if id_path.exists():
-            id_df = pd.read_csv(id_path)
-            identity_map = {
-                (row["smiles"], row["model_name"]): row["mol_idx"]
-                for _, row in id_df.iterrows()
-            }
-            return identity_map, id_df
-    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError, KeyError):
-        pass
-
-    return {}, None
 
 
 def sdf_to_mols(sdf_file, subsample):

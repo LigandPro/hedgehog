@@ -317,7 +317,7 @@ def _load_rascore_impl():
             try:
                 from hedgehog.setup import ensure_rascore_model
 
-                project_root = Path(__file__).resolve().parents[4]
+                project_root = Path(__file__).resolve().parents[3]
                 model_path = ensure_rascore_model(project_root)
             except (ImportError, OSError, RuntimeError) as e:
                 logger.warning(
@@ -448,9 +448,7 @@ def _calculate_syba_score_single(smiles: str) -> float | None:
 
 def _get_rascore_model_path() -> Path:
     """Get path to RAScore model file (native xgboost JSON format)."""
-    molscore_path = (
-        Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
-    )
+    molscore_path = Path(__file__).parent.parent.parent.parent / "modules" / "MolScore"
     return (
         molscore_path
         / "molscore"
@@ -464,9 +462,7 @@ def _get_rascore_model_path() -> Path:
 
 def _get_rascore_pickle_model_path() -> Path:
     """Get path to RAScore model file in MolScore upstream pickle format."""
-    molscore_path = (
-        Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
-    )
+    molscore_path = Path(__file__).parent.parent.parent.parent / "modules" / "MolScore"
     return (
         molscore_path
         / "molscore"

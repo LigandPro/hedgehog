@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from hedgehog.configs.logger import logger
-from hedgehog.stages.docking.binary import _resolve_autobox_path, _resolve_path
+from hedgehog.docking.binary import _resolve_autobox_path, _resolve_path
 
 
 def _create_docking_config_file(
@@ -57,7 +57,7 @@ def _create_docking_config_file(
 
     autobox_ligand = tool_config.get("autobox_ligand") or cfg.get("autobox_ligand")
     if autobox_ligand:
-        project_root = Path(__file__).parent.parent.parent.parent.parent
+        project_root = Path(__file__).parent.parent.parent.parent
         autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
         if autobox_path:
             tool_config["autobox_ligand"] = str(autobox_path)
@@ -130,7 +130,7 @@ def _create_per_molecule_configs(
     autobox_ligand = tool_config.get("autobox_ligand") or cfg.get("autobox_ligand")
     autobox_path = None
     if autobox_ligand:
-        project_root = Path(__file__).parent.parent.parent.parent.parent
+        project_root = Path(__file__).parent.parent.parent.parent
         autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
 
     skip_keys = {"bin", "center", "size"}

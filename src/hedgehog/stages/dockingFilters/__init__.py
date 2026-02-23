@@ -1,17 +1,17 @@
-"""Docking filters module for post-docking pose quality assessment."""
+"""Backwards-compatibility shim. Use hedgehog.docking_filters instead."""
 
-from .main import docking_filters_main
-from .utils import (
-    apply_conformer_deviation_filter,
-    apply_interaction_filter,
-    apply_pose_quality_filter,
-    apply_shepherd_score_filter,
+import importlib
+import warnings
+
+warnings.warn(
+    "hedgehog.stages.dockingFilters is deprecated. Use hedgehog.docking_filters instead.",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__all__ = [
-    "docking_filters_main",
-    "apply_pose_quality_filter",
-    "apply_interaction_filter",
-    "apply_shepherd_score_filter",
-    "apply_conformer_deviation_filter",
-]
+from hedgehog.docking_filters import *  # noqa: E402, F401, F403
+from hedgehog.docking_filters import docking_filters_main  # noqa: E402, F401
+
+
+def __getattr__(name):
+    return importlib.import_module(f"hedgehog.docking_filters.{name}")

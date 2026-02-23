@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from hedgehog.stages.structFilters.utils import (
+from hedgehog.struct_filters.utils import (
     combine_filter_results_in_memory,
     filter_data,
 )
