@@ -1,4 +1,5 @@
 import csv
+import inspect
 import shutil
 import time
 from datetime import datetime
@@ -637,7 +638,7 @@ class PipelineStageRunner:
 
             # Run docking filters
             result = docking_filters_main(self.config, reporter=reporter)
-            return result is not None and len(result) > 0
+            return bool(result)
         except Exception as e:
             logger.error("Error running docking filters: %s", e)
             return False
@@ -671,6 +672,17 @@ class MolecularAnalysisPipeline:
     def __init__(self, config: dict, progress_callback=None):
         self.config = config
         self.progress_callback = progress_callback
+        self._legacy_callback = False
+        if progress_callback is not None:
+            try:
+                sig = inspect.signature(progress_callback)
+                params = list(sig.parameters)
+                # New-style callbacks accept a single dict (event); legacy ones
+                # take (stage_name, current, total) — 3+ positional params.
+                if len(params) >= 3:
+                    self._legacy_callback = True
+            except (ValueError, TypeError):
+                pass
         self.data_checker = DataChecker(config)
         self.stage_runner = PipelineStageRunner(config, self.data_checker)
         self.current_data = None
@@ -729,32 +741,32 @@ class MolecularAnalysisPipeline:
         if not self.progress_callback:
             return
 
-        try:
+        if not self._legacy_callback:
             self.progress_callback(event)
             return
-        except TypeError:
-            # Legacy callback: (stage_name, current, total)
-            try:
-                event_type = event.get("type")
-                stage = event.get("stage")
-                if not stage:
-                    return
 
-                if event_type == "stage_progress":
-                    self.progress_callback(
-                        stage, int(event.get("current", 0)), int(event.get("total", 0))
-                    )
-                elif event_type == "stage_start":
-                    self.progress_callback(
-                        stage,
-                        int(event.get("stage_index", 0)),
-                        int(event.get("total_stages", 0)),
-                    )
-                elif event_type == "stage_complete":
-                    total = int(event.get("total_stages", 0))
-                    self.progress_callback(stage, total, total)
-            except Exception:
+        # Legacy callback: (stage_name, current, total)
+        try:
+            event_type = event.get("type")
+            stage = event.get("stage")
+            if not stage:
                 return
+
+            if event_type == "stage_progress":
+                self.progress_callback(
+                    stage, int(event.get("current", 0)), int(event.get("total", 0))
+                )
+            elif event_type == "stage_start":
+                self.progress_callback(
+                    stage,
+                    int(event.get("stage_index", 0)),
+                    int(event.get("total_stages", 0)),
+                )
+            elif event_type == "stage_complete":
+                total = int(event.get("total_stages", 0))
+                self.progress_callback(stage, total, total)
+        except Exception:
+            return
 
     def _count_csv_rows(self, path: Path) -> int | None:
         """Count data rows in a CSV file (excluding header)."""
@@ -957,9 +969,10 @@ class MolecularAnalysisPipeline:
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
         start_time = time.perf_counter()
-        try:
+        sig = inspect.signature(runner_func)
+        if "reporter" in sig.parameters:
             completed = runner_func(*args, reporter=reporter)
-        except TypeError:
+        else:
             completed = runner_func(*args)
         elapsed = time.perf_counter() - start_time
         output_count = self._resolve_stage_output_count(
@@ -1120,7 +1133,7 @@ class MolecularAnalysisPipeline:
     def _run_final_descriptors(self) -> tuple[bool, bool]:
         """Run final descriptors calculation stage."""
 
-        def _run_final_desc():
+        def _run_final_desc(reporter=None):
             final_data = self.get_latest_data(
                 skip_descriptors=True, fallback_on_empty=False
             )
@@ -1133,7 +1146,7 @@ class MolecularAnalysisPipeline:
                 )
                 return False
             return self.stage_runner.run_descriptors(
-                final_data, subfolder=DIR_FINAL_DESCRIPTORS
+                final_data, subfolder=DIR_FINAL_DESCRIPTORS, reporter=reporter
             )
 
         return self._run_stage(STAGE_FINAL_DESCRIPTORS, _run_final_desc)
@@ -1259,6 +1272,7 @@ class MolecularAnalysisPipeline:
             docking_scores = _collect_docking_scores(self.data_checker.base_path)
             if not docking_scores.empty:
                 output_df["_join_mol_idx"] = output_df["mol_idx"].astype(str)
+                docking_scores["mol_idx"] = docking_scores["mol_idx"].astype(str)
                 docking_scores = docking_scores.rename(
                     columns={"mol_idx": "_join_mol_idx"}
                 )

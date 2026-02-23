@@ -154,7 +154,7 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
         folder_to_save.mkdir(parents=True, exist_ok=True)
         prepared_output = folder_to_save / f"prepared_{input_path_obj.stem}.csv"
 
-        df = pd.read_csv(input_path_obj)
+        df = pd.read_csv(input_path_obj, encoding="utf-8-sig")
         lower_cols = {c.lower(): c for c in df.columns}
         smiles_col = lower_cols.get("smiles")
         if not smiles_col:
@@ -598,9 +598,20 @@ def run(
 
     _preprocess_input(config_dict, folder_to_save)
 
-    data = prepare_input_data(config_dict, logger)
+    try:
+        data = prepare_input_data(config_dict, logger)
+    except FileNotFoundError:
+        logger.error(
+            "No input files found matching pattern: %s",
+            config_dict.get("generated_mols_path", "<not set>"),
+        )
+        raise typer.Exit(code=1) from None
 
-    if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
+    if (
+        "mol_idx" not in data.columns
+        or data["mol_idx"].isna().all()
+        or (data["mol_idx"].astype(str).str.strip() == "").all()
+    ):
         data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
 
     should_save = config_dict.get("save_sampled_mols", False) or stage is not None
@@ -958,9 +969,9 @@ def info() -> None:
 def version() -> None:
     """Display version information."""
     if _plain_output_enabled():
-        console.print("HEDGEHOG version 1.0.12")
+        console.print("HEDGEHOG version 1.0.13")
     else:
-        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.12[/bold]")
+        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.13[/bold]")
     console.print(
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )

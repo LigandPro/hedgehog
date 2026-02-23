@@ -2,8 +2,10 @@
 
 import base64
 import html as html_lib
+import importlib.metadata
 import json
 import logging
+import math
 import statistics
 from datetime import datetime
 from pathlib import Path
@@ -78,6 +80,14 @@ DESCRIPTOR_ALIASES = {
 
 # Columns to exclude from descriptor analysis (not numeric descriptors)
 DESCRIPTOR_EXCLUDE_COLS = {"smiles", "model_name", "mol_idx", "chars", "name", "id"}
+
+
+def _get_hedgehog_version() -> str:
+    """Get the installed hedgehog package version."""
+    try:
+        return importlib.metadata.version("hedgehog")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 class ReportGenerator:
@@ -250,7 +260,7 @@ class ReportGenerator:
         """Get report metadata."""
         return {
             "generated_at": datetime.now().isoformat(),
-            "hedgehog_version": "1.0.0",
+            "hedgehog_version": _get_hedgehog_version(),
             "run_path": str(self.base_path),
         }
 
@@ -569,7 +579,9 @@ class ReportGenerator:
             model_stats.append(
                 {
                     "model_name": model,
-                    "initial": initial_count or final_count,
+                    "initial": initial_count
+                    if initial_count is not None
+                    else final_count,
                     "final": final_count,
                     "losses": self._get_model_losses(model),
                 }
@@ -669,11 +681,12 @@ class ReportGenerator:
                 values = df[col].dropna().tolist()
                 if values:
                     stats["distributions"][desc] = values
+                    non_null = df[col].dropna()
                     stats["summary"][desc] = {
-                        "mean": float(df[col].mean()),
-                        "std": float(df[col].std()),
-                        "min": float(df[col].min()),
-                        "max": float(df[col].max()),
+                        "mean": float(non_null.mean()),
+                        "std": float(non_null.std()) if len(non_null) > 1 else 0.0,
+                        "min": float(non_null.min()),
+                        "max": float(non_null.max()),
                     }
 
         return stats
@@ -768,13 +781,15 @@ class ReportGenerator:
                 if values:
                     stats["distributions"][col] = values
 
-        # Get scatter plot data
+        # Get scatter plot data (only rows where both scores are non-null)
         if "sa_score" in df.columns and "syba_score" in df.columns:
+            scatter_mask = df[["sa_score", "syba_score"]].notna().all(axis=1)
+            scatter_df = df[scatter_mask]
             stats["scatter_data"] = {
-                "sa_scores": df["sa_score"].dropna().tolist(),
-                "syba_scores": df["syba_score"].dropna().tolist(),
-                "model_names": df["model_name"].tolist()
-                if "model_name" in df.columns
+                "sa_scores": scatter_df["sa_score"].tolist(),
+                "syba_scores": scatter_df["syba_score"].tolist(),
+                "model_names": scatter_df["model_name"].tolist()
+                if "model_name" in scatter_df.columns
                 else [],
             }
 
@@ -1515,12 +1530,16 @@ class ReportGenerator:
         if "sa_score" in df.columns:
             result["sa_scores"] = df["sa_score"].dropna().tolist()
             if result["sa_scores"]:
-                result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
+                result["summary"]["avg_sa_score"] = float(
+                    statistics.mean(result["sa_scores"])
+                )
 
         if "syba_score" in df.columns:
             result["syba_scores"] = df["syba_score"].dropna().tolist()
             if result["syba_scores"]:
-                result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
+                result["summary"]["avg_syba_score"] = float(
+                    statistics.mean(result["syba_scores"])
+                )
 
         if "ra_score" in df.columns:
             result["ra_scores"] = df["ra_score"].dropna().tolist()
@@ -1538,7 +1557,10 @@ class ReportGenerator:
                 solved = (
                     df[col].sum()
                     if df[col].dtype == bool
-                    else df[col].astype(bool).sum()
+                    else df[col]
+                    .map({"True": True, "False": False, True: True, False: False})
+                    .fillna(False)
+                    .sum()
                 )
                 result["solved_count"] = int(solved)
                 result["unsolved_count"] = len(df) - int(solved)
@@ -1588,10 +1610,10 @@ class ReportGenerator:
                     "summary": {},
                 }
 
-                # Calculate per-model summary
+                # Calculate per-model summary (use already-filtered lists)
                 if "sa_score" in model_df.columns and len(model_data["sa_scores"]) > 0:
                     model_data["summary"]["avg_sa_score"] = float(
-                        model_df["sa_score"].mean()
+                        statistics.mean(model_data["sa_scores"])
                     )
 
                 if (
@@ -1599,12 +1621,12 @@ class ReportGenerator:
                     and len(model_data["syba_scores"]) > 0
                 ):
                     model_data["summary"]["avg_syba_score"] = float(
-                        model_df["syba_score"].mean()
+                        statistics.mean(model_data["syba_scores"])
                     )
 
                 if "ra_score" in model_df.columns and len(model_data["ra_scores"]) > 0:
                     model_data["summary"]["avg_ra_score"] = float(
-                        model_df["ra_score"].dropna().mean()
+                        statistics.mean(model_data["ra_scores"])
                     )
 
                 # Count solved/unsolved per model
@@ -1612,7 +1634,10 @@ class ReportGenerator:
                     model_solved = (
                         model_df[solved_col].sum()
                         if model_df[solved_col].dtype == bool
-                        else (model_df[solved_col] == True).sum()  # noqa: E712
+                        else model_df[solved_col]
+                        .map({"True": True, "False": False, True: True, False: False})
+                        .fillna(False)
+                        .sum()
                     )
                     model_data["solved_count"] = int(model_solved)
                     model_data["unsolved_count"] = len(model_df) - int(model_solved)
@@ -2624,7 +2649,7 @@ class ReportGenerator:
             )
             model_rows += f"""
             <tr>
-                <td>{model["model_name"]}</td>
+                <td>{html_lib.escape(str(model["model_name"]))}</td>
                 <td>{model["initial"]}</td>
                 <td>{model["final"]}</td>
                 <td>{retention:.1f}%</td>
@@ -2788,7 +2813,7 @@ class ReportGenerator:
             <h1>HEDGEHOG Pipeline Report</h1>
             <div class="meta">
                 <p>Generated: {metadata.get("generated_at", "N/A")}</p>
-                <p>Run path: {metadata.get("run_path", "N/A")}</p>
+                <p>Run path: {html_lib.escape(str(metadata.get("run_path", "N/A")))}</p>
             </div>
         </header>
 
@@ -2959,7 +2984,13 @@ class ReportGenerator:
             return {k: self._make_json_serializable(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [self._make_json_serializable(item) for item in obj]
-        elif isinstance(obj, (int, float, str, bool, type(None))):
+        elif isinstance(obj, bool):
+            return obj
+        elif isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return obj
+        elif isinstance(obj, (int, str, type(None))):
             return obj
         elif hasattr(obj, "tolist"):  # numpy arrays
             return obj.tolist()

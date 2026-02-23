@@ -71,6 +71,10 @@ def _resolve_docking_binary(config_path: str, tool_name: str) -> str:
     if os.path.isabs(config_path) and os.path.isfile(config_path):
         return config_path
 
+    # Handle relative paths (e.g., "./smina" or "bin/gnina")
+    if not os.path.isabs(config_path) and os.path.isfile(config_path):
+        return os.path.abspath(config_path)
+
     found = shutil.which(tool_name)
     if found and _is_real_binary(found):
         return found
@@ -212,11 +216,16 @@ def _sdf_center(sdf_path: Path) -> tuple[float, float, float] | None:
         return None
 
     suppl = Chem.SDMolSupplier(str(sdf_path))
-    mol = next((m for m in suppl if m is not None), None)
+    try:
+        mol = next((m for m in suppl if m is not None), None)
+    finally:
+        del suppl
     if mol is None or mol.GetNumConformers() == 0:
         return None
     conf = mol.GetConformer()
     n = mol.GetNumAtoms()
+    if n == 0:
+        return None
     sx = sy = sz = 0.0
     for i in range(n):
         p = conf.GetAtomPosition(i)
@@ -328,16 +337,19 @@ def _gnina_zero_affinity_count(output_sdf: Path) -> tuple[int, int]:
     total = 0
     zero = 0
     suppl = Chem.SDMolSupplier(str(output_sdf))
-    for mol in suppl:
-        if mol is None:
-            continue
-        total += 1
-        if mol.HasProp("minimizedAffinity"):
-            try:
-                if float(mol.GetProp("minimizedAffinity")) == 0.0:
-                    zero += 1
-            except Exception:
+    try:
+        for mol in suppl:
+            if mol is None:
                 continue
+            total += 1
+            if mol.HasProp("minimizedAffinity"):
+                try:
+                    if float(mol.GetProp("minimizedAffinity")) == 0.0:
+                        zero += 1
+                except Exception:
+                    continue
+    finally:
+        del suppl
     return (zero, total)
 
 
@@ -371,6 +383,20 @@ def _emit_post_docking_warnings(
     except Exception:
         # Warning-only logic must never fail docking.
         return
+
+
+def _validate_coord_list(values, label):
+    """Validate and convert a list of coordinate values to floats."""
+    if values is None:
+        return None
+    if not isinstance(values, (list, tuple)) or len(values) < 3:
+        return values  # let downstream checks handle non-list/short values
+    try:
+        return [float(v) for v in values[:3]]
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"Invalid {label} values in docking config: {values!r} — {e}"
+        ) from e
 
 
 def _create_docking_config_file(
@@ -408,7 +434,10 @@ def _create_docking_config_file(
         f"out = {output_sdf}",
     ]
 
-    center = tool_config.get("center") or cfg.get("center")
+    _raw_center = tool_config.get("center")
+    center = _validate_coord_list(
+        _raw_center if _raw_center is not None else cfg.get("center"), "center"
+    )
     if center and isinstance(center, (list, tuple)) and len(center) >= 3:
         lines.extend(
             [
@@ -418,7 +447,10 @@ def _create_docking_config_file(
             ]
         )
 
-    size = tool_config.get("size") or cfg.get("size")
+    _raw_size = tool_config.get("size")
+    size = _validate_coord_list(
+        _raw_size if _raw_size is not None else cfg.get("size"), "size"
+    )
     if size and isinstance(size, (list, tuple)) and len(size) >= 3:
         lines.extend(
             [f"size_x = {size[0]}", f"size_y = {size[1]}", f"size_z = {size[2]}"]
@@ -493,8 +525,14 @@ def _create_per_molecule_configs(
     # Resolve common settings once
     receptor_abs = _resolve_path(receptor, ligands_dir)
 
-    center = tool_config.get("center") or cfg.get("center")
-    size = tool_config.get("size") or cfg.get("size")
+    _raw_center = tool_config.get("center")
+    center = _validate_coord_list(
+        _raw_center if _raw_center is not None else cfg.get("center"), "center"
+    )
+    _raw_size = tool_config.get("size")
+    size = _validate_coord_list(
+        _raw_size if _raw_size is not None else cfg.get("size"), "size"
+    )
 
     autobox_ligand = tool_config.get("autobox_ligand")
     autobox_path = None
@@ -617,7 +655,7 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         ligands_dir: Directory for docking files
         tool_name: 'smina' or 'gnina' for log messages
     """
-    f.write(f"cd {ligands_dir}\n")
+    f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
 
     if isinstance(protein_prep_cmd, (list, tuple)):
         protein_prep_cmd_str = " ".join(shlex.quote(str(p)) for p in protein_prep_cmd)
@@ -742,18 +780,21 @@ def _write_receptor_check_bash(f, receptor):
 
 def _write_docking_command_bash(f, ligands_dir, docking_bin, config_file, tool_name):
     """Write docking command bash code to script file."""
-    f.write(f"cd {ligands_dir}\n")
+    f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
     try:
         config_rel = config_file.relative_to(ligands_dir)
     except ValueError:
         config_rel = config_file.name
     f.write(f'echo "Starting {tool_name.upper()} docking with config: {config_rel}"\n')
     f.write(f"{docking_bin} --config {config_rel}\n")
-    f.write("if [ $? -eq 0 ]; then\n")
+    f.write("DOCKING_EXIT=$?\n")
+    f.write("if [ $DOCKING_EXIT -eq 0 ]; then\n")
     f.write(f'  echo "{tool_name.upper()} docking completed successfully"\n')
     f.write("else\n")
-    f.write(f'  echo "{tool_name.upper()} docking failed with exit code $?"\n')
-    f.write("  exit 1\n")
+    f.write(
+        f'  echo "{tool_name.upper()} docking failed with exit code $DOCKING_EXIT"\n'
+    )
+    f.write("  exit $DOCKING_EXIT\n")
     f.write("fi\n")
 
 
@@ -879,8 +920,8 @@ def _create_smina_per_molecule_script(
         if protein_prep_cmd:
             _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, "smina")
 
-        f.write(f"cd {ligands_dir}\n")
-        f.write(f'mkdir -p "{logs_dir}"\n\n')
+        f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
+        f.write(f"mkdir -p {shlex.quote(str(logs_dir))}\n\n")
 
         f.write("# Per-molecule docking with error handling\n")
         f.write("FAILED=()\n")
@@ -1088,27 +1129,34 @@ def _split_sdf_to_molecules(sdf_path: Path, molecules_dir: Path) -> list[Path]:
     molecule_files = []
 
     suppl = Chem.SDMolSupplier(str(sdf_path))
-    for mol in suppl:
-        if mol is None:
-            continue
+    try:
+        for mol in suppl:
+            if mol is None:
+                continue
 
-        mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
-        if not mol_name:
-            mol_name = f"mol_{len(molecule_files):05d}"
+            mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
+            if not mol_name:
+                mol_name = f"mol_{len(molecule_files):05d}"
 
-        # Sanitize molecule name for filesystem and force uniqueness with index prefix
-        base_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in mol_name)
-        if not base_name:
-            base_name = "mol"
-        base_name = base_name[:180]
-        safe_name = f"{len(molecule_files):06d}_{base_name}"
-        mol_path = molecules_dir / f"{safe_name}.sdf"
+            # Sanitize molecule name for filesystem and force uniqueness with index prefix
+            base_name = "".join(
+                c if c.isalnum() or c in "-_" else "_" for c in mol_name
+            )
+            if not base_name:
+                base_name = "mol"
+            base_name = base_name[:180]
+            safe_name = f"{len(molecule_files):06d}_{base_name}"
+            mol_path = molecules_dir / f"{safe_name}.sdf"
 
-        writer = Chem.SDWriter(str(mol_path))
-        writer.write(mol)
-        writer.close()
+            writer = Chem.SDWriter(str(mol_path))
+            try:
+                writer.write(mol)
+            finally:
+                writer.close()
 
-        molecule_files.append(mol_path)
+            molecule_files.append(mol_path)
+    finally:
+        del suppl
 
     logger.info(
         "Split SDF into %d individual molecule files in %s",
@@ -1157,8 +1205,12 @@ def _resolve_gnina_parallel_jobs(cfg: dict, cpu_per_process: int) -> int:
 
 def _count_visible_nvidia_gpus() -> int:
     """Return count of visible NVIDIA GPUs available to this process."""
-    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-    if visible_devices:
+    cuda_env = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_env is not None:
+        visible_devices = cuda_env.strip()
+        if not visible_devices:
+            # Explicitly empty — user intends no GPUs
+            return 0
         tokens = [item.strip() for item in visible_devices.split(",") if item.strip()]
         if any(
             token in {"-1", "none", "void"} for token in (t.lower() for t in tokens)
@@ -1212,7 +1264,14 @@ def _materialize_prepared_ligands(
             cwd=str(ligands_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=600,
         )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "%s ligand preparation timed out after 600s, falling back to batch mode",
+            tool_name.upper(),
+        )
+        return False
     except subprocess.CalledProcessError as exc:
         logger.warning(
             "%s ligand preparation failed before per-molecule split (exit=%s), falling back to batch mode",
@@ -1272,30 +1331,34 @@ def _aggregate_docking_results(results_dir: Path, output_sdf: Path) -> int:
     def _pick_best_pose(result_file: Path):
         best_mol = None
         best_affinity = float("inf")
-        for mol in Chem.SDMolSupplier(str(result_file)):
-            if mol is None:
-                continue
-            affinity = _extract_pose_affinity(mol)
-            affinity_sort = affinity if affinity is not None else float("inf")
-            if best_mol is None or affinity_sort < best_affinity:
-                best_mol = mol
-                best_affinity = affinity_sort
+        suppl = Chem.SDMolSupplier(str(result_file))
+        try:
+            for mol in suppl:
+                if mol is None:
+                    continue
+                affinity = _extract_pose_affinity(mol)
+                affinity_sort = affinity if affinity is not None else float("inf")
+                if best_mol is None or affinity_sort < best_affinity:
+                    best_mol = mol
+                    best_affinity = affinity_sort
+        finally:
+            del suppl
         return best_mol
 
     writer = Chem.SDWriter(str(output_sdf))
     count = 0
-
-    for result_file in result_files:
-        try:
-            best_pose = _pick_best_pose(result_file)
-            if best_pose is not None:
-                writer.write(best_pose)
-                count += 1
-        except Exception as e:
-            logger.warning("Failed to read result file %s: %s", result_file, e)
-            continue
-
-    writer.close()
+    try:
+        for result_file in result_files:
+            try:
+                best_pose = _pick_best_pose(result_file)
+                if best_pose is not None:
+                    writer.write(best_pose)
+                    count += 1
+            except Exception as e:
+                logger.warning("Failed to read result file %s: %s", result_file, e)
+                continue
+    finally:
+        writer.close()
     logger.info(
         "Aggregated %d best poses (single pose per molecule) from %d result files into %s",
         count,
@@ -1322,27 +1385,27 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
 
     writer = Chem.SDWriter(str(sdf_path))
     written_count = 0
-
-    for smi, name in zip(
-        smiles_series.astype(str), name_series.astype(str), strict=False
-    ):
-        try:
-            mol = Chem.MolFromSmiles(smi)
-            if mol is None:
-                continue
-            mol = Chem.AddHs(mol)
+    try:
+        for smi, name in zip(
+            smiles_series.astype(str), name_series.astype(str), strict=False
+        ):
             try:
-                AllChem.EmbedMolecule(mol, AllChem.ETKDG())
-                AllChem.UFFOptimizeMolecule(mol)
+                mol = Chem.MolFromSmiles(smi)
+                if mol is None:
+                    continue
+                mol = Chem.AddHs(mol)
+                try:
+                    AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+                    AllChem.UFFOptimizeMolecule(mol)
+                except Exception:
+                    pass
+                mol.SetProp("_Name", name)
+                writer.write(mol)
+                written_count += 1
             except Exception:
-                pass
-            mol.SetProp("_Name", name)
-            writer.write(mol)
-            written_count += 1
-        except Exception:
-            continue
-
-    writer.close()
+                continue
+    finally:
+        writer.close()
 
     if written_count == 0:
         raise RuntimeError("RDKit conversion produced 0 molecules for GNINA SDF")
@@ -1513,7 +1576,7 @@ def _create_gnina_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {ligands_dir}\n")
+        f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
         try:
             config_rel = config_file.relative_to(ligands_dir)
         except ValueError:
@@ -1523,11 +1586,12 @@ def _create_gnina_script(
             "__GNINA_CONFIG__", shlex.quote(str(config_rel))
         )
         f.write(f"{gnina_cmd}\n")
-        f.write("if [ $? -eq 0 ]; then\n")
+        f.write("DOCKING_EXIT=$?\n")
+        f.write("if [ $DOCKING_EXIT -eq 0 ]; then\n")
         f.write('  echo "GNINA docking completed successfully"\n')
         f.write("else\n")
-        f.write('  echo "GNINA docking failed with exit code $?"\n')
-        f.write("  exit 1\n")
+        f.write('  echo "GNINA docking failed with exit code $DOCKING_EXIT"\n')
+        f.write("  exit $DOCKING_EXIT\n")
         f.write("fi\n")
 
     os.chmod(script_path, 0o755)
@@ -1572,8 +1636,8 @@ def _create_gnina_per_molecule_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {ligands_dir}\n")
-        f.write(f'mkdir -p "{logs_dir}"\n\n')
+        f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
+        f.write(f"mkdir -p {shlex.quote(str(logs_dir))}\n\n")
 
         f.write("# Per-molecule docking with bounded parallelism\n")
         f.write(f"MAX_JOBS={max(1, int(parallel_jobs))}\n")
@@ -1865,15 +1929,25 @@ def _run_docking_script(
         return {"status": "error", "log_path": str(log_path)}
 
     if background:
-        with open(log_path, "ab") as logf:
-            subprocess.Popen(
-                ["./" + script_path.name],
-                stdout=logf,
-                stderr=logf,
-                cwd=str(working_dir),
-            )
-        logger.info("Started %s in background. Log: %s", script_path.name, log_path)
-        return {"status": "started_background", "log_path": str(log_path)}
+        logf = open(log_path, "ab")  # noqa: SIM115
+        proc = subprocess.Popen(
+            ["./" + script_path.name],
+            stdout=logf,
+            stderr=logf,
+            cwd=str(working_dir),
+            start_new_session=True,
+        )
+        logger.info(
+            "Started %s in background (PID %d). Log: %s",
+            script_path.name,
+            proc.pid,
+            log_path,
+        )
+        return {
+            "status": "started_background",
+            "log_path": str(log_path),
+            "pid": proc.pid,
+        }
     else:
         with open(log_path, "wb") as logf:
             proc = subprocess.Popen(
@@ -2116,23 +2190,15 @@ def _setup_gnina(
             return None
 
         if "protein_prepared.pdb" in original_receptor:
-            logger.warning(
-                "GNINA: Config has prepared path: %s, this should have been restored",
-                original_receptor,
-            )
-            project_root = Path(__file__).parent.parent.parent.parent.parent
-            possible_originals = [
-                project_root / "data/test/7EW9_apo.pdb",
-            ]
-            original_receptor = None
-            for possible in possible_originals:
-                if possible.exists():
-                    original_receptor = str(possible.resolve())
-                    break
-            if not original_receptor:
-                logger.error("GNINA: Could not find original receptor file")
+            receptor_path = Path(original_receptor)
+            if not receptor_path.exists():
+                logger.error(
+                    "GNINA: Config references prepared receptor path '%s' which "
+                    "does not exist. Please check 'receptor_pdb' in your docking "
+                    "config and provide the original receptor file.",
+                    original_receptor,
+                )
                 return None
-            cfg["receptor_pdb"] = original_receptor
 
         receptor, protein_prep_cmd = _get_receptor_and_prep_cmd(
             cfg, ligands_dir, protein_preparation_tool, "gnina"

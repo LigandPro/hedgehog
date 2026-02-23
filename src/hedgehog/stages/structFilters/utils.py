@@ -35,6 +35,7 @@ if _LILLY_BIN_PATH.exists():
 
 _VALID_SCHEDULERS = {"threads", "processes"}
 _COMPLEXITY_FILTERS_CACHE = {}
+_COMPLEXITY_FILTERS_LOCK = threading.Lock()
 _MOLCOMPLEXITY_ALERT_NAMES: list[str] | None = None
 _ALERT_COMPILED_SMARTS: list[tuple[str, object, str]] | None = None
 _ALERT_RULESET_NAMES: list[str] | None = None
@@ -87,13 +88,14 @@ def _resolve_scheduler(config_structFilters, scheduler_key, default="processes")
 
 def _get_complexity_filter(metric_name):
     """Get cached complexity filter instance for worker process."""
-    complexity_filter = _COMPLEXITY_FILTERS_CACHE.get(metric_name)
-    if complexity_filter is None:
-        complexity_filter = mc.complexity.ComplexityFilter(
-            complexity_metric=metric_name
-        )
-        _COMPLEXITY_FILTERS_CACHE[metric_name] = complexity_filter
-    return complexity_filter
+    with _COMPLEXITY_FILTERS_LOCK:
+        complexity_filter = _COMPLEXITY_FILTERS_CACHE.get(metric_name)
+        if complexity_filter is None:
+            complexity_filter = mc.complexity.ComplexityFilter(
+                complexity_metric=metric_name
+            )
+            _COMPLEXITY_FILTERS_CACHE[metric_name] = complexity_filter
+        return complexity_filter
 
 
 def _compute_molcomplexity_one(args):
@@ -193,7 +195,26 @@ def _process_nibr_chunk(args):
     return chunk_df.to_dict("records")
 
 
-mc = _import_medchem_quietly()
+_mc = None
+
+
+def _get_mc():
+    """Lazy-load medchem module on first access."""
+    global _mc
+    if _mc is None:
+        _mc = _import_medchem_quietly()
+    return _mc
+
+
+# Backward-compatible module-level attribute for existing references
+class _LazyMedchem:
+    """Proxy that delays medchem import until first attribute access."""
+
+    def __getattr__(self, name):
+        return getattr(_get_mc(), name)
+
+
+mc = _LazyMedchem()
 
 try:
     from medchem.structural.lilly_demerits import LillyDemeritsFilters
@@ -579,7 +600,8 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
         DataFrame with filter results or None if no molecules to process
     """
     input_type = input_path[input_path.rfind(".") + 1 :]
-    assert input_type in {"csv", "smi", "sdf", "txt"}
+    if input_type not in {"csv", "smi", "sdf", "txt"}:
+        raise ValueError(f"Unsupported input file type: .{input_type}")
 
     if input_type == "csv":
         data = pd.read_csv(input_path)
@@ -589,7 +611,7 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
         with open(input_path) as file:
             lines = [line.rstrip("\n") for line in file]
 
-        if subsample <= len(lines):
+        if subsample is not None and subsample <= len(lines):
             lines = np.random.permutation(lines)[:subsample].tolist()
 
         smiles = []
@@ -609,6 +631,10 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
     elif input_type == "sdf":
         mols, smiles = sdf_to_mols(input_path, subsample)
 
+    if not smiles:
+        logger.warning("No valid molecules in file: %s", input_path)
+        return None
+
     if isinstance(smiles[0], tuple):
         cleaned = []
         for item in smiles:
@@ -625,13 +651,12 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
     else:
         mols, smiles = dropna(mols, smiles)
 
-    assert len(mols) == len(smiles), f"{len(mols)}, {len(smiles)}"
-    if not isinstance(smiles[0], tuple):
-        assert len(mols) <= subsample
-
-    for mol, smi in zip(mols, smiles, strict=False):
-        smi_val = smi[0] if isinstance(smi, tuple) else smi
-        assert mol is not None, f"{smi_val}"
+    if len(mols) != len(smiles):
+        raise ValueError(
+            f"Molecule/SMILES length mismatch: {len(mols)} vs {len(smiles)}"
+        )
+    if not mols:
+        return None
 
     final_result = None
     if len(mols) > 0:
@@ -787,64 +812,6 @@ def _init_alert_worker_quiet(
     _init_alert_worker(compiled_smarts, rule_set_names)
 
 
-def _resolve_common_alerts_n_jobs(
-    config_structFilters: dict, config: dict, total_items: int
-) -> int:
-    """Resolve workers for Common Alerts with size-aware defaults."""
-    base_n_jobs = resolve_n_jobs(config_structFilters, config)
-    auto_n_jobs = bool(config_structFilters.get("common_alerts_auto_n_jobs", True))
-    if not auto_n_jobs:
-        return base_n_jobs
-
-    threshold_raw = config_structFilters.get(
-        "common_alerts_small_input_threshold", 2000
-    )
-    small_jobs_raw = config_structFilters.get("common_alerts_small_input_n_jobs", 1)
-    large_jobs_raw = config_structFilters.get("common_alerts_large_input_n_jobs", 12)
-
-    try:
-        threshold = int(threshold_raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Invalid common_alerts_small_input_threshold=%r. Using default 2000.",
-            threshold_raw,
-        )
-        threshold = 2000
-
-    try:
-        small_jobs = max(1, int(small_jobs_raw))
-    except (TypeError, ValueError):
-        logger.warning(
-            "Invalid common_alerts_small_input_n_jobs=%r. Using default 1.",
-            small_jobs_raw,
-        )
-        small_jobs = 1
-
-    try:
-        large_jobs = max(1, int(large_jobs_raw))
-    except (TypeError, ValueError):
-        logger.warning(
-            "Invalid common_alerts_large_input_n_jobs=%r. Using default 12.",
-            large_jobs_raw,
-        )
-        large_jobs = 12
-
-    if total_items <= max(0, threshold):
-        selected = small_jobs
-    else:
-        selected = large_jobs
-
-    logger.info(
-        "Common Alerts auto workers: %d (molecules=%d, threshold=%d, small=%d, large=%d)",
-        selected,
-        total_items,
-        threshold,
-        small_jobs,
-        large_jobs,
-    )
-    return selected
-
-
 def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_cb=None):
     logger.info("Calculating Common Alerts...")
 
@@ -875,10 +842,10 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
         compiled_smarts.append((ruleset, patt, str(desc)))
 
     # Parallel per-molecule alert checking.
+    n_jobs = resolve_n_jobs(config_structFilters, config)
+    logger.info("Common Alerts workers: %d", n_jobs)
     items = [(i, mol) for i, mol in enumerate(mols)]
     total_items = len(items)
-    n_jobs = _resolve_common_alerts_n_jobs(config_structFilters, config, total_items)
-    logger.info("Common Alerts workers: %d", n_jobs)
 
     progress_log_step = max(1, min(500, total_items // 20)) if total_items else 1
     heartbeat_interval_seconds = 30.0
@@ -1534,8 +1501,8 @@ def get_basic_stats(
             all_extended, ignore_index=True
         )
 
-    num_mol = len(filter_results)
     filter_results.dropna(subset="mol", inplace=True)
+    num_mol = len(filter_results)
     if isinstance(model_name, str):
         filter_results["model_name"] = model_name
 
@@ -1613,6 +1580,12 @@ def get_basic_stats(
             num_mol,
             mean_noNA_demerit_score=filter_results.demerit_score.dropna().mean(),
         )
+        # If all demerit_score values are NaN, molecules were not scored (not failed)
+        if (
+            "demerit_score" in filter_results.columns
+            and filter_results["demerit_score"].isna().all()
+        ):
+            filter_results["pass"] = True
         pass_col = _get_pass_column(filter_results, "demerit_score", lambda x: x == 0)
         res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
         res_df, filter_extended = common_postprocessing_statistics(
@@ -1834,29 +1807,29 @@ def plot_calculated_stats(config, stage_dir):
         ax.xaxis.set_major_formatter(plt.FuncFormatter(format_number))
         ax.set_xlim(left=0)
 
-    ax.set_xlabel(
-        f"Number of Molecules (Total: {format_number(total_mols)})",
-        fontsize=12,
-        labelpad=10,
-    )
-    ax.set_ylabel("Models", fontsize=12, labelpad=10)
+        ax.set_xlabel(
+            f"Number of Molecules (Total: {format_number(total_mols)})",
+            fontsize=12,
+            labelpad=10,
+        )
+        ax.set_ylabel("Models", fontsize=12, labelpad=10)
 
-    ax.grid(True, axis="x", alpha=0.2, linestyle="--")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+        ax.grid(True, axis="x", alpha=0.2, linestyle="--")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-    sorted_indices = np.argsort(banned_percentages)[::-1]
-    sorted_handles = [total] + [banned_bars[i] for i in sorted_indices]
+        sorted_indices = np.argsort(banned_percentages)[::-1]
+        sorted_handles = [total] + [banned_bars[i] for i in sorted_indices]
 
-    legend = ax.legend(
-        handles=sorted_handles,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        fontsize=11,
-        ncol=1,
-    )
-    legend.get_frame().set_alpha(0.9)
-    legend.get_frame().set_edgecolor("lightgray")
+        legend = ax.legend(
+            handles=sorted_handles,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            fontsize=11,
+            ncol=1,
+        )
+        legend.get_frame().set_alpha(0.9)
+        legend.get_frame().set_edgecolor("lightgray")
 
     plt.subplots_adjust(right=0.85, hspace=0.6, wspace=0.5)
 
@@ -1970,6 +1943,24 @@ def plot_restriction_ratios(config, stage_dir):
             if "any" in data.columns:
                 data.drop(columns=["any"], inplace=True)
 
+            numeric_data = data.select_dtypes(include="number")
+            if numeric_data.empty:
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No numeric data available",
+                    horizontalalignment="center",
+                    verticalalignment="center",
+                    transform=ax.transAxes,
+                )
+                ax.set_title(
+                    f"{clean_name(filter_name)} Filter",
+                    pad=10,
+                    fontsize=11,
+                    fontweight="bold",
+                )
+                continue
+
             custom_cmap = LinearSegmentedColormap.from_list(
                 "custom", ["white", "#B29EEE"]
             )
@@ -1980,7 +1971,7 @@ def plot_restriction_ratios(config, stage_dir):
                 ax=ax,
                 cbar_kws={"label": "Passed Molecules", "format": "%d"},
                 vmin=0,
-                vmax=max(data.max()),
+                vmax=numeric_data.max().max(),
                 fmt=".0f",
                 annot=True,
                 annot_kws={"size": 12, "rotation": 0, "color": "black"},

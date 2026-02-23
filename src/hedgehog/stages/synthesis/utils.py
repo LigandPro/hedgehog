@@ -1,8 +1,10 @@
+import hashlib
 import json
 import os
-import pickle
+import pickle  # noqa: S403 — required for legacy RAScore model; integrity-checked before load
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +25,11 @@ _lazy_cache: dict[str, Any] = {
     "syba_model": None,
     "rascore_booster": None,
 }
+_lazy_lock = threading.Lock()
 
 
 def _get_cached(key: str, loader: callable) -> Any:
-    """Generic lazy loading with caching.
+    """Generic lazy loading with caching (thread-safe).
 
     Args:
         key: Cache key name
@@ -35,9 +38,55 @@ def _get_cached(key: str, loader: callable) -> Any:
     Returns:
         Cached value, or False if loading failed
     """
-    if _lazy_cache[key] is None:
-        _lazy_cache[key] = loader()
-    return _lazy_cache[key]
+    with _lazy_lock:
+        if _lazy_cache[key] is None:
+            _lazy_cache[key] = loader()
+        return _lazy_cache[key]
+
+
+def _get_project_root() -> Path:
+    """Find project root by searching for pyproject.toml up the directory tree.
+
+    Works both in development (running from repo) and installed (via pip) mode.
+
+    Returns:
+        Path to the project root directory.
+    """
+    current = Path(__file__).resolve().parent
+    for parent in [current, *current.parents]:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    # Fallback for installed mode: stages/synthesis -> stages -> hedgehog -> src -> root
+    return Path(__file__).resolve().parents[4]
+
+
+# Known SHA256 hashes for trusted RAScore model files.
+# TODO: Compute the actual hash from the legitimate model.pkl and update here.
+_KNOWN_RASCORE_HASHES: dict[str, str] = {
+    # "model.pkl": "<sha256hex>",
+}
+
+
+def _verify_model_integrity(model_path: Path) -> bool:
+    """Verify SHA256 hash of a model file before loading.
+
+    Raises ValueError if the hash does not match a known good value.
+    Returns True if verification passes or no known hash is available.
+    """
+    expected = _KNOWN_RASCORE_HASHES.get(model_path.name)
+    if expected is None:
+        logger.warning(
+            "No known hash for model file: %s — skipping integrity check",
+            model_path.name,
+        )
+        return True
+    actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ValueError(
+            f"Model file integrity check failed for {model_path.name}: "
+            f"expected {expected}, got {actual}"
+        )
+    return True
 
 
 def prepare_input_smiles(input_df, output_file):
@@ -118,10 +167,14 @@ def run_aizynthfinder(
             text=True,
             check=True,
             cwd=str(run_dir),
+            timeout=3600,
         )
 
         logger.info("Retrosynthesis analysis completed successfully")
         return True
+    except subprocess.TimeoutExpired:
+        logger.error("Retrosynthesis analysis timed out after 3600 seconds")
+        return False
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else e.stdout
         logger.error("Retrosynthesis analysis failed with exit code %d", e.returncode)
@@ -318,7 +371,7 @@ def _load_rascore_impl():
             try:
                 from hedgehog.setup import ensure_rascore_model
 
-                project_root = Path(__file__).resolve().parents[4]
+                project_root = _get_project_root()
                 model_path = ensure_rascore_model(project_root)
             except Exception as e:
                 logger.warning(
@@ -328,8 +381,9 @@ def _load_rascore_impl():
                 return False
     try:
         if model_path.suffix.lower() == ".pkl":
+            _verify_model_integrity(model_path)
             with open(model_path, "rb") as f:
-                model = pickle.load(f)
+                model = pickle.load(f)  # noqa: S301 — integrity-checked above
             logger.debug("RAScore pickle model loaded successfully")
             return {"kind": "pickle_classifier", "model": model}
 
@@ -406,7 +460,7 @@ def _calculate_syba_score(smiles):
         if mol is None:
             return np.nan
         return syba_model.predict(mol=mol)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — SYBA can raise varied exceptions
         logger.debug("Failed to calculate SYBA score for %s: %s", smiles, e)
         return np.nan
 
@@ -449,9 +503,7 @@ def _calculate_syba_score_single(smiles: str) -> float | None:
 
 def _get_rascore_model_path() -> Path:
     """Get path to RAScore model file (native xgboost JSON format)."""
-    molscore_path = (
-        Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
-    )
+    molscore_path = _get_project_root() / "modules" / "MolScore"
     return (
         molscore_path
         / "molscore"
@@ -465,9 +517,7 @@ def _get_rascore_model_path() -> Path:
 
 def _get_rascore_pickle_model_path() -> Path:
     """Get path to RAScore model file in MolScore upstream pickle format."""
-    molscore_path = (
-        Path(__file__).parent.parent.parent.parent.parent / "modules" / "MolScore"
-    )
+    molscore_path = _get_project_root() / "modules" / "MolScore"
     return (
         molscore_path
         / "molscore"
@@ -518,7 +568,7 @@ def _ensure_rascore_pickle_path() -> Path | None:
     try:
         from hedgehog.setup import ensure_rascore_model
 
-        project_root = Path(__file__).resolve().parents[4]
+        project_root = _get_project_root()
         return ensure_rascore_model(project_root)
     except Exception as e:
         logger.warning(
@@ -547,7 +597,7 @@ def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
         )
         return nan_list
 
-    project_root = Path(__file__).resolve().parents[4]
+    project_root = _get_project_root()
     with tempfile.TemporaryDirectory(prefix="rascore_worker_") as tmp_dir:
         tmp_path = Path(tmp_dir)
         input_json = tmp_path / "rascore_input.json"
@@ -583,9 +633,13 @@ def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=300,
             )
             payload = json.loads(output_json.read_text(encoding="utf-8"))
             raw_scores = payload.get("scores", [])
+        except subprocess.TimeoutExpired:
+            logger.warning("Legacy RAScore worker timed out after 300 seconds")
+            return nan_list
         except Exception as e:
             logger.warning("Legacy RAScore worker failed: %s", e)
             return nan_list

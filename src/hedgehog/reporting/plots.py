@@ -1,5 +1,6 @@
 """Plot generation functions for HEDGEHOG reports using Plotly."""
 
+import html
 import statistics
 from collections import Counter
 from typing import Any
@@ -37,7 +38,10 @@ def plot_funnel(funnel_data: list[dict[str, Any]]) -> str:
 
     # Purple gradient for funnel segments
     n = len(stages)
-    colors = [f"rgba(139, 92, 246, {0.95 - i * 0.1})" for i in range(n)]
+    colors = [
+        f"rgba(139, 92, 246, {max(0.1, 0.95 - i * (0.85 / max(n - 1, 1)))})"
+        for i in range(n)
+    ]
 
     fig = go.Figure(
         go.Funnel(
@@ -1197,10 +1201,13 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
             else "<td>-</td>"
             for d in descriptors
         ]
-        rows.append(f"<tr><td><strong>{model}</strong></td>{''.join(cells)}</tr>")
+        rows.append(
+            f"<tr><td><strong>{html.escape(str(model))}</strong></td>{''.join(cells)}</tr>"
+        )
 
     header = "<th>Model</th>" + "".join(
-        f"<th title='{d}'>{readable_names.get(d, d)}</th>" for d in descriptors
+        f"<th title='{html.escape(str(d))}'>{html.escape(str(readable_names.get(d, d)))}</th>"
+        for d in descriptors
     )
 
     return f"""
@@ -1359,7 +1366,10 @@ def plot_filter_top_reasons_bar(reasons_data: dict[str, int], top_n: int = 10) -
 
     # Create gradient colors
     n = len(reasons)
-    colors = [f"rgba(139, 92, 246, {0.95 - i * 0.05})" for i in range(n)]
+    colors = [
+        f"rgba(139, 92, 246, {max(0.1, 0.95 - i * (0.85 / max(n - 1, 1)))})"
+        for i in range(n)
+    ]
 
     fig = go.Figure(
         go.Bar(
@@ -1690,7 +1700,10 @@ def plot_docking_top_molecules(
 
     # Gradient colors
     n = len(scores)
-    colors = [f"rgba(139, 92, 246, {0.95 - i * 0.05})" for i in range(n)]
+    colors = [
+        f"rgba(139, 92, 246, {max(0.1, 0.95 - i * (0.85 / max(n - 1, 1)))})"
+        for i in range(n)
+    ]
 
     fig = go.Figure(
         go.Bar(

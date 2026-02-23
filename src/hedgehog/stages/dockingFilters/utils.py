@@ -62,8 +62,13 @@ def _autobox_from_reference_ligand(
     if not ref_path.exists():
         return None
 
-    suppl = Chem.SDMolSupplier(str(ref_path))
-    ref_mol = next((m for m in suppl if m is not None), None)
+    try:
+        suppl = Chem.SDMolSupplier(str(ref_path))
+        ref_mol = next((m for m in suppl if m is not None), None)
+    except Exception as e:
+        logger.warning("Failed to read reference ligand SDF %s: %s", ref_path, e)
+        return None
+
     if ref_mol is None or ref_mol.GetNumConformers() == 0:
         return None
 
@@ -291,30 +296,71 @@ def apply_interaction_filter(
     u = mda.Universe(str(protein_pdb))
     protein = plf.Molecule.from_mda(u)
 
-    # Convert RDKit mols to ProLIF molecules
+    # Convert RDKit mols to ProLIF molecules (skip those without conformers)
     plf_mols = []
-    for mol in mols:
+    skipped_indices: set[int] = set()
+    for idx, mol in enumerate(mols):
+        if mol is None or mol.GetNumConformers() == 0:
+            logger.debug(
+                "Skipping molecule %d: no conformer for interaction filter", idx
+            )
+            skipped_indices.add(idx)
+            plf_mols.append(None)
+            continue
         mol_h = Chem.AddHs(mol, addCoords=True)
         plf_mols.append(plf.Molecule.from_rdkit(mol_h))
+
+    # Remove None entries before running ProLIF (it doesn't handle them)
+    valid_plf_mols = [m for m in plf_mols if m is not None]
 
     # Calculate interactions (exclude FaceToFace due to edge case errors)
     safe_interactions = [it for it in interaction_types if it != "FaceToFace"]
     fp = plf.Fingerprint(interactions=safe_interactions)
     n_jobs = resolve_n_jobs(config)
-    fp.run_from_iterable(plf_mols, protein, n_jobs=n_jobs)
-
-    df_interactions = fp.to_dataframe(drop_empty=False)
+    if valid_plf_mols:
+        fp.run_from_iterable(valid_plf_mols, protein, n_jobs=n_jobs)
+        df_interactions = fp.to_dataframe(drop_empty=False)
+    else:
+        df_interactions = pd.DataFrame()
 
     # Build results DataFrame
+    # Map valid molecule positions back to original indices
+    valid_idx_map: dict[int, int] = {}  # original index -> df_interactions row
+    vi = 0
+    for i in range(len(mols)):
+        if i not in skipped_indices:
+            valid_idx_map[i] = vi
+            vi += 1
+
     results = []
     for i in range(len(mols)):
-        if i < len(df_interactions):
-            row = df_interactions.iloc[i]
-            # Count H-bonds
+        if i in skipped_indices:
+            # Molecule had no conformer — mark as failed
+            n_hbonds = 0
+            passed = min_hbonds == 0 and not required_residues
+            interactions_str = ""
+            results.append(
+                {
+                    "mol_idx": i,
+                    "n_hbonds": n_hbonds,
+                    "interactions": interactions_str,
+                    "pass_interactions": passed,
+                }
+            )
+            continue
+
+        fp_row_idx = valid_idx_map.get(i)
+        if fp_row_idx is not None and fp_row_idx < len(df_interactions):
+            row = df_interactions.iloc[fp_row_idx]
+            # Count H-bonds — use exact match on last level of column name
+            # ProLIF uses MultiIndex columns: (residue, interaction_type)
             hbond_cols = [
-                c for c in row.index if "HBDonor" in str(c) or "HBAcceptor" in str(c)
+                c
+                for c in row.index
+                if (isinstance(c, tuple) and c[-1] in ("HBDonor", "HBAcceptor"))
+                or (not isinstance(c, tuple) and c in ("HBDonor", "HBAcceptor"))
             ]
-            n_hbonds = sum(row[hbond_cols].values) if hbond_cols else 0
+            n_hbonds = int(row[hbond_cols].astype(bool).sum()) if hbond_cols else 0
 
             # Check required residues
             has_required = True
@@ -384,6 +430,8 @@ def _check_shepherd_score_single(mol: Chem.Mol) -> dict[str, Any]:
         mol_positions = torch.tensor(mol_conf.GetPositions(), dtype=torch.float32)
 
         score = shape_tanimoto(ref_positions, mol_positions, alpha=alpha).item()
+        if not np.isfinite(score):
+            return {"score": 0.0, "passed": False, "error": "non-finite score"}
         passed = score >= min_score
         return {"score": score, "passed": passed, "error": None}
     except Exception as e:
@@ -458,12 +506,14 @@ def _resolve_shepherd_worker_command() -> list[str]:
 
 def _write_sdf(path: Path, mols: list[Chem.Mol]) -> None:
     writer = Chem.SDWriter(str(path))
-    writer.SetKekulize(False)
-    for i, mol in enumerate(mols):
-        current = Chem.Mol(mol)
-        current.SetProp("_Name", f"mol_{i}")
-        writer.write(current)
-    writer.close()
+    try:
+        writer.SetKekulize(False)
+        for i, mol in enumerate(mols):
+            current = Chem.Mol(mol)
+            current.SetProp("_Name", f"mol_{i}")
+            writer.write(current)
+    finally:
+        writer.close()
 
 
 def _apply_shepherd_score_filter_worker(
@@ -559,7 +609,12 @@ def _apply_shepherd_score_filter_worker(
             if not output_json.exists():
                 raise RuntimeError("Shepherd worker did not produce output.json")
 
-            payload = json.loads(output_json.read_text(encoding="utf-8"))
+            try:
+                payload = json.loads(output_json.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, ValueError) as je:
+                raise RuntimeError(
+                    f"Shepherd worker output.json is not valid JSON: {je}"
+                ) from je
             if not isinstance(payload, list):
                 raise RuntimeError("Shepherd worker output.json has invalid format")
 
@@ -736,6 +791,16 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
                 "no_internal_clash": False,
                 "passed": False,
                 "error": "no conformer",
+            }
+
+        if mol.GetNumAtoms() == 0:
+            return {
+                "no_clashes": False,
+                "no_volume_clash": False,
+                "not_too_far_away": False,
+                "no_internal_clash": False,
+                "passed": False,
+                "error": "molecule has no atoms",
             }
 
         conf = mol.GetConformer()

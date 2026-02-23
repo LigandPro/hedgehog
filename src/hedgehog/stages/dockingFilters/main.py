@@ -124,6 +124,32 @@ def _collapse_to_single_pose(
     return selected_mols, collapsed_df
 
 
+def _remap_mol_idx(
+    filter_df: pd.DataFrame,
+    active_pose_indices: list[int],
+    filter_name: str,
+) -> pd.DataFrame:
+    """Remap 0-based filter mol_idx back to the original pose indices.
+
+    Each filter operates on a subset of molecules (active_pose_indices).  The
+    filter produces a DataFrame with mol_idx in 0..len(subset)-1.  This helper
+    remaps those back to the original pose indices with bounds validation.
+    """
+    indices = filter_df["mol_idx"].tolist()
+    n = len(active_pose_indices)
+    if any(int(i) < 0 or int(i) >= n for i in indices):
+        logger.error(
+            "%s: mol_idx out of range — max valid=%d, got max=%s. "
+            "Returning filter results without remapping.",
+            filter_name,
+            n - 1,
+            max(int(i) for i in indices) if indices else "N/A",
+        )
+        return filter_df
+    filter_df["mol_idx"] = [active_pose_indices[int(i)] for i in indices]
+    return filter_df
+
+
 def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame | None:
     """
     Main entry point for docking filters stage.
@@ -345,9 +371,13 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     sb_short_circuit = bool(sb_config.get("short_circuit", True)) and agg_mode == "all"
     active_pose_indices = list(range(len(mols)))
     if sb_short_circuit and "pass_search_box" in results_df.columns:
-        active_pose_indices = results_df.loc[
-            results_df["pass_search_box"] == True, "mol_idx"  # noqa: E712
-        ].tolist()
+        active_pose_indices = (
+            results_df.loc[
+                results_df["pass_search_box"] == True, "mol_idx"  # noqa: E712
+            ]
+            .astype(int)
+            .tolist()
+        )
 
     # Filter 1: Pose Quality — dispatch by backend
     if pq_config.get("enabled", True):
@@ -373,7 +403,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                     pq_df = apply_pose_quality_filter(
                         mols_active, protein_pdb, pq_config
                     )
-                pq_df["mol_idx"] = [active_pose_indices[i] for i in pq_df["mol_idx"]]
+                pq_df = _remap_mol_idx(pq_df, active_pose_indices, "pose_quality")
                 results_df = results_df.merge(pq_df, on="mol_idx", how="left")
                 filters_applied.append("pose_quality")
             except Exception as e:
@@ -397,7 +427,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         if "pass_search_box" in results_df.columns:
             sb_mask = results_df["pass_search_box"].fillna(False) == True  # noqa: E712
             pq_mask = pq_mask & sb_mask
-        active_pose_indices = results_df.loc[pq_mask, "mol_idx"].tolist()
+        active_pose_indices = results_df.loc[pq_mask, "mol_idx"].astype(int).tolist()
 
     # Filter 2: Interactions
     if int_config.get("enabled", True):
@@ -412,7 +442,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             try:
                 mols_active = [mols[i] for i in active_pose_indices]
                 int_df = apply_interaction_filter(mols_active, protein_pdb, int_config)
-                int_df["mol_idx"] = [active_pose_indices[i] for i in int_df["mol_idx"]]
+                int_df = _remap_mol_idx(int_df, active_pose_indices, "interactions")
                 results_df = results_df.merge(int_df, on="mol_idx", how="left")
                 filters_applied.append("interactions")
             except Exception as e:
@@ -458,9 +488,9 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                             if ss_step_idx is not None
                             else None,
                         )
-                        ss_df["mol_idx"] = [
-                            active_pose_indices[i] for i in ss_df["mol_idx"]
-                        ]
+                        ss_df = _remap_mol_idx(
+                            ss_df, active_pose_indices, "shepherd_score"
+                        )
                         results_df = results_df.merge(ss_df, on="mol_idx", how="left")
                         filters_applied.append("shepherd_score")
                 else:
@@ -507,7 +537,9 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                         cd_config,
                         progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
                     )
-                cd_df["mol_idx"] = [active_pose_indices[i] for i in cd_df["mol_idx"]]
+                cd_df = _remap_mol_idx(
+                    cd_df, active_pose_indices, "conformer_deviation"
+                )
                 results_df = results_df.merge(cd_df, on="mol_idx", how="left")
                 filters_applied.append("conformer_deviation")
             except Exception as e:
@@ -607,10 +639,12 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         # Save filtered SDF
         filtered_sdf_path = output_dir / "filtered_poses.sdf"
         writer = Chem.SDWriter(str(filtered_sdf_path))
-        for i in pose_indices:
-            if 0 <= i < len(mols) and mols[i]:
-                writer.write(mols[i])
-        writer.close()
+        try:
+            for i in pose_indices:
+                if 0 <= i < len(mols) and mols[i]:
+                    writer.write(mols[i])
+        finally:
+            writer.close()
         logger.info("Saved filtered poses to %s", filtered_sdf_path)
 
     # Save failed molecules if configured

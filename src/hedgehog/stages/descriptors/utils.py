@@ -148,8 +148,11 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         mol_idx: Molecule index
 
     Returns:
-        dict: Dictionary of computed descriptors
+        dict: Dictionary of computed descriptors, or None for degenerate molecules.
     """
+    if mol_n.GetNumHeavyAtoms() == 0:
+        return None
+
     mol = Chem.AddHs(mol_n)
 
     symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
@@ -264,6 +267,8 @@ def _compute_descriptors_for_row(args):
             return None, (smiles, model_name, mol_idx)
 
     row_metrics = _compute_single_molecule_descriptors(mol_n, model_name, mol_idx)
+    if row_metrics is None:
+        return None, (smiles, model_name, mol_idx)
     row_metrics["smiles"] = smiles
     return row_metrics, None
 
