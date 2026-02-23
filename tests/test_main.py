@@ -7,7 +7,6 @@ import pandas as pd
 
 from hedgehog.main import (
     Stage,
-    _canonicalize_smiles,
     _folder_is_empty,
     _get_input_format_flag,
     _get_unique_results_folder,
@@ -41,47 +40,6 @@ class _FakeProgress:
 
     def update(self, task_id: int, **kwargs) -> None:
         self.update_calls.append({"task_id": task_id, **kwargs})
-
-
-class TestCanonicalizeSmiles:
-    """Tests for _canonicalize_smiles function."""
-
-    def test_valid_smiles_benzene(self):
-        """Valid benzene SMILES - should return canonical form."""
-        result = _canonicalize_smiles("c1ccccc1")
-        assert result is not None
-        assert result == "c1ccccc1"
-
-    def test_valid_smiles_ethanol(self):
-        """Valid ethanol SMILES - should return canonical form."""
-        result = _canonicalize_smiles("CCO")
-        assert result is not None
-        assert result == "CCO"
-
-    def test_valid_smiles_aspirin(self):
-        """Valid aspirin SMILES - should return canonical form."""
-        result = _canonicalize_smiles("CC(=O)Oc1ccccc1C(=O)O")
-        assert result is not None
-
-    def test_invalid_smiles(self):
-        """Invalid SMILES string - should return None."""
-        result = _canonicalize_smiles("invalid")
-        assert result is None
-
-    def test_empty_smiles(self):
-        """Empty SMILES string - should return empty string."""
-        result = _canonicalize_smiles("")
-        assert result == ""
-
-    def test_smiles_with_stereochemistry(self):
-        """SMILES with stereochemistry should be preserved."""
-        result = _canonicalize_smiles("[C@@H](O)(F)Cl")
-        assert result is not None
-
-    def test_malformed_smiles(self):
-        """Malformed SMILES - should return None."""
-        result = _canonicalize_smiles("C(C)(C)(C)(C)C")  # invalid valence
-        assert result is None
 
 
 class TestFolderIsEmpty:

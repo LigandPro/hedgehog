@@ -8,7 +8,6 @@ from pathlib import Path
 import matplotlib as mpl
 import pandas as pd
 import typer
-from rdkit import Chem
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -109,14 +108,6 @@ def _get_unique_results_folder(base_folder) -> Path:
 
     new_folder = parent / f"{base_name}_{max_number + 1}"
     return new_folder
-
-
-def _canonicalize_smiles(smi: str) -> str | None:
-    """Canonicalize a SMILES string using RDKit. Returns None if invalid."""
-    mol = Chem.MolFromSmiles(smi)
-    if mol is None:
-        return None
-    return Chem.MolToSmiles(mol)
 
 
 def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:

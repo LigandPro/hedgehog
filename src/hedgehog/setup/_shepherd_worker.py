@@ -2,60 +2,37 @@
 
 from __future__ import annotations
 
-import os
 import shlex
-import shutil
 import subprocess
 from pathlib import Path
 
+from hedgehog.setup._common import (
+    resolve_python_binary as _resolve_python_binary,
+)
+from hedgehog.setup._common import (
+    run as _run,
+)
+from hedgehog.setup._common import (
+    venv_python as _venv_python,
+)
+from hedgehog.setup._common import (
+    venv_worker_entry as _venv_worker_entry_raw,
+)
+from hedgehog.setup._common import (
+    verify_worker as _verify_worker_raw,
+)
 from hedgehog.setup._download import confirm_download, resolve_uv_binary
 
-
-def _venv_python(venv_dir: Path) -> Path:
-    if os.name == "nt":
-        return venv_dir / "Scripts" / "python.exe"
-    return venv_dir / "bin" / "python"
+_WORKER_SCRIPT_NAME = "hedgehog-shepherd-worker"
+_FALLBACK_MODULE = "hedgehog.workers.shepherd_worker"
 
 
 def _venv_worker_entry(venv_dir: Path) -> Path:
-    if os.name == "nt":
-        return venv_dir / "Scripts" / "hedgehog-shepherd-worker.exe"
-    return venv_dir / "bin" / "hedgehog-shepherd-worker"
-
-
-def _run(cmd: list[str], cwd: Path, timeout: int = 1800) -> None:
-    subprocess.run(cmd, cwd=cwd, check=True, timeout=timeout)
-
-
-def _resolve_python_binary(python_bin: str | None) -> str:
-    if python_bin:
-        explicit = Path(python_bin)
-        if explicit.exists():
-            return str(explicit)
-        found = shutil.which(python_bin)
-        if found:
-            return found
-        raise RuntimeError(f"Requested Python interpreter was not found: {python_bin}")
-
-    for candidate in ("python3.12", "python3.11", "python3.10"):
-        found = shutil.which(candidate)
-        if found:
-            return found
-
-    raise RuntimeError(
-        "No supported Python interpreter found. Install one of: python3.12, python3.11, python3.10"
-    )
+    return _venv_worker_entry_raw(venv_dir, _WORKER_SCRIPT_NAME)
 
 
 def _verify_worker(worker_entry: Path, venv_python: Path, cwd: Path) -> None:
-    if worker_entry.exists():
-        _run([str(worker_entry), "--help"], cwd=cwd, timeout=60)
-        return
-    _run(
-        [str(venv_python), "-m", "hedgehog.workers.shepherd_worker", "--help"],
-        cwd=cwd,
-        timeout=60,
-    )
+    _verify_worker_raw(worker_entry, venv_python, cwd, _FALLBACK_MODULE)
 
 
 def ensure_shepherd_worker(project_root: Path, python_bin: str | None = None) -> Path:
@@ -100,7 +77,7 @@ def ensure_shepherd_worker(project_root: Path, python_bin: str | None = None) ->
     except Exception as exc:  # noqa: BLE001 — intentional: Shepherd verification may raise diverse errors
         raise RuntimeError(
             "Shepherd worker was installed but failed verification. "
-            f"Command: {shlex.join([str(venv_python), '-m', 'hedgehog.workers.shepherd_worker', '--help'])}. "
+            f"Command: {shlex.join([str(venv_python), '-m', _FALLBACK_MODULE, '--help'])}. "
             f"Error: {exc}"
         ) from exc
 

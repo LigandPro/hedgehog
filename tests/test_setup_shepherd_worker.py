@@ -30,9 +30,7 @@ class TestEnsureShepherdWorker:
             "hedgehog.setup._shepherd_worker.resolve_uv_binary",
             lambda: "/usr/bin/uv",
         )
-        monkeypatch.setattr(
-            "hedgehog.setup._shepherd_worker.shutil.which", lambda _: None
-        )
+        monkeypatch.setattr("hedgehog.setup._common.shutil.which", lambda _: None)
 
         with pytest.raises(RuntimeError, match="No supported Python interpreter found"):
             ensure_shepherd_worker(tmp_path)
@@ -46,7 +44,7 @@ class TestEnsureShepherdWorker:
             lambda: "/usr/bin/uv",
         )
         monkeypatch.setattr(
-            "hedgehog.setup._shepherd_worker.shutil.which",
+            "hedgehog.setup._common.shutil.which",
             lambda name: None,
         )
         monkeypatch.setattr(
@@ -68,7 +66,7 @@ class TestEnsureShepherdWorker:
                 worker_entry = venv_python.parent / "hedgehog-shepherd-worker"
                 worker_entry.write_text("#!/bin/sh\n", encoding="utf-8")
 
-        monkeypatch.setattr("hedgehog.setup._shepherd_worker.subprocess.run", _mock_run)
+        monkeypatch.setattr("hedgehog.setup._common.subprocess.run", _mock_run)
 
         result = ensure_shepherd_worker(tmp_path, python_bin=str(explicit_python))
 
@@ -94,7 +92,7 @@ class TestEnsureShepherdWorker:
             "hedgehog.setup._shepherd_worker.resolve_uv_binary",
             lambda: "/usr/bin/uv",
         )
-        monkeypatch.setattr("hedgehog.setup._shepherd_worker.shutil.which", _which)
+        monkeypatch.setattr("hedgehog.setup._common.shutil.which", _which)
         monkeypatch.setattr(
             "hedgehog.setup._shepherd_worker.confirm_download",
             lambda *_a, **_kw: True,
@@ -114,7 +112,7 @@ class TestEnsureShepherdWorker:
                 worker_entry = venv_python.parent / "hedgehog-shepherd-worker"
                 worker_entry.write_text("#!/bin/sh\n", encoding="utf-8")
 
-        monkeypatch.setattr("hedgehog.setup._shepherd_worker.subprocess.run", _mock_run)
+        monkeypatch.setattr("hedgehog.setup._common.subprocess.run", _mock_run)
 
         ensure_shepherd_worker(tmp_path)
         assert calls[0][:3] == ["/usr/local/bin/python3.12", "-m", "venv"]
@@ -130,7 +128,7 @@ class TestEnsureShepherdWorker:
             lambda name: None,
         )
         monkeypatch.setattr(
-            "hedgehog.setup._shepherd_worker.shutil.which",
+            "hedgehog.setup._common.shutil.which",
             lambda name: "/usr/local/bin/python3.12" if name == "python3.12" else None,
         )
         monkeypatch.setattr(
@@ -152,7 +150,7 @@ class TestEnsureShepherdWorker:
                 worker_entry = venv_python.parent / "hedgehog-shepherd-worker"
                 worker_entry.write_text("#!/bin/sh\n", encoding="utf-8")
 
-        monkeypatch.setattr("hedgehog.setup._shepherd_worker.subprocess.run", _mock_run)
+        monkeypatch.setattr("hedgehog.setup._common.subprocess.run", _mock_run)
 
         ensure_shepherd_worker(tmp_path)
         assert calls[1][:3] == [str(uv_bin), "pip", "install"]
