@@ -4,6 +4,7 @@ const meta: MetaRecord = {
   index: 'Introduction',
   'getting-started': 'Getting Started',
   cli: 'CLI Reference',
+  api: 'API',
   pipeline: 'Pipeline Stages',
   configuration: 'Configuration',
   reporting: 'Reporting',

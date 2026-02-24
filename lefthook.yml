@@ -9,6 +9,10 @@ pre-commit:
     ruff-check-staged:
       glob: '*.{py,pyi}'
       run: uv run --extra lint ruff check {staged_files}
+    rascore-strict-unit:
+      run: uv run --extra test pytest tests/test_synthesis.py -k "load_rascore_uses_pickle_when_json_is_invalid or strict_rascore_mode_raises_when_local_model_fails"
+    one-molecule-pipeline-smoke:
+      run: MOLSCORE_NJOBS=1 SLURM_CPUS_PER_TASK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 AIZYNTH_NPROC=1 HEDGEHOG_PLAIN_OUTPUT=1 HEDGEHOG_STRICT_RASCORE=1 uv run --extra test pytest tests/test_pipeline_one_molecule_cli.py -m "integration and slow"
     git-diff-check:
       run: git diff --check --cached
 

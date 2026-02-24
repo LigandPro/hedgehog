@@ -23,6 +23,7 @@ _lazy_cache: dict[str, Any] = {
     "syba_model": None,
     "rascore_booster": None,
 }
+STRICT_RASCORE_ENV = "HEDGEHOG_STRICT_RASCORE"
 
 
 def _get_cached(key: str, loader: callable) -> Any:
@@ -308,39 +309,46 @@ def _load_syba_model_impl():
 
 
 def _load_rascore_impl():
-    """Load RAScore XGBoost model."""
-    model_path = _get_rascore_model_path()
-    if not model_path.exists():
-        pkl_path = _get_rascore_pickle_model_path()
-        if pkl_path.exists():
-            model_path = pkl_path
-        else:
-            try:
-                from hedgehog.setup import ensure_rascore_model
+    """Load RAScore model.
 
-                project_root = Path(__file__).resolve().parents[3]
-                model_path = ensure_rascore_model(project_root)
-            except Exception as e:
-                logger.warning(
-                    "RAScore model is unavailable (%s). RA scores will be set to np.nan",
-                    e,
-                )
-                return False
+    Preferred order:
+      1) native XGBoost JSON model (if present and valid)
+      2) MolScore upstream pickle model
+    """
+    json_path = _get_rascore_model_path()
+    pkl_path = _get_rascore_pickle_model_path()
+
+    if json_path.exists():
+        try:
+            import xgboost as xgb
+
+            booster = xgb.Booster()
+            booster.load_model(str(json_path))
+            logger.debug("RAScore xgboost model loaded successfully")
+            return {"kind": "xgboost_booster", "model": booster}
+        except Exception as e:
+            logger.warning("Failed to load RAScore model from %s: %s", json_path, e)
+
+    if not pkl_path.exists():
+        try:
+            from hedgehog.setup import ensure_rascore_model
+
+            project_root = Path(__file__).resolve().parents[3]
+            pkl_path = ensure_rascore_model(project_root)
+        except Exception as e:
+            logger.warning(
+                "RAScore model is unavailable (%s). RA scores will be set to np.nan",
+                e,
+            )
+            return False
+
     try:
-        if model_path.suffix.lower() == ".pkl":
-            with open(model_path, "rb") as f:
-                model = pickle.load(f)
-            logger.debug("RAScore pickle model loaded successfully")
-            return {"kind": "pickle_classifier", "model": model}
-
-        import xgboost as xgb
-
-        booster = xgb.Booster()
-        booster.load_model(str(model_path))
-        logger.debug("RAScore xgboost model loaded successfully")
-        return {"kind": "xgboost_booster", "model": booster}
+        with open(pkl_path, "rb") as f:
+            model = pickle.load(f)
+        logger.debug("RAScore pickle model loaded successfully")
+        return {"kind": "pickle_classifier", "model": model}
     except Exception as e:
-        logger.warning("Failed to load RAScore model: %s", e)
+        logger.warning("Failed to load RAScore model from %s: %s", pkl_path, e)
         return False
 
 
@@ -357,6 +365,12 @@ def _load_syba_model():
 def _load_rascore():
     """Load RAScore model with caching."""
     return _get_cached("rascore_booster", _load_rascore_impl)
+
+
+def _strict_rascore_enabled() -> bool:
+    """Return True when strict RAScore mode is enabled via environment."""
+    raw = os.environ.get(STRICT_RASCORE_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _calculate_sa_score_single(smiles: str) -> float | None:
@@ -568,8 +582,14 @@ def _calculate_ra_scores_batch(
     """
     nan_list = [np.nan] * len(smiles_list)
 
+    strict_rascore = _strict_rascore_enabled()
     rascore_model = _load_rascore()
     if not rascore_model:
+        if strict_rascore:
+            raise RuntimeError(
+                "RAScore local model load failed in strict mode "
+                f"({STRICT_RASCORE_ENV}=1)."
+            )
         logger.info(
             "RAScore local model load failed; falling back to legacy worker backend"
         )
@@ -600,6 +620,11 @@ def _calculate_ra_scores_batch(
             scores[idx] = float(prob)
         return scores
     except Exception as e:
+        if strict_rascore:
+            raise RuntimeError(
+                "Failed to calculate RA scores in strict mode "
+                f"({STRICT_RASCORE_ENV}=1)."
+            ) from e
         logger.debug("Failed to calculate RA scores in batch: %s", e)
         return nan_list
 

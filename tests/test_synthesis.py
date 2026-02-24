@@ -677,6 +677,7 @@ class TestRascoreAutoInstall:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         """When local model load fails, batch scorer should use legacy worker."""
+        monkeypatch.delenv(synthesis_utils.STRICT_RASCORE_ENV, raising=False)
         called = {"run": False}
 
         def _fake_run(cmd, **kwargs):
@@ -700,3 +701,49 @@ class TestRascoreAutoInstall:
         assert len(scores) == 2
         assert scores[0] == pytest.approx(0.42)
         assert np.isnan(scores[1])
+
+    def test_load_rascore_uses_pickle_when_json_is_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Invalid JSON model should fall back to local pickle model."""
+        json_path = tmp_path / "model.json"
+        json_path.write_text("corrupted-model", encoding="utf-8")
+
+        pkl_path = tmp_path / "model.pkl"
+        with open(pkl_path, "wb") as f:
+            pickle.dump(_DummyRascoreClassifier(), f)
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_pickle_model_path", lambda: pkl_path
+        )
+        synthesis_utils._lazy_cache["rascore_booster"] = None
+
+        loaded = synthesis_utils._load_rascore_impl()
+
+        assert loaded
+        assert loaded["kind"] == "pickle_classifier"
+
+    def test_strict_rascore_mode_raises_when_local_model_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Strict mode should fail fast instead of using legacy fallback."""
+        monkeypatch.setenv(synthesis_utils.STRICT_RASCORE_ENV, "1")
+        monkeypatch.setattr(synthesis_utils, "_load_rascore", lambda: False)
+
+        called_legacy = {"called": False}
+
+        def _fake_legacy(_smiles):
+            called_legacy["called"] = True
+            return [0.1]
+
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_ra_scores_batch_legacy", _fake_legacy
+        )
+
+        with pytest.raises(RuntimeError, match="strict mode"):
+            _calculate_ra_scores_batch([SMILES_ETHANOL])
+
+        assert called_legacy["called"] is False

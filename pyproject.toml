@@ -24,30 +24,22 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = "src"
 
 [project.optional-dependencies]
 lint = ["ruff", "mypy", "pyright"]
 test = ["pytest", "pytest-cov"]
 shepherd = ["shepherd-score>=1.2.1"]
-docking-legacy = ["posecheck>=1.3.1"]
 
 [project.scripts]
 hedgehog = "hedgehog.main:app"
 hedge = "hedgehog.main:app"
 hedgehog-shepherd-worker = "hedgehog.workers.shepherd_worker:main"
 
-
-[tool.setuptools]
-packages = {find = {where = ["src"]}}
-package-dir = {"" = "src"}
-
-[tool.setuptools.package-data]
-"*" = ["*.yml", "*.yaml", "*.csv", "*.json", "*.html"]
-"hedgehog.vendor.moleval.metrics.NP_Score" = ["publicnp.model.gz"]
-"hedgehog.vendor.moleval.metrics.SA_Score" = ["fpscores.pkl.gz"]
-"hedgehog.vendor.moleval.metrics.fcd_torch" = ["ChemNet_v0.13_pretrained.pt"]
 
 [tool.ruff]
 target-version = "py310"
@@ -81,35 +73,12 @@ lint.ignore = [
     "F401",
     "F403",
 ]
-# New flat namespace modules
 "**/struct_filters/main.py" = ["F403", "F405"]
 "**/struct_filters/utils.py" = ["E402"]
 "**/synthesis/main.py" = ["F403", "F405"]
-# Backwards-compatibility shims (stages/)
-"**/stages/structFilters/main.py" = ["F403", "F405", "E402", "I001"]
-"**/stages/structFilters/utils.py" = ["E402", "F403", "I001"]
-"**/stages/structFilters/__init__.py" = ["E402", "F403", "I001"]
-"**/stages/synthesis/main.py" = ["F403", "F405", "E402", "I001"]
-"**/stages/synthesis/utils.py" = ["E402", "F403", "I001"]
-"**/stages/synthesis/__init__.py" = ["E402", "F403", "I001"]
-"**/stages/docking/main.py" = ["E402", "F403", "I001"]
-"**/stages/docking/utils.py" = ["E402", "F403", "I001"]
-"**/stages/docking/__init__.py" = ["E402", "F403", "I001"]
-"**/stages/dockingFilters/main.py" = ["E402", "F403", "I001"]
-"**/stages/dockingFilters/utils.py" = ["E402", "F403", "I001"]
-"**/stages/dockingFilters/__init__.py" = ["E402", "F403", "I001"]
-"**/stages/descriptors/main.py" = ["E402", "F403", "I001"]
-"**/stages/descriptors/utils.py" = ["E402", "F403", "I001"]
-"**/stages/descriptors/__init__.py" = ["E402", "F403", "I001"]
-"**/stages/molPrep/main.py" = ["E402", "F403", "I001"]
-"**/stages/molPrep/utils.py" = ["E402", "F403", "I001"]
-"**/stages/molPrep/__init__.py" = ["E402", "F403", "I001"]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
-
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -138,8 +107,6 @@ exclude_lines = [
 ]
 
 [tool.uv]
-# posecheck 1.3.1 hard-pins pandas==2.0.0 which lacks wheels for Python 3.12+
-# and fails to build from source (missing pkg_resources). Override to >=2.2.0.
 override-dependencies = ["pandas>=2.2.0"]
 
 [tool.uv.sources]
