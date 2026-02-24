@@ -77,10 +77,10 @@ For full details, use the documentation instead of this README:
 - [Introduction](docs/content/index.mdx)
 - [Getting Started](docs/content/getting-started.mdx)
 - [CLI Reference](docs/content/cli.mdx)
-- [Pipeline Stages](docs/content/pipeline)
-- [Configuration](docs/content/configuration)
-- [Reporting](docs/content/reporting)
-- [Advanced Topics](docs/content/advanced)
+- [Pipeline Stages](docs/content/pipeline/index.mdx)
+- [Configuration](docs/content/configuration/index.mdx)
+- [Reporting](docs/content/reporting/index.mdx)
+- [Advanced Topics](docs/content/advanced/architecture.mdx)
 - [TUI README](tui/README.md)
 
 To run the docs site locally:
