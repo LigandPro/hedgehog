@@ -27,6 +27,10 @@ def __getattr__(name: str):
         from hedgehog.setup._shepherd_worker import ensure_shepherd_worker
 
         return ensure_shepherd_worker
+    if name == "ensure_nvmolkit_worker":
+        from hedgehog.setup._nvmolkit_worker import ensure_nvmolkit_worker
+
+        return ensure_nvmolkit_worker
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -35,4 +39,5 @@ __all__ = [
     "ensure_aizynthfinder",
     "ensure_rascore_model",
     "ensure_shepherd_worker",
+    "ensure_nvmolkit_worker",
 ]

@@ -80,6 +80,24 @@ DESCRIPTOR_ALIASES = {
 DESCRIPTOR_EXCLUDE_COLS = {"smiles", "model_name", "mol_idx", "chars", "name", "id"}
 
 
+def _try_read_csv(*paths: Path) -> pd.DataFrame | None:
+    """Try reading CSV from multiple candidate paths, returning first success.
+
+    Args:
+        paths: One or more Path objects to try reading in order.
+
+    Returns:
+        DataFrame from the first readable file, or None if all fail.
+    """
+    for path in paths:
+        if path.exists():
+            try:
+                return pd.read_csv(path)
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+                logger.debug("Could not read %s: %s", path, e)
+    return None
+
+
 class ReportGenerator:
     """Generates comprehensive HTML reports for HEDGEHOG pipeline runs."""
 
@@ -344,30 +362,7 @@ class ReportGenerator:
 
         return funnel
 
-    def _get_stage_output_count(self, stage_key: str) -> int | None:
-        """Get molecule count from stage output file."""
-        stage_dir = STAGE_DIRS.get(stage_key)
-        if not stage_dir:
-            return None
-
-        # Try common output file locations
-        paths_to_try = [
-            self.base_path / stage_dir / "filtered_molecules.csv",
-            self.base_path / stage_dir / "filtered" / "filtered_molecules.csv",
-            self.base_path / stage_dir / "ligands.csv",  # For docking stage
-        ]
-
-        for path in paths_to_try:
-            if path.exists():
-                try:
-                    df = pd.read_csv(path)
-                    return len(df)
-                except Exception as e:
-                    logger.debug("Could not read %s: %s", path, e)
-                    continue
-        return None
-
-    def _get_stage_output_count_by_model(
+    def _get_stage_output_count(
         self, stage_key: str, model_name: str | None = None
     ) -> int | None:
         """Get molecule count from stage output file, optionally filtered by model.
@@ -389,17 +384,12 @@ class ReportGenerator:
             self.base_path / stage_dir / "ligands.csv",
         ]
 
-        for path in paths_to_try:
-            if path.exists():
-                try:
-                    df = pd.read_csv(path)
-                    if model_name and "model_name" in df.columns:
-                        df = df[df["model_name"] == model_name]
-                    return len(df)
-                except Exception as e:
-                    logger.debug("Could not read %s: %s", path, e)
-                    continue
-        return None
+        df = _try_read_csv(*paths_to_try)
+        if df is None:
+            return None
+        if model_name and "model_name" in df.columns:
+            df = df[df["model_name"] == model_name]
+        return len(df)
 
     def _get_available_models(self) -> list[str]:
         """Get list of available model names from input or output files.
@@ -476,7 +466,7 @@ class ReportGenerator:
         ]
 
         for stage_key, display_name in stage_order:
-            count = self._get_stage_output_count_by_model(stage_key, model_name)
+            count = self._get_stage_output_count(stage_key, model_name)
             if count is not None:
                 funnel.append({"stage": display_name, "count": count})
 

@@ -990,129 +990,127 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
     return final_result
 
 
-def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Bredt filter...")
-    config_structFilters = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = _resolve_scheduler(config_structFilters, "bredt_scheduler")
-    logger.info("Bredt workers: %d", n_jobs)
-    out = mc.functional.bredt_filter(
+def _apply_simple_medchem_filter(
+    config,
+    mols,
+    smiles_modelName_mols,
+    filter_name,
+    mc_func,
+    scheduler_key,
+    extra_kwargs=None,
+):
+    """Generic helper for simple medchem filters that share the same skeleton.
+
+    Args:
+        config: Pipeline configuration dictionary.
+        mols: List of RDKit molecule objects.
+        smiles_modelName_mols: Optional list of (smiles, model_name, mol, mol_idx) tuples.
+        filter_name: Human-readable filter name for logging.
+        mc_func: The medchem functional filter callable.
+        scheduler_key: Config key used to resolve the parallel scheduler.
+        extra_kwargs: Optional callable ``(config_sf) -> dict`` that returns
+            additional keyword arguments for *mc_func*.
+    """
+    logger.info("Calculating %s filter...", filter_name)
+    config_sf = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, scheduler_key)
+    logger.info("%s workers: %d", filter_name, n_jobs)
+    kwargs = dict(
         mols=mols,
         n_jobs=n_jobs,
         scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
+    if extra_kwargs:
+        kwargs.update(extra_kwargs(config_sf))
+    out = mc_func(**kwargs)
     results = pd.DataFrame({"mol": mols, "pass": out})
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
     return results
+
+
+def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Bredt",
+        mc.functional.bredt_filter,
+        "bredt_scheduler",
+    )
 
 
 def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Protecting Groups filter...")
-    config_structFilters = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = _resolve_scheduler(config_structFilters, "protecting_groups_scheduler")
-    logger.info("Protecting Groups workers: %d", n_jobs)
-    out = mc.functional.protecting_groups_filter(
-        mols=mols,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Protecting Groups",
+        mc.functional.protecting_groups_filter,
+        "protecting_groups_scheduler",
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Ring Infraction filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "ring_infraction_scheduler")
-    logger.info("Ring Infraction workers: %d", n_jobs)
-    min_size = config_sf.get("ring_infraction_hetcycle_min_size", 4)
-    out = mc.functional.ring_infraction_filter(
-        mols=mols,
-        hetcycle_min_size=min_size,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Ring Infraction",
+        mc.functional.ring_infraction_filter,
+        "ring_infraction_scheduler",
+        extra_kwargs=lambda cfg: {
+            "hetcycle_min_size": cfg.get("ring_infraction_hetcycle_min_size", 4),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_stereo_center(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Stereo Center filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "stereo_center_scheduler")
-    logger.info("Stereo Center workers: %d", n_jobs)
-    max_centers = config_sf.get("stereo_max_centers", 4)
-    max_undefined = config_sf.get("stereo_max_undefined", 2)
-    out = mc.functional.num_stereo_center_filter(
-        mols=mols,
-        max_stereo_centers=max_centers,
-        max_undefined_stereo_centers=max_undefined,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Stereo Center",
+        mc.functional.num_stereo_center_filter,
+        "stereo_center_scheduler",
+        extra_kwargs=lambda cfg: {
+            "max_stereo_centers": cfg.get("stereo_max_centers", 4),
+            "max_undefined_stereo_centers": cfg.get("stereo_max_undefined", 2),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_halogenicity(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Halogenicity filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "halogenicity_scheduler")
-    logger.info("Halogenicity workers: %d", n_jobs)
-    out = mc.functional.halogenicity_filter(
-        mols=mols,
-        thresh_F=config_sf.get("halogenicity_thresh_F", 6),
-        thresh_Br=config_sf.get("halogenicity_thresh_Br", 3),
-        thresh_Cl=config_sf.get("halogenicity_thresh_Cl", 3),
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Halogenicity",
+        mc.functional.halogenicity_filter,
+        "halogenicity_scheduler",
+        extra_kwargs=lambda cfg: {
+            "thresh_F": cfg.get("halogenicity_thresh_F", 6),
+            "thresh_Br": cfg.get("halogenicity_thresh_Br", 3),
+            "thresh_Cl": cfg.get("halogenicity_thresh_Cl", 3),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_symmetry(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Symmetry filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "symmetry_scheduler")
-    logger.info("Symmetry workers: %d", n_jobs)
-    threshold = config_sf.get("symmetry_threshold", 0.8)
-    out = mc.functional.symmetry_filter(
-        mols=mols,
-        symmetry_threshold=threshold,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Symmetry",
+        mc.functional.symmetry_filter,
+        "symmetry_scheduler",
+        extra_kwargs=lambda cfg: {
+            "symmetry_threshold": cfg.get("symmetry_threshold", 0.8),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
@@ -1449,6 +1447,110 @@ def _create_base_stats_df(model_name, num_mol, **extra_columns):
     return pd.DataFrame(data)
 
 
+def _stats_common_alerts(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for common_alerts filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        all_banned_ratio=(~filter_results["pass"]).mean(),
+        any_banned_ratio=(~filter_results["pass_any"]).mean(),
+    )
+    for name in config["include_rulesets"]:
+        res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
+    return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+
+def _stats_molgraph(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for molgraph_stats filter."""
+    res_df = _create_base_stats_df(model_name, num_mol)
+    for i in range(1, 12):
+        res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_{i}"].mean()
+    res_df, filter_extended = common_postprocessing_statistics(
+        filter_results, res_df, stat, extend
+    )
+    pass_cols = [
+        col
+        for col in filter_extended.columns
+        if col.startswith("pass_") and col != "pass_any"
+    ]
+    filter_extended["pass"] = filter_extended[pass_cols].all(axis=1)
+    return res_df, filter_extended
+
+
+def _stats_molcomplexity(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for molcomplexity filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        all_banned_ratio=1 - filter_results["pass"].mean(),
+        any_banned_ratio=1 - filter_results["pass_any"].mean(),
+    )
+    for name in mc.complexity.ComplexityFilter.list_default_available_filters():
+        res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
+    return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+
+def _stats_simple_banned(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for simple banned-ratio filters (bredt, protecting_groups, etc.)."""
+    res_df = _create_base_stats_df(model_name, num_mol)
+    res_df["banned_ratio"] = 1 - filter_results["pass"].mean()
+    return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+
+def _stats_nibr(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for NIBR filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        mean_severity=filter_results.severity.mean(),
+        max_severity=filter_results.severity.max(),
+        mean_n_covalent_motif=filter_results.n_covalent_motif.mean(),
+        mean_nonzero_special_mol=(filter_results.special_mol > 0).mean(),
+    )
+    pass_col = _get_pass_column(filter_results, "severity", lambda x: x == 0)
+    res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
+    res_df, filter_extended = common_postprocessing_statistics(
+        filter_results, res_df, stat, extend
+    )
+    filter_extended = _ensure_pass_column_in_extended(
+        filter_extended, pass_col, filter_results, "severity"
+    )
+    return res_df, filter_extended
+
+
+def _stats_lilly(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for lilly filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        mean_noNA_demerit_score=filter_results.demerit_score.dropna().mean(),
+    )
+    pass_col = _get_pass_column(filter_results, "demerit_score", lambda x: x == 0)
+    res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
+    res_df, filter_extended = common_postprocessing_statistics(
+        filter_results, res_df, stat, extend
+    )
+    filter_extended = _ensure_pass_column_in_extended(
+        filter_extended, pass_col, filter_results, "demerit_score"
+    )
+    return res_df, filter_extended
+
+
+_STATS_REGISTRY = {
+    "common_alerts": _stats_common_alerts,
+    "molgraph_stats": _stats_molgraph,
+    "molcomplexity": _stats_molcomplexity,
+    "bredt": _stats_simple_banned,
+    "protecting_groups": _stats_simple_banned,
+    "ring_infraction": _stats_simple_banned,
+    "stereo_center": _stats_simple_banned,
+    "halogenicity": _stats_simple_banned,
+    "symmetry": _stats_simple_banned,
+    "NIBR": _stats_nibr,
+    "lilly": _stats_lilly,
+}
+
+
 def get_basic_stats(
     config, filter_results, model_name, filter_name, stat=None, extend=None
 ):
@@ -1481,91 +1583,10 @@ def get_basic_stats(
     if isinstance(model_name, str):
         filter_results["model_name"] = model_name
 
-    if filter_name == "common_alerts":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            all_banned_ratio=(~filter_results["pass"]).mean(),
-            any_banned_ratio=(~filter_results["pass_any"]).mean(),
-        )
-        for name in config["include_rulesets"]:
-            res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
-        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
-
-    if filter_name == "molgraph_stats":
-        res_df = _create_base_stats_df(model_name, num_mol)
-        for i in range(1, 12):
-            res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_{i}"].mean()
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
-        pass_cols = [
-            col
-            for col in filter_extended.columns
-            if col.startswith("pass_") and col != "pass_any"
-        ]
-        filter_extended["pass"] = filter_extended[pass_cols].all(axis=1)
-        return res_df, filter_extended
-
-    if filter_name == "molcomplexity":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            all_banned_ratio=1 - filter_results["pass"].mean(),
-            any_banned_ratio=1 - filter_results["pass_any"].mean(),
-        )
-        for name in mc.complexity.ComplexityFilter.list_default_available_filters():
-            res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
-        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
-
-    if filter_name in (
-        "bredt",
-        "protecting_groups",
-        "ring_infraction",
-        "stereo_center",
-        "halogenicity",
-        "symmetry",
-    ):
-        res_df = _create_base_stats_df(model_name, num_mol)
-        res_df["banned_ratio"] = 1 - filter_results["pass"].mean()
-        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
-
-    if filter_name == "NIBR":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            mean_severity=filter_results.severity.mean(),
-            max_severity=filter_results.severity.max(),
-            mean_n_covalent_motif=filter_results.n_covalent_motif.mean(),
-            mean_nonzero_special_mol=(filter_results.special_mol > 0).mean(),
-        )
-        pass_col = _get_pass_column(filter_results, "severity", lambda x: x == 0)
-        res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
-        filter_extended = _ensure_pass_column_in_extended(
-            filter_extended, pass_col, filter_results, "severity"
-        )
-        return res_df, filter_extended
-
-    if filter_name == "lilly":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            mean_noNA_demerit_score=filter_results.demerit_score.dropna().mean(),
-        )
-        pass_col = _get_pass_column(filter_results, "demerit_score", lambda x: x == 0)
-        res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
-        filter_extended = _ensure_pass_column_in_extended(
-            filter_extended, pass_col, filter_results, "demerit_score"
-        )
-        return res_df, filter_extended
-
-    raise ValueError(f"Filter {filter_name} not found")
+    handler = _STATS_REGISTRY.get(filter_name)
+    if handler is None:
+        raise ValueError(f"Filter {filter_name} not found")
+    return handler(config, filter_results, model_name, num_mol, stat, extend)
 
 
 def check_paths(config, paths):

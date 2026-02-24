@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -21,6 +21,11 @@ from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # Suppress common warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 
 def _project_root() -> Path:
@@ -43,6 +48,241 @@ def _resolve_existing_path(base_folder: Path, path: str | Path) -> Path:
         if c.exists():
             return c
     return (base_folder / p).resolve()
+
+
+def _make_passthrough_df(n_mols: int, columns: dict[str, Any]) -> pd.DataFrame:
+    """Build a 'pass everyone' DataFrame with mol_idx and the given constant columns.
+
+    Args:
+        n_mols: Number of molecules (rows).
+        columns: Mapping of column name -> constant value for every row.
+
+    Returns:
+        DataFrame with ``mol_idx`` in ``range(n_mols)`` plus the requested columns.
+    """
+    data: dict[str, Any] = {"mol_idx": range(n_mols)}
+    for col, val in columns.items():
+        data[col] = [val] * n_mols if isinstance(val, float) and np.isnan(val) else val
+    return pd.DataFrame(data)
+
+
+# Sentinel for conformer-RMSD error results.
+_CONFORMER_ERROR: dict[str, Any] = {
+    "min_rmsd": float("inf"),
+    "n_conformers_generated": 0,
+    "passed": False,
+}
+
+
+def _error_result(**defaults: Any) -> dict[str, Any]:
+    """Build a default error-result dict.
+
+    Returns a dict with ``error: None`` merged with *defaults*.
+    """
+    out = dict(defaults)
+    out.setdefault("error", None)
+    return out
+
+
+def _fail_result(error: str, **defaults: Any) -> dict[str, Any]:
+    """Build a failure-result dict with a specific error message."""
+    out = dict(defaults)
+    out["error"] = error
+    return out
+
+
+def _aggregate_filter_results(
+    raw_results: list[dict[str, Any]],
+    col_mapping: dict[str, str],
+    pass_col: str,
+    filter_name: str,
+) -> pd.DataFrame:
+    """Aggregate per-molecule filter results into a DataFrame.
+
+    Args:
+        raw_results: List of dicts returned by per-molecule worker functions.
+        col_mapping: Mapping of ``{result_key: dataframe_column}``.
+        pass_col: Name of the boolean pass column in the DataFrame.
+        filter_name: Human-readable filter name for log messages.
+
+    Returns:
+        DataFrame with ``mol_idx``, mapped columns, and ``pass_col``.
+    """
+    results: list[dict[str, Any]] = []
+    for i, res in enumerate(raw_results):
+        if res.get("error"):
+            logger.warning("%s failed for mol %d: %s", filter_name, i, res["error"])
+        row: dict[str, Any] = {"mol_idx": i}
+        for src_key, dst_col in col_mapping.items():
+            row[dst_col] = res[src_key]
+        row[pass_col] = res["passed"]
+        results.append(row)
+
+    df = pd.DataFrame(results)
+    logger.info(
+        "%s: %d/%d passed",
+        filter_name,
+        int(df[pass_col].sum()),
+        len(df),
+    )
+    return df
+
+
+def _resolve_worker_command(
+    env_var: str,
+    venv_name: str,
+    entry_name: str,
+    module_path: str,
+    install_hint: str,
+) -> list[str]:
+    """Resolve a worker command from environment, venv entry-point, or venv python.
+
+    Resolution order:
+    1. Environment variable (shell-split).
+    2. Platform-specific entry-point script inside the venv.
+    3. ``python -m <module_path>`` using the venv python.
+
+    Args:
+        env_var: Environment variable name (e.g. ``HEDGEHOG_SHEPHERD_WORKER_CMD``).
+        venv_name: Venv directory name under project root (e.g. ``.venv-shepherd-worker``).
+        entry_name: Entry-point script base name (e.g. ``hedgehog-shepherd-worker``).
+        module_path: Dotted module path for ``python -m`` fallback.
+        install_hint: Human-readable install instruction for the error message.
+
+    Returns:
+        Command tokens ready for ``subprocess.run()``.
+
+    Raises:
+        RuntimeError: If no command could be resolved.
+    """
+    raw_cmd = os.environ.get(env_var, "").strip()
+    if raw_cmd:
+        parts = shlex.split(raw_cmd)
+        if not parts:
+            raise RuntimeError(f"{env_var} is empty")
+        return parts
+
+    project_root = _project_root()
+    if os.name == "nt":
+        worker_entry = project_root / venv_name / "Scripts" / f"{entry_name}.exe"
+        venv_python = project_root / venv_name / "Scripts" / "python.exe"
+    else:
+        worker_entry = project_root / venv_name / "bin" / entry_name
+        venv_python = project_root / venv_name / "bin" / "python"
+
+    if worker_entry.exists():
+        return [str(worker_entry)]
+    if venv_python.exists():
+        return [str(venv_python), "-m", module_path]
+
+    raise RuntimeError(
+        f"No {entry_name} command found. Set {env_var} or run: {install_hint}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Conformer RMSD helpers (unified for symmetry-aware and naive modes)
+# ---------------------------------------------------------------------------
+
+
+def _select_embedding_params(
+    method_name: str, random_seed: int
+) -> AllChem.EmbedParameters:
+    """Return RDKit embedding parameters for the given method name."""
+    if method_name == "ETKDGv3":
+        params = AllChem.ETKDGv3()
+    elif method_name == "ETKDGv2":
+        params = AllChem.ETKDGv2()
+    else:
+        params = AllChem.ETKDG()
+    params.randomSeed = random_seed
+    return params
+
+
+def _prepare_reference_mol_for_conformer(
+    mol: Chem.Mol, include_hydrogens: bool
+) -> Chem.Mol:
+    """Prepare the reference molecule for conformer RMSD computation."""
+    if include_hydrogens:
+        return Chem.AddHs(mol, addCoords=True)
+    return Chem.RemoveHs(Chem.Mol(mol), sanitize=False)
+
+
+def _check_conformer_rmsd_single(args: tuple) -> dict[str, Any]:
+    """Unified conformer RMSD checker -- supports both symmetry-aware and naive modes.
+
+    When ``use_symmetry`` is True, uses ``GetBestRMS`` which considers molecular
+    symmetry (via substructure match) when computing RMSD.  When False, uses the
+    naive ``AlignMol`` (Kabsch, identity permutation).
+
+    Args:
+        args: Tuple of
+            (mol, num_conformers, max_rmsd, method_name, random_seed,
+             include_hydrogens, max_matches, early_stop_on_pass, use_symmetry).
+
+    Returns:
+        Dict with keys: min_rmsd, n_conformers_generated, passed, error.
+    """
+    (
+        mol,
+        num_conformers,
+        max_rmsd,
+        method_name,
+        random_seed,
+        include_hydrogens,
+        max_matches,
+        early_stop_on_pass,
+        use_symmetry,
+    ) = args
+    try:
+        reference_mol = _prepare_reference_mol_for_conformer(mol, include_hydrogens)
+        params = _select_embedding_params(method_name, random_seed)
+
+        mol_confs = Chem.Mol(reference_mol)
+        mol_confs.RemoveAllConformers()
+        AllChem.EmbedMultipleConfs(mol_confs, numConfs=num_conformers, params=params)
+        n_generated = mol_confs.GetNumConformers()
+
+        if n_generated == 0:
+            return _fail_result("no conformers generated", **_CONFORMER_ERROR)
+
+        if use_symmetry:
+            from rdkit.Chem import rdMolAlign
+
+            rmsd_values: list[float] = []
+            for conf_id in range(n_generated):
+                rmsd = rdMolAlign.GetBestRMS(
+                    mol_confs,
+                    reference_mol,
+                    prbId=conf_id,
+                    refId=0,
+                    maxMatches=max_matches,
+                )
+                rmsd_values.append(rmsd)
+                if early_stop_on_pass and rmsd <= max_rmsd:
+                    break
+        else:
+            rmsd_values = []
+            for conf_id in range(n_generated):
+                conf_mol = Chem.Mol(mol_confs)
+                conf_mol.RemoveAllConformers()
+                conf_mol.AddConformer(mol_confs.GetConformer(conf_id), assignId=True)
+                rmsd = AllChem.AlignMol(conf_mol, reference_mol)
+                rmsd_values.append(rmsd)
+
+        min_rmsd = min(rmsd_values)
+        return _error_result(
+            min_rmsd=min_rmsd,
+            n_conformers_generated=n_generated,
+            passed=min_rmsd <= max_rmsd,
+        )
+    except Exception as e:
+        return _fail_result(str(e), **_CONFORMER_ERROR)
+
+
+# ---------------------------------------------------------------------------
+# Search-box filter
+# ---------------------------------------------------------------------------
 
 
 def _autobox_from_reference_ligand(
@@ -109,12 +349,8 @@ def apply_search_box_filter(
     """
     enabled = bool(config.get("enabled", True))
     if not enabled:
-        return pd.DataFrame(
-            {
-                "mol_idx": range(len(mols)),
-                "frac_atoms_outside_box": 0.0,
-                "pass_search_box": True,
-            }
+        return _make_passthrough_df(
+            len(mols), {"frac_atoms_outside_box": 0.0, "pass_search_box": True}
         )
 
     # Prefer explicit center/size if present, otherwise fall back to autobox reference.
@@ -131,12 +367,8 @@ def apply_search_box_filter(
             logger.warning(
                 "Search-box filter enabled but no box could be resolved; passing all poses."
             )
-            return pd.DataFrame(
-                {
-                    "mol_idx": range(len(mols)),
-                    "frac_atoms_outside_box": 0.0,
-                    "pass_search_box": True,
-                }
+            return _make_passthrough_df(
+                len(mols), {"frac_atoms_outside_box": 0.0, "pass_search_box": True}
             )
         center, size = box
 
@@ -189,6 +421,11 @@ def apply_search_box_filter(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Molecule loading
+# ---------------------------------------------------------------------------
+
+
 def load_molecules_from_sdf(sdf_path: str | Path) -> list[Chem.Mol]:
     """Load molecules from SDF file."""
     sdf_path = Path(sdf_path)
@@ -199,6 +436,11 @@ def load_molecules_from_sdf(sdf_path: str | Path) -> list[Chem.Mol]:
     mols = [mol for mol in suppl if mol is not None]
     logger.info("Loaded %d molecules from %s", len(mols), sdf_path)
     return mols
+
+
+# ---------------------------------------------------------------------------
+# Pose quality filter (PoseCheck legacy)
+# ---------------------------------------------------------------------------
 
 
 def apply_pose_quality_filter(
@@ -255,6 +497,11 @@ def apply_pose_quality_filter(
         len(df),
     )
     return df
+
+
+# ---------------------------------------------------------------------------
+# Interaction filter (ProLIF)
+# ---------------------------------------------------------------------------
 
 
 def apply_interaction_filter(
@@ -357,6 +604,11 @@ def apply_interaction_filter(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Shepherd-Score filter
+# ---------------------------------------------------------------------------
+
+
 def _check_shepherd_score_single(mol: Chem.Mol) -> dict[str, Any]:
     """Compute shape Tanimoto score for a single molecule.
 
@@ -412,47 +664,19 @@ def _soft_skip_shepherd_filter(mols: list[Chem.Mol], reason: str) -> pd.DataFram
         "To enable it, run: uv run hedgehog setup shepherd-worker --yes",
         reason,
     )
-    return pd.DataFrame(
-        {
-            "mol_idx": range(len(mols)),
-            "shape_score": [float("nan")] * len(mols),
-            "pass_shepherd_score": [True] * len(mols),
-        }
+    return _make_passthrough_df(
+        len(mols),
+        {"shape_score": float("nan"), "pass_shepherd_score": True},
     )
 
 
 def _resolve_shepherd_worker_command() -> list[str]:
-    raw_cmd = os.environ.get("HEDGEHOG_SHEPHERD_WORKER_CMD", "").strip()
-    if raw_cmd:
-        parts = shlex.split(raw_cmd)
-        if not parts:
-            raise RuntimeError("HEDGEHOG_SHEPHERD_WORKER_CMD is empty")
-        return parts
-
-    project_root = _project_root()
-    if os.name == "nt":
-        worker_entry = (
-            project_root
-            / ".venv-shepherd-worker"
-            / "Scripts"
-            / "hedgehog-shepherd-worker.exe"
-        )
-        venv_python = project_root / ".venv-shepherd-worker" / "Scripts" / "python.exe"
-    else:
-        worker_entry = (
-            project_root / ".venv-shepherd-worker" / "bin" / "hedgehog-shepherd-worker"
-        )
-        venv_python = project_root / ".venv-shepherd-worker" / "bin" / "python"
-
-    if worker_entry.exists():
-        return [str(worker_entry)]
-    if venv_python.exists():
-        return [str(venv_python), "-m", "hedgehog.workers.shepherd_worker"]
-
-    raise RuntimeError(
-        "No shepherd worker command found. "
-        "Set HEDGEHOG_SHEPHERD_WORKER_CMD or run: "
-        "uv run hedgehog setup shepherd-worker --yes"
+    return _resolve_worker_command(
+        env_var="HEDGEHOG_SHEPHERD_WORKER_CMD",
+        venv_name=".venv-shepherd-worker",
+        entry_name="hedgehog-shepherd-worker",
+        module_path="hedgehog.workers.shepherd_worker",
+        install_hint="uv run hedgehog setup shepherd-worker --yes",
     )
 
 
@@ -646,25 +870,12 @@ def _apply_shepherd_score_filter_inprocess(
         initargs=(ref_positions_list, alpha, min_shape_score),
     )
 
-    results = []
-    for i, res in enumerate(raw_results):
-        if res["error"]:
-            logger.warning("Shepherd-Score failed for mol %d: %s", i, res["error"])
-        results.append(
-            {
-                "mol_idx": i,
-                "shape_score": res["score"],
-                "pass_shepherd_score": res["passed"],
-            }
-        )
-
-    df = pd.DataFrame(results)
-    logger.info(
-        "Shepherd-Score filter: %d/%d passed",
-        int(df["pass_shepherd_score"].sum()),
-        len(df),
+    return _aggregate_filter_results(
+        raw_results,
+        col_mapping={"score": "shape_score"},
+        pass_col="pass_shepherd_score",
+        filter_name="Shepherd-Score filter",
     )
-    return df
 
 
 def apply_shepherd_score_filter(
@@ -714,6 +925,19 @@ def apply_shepherd_score_filter(
     return _soft_skip_shepherd_filter(mols, "no backend available")
 
 
+# ---------------------------------------------------------------------------
+# PoseBusters / posecheck-fast filter
+# ---------------------------------------------------------------------------
+
+_POSEBUSTERS_ERROR: dict[str, Any] = {
+    "no_clashes": False,
+    "no_volume_clash": False,
+    "not_too_far_away": False,
+    "no_internal_clash": False,
+    "passed": False,
+}
+
+
 def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
     """Run posecheck-fast checks for a single molecule.
 
@@ -729,14 +953,7 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
     mol, protein_coords, protein_atom_names, config = args
     try:
         if mol is None or mol.GetNumConformers() == 0:
-            return {
-                "no_clashes": False,
-                "no_volume_clash": False,
-                "not_too_far_away": False,
-                "no_internal_clash": False,
-                "passed": False,
-                "error": "no conformer",
-            }
+            return _fail_result("no conformer", **_POSEBUSTERS_ERROR)
 
         conf = mol.GetConformer()
         pos_pred = np.array([conf.GetPositions()])  # (1, n_atoms, 3)
@@ -763,23 +980,15 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
         no_internal_clash = r["no_internal_clash"][0]
 
         passed = no_clashes and no_volume_clash and not_too_far and no_internal_clash
-        return {
-            "no_clashes": no_clashes,
-            "no_volume_clash": no_volume_clash,
-            "not_too_far_away": not_too_far,
-            "no_internal_clash": no_internal_clash,
-            "passed": passed,
-            "error": None,
-        }
+        return _error_result(
+            no_clashes=no_clashes,
+            no_volume_clash=no_volume_clash,
+            not_too_far_away=not_too_far,
+            no_internal_clash=no_internal_clash,
+            passed=passed,
+        )
     except Exception as e:
-        return {
-            "no_clashes": False,
-            "no_volume_clash": False,
-            "not_too_far_away": False,
-            "no_internal_clash": False,
-            "passed": False,
-            "error": str(e),
-        }
+        return _fail_result(str(e), **_POSEBUSTERS_ERROR)
 
 
 def apply_posebusters_fast_filter(
@@ -839,28 +1048,17 @@ def apply_posebusters_fast_filter(
         _check_posebusters_fast_single, items, n_jobs=1, progress=progress_cb
     )
 
-    results = []
-    for i, res in enumerate(raw_results):
-        if res["error"]:
-            logger.warning("posecheck-fast failed for mol %d: %s", i, res["error"])
-        results.append(
-            {
-                "mol_idx": i,
-                "no_clashes": res["no_clashes"],
-                "no_volume_clash": res["no_volume_clash"],
-                "not_too_far_away": res["not_too_far_away"],
-                "no_internal_clash": res["no_internal_clash"],
-                "pass_pose_quality": res["passed"],
-            }
-        )
-
-    df = pd.DataFrame(results)
-    logger.info(
-        "posecheck-fast filter: %d/%d passed",
-        int(df["pass_pose_quality"].sum()),
-        len(df),
+    return _aggregate_filter_results(
+        raw_results,
+        col_mapping={
+            "no_clashes": "no_clashes",
+            "no_volume_clash": "no_volume_clash",
+            "not_too_far_away": "not_too_far_away",
+            "no_internal_clash": "no_internal_clash",
+        },
+        pass_col="pass_pose_quality",
+        filter_name="posecheck-fast filter",
     )
-    return df
 
 
 def apply_posecheck_fast_filter(
@@ -872,88 +1070,28 @@ def apply_posecheck_fast_filter(
     return apply_posebusters_fast_filter(mols, protein_pdb, config)
 
 
-def _check_symmetry_rmsd_single(args: tuple) -> dict[str, Any]:
-    """Compute symmetry-corrected conformer RMSD for a single molecule.
+# ---------------------------------------------------------------------------
+# Conformer deviation filters (symmetry-aware & naive)
+# ---------------------------------------------------------------------------
 
-    Uses RDKit's GetBestRMS which considers molecular symmetry (via substructure
-    match) when computing RMSD — same correctness as spyrmsd but ~15x faster.
 
-    Args:
-        args: Tuple of (mol, num_conformers, max_rmsd, method_name, random_seed).
+def _resolve_conformer_backend(
+    config: dict[str, Any],
+) -> Literal["symmetry_rmsd", "naive"]:
+    """Determine which conformer RMSD backend to use from config.
 
     Returns:
-        Dict with keys: min_rmsd, n_conformers_generated, passed, error.
+        ``"symmetry_rmsd"`` or ``"naive"``.
     """
-    from rdkit.Chem import rdMolAlign
-
-    (
-        mol,
-        num_conformers,
-        max_rmsd,
-        method_name,
-        random_seed,
-        include_hydrogens,
-        max_matches,
-        early_stop_on_pass,
-    ) = args
-    try:
-        if include_hydrogens:
-            reference_mol = Chem.AddHs(mol, addCoords=True)
-        else:
-            reference_mol = Chem.RemoveHs(Chem.Mol(mol), sanitize=False)
-
-        # Select embedding method
-        if method_name == "ETKDGv3":
-            params = AllChem.ETKDGv3()
-        elif method_name == "ETKDGv2":
-            params = AllChem.ETKDGv2()
-        else:
-            params = AllChem.ETKDG()
-        params.randomSeed = random_seed
-
-        mol_confs = Chem.Mol(reference_mol)
-        mol_confs.RemoveAllConformers()
-
-        AllChem.EmbedMultipleConfs(mol_confs, numConfs=num_conformers, params=params)
-        n_generated = mol_confs.GetNumConformers()
-
-        if n_generated == 0:
-            return {
-                "min_rmsd": float("inf"),
-                "n_conformers_generated": 0,
-                "passed": False,
-                "error": "no conformers generated",
-            }
-
-        # GetBestRMS: Kabsch alignment + symmetry-aware atom permutation.
-        # NOTE: hydrogens can cause combinatorial explosion in symmetry matching.
-        rmsd_values = []
-        for conf_id in range(n_generated):
-            rmsd = rdMolAlign.GetBestRMS(
-                mol_confs,
-                reference_mol,
-                prbId=conf_id,
-                refId=0,
-                maxMatches=max_matches,
-            )
-            rmsd_values.append(rmsd)
-            if early_stop_on_pass and rmsd <= max_rmsd:
-                break
-
-        min_rmsd = min(rmsd_values)
-        return {
-            "min_rmsd": min_rmsd,
-            "n_conformers_generated": n_generated,
-            "passed": min_rmsd <= max_rmsd,
-            "error": None,
-        }
-    except Exception as e:
-        return {
-            "min_rmsd": float("inf"),
-            "n_conformers_generated": 0,
-            "passed": False,
-            "error": str(e),
-        }
+    backend = str(config.get("backend", "symmetry_rmsd")).lower()
+    if backend not in {"symmetry_rmsd", "naive"}:
+        logger.warning(
+            "Unknown conformer_deviation.backend=%r, using 'symmetry_rmsd'. "
+            "Valid values: symmetry_rmsd|naive",
+            backend,
+        )
+        return "symmetry_rmsd"
+    return backend  # type: ignore[return-value]
 
 
 def apply_symmetry_rmsd_filter(
@@ -1000,93 +1138,23 @@ def apply_symmetry_rmsd_filter(
             include_hydrogens,
             max_matches,
             early_stop_on_pass,
+            True,  # use_symmetry
         )
         for mol in mols
     ]
     raw_results = parallel_map(
-        _check_symmetry_rmsd_single, items, n_jobs, progress=progress_cb
+        _check_conformer_rmsd_single, items, n_jobs, progress=progress_cb
     )
 
-    results = []
-    for i, res in enumerate(raw_results):
-        if res["error"]:
-            logger.warning("Symmetry-RMSD failed for mol %d: %s", i, res["error"])
-        results.append(
-            {
-                "mol_idx": i,
-                "min_conformer_rmsd": res["min_rmsd"],
-                "n_conformers_generated": res["n_conformers_generated"],
-                "pass_conformer_deviation": res["passed"],
-            }
-        )
-
-    df = pd.DataFrame(results)
-    logger.info(
-        "Symmetry-RMSD filter: %d/%d passed",
-        int(df["pass_conformer_deviation"].sum()),
-        len(df),
+    return _aggregate_filter_results(
+        raw_results,
+        col_mapping={
+            "min_rmsd": "min_conformer_rmsd",
+            "n_conformers_generated": "n_conformers_generated",
+        },
+        pass_col="pass_conformer_deviation",
+        filter_name="Symmetry-RMSD filter",
     )
-    return df
-
-
-def _check_conformer_deviation_single(args: tuple) -> dict[str, Any]:
-    """Check conformer RMSD deviation for a single molecule.
-
-    Args:
-        args: Tuple of (mol, num_conformers, max_rmsd, method_name, random_seed).
-
-    Returns:
-        Dict with keys: min_rmsd, n_conformers_generated, passed, error.
-    """
-    mol, num_conformers, max_rmsd, method_name, random_seed = args
-    try:
-        mol_h = Chem.AddHs(mol, addCoords=True)
-
-        # Select embedding method
-        if method_name == "ETKDGv3":
-            params = AllChem.ETKDGv3()
-        elif method_name == "ETKDGv2":
-            params = AllChem.ETKDGv2()
-        else:
-            params = AllChem.ETKDG()
-        params.randomSeed = random_seed
-
-        mol_confs = Chem.Mol(mol_h)
-        mol_confs.RemoveAllConformers()
-
-        AllChem.EmbedMultipleConfs(mol_confs, numConfs=num_conformers, params=params)
-        n_generated = mol_confs.GetNumConformers()
-
-        if n_generated == 0:
-            return {
-                "min_rmsd": float("inf"),
-                "n_conformers_generated": 0,
-                "passed": False,
-                "error": "no conformers generated",
-            }
-
-        rmsd_values = []
-        for conf_id in range(n_generated):
-            conf_mol = Chem.Mol(mol_confs)
-            conf_mol.RemoveAllConformers()
-            conf_mol.AddConformer(mol_confs.GetConformer(conf_id), assignId=True)
-            rmsd = AllChem.AlignMol(conf_mol, mol_h)
-            rmsd_values.append(rmsd)
-
-        min_rmsd = min(rmsd_values)
-        return {
-            "min_rmsd": min_rmsd,
-            "n_conformers_generated": n_generated,
-            "passed": min_rmsd <= max_rmsd,
-            "error": None,
-        }
-    except Exception as e:
-        return {
-            "min_rmsd": float("inf"),
-            "n_conformers_generated": 0,
-            "passed": False,
-            "error": str(e),
-        }
 
 
 def apply_conformer_deviation_filter(
@@ -1095,7 +1163,7 @@ def apply_conformer_deviation_filter(
     progress_cb=None,
 ) -> pd.DataFrame:
     """
-    Apply conformer deviation filter.
+    Apply conformer deviation filter (naive, identity-permutation RMSD).
 
     Checks if docked pose is geometrically plausible by comparing
     to generated conformers.
@@ -1105,7 +1173,8 @@ def apply_conformer_deviation_filter(
         config: Filter configuration dict
 
     Returns:
-        DataFrame with columns: mol_idx, min_rmsd, n_conformers, pass
+        DataFrame with columns: mol_idx, min_conformer_rmsd,
+        n_conformers_generated, pass_conformer_deviation
     """
     num_conformers = config.get("num_conformers", 50)
     max_rmsd = config.get("max_rmsd_to_conformer", 3.0)
@@ -1119,28 +1188,31 @@ def apply_conformer_deviation_filter(
     )
 
     n_jobs = resolve_n_jobs(config)
-    items = [(mol, num_conformers, max_rmsd, method, random_seed) for mol in mols]
-    raw_results = parallel_map(
-        _check_conformer_deviation_single, items, n_jobs, progress=progress_cb
-    )
-
-    results = []
-    for i, res in enumerate(raw_results):
-        if res["error"]:
-            logger.warning("Conformer deviation failed for mol %d: %s", i, res["error"])
-        results.append(
-            {
-                "mol_idx": i,
-                "min_conformer_rmsd": res["min_rmsd"],
-                "n_conformers_generated": res["n_conformers_generated"],
-                "pass_conformer_deviation": res["passed"],
-            }
+    # Naive mode: always include hydrogens, no max_matches, no early stop.
+    items = [
+        (
+            mol,
+            num_conformers,
+            max_rmsd,
+            method,
+            random_seed,
+            True,  # include_hydrogens (original naive behavior)
+            10000,  # max_matches (unused in naive path)
+            False,  # early_stop_on_pass (not supported in naive)
+            False,  # use_symmetry
         )
-
-    df = pd.DataFrame(results)
-    logger.info(
-        "Conformer deviation filter: %d/%d passed",
-        int(df["pass_conformer_deviation"].sum()),
-        len(df),
+        for mol in mols
+    ]
+    raw_results = parallel_map(
+        _check_conformer_rmsd_single, items, n_jobs, progress=progress_cb
     )
-    return df
+
+    return _aggregate_filter_results(
+        raw_results,
+        col_mapping={
+            "min_rmsd": "min_conformer_rmsd",
+            "n_conformers_generated": "n_conformers_generated",
+        },
+        pass_col="pass_conformer_deviation",
+        filter_name="Conformer deviation filter",
+    )

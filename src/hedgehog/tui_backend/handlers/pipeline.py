@@ -50,6 +50,7 @@ class PipelineJob:
         self.previous_stage: str | None = None
         self.progress: dict[str, int] = {s: 0 for s in stages}
         self._thread: threading.Thread | None = None
+        self._temp_files: list[Path] = []
 
     def start(self):
         """Start the pipeline in a background thread."""
@@ -58,6 +59,9 @@ class PipelineJob:
 
     def cancel(self):
         """Cancel the pipeline."""
+        # TODO: Stages without progress events cannot be cancelled promptly because
+        # cancellation is only checked in _progress_callback. Consider adding a
+        # periodic cancellation check inside long-running stage loops.
         self.cancelled = True
 
     def _map_stage_name(self, internal_name: str) -> str:
@@ -104,6 +108,7 @@ class PipelineJob:
                     )
                     yaml.safe_dump(sub_cfg, tmp)
                     tmp.close()
+                    self._temp_files.append(Path(tmp.name))
                     config_dict[cfg_key] = tmp.name
                 except Exception:
                     pass  # Best-effort; pipeline will use original config
@@ -137,6 +142,7 @@ class PipelineJob:
             progress_pct = int((current / total) * 100) if total > 0 else 0
             progress_pct = max(0, min(100, progress_pct))
             message = event.get("message") or f"Running: {tui_stage}"
+            self.progress.setdefault(tui_stage, 0)
             self.progress[tui_stage] = progress_pct
             self._notify(
                 "progress",
@@ -225,6 +231,10 @@ class PipelineJob:
         except Exception as e:
             self._notify("error", {"message": str(e)})
             self._log("error", f"Pipeline error: {e}")
+        finally:
+            for tmp_path in self._temp_files:
+                tmp_path.unlink(missing_ok=True)
+            self._temp_files.clear()
 
 
 _MAX_COMPLETED_JOBS = 50

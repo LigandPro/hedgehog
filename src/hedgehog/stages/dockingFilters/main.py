@@ -12,6 +12,7 @@ from hedgehog.configs.logger import load_config, logger
 from hedgehog.utils.parallel import resolve_n_jobs
 
 from .utils import (
+    _resolve_conformer_backend,
     apply_conformer_deviation_filter,
     apply_interaction_filter,
     apply_pose_quality_filter,
@@ -122,6 +123,71 @@ def _collapse_to_single_pose(
     collapsed_df = collapsed_df.reset_index(drop=True)
     collapsed_df["mol_idx"] = range(len(collapsed_df))
     return selected_mols, collapsed_df
+
+
+def _run_single_filter(
+    *,
+    filter_name: str,
+    step_names: list[str],
+    reporter,
+    stage_total: int,
+    step_progress_fn,
+    mols: list[Chem.Mol],
+    active_pose_indices: list[int],
+    results_df: pd.DataFrame,
+    filters_applied: list[str],
+    pass_col: str,
+    run_fn,
+) -> pd.DataFrame:
+    """Run a single filter with standard progress/error/short-circuit handling.
+
+    This eliminates the repeated boilerplate per filter in ``docking_filters_main``.
+
+    Args:
+        filter_name: Human label for log messages (e.g. ``"pose_quality"``).
+        step_names: Ordered list of step names for progress calculation.
+        reporter: Optional progress reporter.
+        stage_total: Total progress units across all steps.
+        step_progress_fn: Callable ``(step_index, label) -> progress_cb | None``.
+        mols: Full molecule list.
+        active_pose_indices: Indices of molecules still active after short-circuit.
+        results_df: Cumulative results DataFrame (modified in place).
+        filters_applied: Accumulator list of successfully applied filter names.
+        pass_col: Name of the boolean pass column (e.g. ``"pass_pose_quality"``).
+        run_fn: Callable ``(mols_active, progress_cb) -> pd.DataFrame`` that runs the
+            actual filter logic.  Must return a DataFrame with ``mol_idx`` and
+            ``pass_col``.
+
+    Returns:
+        Updated ``results_df``.
+    """
+    step_idx = step_names.index(filter_name)
+    if reporter is not None:
+        reporter.progress(
+            step_idx * 100,
+            stage_total,
+            message=f"DockingFilters: {filter_name}",
+        )
+    if active_pose_indices:
+        try:
+            mols_active = [mols[i] for i in active_pose_indices]
+            progress_cb = step_progress_fn(step_idx, filter_name)
+            df = run_fn(mols_active, progress_cb)
+            df["mol_idx"] = [active_pose_indices[i] for i in df["mol_idx"]]
+            results_df = results_df.merge(df, on="mol_idx", how="left")
+            filters_applied.append(filter_name)
+        except Exception as e:
+            logger.error("%s filter failed: %s", filter_name, e)
+            results_df[pass_col] = True
+    else:
+        results_df[pass_col] = False
+    if reporter is not None:
+        reporter.progress(
+            (step_idx + 1) * 100,
+            stage_total,
+            message=f"DockingFilters: {filter_name}",
+        )
+    return results_df
 
 
 def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame | None:
@@ -282,7 +348,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     )
 
     # Apply filters
-    filters_applied = []
+    filters_applied: list[str] = []
 
     # Stage progress: map each enabled filter step to a 0-100 slot.
     sb_config = filter_config.get("search_box", {})
@@ -349,44 +415,30 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             results_df["pass_search_box"] == True, "mol_idx"  # noqa: E712
         ].tolist()
 
-    # Filter 1: Pose Quality — dispatch by backend
+    # Filter 1: Pose Quality -- dispatch by backend
     if pq_config.get("enabled", True):
-        pq_step_idx = step_names.index("pose_quality")
-        if reporter is not None:
-            reporter.progress(
-                pq_step_idx * 100,
-                stage_total,
-                message="DockingFilters: pose_quality",
-            )
-        if active_pose_indices:
-            try:
-                mols_active = [mols[i] for i in active_pose_indices]
-                pq_backend = pq_config.get("backend", "posebusters_fast")
-                if pq_backend == "posebusters_fast":
-                    pq_df = apply_posebusters_fast_filter(
-                        mols_active,
-                        protein_pdb,
-                        pq_config,
-                        progress_cb=_step_progress(pq_step_idx, "pose_quality"),
-                    )
-                else:  # "posecheck" (legacy)
-                    pq_df = apply_pose_quality_filter(
-                        mols_active, protein_pdb, pq_config
-                    )
-                pq_df["mol_idx"] = [active_pose_indices[i] for i in pq_df["mol_idx"]]
-                results_df = results_df.merge(pq_df, on="mol_idx", how="left")
-                filters_applied.append("pose_quality")
-            except Exception as e:
-                logger.error("Pose quality filter failed: %s", e)
-                results_df["pass_pose_quality"] = True
-        else:
-            results_df["pass_pose_quality"] = False
-        if reporter is not None:
-            reporter.progress(
-                (pq_step_idx + 1) * 100,
-                stage_total,
-                message="DockingFilters: pose_quality",
-            )
+        pq_backend = pq_config.get("backend", "posebusters_fast")
+
+        def _run_pose_quality(mols_active, progress_cb):
+            if pq_backend == "posebusters_fast":
+                return apply_posebusters_fast_filter(
+                    mols_active, protein_pdb, pq_config, progress_cb=progress_cb
+                )
+            return apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
+
+        results_df = _run_single_filter(
+            filter_name="pose_quality",
+            step_names=step_names,
+            reporter=reporter,
+            stage_total=stage_total,
+            step_progress_fn=_step_progress,
+            mols=mols,
+            active_pose_indices=active_pose_indices,
+            results_df=results_df,
+            filters_applied=filters_applied,
+            pass_col="pass_pose_quality",
+            run_fn=_run_pose_quality,
+        )
 
     # Optional optimization: under aggregation mode "all", if a pose fails pose quality
     # it cannot pass the overall filter, so we can skip heavier checks (interactions,
@@ -401,126 +453,86 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
     # Filter 2: Interactions
     if int_config.get("enabled", True):
-        int_step_idx = step_names.index("interactions")
-        if reporter is not None:
-            reporter.progress(
-                int_step_idx * 100,
-                stage_total,
-                message="DockingFilters: interactions",
-            )
-        if active_pose_indices:
-            try:
-                mols_active = [mols[i] for i in active_pose_indices]
-                int_df = apply_interaction_filter(mols_active, protein_pdb, int_config)
-                int_df["mol_idx"] = [active_pose_indices[i] for i in int_df["mol_idx"]]
-                results_df = results_df.merge(int_df, on="mol_idx", how="left")
-                filters_applied.append("interactions")
-            except Exception as e:
-                logger.error("Interaction filter failed: %s", e)
-                results_df["pass_interactions"] = True
-        else:
-            results_df["pass_interactions"] = False
-        if reporter is not None:
-            reporter.progress(
-                (int_step_idx + 1) * 100,
-                stage_total,
-                message="DockingFilters: interactions",
-            )
+
+        def _run_interactions(mols_active, _progress_cb):
+            return apply_interaction_filter(mols_active, protein_pdb, int_config)
+
+        results_df = _run_single_filter(
+            filter_name="interactions",
+            step_names=step_names,
+            reporter=reporter,
+            stage_total=stage_total,
+            step_progress_fn=_step_progress,
+            mols=mols,
+            active_pose_indices=active_pose_indices,
+            results_df=results_df,
+            filters_applied=filters_applied,
+            pass_col="pass_interactions",
+            run_fn=_run_interactions,
+        )
 
     # Filter 3: Shepherd-Score
     if ss_config.get("enabled", False):
         if ref_path and Path(ref_path).exists():
-            ss_step_idx = (
-                step_names.index("shepherd_score")
-                if "shepherd_score" in step_names
-                else None
-            )
-            if reporter is not None and ss_step_idx is not None:
-                reporter.progress(
-                    ss_step_idx * 100,
-                    stage_total,
-                    message="DockingFilters: shepherd_score",
-                )
+            ref_mol = None
             try:
                 ref_mol = Chem.MolFromMolFile(str(ref_path))
-                if ref_mol:
-                    if not active_pose_indices:
-                        results_df["pass_shepherd_score"] = False
-                    else:
-                        mols_active = [mols[i] for i in active_pose_indices]
-                        ss_df = apply_shepherd_score_filter(
-                            mols_active,
-                            ref_mol,
-                            ss_config,
-                            progress_cb=_step_progress(
-                                ss_step_idx or 0, "shepherd_score"
-                            )
-                            if ss_step_idx is not None
-                            else None,
-                        )
-                        ss_df["mol_idx"] = [
-                            active_pose_indices[i] for i in ss_df["mol_idx"]
-                        ]
-                        results_df = results_df.merge(ss_df, on="mol_idx", how="left")
-                        filters_applied.append("shepherd_score")
-                else:
-                    logger.warning(
-                        "Failed to load reference molecule for Shepherd-Score"
-                    )
-                    results_df["pass_shepherd_score"] = True
             except Exception as e:
                 logger.error("Shepherd-Score filter failed: %s", e)
-                results_df["pass_shepherd_score"] = True
-            finally:
-                if reporter is not None and ss_step_idx is not None:
-                    reporter.progress(
-                        (ss_step_idx + 1) * 100,
-                        stage_total,
-                        message="DockingFilters: shepherd_score",
+
+            if ref_mol:
+
+                def _run_shepherd(mols_active, progress_cb):
+                    return apply_shepherd_score_filter(
+                        mols_active, ref_mol, ss_config, progress_cb=progress_cb
                     )
+
+                results_df = _run_single_filter(
+                    filter_name="shepherd_score",
+                    step_names=step_names,
+                    reporter=reporter,
+                    stage_total=stage_total,
+                    step_progress_fn=_step_progress,
+                    mols=mols,
+                    active_pose_indices=active_pose_indices,
+                    results_df=results_df,
+                    filters_applied=filters_applied,
+                    pass_col="pass_shepherd_score",
+                    run_fn=_run_shepherd,
+                )
+            else:
+                logger.warning("Failed to load reference molecule for Shepherd-Score")
+                results_df["pass_shepherd_score"] = True
         else:
             logger.info("Shepherd-Score disabled (no reference ligand)")
             results_df["pass_shepherd_score"] = True
 
-    # Filter 4: Conformer Deviation — dispatch by backend
+    # Filter 4: Conformer Deviation -- dispatch by backend
     if cd_config.get("enabled", True):
-        cd_step_idx = step_names.index("conformer_deviation")
-        if reporter is not None:
-            reporter.progress(
-                cd_step_idx * 100,
-                stage_total,
-                message="DockingFilters: conformer_deviation",
+        cd_backend = _resolve_conformer_backend(cd_config)
+
+        def _run_conformer(mols_active, progress_cb):
+            if cd_backend == "symmetry_rmsd":
+                return apply_symmetry_rmsd_filter(
+                    mols_active, cd_config, progress_cb=progress_cb
+                )
+            return apply_conformer_deviation_filter(
+                mols_active, cd_config, progress_cb=progress_cb
             )
-        if active_pose_indices:
-            try:
-                mols_active = [mols[i] for i in active_pose_indices]
-                cd_backend = cd_config.get("backend", "symmetry_rmsd")
-                if cd_backend == "symmetry_rmsd":
-                    cd_df = apply_symmetry_rmsd_filter(
-                        mols_active,
-                        cd_config,
-                        progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
-                    )
-                else:  # "naive" (legacy)
-                    cd_df = apply_conformer_deviation_filter(
-                        mols_active,
-                        cd_config,
-                        progress_cb=_step_progress(cd_step_idx, "conformer_deviation"),
-                    )
-                cd_df["mol_idx"] = [active_pose_indices[i] for i in cd_df["mol_idx"]]
-                results_df = results_df.merge(cd_df, on="mol_idx", how="left")
-                filters_applied.append("conformer_deviation")
-            except Exception as e:
-                logger.error("Conformer deviation filter failed: %s", e)
-                results_df["pass_conformer_deviation"] = True
-        else:
-            results_df["pass_conformer_deviation"] = False
-        if reporter is not None:
-            reporter.progress(
-                (cd_step_idx + 1) * 100,
-                stage_total,
-                message="DockingFilters: conformer_deviation",
-            )
+
+        results_df = _run_single_filter(
+            filter_name="conformer_deviation",
+            step_names=step_names,
+            reporter=reporter,
+            stage_total=stage_total,
+            step_progress_fn=_step_progress,
+            mols=mols,
+            active_pose_indices=active_pose_indices,
+            results_df=results_df,
+            filters_applied=filters_applied,
+            pass_col="pass_conformer_deviation",
+            run_fn=_run_conformer,
+        )
 
     if reporter is not None:
         reporter.progress(stage_total, stage_total, message="DockingFilters complete")

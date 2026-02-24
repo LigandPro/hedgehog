@@ -402,6 +402,239 @@ def _preprocess_input(
         logger.info("Using preprocessed input: %s", prepared_path)
 
 
+class CliProgressTracker:
+    """Manages Rich progress display for CLI pipeline execution.
+
+    Wraps a :class:`rich.progress.Progress` bar and translates pipeline
+    progress events (dicts with ``type``, ``stage``, ``current``, ``total``,
+    etc.) into visual updates.  Intended to be used as a context manager so
+    that the underlying ``Progress`` widget is properly started/stopped.
+    """
+
+    _SHORT_STAGE_NAMES: dict[str, str] = {
+        "mol_prep": "Prep",
+        "descriptors": "Descriptors",
+        "struct_filters": "StructFilters",
+        "synthesis": "Synthesis",
+        "docking": "Docking",
+        "docking_filters": "DockFilters",
+        "final_descriptors": "FinalDesc",
+    }
+
+    def __init__(self, console: Console) -> None:
+        columns = _build_progress_columns(console.width)
+        self._progress = Progress(
+            *columns,
+            refresh_per_second=4,
+            console=console,
+        )
+        self._active_task_id: int | None = None
+        self._stage_started_at: float | None = None
+        self._current_stage_done: int | None = None
+        self._current_stage_total: int | None = None
+
+    # -- context manager --------------------------------------------------
+
+    def __enter__(self) -> "CliProgressTracker":
+        self._progress.__enter__()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._progress.__exit__(*exc)
+
+    # -- public API -------------------------------------------------------
+
+    def handle_event(self, event: dict) -> None:
+        """Handle a progress event emitted by the pipeline."""
+        event_type = event.get("type")
+        stage = str(event.get("stage", ""))
+        stage_index = int(event.get("stage_index", 0) or 0)
+        total_stages = int(event.get("total_stages", 0) or 0)
+        short_name = self._short_stage_name(stage)
+        message = event.get("message")
+        task_id = self._get_or_create_task(
+            stage_index, total_stages, short_name, message
+        )
+        if task_id is None:
+            return
+
+        if event_type == "stage_start":
+            self._handle_stage_start(
+                task_id, stage_index, total_stages, short_name, message
+            )
+        elif event_type == "stage_progress":
+            self._handle_stage_progress(
+                event, task_id, stage_index, total_stages, short_name, message
+            )
+        elif event_type == "stage_complete":
+            self._handle_stage_complete(
+                task_id, stage_index, total_stages, short_name, message
+            )
+
+    # -- private helpers --------------------------------------------------
+
+    def _short_stage_name(self, stage: str) -> str:
+        if stage in self._SHORT_STAGE_NAMES:
+            return self._SHORT_STAGE_NAMES[stage]
+        return stage.replace("_", " ").title()
+
+    @staticmethod
+    def _format_seconds(value: float | None) -> str:
+        if value is None:
+            return "-"
+        if value < 60:
+            return f"{value:.1f}s"
+        minutes, seconds = divmod(int(round(value)), 60)
+        if minutes < 60:
+            return f"{minutes:02d}:{seconds:02d}"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+
+    @staticmethod
+    def _format_count(value: int | None) -> str:
+        if value is None:
+            return "-"
+        return f"{value:,}"
+
+    @staticmethod
+    def _short_progress_message(value: str | None) -> str:
+        if not value:
+            return ""
+        text = " ".join(str(value).split())
+        if len(text) > 36:
+            return text[:33] + "..."
+        return text
+
+    def _progress_description(
+        self,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None = None,
+    ) -> str:
+        base = f"{stage_index}/{total_stages} - {short_name}"
+        short_message = self._short_progress_message(message)
+        if short_message:
+            return f"{base} · {short_message}"
+        return base
+
+    def _get_or_create_task(
+        self,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None = None,
+    ) -> int | None:
+        if stage_index <= 0:
+            return None
+        if self._active_task_id is None:
+            self._active_task_id = self._progress.add_task(
+                self._progress_description(
+                    stage_index, total_stages, short_name, message
+                ),
+                total=100,
+                done_total="-/-",
+                rate="-",
+                eta="-",
+            )
+        return self._active_task_id
+
+    def _handle_stage_start(
+        self,
+        task_id: int,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None,
+    ) -> None:
+        self._stage_started_at = time.perf_counter()
+        self._current_stage_done = None
+        self._current_stage_total = None
+        self._progress.update(
+            task_id,
+            completed=0,
+            description=self._progress_description(
+                stage_index, total_stages, short_name, message
+            ),
+            done_total="-/-",
+            rate="-",
+            eta="-",
+        )
+
+    def _handle_stage_progress(
+        self,
+        event: dict,
+        task_id: int,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None,
+    ) -> None:
+        current = int(event.get("current", 0) or 0)
+        total = int(event.get("total", 0) or 0)
+        self._current_stage_done = current if current >= 0 else None
+        self._current_stage_total = total if total > 0 else None
+        pct = int(round((current / total) * 100)) if total > 0 else 0
+        pct = max(0, min(100, pct))
+        elapsed_seconds = (
+            time.perf_counter() - self._stage_started_at
+            if self._stage_started_at is not None
+            else None
+        )
+        left_count = max(total - current, 0) if total > 0 and current >= 0 else None
+        rate = (
+            (current / elapsed_seconds)
+            if elapsed_seconds and elapsed_seconds > 0 and current > 0
+            else None
+        )
+        eta_seconds = (
+            (left_count / rate)
+            if left_count is not None and rate and rate > 0
+            else None
+        )
+        self._progress.update(
+            task_id,
+            completed=pct,
+            description=self._progress_description(
+                stage_index, total_stages, short_name, message
+            ),
+            done_total=(
+                f"{self._format_count(current)}/{self._format_count(total)}"
+                if total > 0
+                else "-/-"
+            ),
+            rate=(f"{rate:,.0f}/s" if rate is not None else "-"),
+            eta=self._format_seconds(eta_seconds),
+        )
+
+    def _handle_stage_complete(
+        self,
+        task_id: int,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None,
+    ) -> None:
+        done_total = "-/-"
+        stage_total = self._current_stage_total
+        stage_done = self._current_stage_done
+        if stage_total is not None:
+            done = stage_done
+            if done is None or done < 0:
+                done = stage_total
+            done_total = f"{self._format_count(done)}/{self._format_count(stage_total)}"
+        self._progress.update(
+            task_id,
+            completed=100,
+            description=self._progress_description(
+                stage_index, total_stages, short_name, message
+            ),
+            done_total=done_total,
+            rate="-",
+            eta="-",
+        )
+
+
 def _save_sampled_molecules(
     data: pd.DataFrame,
     folder_to_save: Path,
@@ -613,205 +846,8 @@ def run(
     if _plain_output_enabled() or not show_progress:
         success = calculate_metrics(data, config_dict, None)
     else:
-        short_stage_names = {
-            "mol_prep": "Prep",
-            "descriptors": "Descriptors",
-            "struct_filters": "StructFilters",
-            "synthesis": "Synthesis",
-            "docking": "Docking",
-            "docking_filters": "DockFilters",
-            "final_descriptors": "FinalDesc",
-        }
-
-        def _short_stage_name(stage: str) -> str:
-            if stage in short_stage_names:
-                return short_stage_names[stage]
-            return stage.replace("_", " ").title()
-
-        def _to_int(value) -> int | None:
-            if value is None:
-                return None
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return None
-
-        def _format_seconds(value: float | None) -> str:
-            if value is None:
-                return "-"
-            if value < 60:
-                return f"{value:.1f}s"
-            minutes, seconds = divmod(int(round(value)), 60)
-            if minutes < 60:
-                return f"{minutes:02d}:{seconds:02d}"
-            hours, minutes = divmod(minutes, 60)
-            return f"{hours:d}:{minutes:02d}:{seconds:02d}"
-
-        def _format_count(value: int | None) -> str:
-            if value is None:
-                return "-"
-            return f"{value:,}"
-
-        def _short_progress_message(value: str | None) -> str:
-            if not value:
-                return ""
-            text = " ".join(str(value).split())
-            if len(text) > 36:
-                return text[:33] + "..."
-            return text
-
-        def _progress_description(
-            stage_index: int,
-            total_stages: int,
-            short_name: str,
-            message: str | None = None,
-        ) -> str:
-            base = f"{stage_index}/{total_stages} - {short_name}"
-            short_message = _short_progress_message(message)
-            if short_message:
-                return f"{base} · {short_message}"
-            return base
-
-        console_width = shared_console.width
-        progress_columns = _build_progress_columns(console_width)
-        with Progress(
-            *progress_columns,
-            refresh_per_second=4,
-            console=shared_console,
-        ) as progress:
-            active_task_id: int | None = None
-            stage_started_at: float | None = None
-            current_stage_done: int | None = None
-            current_stage_total: int | None = None
-
-            def _get_or_create_task(
-                stage_index: int,
-                total_stages: int,
-                short_name: str,
-                message: str | None = None,
-            ) -> int | None:
-                nonlocal active_task_id
-                if stage_index <= 0:
-                    return None
-                if active_task_id is None:
-                    active_task_id = progress.add_task(
-                        _progress_description(
-                            stage_index, total_stages, short_name, message
-                        ),
-                        total=100,
-                        done_total="-/-",
-                        rate="-",
-                        eta="-",
-                    )
-                return active_task_id
-
-            def _cli_progress(event: dict) -> None:
-                nonlocal stage_started_at, current_stage_done, current_stage_total
-                event_type = event.get("type")
-                stage = str(event.get("stage", ""))
-                stage_index = int(event.get("stage_index", 0) or 0)
-                total_stages = int(event.get("total_stages", 0) or 0)
-                short_name = _short_stage_name(stage)
-                message = event.get("message")
-                task_id = _get_or_create_task(
-                    stage_index,
-                    total_stages,
-                    short_name,
-                    message,
-                )
-                if task_id is None:
-                    return
-
-                if event_type == "stage_start":
-                    stage_started_at = time.perf_counter()
-                    current_stage_done = None
-                    current_stage_total = None
-                    progress.update(
-                        task_id,
-                        completed=0,
-                        description=_progress_description(
-                            stage_index,
-                            total_stages,
-                            short_name,
-                            message,
-                        ),
-                        done_total="-/-",
-                        rate="-",
-                        eta="-",
-                    )
-                    return
-
-                if event_type == "stage_progress":
-                    current = int(event.get("current", 0) or 0)
-                    total = int(event.get("total", 0) or 0)
-                    current_stage_done = current if current >= 0 else None
-                    current_stage_total = total if total > 0 else None
-                    pct = int(round((current / total) * 100)) if total > 0 else 0
-                    pct = max(0, min(100, pct))
-                    elapsed_seconds = (
-                        time.perf_counter() - stage_started_at
-                        if stage_started_at is not None
-                        else None
-                    )
-                    left_count = (
-                        max(total - current, 0) if total > 0 and current >= 0 else None
-                    )
-                    rate = (
-                        (current / elapsed_seconds)
-                        if elapsed_seconds and elapsed_seconds > 0 and current > 0
-                        else None
-                    )
-                    eta_seconds = (
-                        (left_count / rate)
-                        if left_count is not None and rate and rate > 0
-                        else None
-                    )
-                    progress.update(
-                        task_id,
-                        completed=pct,
-                        description=_progress_description(
-                            stage_index,
-                            total_stages,
-                            short_name,
-                            message,
-                        ),
-                        done_total=(
-                            f"{_format_count(current)}/{_format_count(total)}"
-                            if total > 0
-                            else "-/-"
-                        ),
-                        rate=(f"{rate:,.0f}/s" if rate is not None else "-"),
-                        eta=_format_seconds(eta_seconds),
-                    )
-                    return
-
-                if event_type == "stage_complete":
-                    done_total = "-/-"
-                    stage_total = current_stage_total
-                    stage_done = current_stage_done
-                    if stage_total is not None:
-                        done = stage_done
-                        if done is None or done < 0:
-                            done = stage_total
-                        done_total = (
-                            f"{_format_count(done)}/{_format_count(stage_total)}"
-                        )
-                    progress.update(
-                        task_id,
-                        completed=100,
-                        description=_progress_description(
-                            stage_index,
-                            total_stages,
-                            short_name,
-                            message,
-                        ),
-                        done_total=done_total,
-                        rate="-",
-                        eta="-",
-                    )
-                    return
-
-            success = calculate_metrics(data, config_dict, _cli_progress)
+        with CliProgressTracker(shared_console) as tracker:
+            success = calculate_metrics(data, config_dict, tracker.handle_event)
 
     if not success:
         logger.error("Pipeline completed with failures")
@@ -958,9 +994,9 @@ def info() -> None:
 def version() -> None:
     """Display version information."""
     if _plain_output_enabled():
-        console.print("HEDGEHOG version 1.0.8")
+        console.print("HEDGEHOG version 1.0.13")
     else:
-        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.8[/bold]")
+        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.13[/bold]")
     console.print(
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )
@@ -987,6 +1023,31 @@ def setup_aizynthfinder(
     project_root = Path(__file__).resolve().parents[2]
     config_path = ensure_aizynthfinder(project_root)
     console.print(f"[bold]AiZynthFinder installed.[/bold] Config: {config_path}")
+
+
+@setup_app.command("nvmolkit-worker")
+def setup_nvmolkit_worker(
+    yes: bool = typer.Option(
+        True,
+        "--yes/--no-yes",
+        "-y",
+        help="Auto-accept downloads (no prompt).",
+    ),
+    python_bin: str | None = typer.Option(
+        None,
+        "--python",
+        help="Python interpreter for worker venv (default: python3.12 -> 3.11 -> 3.10).",
+    ),
+) -> None:
+    """Install isolated nvMolKit worker environment in .venv-nvmolkit-worker."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    from hedgehog.setup import ensure_nvmolkit_worker
+
+    project_root = Path(__file__).resolve().parents[2]
+    worker_path = ensure_nvmolkit_worker(project_root, python_bin=python_bin)
+    console.print(f"[bold]nvMolKit worker installed.[/bold] Entry: {worker_path}")
 
 
 @setup_app.command("shepherd-worker")
