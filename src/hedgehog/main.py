@@ -994,9 +994,9 @@ def info() -> None:
 def version() -> None:
     """Display version information."""
     if _plain_output_enabled():
-        console.print("HEDGEHOG version 1.0.15")
+        console.print("HEDGEHOG version 1.0.16")
     else:
-        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.15[/bold]")
+        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.16[/bold]")
     console.print(
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )
