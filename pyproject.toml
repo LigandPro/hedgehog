@@ -81,9 +81,29 @@ lint.ignore = [
     "F401",
     "F403",
 ]
-"**/stages/structFilters/main.py" = ["F403", "F405"]
-"**/stages/structFilters/utils.py" = ["E402"]
-"**/stages/synthesis/main.py" = ["F403", "F405"]
+# New flat namespace modules
+"**/struct_filters/main.py" = ["F403", "F405"]
+"**/struct_filters/utils.py" = ["E402"]
+"**/synthesis/main.py" = ["F403", "F405"]
+# Backwards-compatibility shims (stages/)
+"**/stages/structFilters/main.py" = ["F403", "F405", "E402", "I001"]
+"**/stages/structFilters/utils.py" = ["E402", "F403", "I001"]
+"**/stages/structFilters/__init__.py" = ["E402", "F403", "I001"]
+"**/stages/synthesis/main.py" = ["F403", "F405", "E402", "I001"]
+"**/stages/synthesis/utils.py" = ["E402", "F403", "I001"]
+"**/stages/synthesis/__init__.py" = ["E402", "F403", "I001"]
+"**/stages/docking/main.py" = ["E402", "F403", "I001"]
+"**/stages/docking/utils.py" = ["E402", "F403", "I001"]
+"**/stages/docking/__init__.py" = ["E402", "F403", "I001"]
+"**/stages/dockingFilters/main.py" = ["E402", "F403", "I001"]
+"**/stages/dockingFilters/utils.py" = ["E402", "F403", "I001"]
+"**/stages/dockingFilters/__init__.py" = ["E402", "F403", "I001"]
+"**/stages/descriptors/main.py" = ["E402", "F403", "I001"]
+"**/stages/descriptors/utils.py" = ["E402", "F403", "I001"]
+"**/stages/descriptors/__init__.py" = ["E402", "F403", "I001"]
+"**/stages/molPrep/main.py" = ["E402", "F403", "I001"]
+"**/stages/molPrep/utils.py" = ["E402", "F403", "I001"]
+"**/stages/molPrep/__init__.py" = ["E402", "F403", "I001"]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true

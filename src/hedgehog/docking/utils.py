@@ -265,7 +265,7 @@ def _warn_if_autobox_far_from_receptor(cfg: dict, tool_name: str) -> None:
         if not autobox_ligand:
             return
 
-        project_root = Path(__file__).parent.parent.parent.parent.parent
+        project_root = Path(__file__).parent.parent.parent.parent
         autobox_path = _resolve_autobox_path(str(autobox_ligand), project_root)
         if autobox_path is None:
             return
@@ -434,7 +434,7 @@ def _resolve_tool_autobox(tool_config: dict) -> str | None:
     autobox_ligand = tool_config.get("autobox_ligand")
     if not autobox_ligand:
         return None
-    project_root = Path(__file__).parent.parent.parent.parent.parent
+    project_root = Path(__file__).parent.parent.parent.parent
     autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
     if autobox_path:
         return str(autobox_path)
@@ -1656,7 +1656,7 @@ def _resolve_receptor_path(receptor_pdb, base_folder=None):
     if receptor_path.is_absolute() and receptor_path.exists():
         return receptor_path
 
-    project_root = Path(__file__).parent.parent.parent.parent.parent
+    project_root = Path(__file__).parent.parent.parent.parent
 
     if not receptor_path.is_absolute():
         candidate = (project_root / receptor_pdb).resolve()
@@ -1964,7 +1964,7 @@ def _prepare_receptor_if_needed(
 
     receptor_path = Path(original_receptor)
     if not receptor_path.is_absolute():
-        project_root = Path(__file__).parent.parent.parent.parent.parent
+        project_root = Path(__file__).parent.parent.parent.parent
         receptor_path = (project_root / original_receptor).resolve()
         if not receptor_path.exists():
             receptor_path = Path(original_receptor).resolve()
@@ -2150,7 +2150,7 @@ def _setup_gnina(
                 "GNINA: Config has prepared path: %s, this should have been restored",
                 original_receptor,
             )
-            project_root = Path(__file__).parent.parent.parent.parent.parent
+            project_root = Path(__file__).parent.parent.parent.parent
             possible_originals = [
                 project_root / "data/test/7EW9_apo.pdb",
             ]

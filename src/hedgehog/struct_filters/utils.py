@@ -22,7 +22,6 @@ _LILLY_BIN_PATH = (
     / ".."
     / ".."
     / ".."
-    / ".."
     / "modules"
     / "lilly_medchem_rules"
     / "bin"
@@ -2115,7 +2114,7 @@ def filter_data(config, stage_dir):
                 input_path = str(sampled_path)
             else:
                 try:
-                    from hedgehog.stages.structFilters.main import _get_input_path
+                    from hedgehog.struct_filters.main import _get_input_path
 
                     input_path = _get_input_path(config, stage_dir, str(base_folder))
                 except Exception:
@@ -2126,7 +2125,7 @@ def filter_data(config, stage_dir):
             input_path = str(sampled_path)
         else:
             try:
-                from hedgehog.stages.structFilters.main import _get_input_path
+                from hedgehog.struct_filters.main import _get_input_path
 
                 input_path = _get_input_path(config, stage_dir, str(base_folder))
             except Exception:

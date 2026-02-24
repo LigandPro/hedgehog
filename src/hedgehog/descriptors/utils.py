@@ -12,7 +12,7 @@ from rdkit import Chem, RDLogger, rdBase
 from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.stages.structFilters.utils import process_path
+from hedgehog.struct_filters.utils import process_path
 from hedgehog.utils.mce18 import compute_mce18
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.stages.molPrep.utils import run_mol_prep
-from hedgehog.stages.structFilters.utils import process_path
+from hedgehog.molprep.utils import run_mol_prep
+from hedgehog.struct_filters.utils import process_path
 
 
 def main(data, config: dict, subfolder: str | None = None, reporter=None):

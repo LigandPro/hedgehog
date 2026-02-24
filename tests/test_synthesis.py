@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import hedgehog.stages.synthesis.utils as synthesis_utils
-from hedgehog.stages.synthesis.utils import (
+import hedgehog.synthesis.utils as synthesis_utils
+from hedgehog.synthesis.utils import (
     _build_score_filter_mask,
     _calculate_ra_scores_batch,
     _get_rascore_model_path,
@@ -21,10 +21,10 @@ from hedgehog.stages.synthesis.utils import (
     prepare_input_smiles,
     run_aizynthfinder,
 )
-from hedgehog.stages.synthesis.utils import (
+from hedgehog.synthesis.utils import (
     _calculate_sa_score_single as _calculate_sa_score,
 )
-from hedgehog.stages.synthesis.utils import (
+from hedgehog.synthesis.utils import (
     _calculate_syba_score_single as _calculate_syba_score,
 )
 

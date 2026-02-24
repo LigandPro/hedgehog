@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.stages.descriptors.utils import (
+from hedgehog.descriptors.utils import (
     compute_metrics,
     draw_filtered_mols,
     filter_molecules,

@@ -1,4 +1,4 @@
-from hedgehog.stages.docking.utils import run_docking
+from hedgehog.docking.utils import run_docking
 
 
 def main(config: dict, reporter=None):

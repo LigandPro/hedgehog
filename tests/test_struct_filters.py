@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 from rdkit import Chem
 
-from hedgehog.stages.structFilters import utils as structfilters_utils
-from hedgehog.stages.structFilters.utils import (
+from hedgehog.struct_filters import utils as structfilters_utils
+from hedgehog.struct_filters.utils import (
     apply_halogenicity,
     apply_lilly_filter,
     apply_molcomplexity_filters,
@@ -151,7 +151,7 @@ class TestGetBasicStats:
 
     def test_multimodel_with_model_name_list_does_not_overwrite_column(self):
         """Should not crash when model_name arg is a list for multi-model inputs."""
-        from hedgehog.stages.structFilters.utils import get_basic_stats
+        from hedgehog.struct_filters.utils import get_basic_stats
 
         df = pd.DataFrame(
             {
@@ -173,7 +173,7 @@ class TestPadDataframeToLength:
 
     def test_no_padding_needed(self):
         """Should return unchanged if already at target length."""
-        from hedgehog.stages.structFilters.utils import _pad_dataframe_to_length
+        from hedgehog.struct_filters.utils import _pad_dataframe_to_length
 
         df = pd.DataFrame({"a": [1, 2, 3]})
         result = _pad_dataframe_to_length(df, 3)
@@ -181,7 +181,7 @@ class TestPadDataframeToLength:
 
     def test_padding_adds_rows(self):
         """Should add rows to reach target length."""
-        from hedgehog.stages.structFilters.utils import _pad_dataframe_to_length
+        from hedgehog.struct_filters.utils import _pad_dataframe_to_length
 
         df = pd.DataFrame({"a": [1, 2]})
         result = _pad_dataframe_to_length(df, 5)
@@ -189,7 +189,7 @@ class TestPadDataframeToLength:
 
     def test_longer_than_target(self):
         """Should return unchanged if longer than target."""
-        from hedgehog.stages.structFilters.utils import _pad_dataframe_to_length
+        from hedgehog.struct_filters.utils import _pad_dataframe_to_length
 
         df = pd.DataFrame({"a": [1, 2, 3, 4, 5]})
         result = _pad_dataframe_to_length(df, 3)
@@ -202,7 +202,7 @@ class TestEnsureDataframeLength:
 
     def test_exact_length(self):
         """Should return unchanged if exactly at expected length."""
-        from hedgehog.stages.structFilters.utils import _ensure_dataframe_length
+        from hedgehog.struct_filters.utils import _ensure_dataframe_length
 
         df = pd.DataFrame({"a": [1, 2, 3]})
         result = _ensure_dataframe_length(df, 3)
@@ -210,7 +210,7 @@ class TestEnsureDataframeLength:
 
     def test_pads_short_dataframe(self):
         """Should pad if shorter than expected."""
-        from hedgehog.stages.structFilters.utils import _ensure_dataframe_length
+        from hedgehog.struct_filters.utils import _ensure_dataframe_length
 
         df = pd.DataFrame({"a": [1, 2]})
         result = _ensure_dataframe_length(df, 4)
@@ -218,7 +218,7 @@ class TestEnsureDataframeLength:
 
     def test_trims_long_dataframe(self):
         """Should trim if longer than expected."""
-        from hedgehog.stages.structFilters.utils import _ensure_dataframe_length
+        from hedgehog.struct_filters.utils import _ensure_dataframe_length
 
         df = pd.DataFrame({"a": [1, 2, 3, 4, 5]})
         result = _ensure_dataframe_length(df, 3)
@@ -475,8 +475,8 @@ def _build_alert_data(rulesets_smarts):
 class TestCommonAlertsContract:
     """Tests for the pass/pass_any semantics of apply_structural_alerts."""
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_pass_is_AND_of_all_rulesets(self, mock_load_config, mock_filter_alerts):
         """A molecule failing 1 of 2 rulesets should have pass=False, pass_any=True."""
         mock_load_config.return_value = {}
@@ -504,8 +504,8 @@ class TestCommonAlertsContract:
         # pass_any = OR of all rulesets → True (since RulesetB passes)
         assert row["pass_any"] == True  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_pass_any_is_OR_of_all_rulesets(self, mock_load_config, mock_filter_alerts):
         """A molecule failing ALL rulesets should have pass=False, pass_any=False."""
         mock_load_config.return_value = {}
@@ -529,8 +529,8 @@ class TestCommonAlertsContract:
         assert row["pass"] == False  # noqa: E712
         assert row["pass_any"] == False  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_all_pass_both_true(self, mock_load_config, mock_filter_alerts):
         """A molecule passing all rulesets should have pass=True, pass_any=True."""
         mock_load_config.return_value = {}
@@ -554,8 +554,8 @@ class TestCommonAlertsContract:
         assert row["pass"] == True  # noqa: E712
         assert row["pass_any"] == True  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_progress_logs_are_emitted(
         self, mock_load_config, mock_filter_alerts, monkeypatch, caplog
     ):
@@ -662,9 +662,9 @@ class TestGetBasicStatsCommonAlerts:
 class TestLillyFilter:
     """Tests for apply_lilly_filter with fully mocked LillyDemeritsFilters."""
 
-    @patch("hedgehog.stages.structFilters.utils.LillyDemeritsFilters")
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", True)
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.LillyDemeritsFilters")
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", True)
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_length_preserved_on_normal_run(self, mock_load_config, MockLillyClass):
         """Invariant: len(result) == len(input)."""
         mock_load_config.return_value = {"lilly_scheduler": "threads"}
@@ -686,9 +686,9 @@ class TestLillyFilter:
         result = apply_lilly_filter(config, mols)
         assert len(result) == 3
 
-    @patch("hedgehog.stages.structFilters.utils.LillyDemeritsFilters")
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", True)
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.LillyDemeritsFilters")
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", True)
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_batch_fallback_on_value_error(self, mock_load_config, MockLillyClass):
         """When dfilter raises ValueError with 'Length of values', fallback triggers."""
         mock_load_config.return_value = {"lilly_scheduler": "threads"}
@@ -723,9 +723,9 @@ class TestLillyFilter:
         # Fallback was triggered (more than 1 call)
         assert call_count[0] > 1
 
-    @patch("hedgehog.stages.structFilters.utils.LillyDemeritsFilters")
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", True)
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.LillyDemeritsFilters")
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", True)
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_invalid_molecules_alignment(self, mock_load_config, MockLillyClass):
         """[valid, None, valid] -> None at index 1 marked as failed."""
         mock_load_config.return_value = {"lilly_scheduler": "threads"}
@@ -753,7 +753,7 @@ class TestLillyFilter:
         # Index 1 (None molecule) should be marked as failed
         assert result["pass_filter"].iloc[1] == False  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", False)
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", False)
     def test_raises_when_not_available(self):
         """LILLY_AVAILABLE=False -> ImportError."""
         mols = [dm.to_mol("CCO")]
@@ -765,8 +765,8 @@ class TestLillyFilter:
 class TestNIBRFilter:
     """Tests for apply_nibr_filter with mocked NIBRFilters."""
 
-    @patch("hedgehog.stages.structFilters.utils.mc")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.mc")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_severity_based_pass(self, mock_load_config, mock_mc):
         """severity 0 -> pass=True, severity >0 -> pass=False (in get_basic_stats)."""
         mock_load_config.return_value = {"nibr_scheduler": "threads"}
@@ -795,8 +795,8 @@ class TestNIBRFilter:
         assert result["severity"].iloc[0] == 0
         assert result["severity"].iloc[1] == 10
 
-    @patch("hedgehog.stages.structFilters.utils.mc")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.mc")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_nibr_bonus_metrics_in_stats(self, mock_load_config, mock_mc):
         """Verify mean_severity, max_severity, banned_ratio in stats."""
         mock_load_config.return_value = {"nibr_scheduler": "threads"}

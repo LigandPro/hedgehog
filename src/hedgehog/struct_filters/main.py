@@ -4,7 +4,7 @@ from time import perf_counter
 import pandas as pd
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.stages.structFilters.utils import (
+from hedgehog.struct_filters.utils import (
     combine_filter_results_in_memory,
     filter_data,
     filter_function_applier,
