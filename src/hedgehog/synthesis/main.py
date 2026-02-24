@@ -25,7 +25,7 @@ def _save_ordered_csv(df: pd.DataFrame, path: Path) -> None:
 
 def _get_aizynthfinder_config() -> Path:
     """Get default path to AiZynthFinder config file."""
-    project_root = Path(__file__).resolve().parents[4]
+    project_root = Path(__file__).resolve().parents[3]
     return (
         project_root
         / "modules"
@@ -38,7 +38,7 @@ def _get_aizynthfinder_config() -> Path:
 
 def _get_aizynthfinder_root() -> Path:
     """Get path to AiZynthFinder project directory."""
-    project_root = Path(__file__).resolve().parents[4]
+    project_root = Path(__file__).resolve().parents[3]
     return project_root / "modules" / "retrosynthesis" / "aizynthfinder"
 
 
@@ -144,7 +144,7 @@ def main(config: dict, reporter=None) -> None:
     if not aizynth_config.exists():
         from hedgehog.setup import ensure_aizynthfinder
 
-        project_root = Path(__file__).resolve().parents[4]
+        project_root = Path(__file__).resolve().parents[3]
         try:
             aizynth_config = ensure_aizynthfinder(project_root)
         except Exception:

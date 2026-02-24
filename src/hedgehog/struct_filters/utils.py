@@ -22,7 +22,6 @@ _LILLY_BIN_PATH = (
     / ".."
     / ".."
     / ".."
-    / ".."
     / "modules"
     / "lilly_medchem_rules"
     / "bin"

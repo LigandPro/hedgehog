@@ -27,8 +27,8 @@ apply_posecheck_fast_filter = apply_posebusters_fast_filter
 
 
 def _project_root() -> Path:
-    # src/hedgehog/stages/dockingFilters/main.py -> project root
-    return Path(__file__).resolve().parent.parent.parent.parent.parent
+    # src/hedgehog/docking_filters/main.py -> project root
+    return Path(__file__).resolve().parent.parent.parent.parent
 
 
 def _resolve_existing_path(base: Path, path: str | Path) -> Path:
