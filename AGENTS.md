@@ -69,7 +69,7 @@ Notes:
 When validating a fresh end-to-end run on the Gauss server, use this exact flow:
 
 ```bash
-ssh Gauss
+ssh server
 source ~/miniforge/etc/profile.d/conda.sh
 conda activate base
 
