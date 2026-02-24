@@ -59,9 +59,11 @@ def _build_single_core_config(
     docking_cfg["tools"] = "gnina"
     docking_cfg["run_in_background"] = False
     docking_cfg["gnina_parallel_jobs"] = 1
-    docking_cfg["receptor_pdb"] = str(repo_root / "data" / "test" / "7EW9_apo.pdb")
+    docking_cfg["receptor_pdb"] = str(
+        repo_root / "src" / "hedgehog" / "configs" / "examples" / "7EW9_apo.pdb"
+    )
     docking_cfg["gnina_config"]["autobox_ligand"] = str(
-        repo_root / "data" / "test" / "05C_from_7EW9.sdf"
+        repo_root / "src" / "hedgehog" / "configs" / "examples" / "05C_from_7EW9.sdf"
     )
     docking_cfg["gnina_config"]["cpu"] = 1
     docking_cfg["gnina_config"]["no_gpu"] = True

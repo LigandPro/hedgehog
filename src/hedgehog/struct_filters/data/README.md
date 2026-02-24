@@ -1,6 +1,6 @@
 # Data Directory
 
-This directory contains filter definitions used by the **🦔 HEDGEHOG** framework, and a test dataset folder. 
+This directory contains structural alert definitions used by the **🦔 HEDGEHOG** structural filters stage.
 
 
 **`common_alerts_collection.csv`** (442KB, 2,459 rows)
@@ -34,7 +34,7 @@ This directory contains filter definitions used by the **🦔 HEDGEHOG** framewo
 calculate_common_alerts: True
 
 # Path to alerts collection
-alerts_data_path: "data/common_alerts_collection.csv"
+alerts_data_path: "src/hedgehog/struct_filters/data/common_alerts_collection.csv"
 
 # Select which rule sets to include
 include_rulesets:

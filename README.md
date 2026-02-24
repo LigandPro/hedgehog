@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-![HEDGEHOG Pipeline](data/imgs/pipeline_structure.png)
+![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
 
 HEDGEHOG is a benchmark pipeline for evaluating generated molecules.
 It applies a staged filtering workflow (standardization, descriptors, structural filters, synthesis checks, docking, and post-docking validation) and generates an interactive HTML report.
@@ -44,7 +44,7 @@ uv run hedgehog run --auto-install
 uv run hedgehog run
 
 # Run with your own molecules
-uv run hedgehog run --mols data/my_molecules.csv
+uv run hedgehog run --mols input/my_molecules.csv
 
 # Run a single stage
 uv run hedgehog run --stage descriptors

@@ -50,10 +50,8 @@ def sample_df(sample_smiles):
 
 @pytest.fixture
 def multimodel_df():
-    """DataFrame from data/test/generated_mols.csv."""
-    test_data_path = (
-        Path(__file__).parent.parent / "data" / "test" / "generated_mols.csv"
-    )
+    """DataFrame from tests/fixtures/generated_mols.csv."""
+    test_data_path = Path(__file__).parent / "fixtures" / "generated_mols.csv"
     if test_data_path.exists():
         return pd.read_csv(test_data_path)
     # Fallback test data

@@ -2181,7 +2181,7 @@ def _restore_gnina_receptor(cfg):
     )
     project_root = Path(__file__).parent.parent.parent.parent
     possible_originals = [
-        project_root / "data/test/7EW9_apo.pdb",
+        project_root / "src/hedgehog/configs/examples/7EW9_apo.pdb",
     ]
     for possible in possible_originals:
         if possible.exists():

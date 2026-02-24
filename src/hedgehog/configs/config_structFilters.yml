@@ -6,7 +6,7 @@ generate_plots: true
 generate_failure_analysis: true
 combine_in_memory: true
 parallel_scheduler: processes
-alerts_data_path: data/common_alerts_collection.csv
+alerts_data_path: src/hedgehog/struct_filters/data/common_alerts_collection.csv
 calculate_common_alerts: true
 common_alerts_auto_n_jobs: true
 common_alerts_small_input_threshold: 2000
