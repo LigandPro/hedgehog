@@ -15,6 +15,15 @@ from hedgehog.docking.utils import (
     _validate_optional_tool_path,
     run_docking,
 )
+from tests.constants import (
+    COL_MODEL_NAME,
+    COL_MOL_IDX,
+    COL_SMILES,
+    FILE_FILTERED_MOLECULES,
+    MODEL_TEST,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
+)
 
 
 class TestFindLatestInputSource:
@@ -24,7 +33,9 @@ class TestFindLatestInputSource:
         """Should find synthesis output in new structure."""
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (synthesis_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -34,7 +45,7 @@ class TestFindLatestInputSource:
         """Should find structural filters output."""
         sf_dir = tmp_path / "stages" / "03_structural_filters_post"
         sf_dir.mkdir(parents=True)
-        (sf_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (sf_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -44,7 +55,9 @@ class TestFindLatestInputSource:
         """Should find descriptors output."""
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -54,7 +67,9 @@ class TestFindLatestInputSource:
         """Should find MolPrep output."""
         prep_dir = tmp_path / "stages" / "00_mol_prep"
         prep_dir.mkdir(parents=True)
-        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (prep_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -64,7 +79,9 @@ class TestFindLatestInputSource:
         """Should find sampled molecules in input directory."""
         input_dir = tmp_path / "input"
         input_dir.mkdir(parents=True)
-        (input_dir / "sampled_molecules.csv").write_text("smiles\nCCO")
+        (input_dir / "sampled_molecules.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -75,15 +92,17 @@ class TestFindLatestInputSource:
         # Create both synthesis and descriptors outputs
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (synthesis_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCC")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCC")
 
         prep_dir = tmp_path / "stages" / "00_mol_prep"
         prep_dir.mkdir(parents=True)
-        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCC")
+        (prep_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCCC")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -98,7 +117,9 @@ class TestFindLatestInputSource:
     def test_legacy_structure(self, tmp_path):
         """Should find legacy flat structure files."""
         (tmp_path / "Synthesis").mkdir()
-        (tmp_path / "Synthesis" / "passSynthesisSMILES.csv").write_text("smiles\nCCO")
+        (tmp_path / "Synthesis" / "passSynthesisSMILES.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -111,9 +132,9 @@ class TestPrepareLigandsDataframe:
         """All valid SMILES should be written."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "CCO", "CC"],
-                "model_name": ["test", "test", "test"],
-                "mol_idx": ["t-0", "t-1", "t-2"],
+                COL_SMILES: [SMILES_BENZENE, SMILES_ETHANOL, "CC"],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1", "t-2"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -128,9 +149,9 @@ class TestPrepareLigandsDataframe:
         """Invalid SMILES should be skipped."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "invalid_smiles", "CCO"],
-                "model_name": ["test", "test", "test"],
-                "mol_idx": ["t-0", "t-1", "t-2"],
+                COL_SMILES: [SMILES_BENZENE, "invalid_smiles", SMILES_ETHANOL],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1", "t-2"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -144,9 +165,9 @@ class TestPrepareLigandsDataframe:
         """All invalid SMILES - should write empty file."""
         df = pd.DataFrame(
             {
-                "smiles": ["invalid1", "invalid2"],
-                "model_name": ["test", "test"],
-                "mol_idx": ["t-0", "t-1"],
+                COL_SMILES: ["invalid1", "invalid2"],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -159,27 +180,27 @@ class TestPrepareLigandsDataframe:
         """Output CSV should have correct columns."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: [SMILES_BENZENE],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
         _prepare_ligands_dataframe(df, output_csv)
 
         result = pd.read_csv(output_csv)
-        assert "smiles" in result.columns
+        assert COL_SMILES in result.columns
         assert "name" in result.columns
-        assert "model_name" in result.columns
-        assert "mol_idx" in result.columns
+        assert COL_MODEL_NAME in result.columns
+        assert COL_MOL_IDX in result.columns
 
     def test_creates_parent_directories(self, tmp_path):
         """Should create parent directories if they don't exist."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: [SMILES_BENZENE],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         output_csv = tmp_path / "nested" / "deep" / "ligands.csv"
@@ -192,9 +213,9 @@ class TestPrepareLigandsDataframe:
         """Empty dataframe should result in empty output."""
         df = pd.DataFrame(
             {
-                "smiles": [],
-                "model_name": [],
-                "mol_idx": [],
+                COL_SMILES: [],
+                COL_MODEL_NAME: [],
+                COL_MOL_IDX: [],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -213,11 +234,11 @@ class TestFindLatestInputSourcePriority:
         # Create both outputs
         sf_dir = tmp_path / "stages" / "03_structural_filters_post"
         sf_dir.mkdir(parents=True)
-        (sf_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (sf_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCC")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCC")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -227,7 +248,9 @@ class TestFindLatestInputSourcePriority:
         """Should fall back to sampled_molecules if no stage outputs."""
         input_dir = tmp_path / "input"
         input_dir.mkdir()
-        (input_dir / "sampled_molecules.csv").write_text("smiles\nCCO")
+        (input_dir / "sampled_molecules.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -237,7 +260,9 @@ class TestFindLatestInputSourcePriority:
         """Should find legacy Descriptors directory."""
         legacy_dir = tmp_path / "Descriptors"
         legacy_dir.mkdir()
-        (legacy_dir / "passDescriptorsSMILES.csv").write_text("smiles\nCCO")
+        (legacy_dir / "passDescriptorsSMILES.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -250,9 +275,9 @@ class TestLigandNaming:
         """Name column should combine mol_idx and model_name."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "CCO"],
-                "model_name": ["model_a", "model_b"],
-                "mol_idx": ["LP-0001-00001", "LP-0002-00001"],
+                COL_SMILES: [SMILES_BENZENE, SMILES_ETHANOL],
+                COL_MODEL_NAME: ["model_a", "model_b"],
+                COL_MOL_IDX: ["LP-0001-00001", "LP-0002-00001"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -267,18 +292,18 @@ class TestLigandNaming:
         """Should preserve identity columns in output."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: [SMILES_BENZENE],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
         _prepare_ligands_dataframe(df, output_csv)
 
         result = pd.read_csv(output_csv)
-        assert "smiles" in result.columns
-        assert "model_name" in result.columns
-        assert "mol_idx" in result.columns
+        assert COL_SMILES in result.columns
+        assert COL_MODEL_NAME in result.columns
+        assert COL_MOL_IDX in result.columns
 
 
 class TestToolValidation:
@@ -307,7 +332,11 @@ class TestRunDockingProteinPrepFallback:
         receptor.write_text("ATOM\n")
         input_csv = tmp_path / "input.csv"
         pd.DataFrame(
-            {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": ["m1-1"]}
+            {
+                COL_SMILES: [SMILES_ETHANOL],
+                COL_MODEL_NAME: ["m1"],
+                COL_MOL_IDX: ["m1-1"],
+            }
         ).to_csv(input_csv, index=False)
 
         docking_cfg = tmp_path / "config_docking.yml"

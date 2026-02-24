@@ -27,6 +27,13 @@ from hedgehog.struct_filters.utils import (
     get_basic_stats,
     process_path,
 )
+from tests.constants import (
+    CFG_STRUCT_FILTERS,
+    COL_MODEL_NAME,
+    COL_SMILES,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
+)
 
 
 class TestProcessPath:
@@ -137,8 +144,8 @@ class TestGetBasicStats:
         # Full integration testing would require more setup
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC", "CCCC"],
-                "model_name": ["m1", "m1", "m2", "m2"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC", "CCCC"],
+                COL_MODEL_NAME: ["m1", "m1", "m2", "m2"],
                 "mol": [None, None, None, None],
                 "pass": [True, False, True, True],
                 "pass_any": [True, True, True, True],
@@ -146,7 +153,7 @@ class TestGetBasicStats:
         )
 
         # Verify DataFrame structure
-        assert df["model_name"].nunique() == 2
+        assert df[COL_MODEL_NAME].nunique() == 2
         assert "pass" in df.columns
 
     def test_multimodel_with_model_name_list_does_not_overwrite_column(self):
@@ -155,16 +162,16 @@ class TestGetBasicStats:
 
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC", "CCCC"],
-                "model_name": ["m1", "m1", "m2", "m2"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC", "CCCC"],
+                COL_MODEL_NAME: ["m1", "m1", "m2", "m2"],
                 "mol": [1, 1, 1, 1],
                 "pass": [True, False, True, True],
             }
         )
 
         res_df, extended = get_basic_stats({}, df, ["m1", "m2"], "bredt")
-        assert set(res_df["model_name"].tolist()) == {"m1", "m2"}
-        assert extended["model_name"].nunique(dropna=True) == 2
+        assert set(res_df[COL_MODEL_NAME].tolist()) == {"m1", "m2"}
+        assert extended[COL_MODEL_NAME].nunique(dropna=True) == 2
         assert len(extended) == 4
 
 
@@ -254,7 +261,7 @@ def _make_config(tmp_path):
             }
         )
     )
-    return {"config_structFilters": str(config_path)}
+    return {CFG_STRUCT_FILTERS: str(config_path)}
 
 
 class TestFilterFunctionApplierNewFilters:
@@ -283,7 +290,7 @@ class TestApplyProtectingGroups:
     """Tests for apply_protecting_groups filter."""
 
     def test_clean_molecules_pass(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO", "CC(=O)O"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL, "CC(=O)O"])
         config = _make_config(tmp_path)
         result = apply_protecting_groups(config, mols)
         assert len(result) == 3
@@ -301,17 +308,17 @@ class TestApplyProtectingGroups:
         assert result["pass"].iloc[0] is np.bool_(False)
 
     def test_returns_dataframe(self, tmp_path):
-        mols = _make_mols(["CCO"])
+        mols = _make_mols([SMILES_ETHANOL])
         config = _make_config(tmp_path)
         result = apply_protecting_groups(config, mols)
         assert isinstance(result, pd.DataFrame)
 
     def test_with_model_names(self, tmp_path):
-        smiles = [("CCO", "model1", dm.to_mol("CCO"), 0)]
-        mols = [dm.to_mol("CCO")]
+        smiles = [(SMILES_ETHANOL, "model1", dm.to_mol(SMILES_ETHANOL), 0)]
+        mols = [dm.to_mol(SMILES_ETHANOL)]
         config = _make_config(tmp_path)
         result = apply_protecting_groups(config, mols, smiles)
-        assert "model_name" in result.columns
+        assert COL_MODEL_NAME in result.columns
 
 
 class TestApplyRingInfraction:
@@ -319,13 +326,13 @@ class TestApplyRingInfraction:
 
     def test_normal_rings_pass(self, tmp_path):
         # Benzene, cyclohexane - normal rings
-        mols = _make_mols(["c1ccccc1", "C1CCCCC1"])
+        mols = _make_mols([SMILES_BENZENE, "C1CCCCC1"])
         config = _make_config(tmp_path)
         result = apply_ring_infraction(config, mols)
         assert result["pass"].all()
 
     def test_returns_correct_structure(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO", "C1CN1"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL, "C1CN1"])
         config = _make_config(tmp_path)
         result = apply_ring_infraction(config, mols)
         assert isinstance(result, pd.DataFrame)
@@ -338,8 +345,8 @@ class TestApplyRingInfraction:
 
         config_path = tmp_path / "config_sf.yml"
         config_path.write_text(yaml.dump({"ring_infraction_hetcycle_min_size": 5}))
-        config = {"config_structFilters": str(config_path)}
-        mols = _make_mols(["c1ccccc1"])
+        config = {CFG_STRUCT_FILTERS: str(config_path)}
+        mols = _make_mols([SMILES_BENZENE])
         result = apply_ring_infraction(config, mols)
         assert len(result) == 1
 
@@ -348,7 +355,7 @@ class TestApplyStereoCenter:
     """Tests for apply_stereo_center filter."""
 
     def test_no_stereocenters_passes(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL])
         config = _make_config(tmp_path)
         result = apply_stereo_center(config, mols)
         assert result["pass"].all()
@@ -376,7 +383,7 @@ class TestApplyHalogenicity:
     """Tests for apply_halogenicity filter."""
 
     def test_no_halogens_passes(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL])
         config = _make_config(tmp_path)
         result = apply_halogenicity(config, mols)
         assert result["pass"].all()
@@ -417,7 +424,7 @@ class TestApplySymmetry:
         assert result["pass"].iloc[0] is np.bool_(True)
 
     def test_returns_dataframe(self, tmp_path):
-        mols = _make_mols(["CCO", "c1ccccc1"])
+        mols = _make_mols([SMILES_ETHANOL, SMILES_BENZENE])
         config = _make_config(tmp_path)
         result = apply_symmetry(config, mols)
         assert isinstance(result, pd.DataFrame)
@@ -440,10 +447,10 @@ class TestGetBasicStatsNewFilters:
     def test_basic_stats_computes(self, filter_name):
         df = pd.DataFrame(
             {
-                "mol": [dm.to_mol("CCO"), dm.to_mol("c1ccccc1")],
+                "mol": [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE)],
                 "pass": [True, False],
-                "model_name": ["m1", "m1"],
-                "smiles": ["CCO", "c1ccccc1"],
+                COL_MODEL_NAME: ["m1", "m1"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE],
             }
         )
         config = {}
@@ -490,8 +497,8 @@ class TestCommonAlertsContract:
         )
         mock_filter_alerts.return_value = alert_data
 
-        mol = Chem.MolFromSmiles("c1ccccc1")  # benzene: has aromatic C, no N
-        config = {"config_structFilters": "dummy.yml"}
+        mol = Chem.MolFromSmiles(SMILES_BENZENE)  # benzene: has aromatic C, no N
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_structural_alerts(config, [mol])
 
         assert len(result) == 1
@@ -519,8 +526,8 @@ class TestCommonAlertsContract:
         )
         mock_filter_alerts.return_value = alert_data
 
-        mol = Chem.MolFromSmiles("c1ccccc1")  # benzene: matches both
-        config = {"config_structFilters": "dummy.yml"}
+        mol = Chem.MolFromSmiles(SMILES_BENZENE)  # benzene: matches both
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_structural_alerts(config, [mol])
 
         row = result.iloc[0]
@@ -544,8 +551,8 @@ class TestCommonAlertsContract:
         )
         mock_filter_alerts.return_value = alert_data
 
-        mol = Chem.MolFromSmiles("CCO")
-        config = {"config_structFilters": "dummy.yml"}
+        mol = Chem.MolFromSmiles(SMILES_ETHANOL)
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_structural_alerts(config, [mol])
 
         row = result.iloc[0]
@@ -586,8 +593,8 @@ class TestCommonAlertsContract:
 
         monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
 
-        mols = [Chem.MolFromSmiles("CCO"), Chem.MolFromSmiles("c1ccccc1")]
-        config = {"config_structFilters": "dummy.yml"}
+        mols = [Chem.MolFromSmiles(SMILES_ETHANOL), Chem.MolFromSmiles(SMILES_BENZENE)]
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
 
         with caplog.at_level("INFO"):
             apply_structural_alerts(config, mols)
@@ -607,13 +614,13 @@ class TestGetBasicStatsCommonAlerts:
         n = len(pass_vals)
         return pd.DataFrame(
             {
-                "mol": [dm.to_mol("CCO")] * n,
-                "smiles": ["CCO"] * n,
+                "mol": [dm.to_mol(SMILES_ETHANOL)] * n,
+                COL_SMILES: [SMILES_ETHANOL] * n,
                 "pass": pass_vals,
                 "pass_any": pass_any_vals,
                 "pass_RulesetA": pass_A_vals,
                 "pass_RulesetB": pass_B_vals,
-                "model_name": ["m1"] * n,
+                COL_MODEL_NAME: ["m1"] * n,
             }
         )
 
@@ -671,10 +678,10 @@ class TestLillyFilter:
         mock_dfilter = MagicMock()
         MockLillyClass.return_value = mock_dfilter
 
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1"), dm.to_mol("CC")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE), dm.to_mol("CC")]
         mock_dfilter.return_value = pd.DataFrame(
             {
-                "smiles": ["CCO", "c1ccccc1", "CC"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC"],
                 "status": ["ok", "ok", "ok"],
                 "pass_filter": [True, True, True],
                 "demerit_score": [0.0, 10.0, 5.0],
@@ -682,7 +689,7 @@ class TestLillyFilter:
             }
         )
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_lilly_filter(config, mols)
         assert len(result) == 3
 
@@ -695,7 +702,7 @@ class TestLillyFilter:
         mock_dfilter = MagicMock()
         MockLillyClass.return_value = mock_dfilter
 
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE)]
 
         # First call (batch) raises ValueError, second calls (one-by-one) succeed
         call_count = [0]
@@ -717,7 +724,7 @@ class TestLillyFilter:
 
         mock_dfilter.side_effect = side_effect
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_lilly_filter(config, mols)
         assert len(result) == 2
         # Fallback was triggered (more than 1 call)
@@ -732,14 +739,14 @@ class TestLillyFilter:
         mock_dfilter = MagicMock()
         MockLillyClass.return_value = mock_dfilter
 
-        valid_mol_1 = dm.to_mol("CCO")
+        valid_mol_1 = dm.to_mol(SMILES_ETHANOL)
         valid_mol_2 = dm.to_mol("CC")
         mols = [valid_mol_1, None, valid_mol_2]
 
         # dfilter is only called on valid mols (2 of them)
         mock_dfilter.return_value = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC"],
+                COL_SMILES: [SMILES_ETHANOL, "CC"],
                 "status": ["ok", "ok"],
                 "pass_filter": [True, True],
                 "demerit_score": [0.0, 5.0],
@@ -747,7 +754,7 @@ class TestLillyFilter:
             }
         )
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_lilly_filter(config, mols)
         assert len(result) == 3
         # Index 1 (None molecule) should be marked as failed
@@ -756,8 +763,8 @@ class TestLillyFilter:
     @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", False)
     def test_raises_when_not_available(self):
         """LILLY_AVAILABLE=False -> ImportError."""
-        mols = [dm.to_mol("CCO")]
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        mols = [dm.to_mol(SMILES_ETHANOL)]
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         with pytest.raises(ImportError, match="not available"):
             apply_lilly_filter(config, mols)
 
@@ -775,7 +782,7 @@ class TestNIBRFilter:
         mock_mc.structural.NIBRFilters.return_value = mock_nibr
 
         # NIBRFilters returns a DataFrame with severity, n_covalent_motif, special_mol, mol
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE)]
         nibr_result = pd.DataFrame(
             {
                 "mol": mols,
@@ -787,7 +794,7 @@ class TestNIBRFilter:
         )
         mock_nibr.return_value = nibr_result
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_nibr_filter(config, mols)
 
         # Result should have the data from NIBRFilters
@@ -804,7 +811,7 @@ class TestNIBRFilter:
         mock_nibr = MagicMock()
         mock_mc.structural.NIBRFilters.return_value = mock_nibr
 
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1"), dm.to_mol("CC")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE), dm.to_mol("CC")]
         nibr_result = pd.DataFrame(
             {
                 "mol": mols,
@@ -815,7 +822,7 @@ class TestNIBRFilter:
         )
         mock_nibr.return_value = nibr_result
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_nibr_filter(config, mols)
         result["model_name"] = "m1"
 
@@ -838,15 +845,15 @@ class TestGetBasicStatsLilly:
         df = pd.DataFrame(
             {
                 "mol": [
-                    dm.to_mol("CCO"),
-                    dm.to_mol("c1ccccc1"),
+                    dm.to_mol(SMILES_ETHANOL),
+                    dm.to_mol(SMILES_BENZENE),
                     dm.to_mol("CC"),
                     dm.to_mol("CCC"),
                 ],
                 "pass_filter": [True, False, True, False],
                 "demerit_score": [0.0, 100.0, 0.0, 50.0],
-                "smiles": ["CCO", "c1ccccc1", "CC", "CCC"],
-                "model_name": ["m1", "m1", "m1", "m1"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC", "CCC"],
+                COL_MODEL_NAME: ["m1", "m1", "m1", "m1"],
                 "status": ["ok", "exclude", "ok", "exclude"],
                 "reasons": ["", "alert", "", "alert"],
             }
@@ -860,11 +867,15 @@ class TestGetBasicStatsLilly:
         """mean_noNA_demerit_score = mean of demerit_score excluding NaN."""
         df = pd.DataFrame(
             {
-                "mol": [dm.to_mol("CCO"), dm.to_mol("c1ccccc1"), dm.to_mol("CC")],
+                "mol": [
+                    dm.to_mol(SMILES_ETHANOL),
+                    dm.to_mol(SMILES_BENZENE),
+                    dm.to_mol("CC"),
+                ],
                 "pass_filter": [True, False, True],
                 "demerit_score": [10.0, 30.0, np.nan],
-                "smiles": ["CCO", "c1ccccc1", "CC"],
-                "model_name": ["m1", "m1", "m1"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC"],
+                COL_MODEL_NAME: ["m1", "m1", "m1"],
                 "status": ["ok", "exclude", "ok"],
                 "reasons": ["", "alert", ""],
             }

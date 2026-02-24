@@ -11,6 +11,16 @@ from hedgehog.descriptors.utils import (
     filter_molecules,
     order_identity_columns,
 )
+from tests.constants import (
+    COL_MODEL_NAME,
+    COL_MOL_IDX,
+    COL_SMILES,
+    FILE_FILTERED_MOLECULES,
+    MODEL_TEST,
+    SMILES_ASPIRIN,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
+)
 
 
 class TestComputeSingleMoleculeDescriptors:
@@ -18,7 +28,7 @@ class TestComputeSingleMoleculeDescriptors:
 
     def test_benzene_descriptors(self):
         """Compute descriptors for benzene."""
-        mol = Chem.MolFromSmiles("c1ccccc1")
+        mol = Chem.MolFromSmiles(SMILES_BENZENE)
         result = _compute_single_molecule_descriptors(mol, "test_model", "test-0")
 
         assert result is not None
@@ -31,7 +41,7 @@ class TestComputeSingleMoleculeDescriptors:
 
     def test_ethanol_descriptors(self):
         """Compute descriptors for ethanol."""
-        mol = Chem.MolFromSmiles("CCO")
+        mol = Chem.MolFromSmiles(SMILES_ETHANOL)
         result = _compute_single_molecule_descriptors(mol, "model", "idx-1")
 
         assert result is not None
@@ -42,8 +52,8 @@ class TestComputeSingleMoleculeDescriptors:
 
     def test_aspirin_descriptors(self):
         """Compute descriptors for aspirin."""
-        mol = Chem.MolFromSmiles("CC(=O)Oc1ccccc1C(=O)O")
-        result = _compute_single_molecule_descriptors(mol, "test", "asp-0")
+        mol = Chem.MolFromSmiles(SMILES_ASPIRIN)
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "asp-0")
 
         assert result is not None
         assert result["n_aroma_rings"] == 1
@@ -53,7 +63,7 @@ class TestComputeSingleMoleculeDescriptors:
     def test_caffeine_descriptors(self):
         """Compute descriptors for caffeine."""
         mol = Chem.MolFromSmiles("CN1C=NC2=C1C(=O)N(C)C(=O)N2C")
-        result = _compute_single_molecule_descriptors(mol, "test", "caf-0")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "caf-0")
 
         assert result is not None
         assert result["n_N_atoms"] == 4  # caffeine has 4 nitrogens
@@ -61,8 +71,8 @@ class TestComputeSingleMoleculeDescriptors:
 
     def test_descriptor_keys_present(self):
         """Ensure all expected descriptor keys are present."""
-        mol = Chem.MolFromSmiles("c1ccccc1")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx-0")
+        mol = Chem.MolFromSmiles(SMILES_BENZENE)
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx-0")
 
         expected_keys = [
             "model_name",
@@ -97,7 +107,7 @@ class TestComputeSingleMoleculeDescriptors:
     def test_fns_atoms_fraction(self):
         """fNS_atoms should count N+S atoms over heavy atoms."""
         mol = Chem.MolFromSmiles("NS")
-        result = _compute_single_molecule_descriptors(mol, "test", "ns-0")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "ns-0")
 
         assert result["n_heavy_atoms"] == 2
         assert result["n_N_atoms"] == 1
@@ -113,34 +123,34 @@ class TestOrderIdentityColumns:
         df = pd.DataFrame(
             {
                 "other": [1, 2],
-                "mol_idx": ["a", "b"],
-                "smiles": ["CCO", "CC"],
-                "model_name": ["m1", "m2"],
+                COL_MOL_IDX: ["a", "b"],
+                COL_SMILES: [SMILES_ETHANOL, "CC"],
+                COL_MODEL_NAME: ["m1", "m2"],
             }
         )
         result = order_identity_columns(df)
 
         columns = list(result.columns)
-        assert columns[0] == "smiles"
-        assert columns[1] == "model_name"
-        assert columns[2] == "mol_idx"
+        assert columns[0] == COL_SMILES
+        assert columns[1] == COL_MODEL_NAME
+        assert columns[2] == COL_MOL_IDX
 
     def test_missing_identity_columns(self):
         """Should handle missing identity columns by only reordering existing ones."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO"],
-                "model_name": ["test"],
-                "mol_idx": ["idx-0"],
+                COL_SMILES: [SMILES_ETHANOL],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["idx-0"],
                 "other": [1],
             }
         )
         result = order_identity_columns(df)
         columns = list(result.columns)
         # Identity columns should come first
-        assert columns[0] == "smiles"
-        assert columns[1] == "model_name"
-        assert columns[2] == "mol_idx"
+        assert columns[0] == COL_SMILES
+        assert columns[1] == COL_MODEL_NAME
+        assert columns[2] == COL_MOL_IDX
 
 
 class TestDropFalseRows:
@@ -150,7 +160,7 @@ class TestDropFalseRows:
         """All rows pass - should return all rows."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
                 "molWt_pass": [True, True, True],
                 "logP_pass": [True, True, True],
             }
@@ -163,7 +173,7 @@ class TestDropFalseRows:
         """Some rows fail - should return only passing rows."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
                 "molWt_pass": [True, False, True],
                 "logP_pass": [True, True, True],
             }
@@ -176,7 +186,7 @@ class TestDropFalseRows:
         """All rows fail - should return empty dataframe."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC"],
+                COL_SMILES: [SMILES_ETHANOL, "CC"],
                 "molWt_pass": [False, False],
             }
         )
@@ -220,9 +230,9 @@ class TestComputeMetrics:
         """Compute metrics for basic molecules."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "CCO", "CC(=O)O"],
-                "model_name": ["test", "test", "test"],
-                "mol_idx": ["t-0", "t-1", "t-2"],
+                COL_SMILES: [SMILES_BENZENE, SMILES_ETHANOL, "CC(=O)O"],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1", "t-2"],
             }
         )
 
@@ -235,9 +245,9 @@ class TestComputeMetrics:
         """Invalid SMILES should be skipped and logged."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "invalid", "CCO"],
-                "model_name": ["test", "test", "test"],
-                "mol_idx": ["t-0", "t-1", "t-2"],
+                COL_SMILES: [SMILES_BENZENE, "invalid", SMILES_ETHANOL],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1", "t-2"],
             }
         )
 
@@ -251,24 +261,24 @@ class TestComputeMetrics:
         """When enabled, stereochemistry should be removed from output SMILES."""
         df = pd.DataFrame(
             {
-                "smiles": ["F[C@H](Cl)Br"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: ["F[C@H](Cl)Br"],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         cfg = {"preprocess": {"remove_stereochemistry": True}}
         result = compute_metrics(df, str(tmp_path) + "/", config_descriptors=cfg)
 
         assert len(result) == 1
-        assert "@" not in result.iloc[0]["smiles"]
+        assert "@" not in result.iloc[0][COL_SMILES]
 
     def test_compute_metrics_remove_charges_best_effort(self, tmp_path):
         """When enabled, charged molecules should be neutralized or skipped."""
         df = pd.DataFrame(
             {
-                "smiles": ["C[NH3+]"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: ["C[NH3+]"],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         cfg = {"preprocess": {"remove_charges": True}}
@@ -276,7 +286,7 @@ class TestComputeMetrics:
 
         # Best-effort behavior: if neutralization succeeds, '+' is removed.
         if len(result) == 1:
-            assert "+" not in result.iloc[0]["smiles"]
+            assert "+" not in result.iloc[0][COL_SMILES]
         else:
             assert (tmp_path / "skipped_molecules.csv").exists()
 
@@ -284,9 +294,9 @@ class TestComputeMetrics:
         """When enabled, radicals should be skipped."""
         df = pd.DataFrame(
             {
-                "smiles": ["[CH3]"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: ["[CH3]"],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         cfg = {"preprocess": {"remove_radicals": True}}
@@ -299,20 +309,20 @@ class TestComputeMetrics:
         """Model name should be preserved in output."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "CCO"],
-                "model_name": ["model_a", "model_b"],
-                "mol_idx": ["a-0", "b-0"],
+                COL_SMILES: [SMILES_BENZENE, SMILES_ETHANOL],
+                COL_MODEL_NAME: ["model_a", "model_b"],
+                COL_MOL_IDX: ["a-0", "b-0"],
             }
         )
 
         result = compute_metrics(df, str(tmp_path) + "/")
 
-        assert "model_name" in result.columns
-        assert set(result["model_name"]) == {"model_a", "model_b"}
+        assert COL_MODEL_NAME in result.columns
+        assert set(result[COL_MODEL_NAME]) == {"model_a", "model_b"}
 
     def test_compute_metrics_empty_df(self, tmp_path):
         """Empty DataFrame should return empty result."""
-        df = pd.DataFrame({"smiles": [], "model_name": [], "mol_idx": []})
+        df = pd.DataFrame({COL_SMILES: [], COL_MODEL_NAME: [], COL_MOL_IDX: []})
         result = compute_metrics(df, str(tmp_path) + "/")
 
         assert len(result) == 0
@@ -321,9 +331,9 @@ class TestComputeMetrics:
         """Output file should be created."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: [SMILES_BENZENE],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
 
@@ -336,13 +346,13 @@ class TestFilterMolecules:
     """Tests for descriptor-based filtering."""
 
     def test_allowed_chars_filters_out_salts(self, tmp_path):
-        mol_ok = Chem.MolFromSmiles("CCO")
+        mol_ok = Chem.MolFromSmiles(SMILES_ETHANOL)
         mol_salt = Chem.MolFromSmiles("CCO.[Na+]")
 
         row_ok = _compute_single_molecule_descriptors(mol_ok, "m", "ok-0")
-        row_ok["smiles"] = "CCO"
+        row_ok[COL_SMILES] = SMILES_ETHANOL
         row_salt = _compute_single_molecule_descriptors(mol_salt, "m", "salt-0")
-        row_salt["smiles"] = "CCO.[Na+]"
+        row_salt[COL_SMILES] = "CCO.[Na+]"
 
         df = pd.DataFrame([row_ok, row_salt])
 
@@ -351,21 +361,21 @@ class TestFilterMolecules:
         }
         filter_molecules(df, borders, str(tmp_path))
 
-        passed = pd.read_csv(tmp_path / "filtered_molecules.csv")
+        passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
         assert len(passed) == 1
-        assert passed.iloc[0]["smiles"] == "CCO"
+        assert passed.iloc[0][COL_SMILES] == SMILES_ETHANOL
 
         flags = pd.read_csv(tmp_path / "pass_flags.csv")
         assert "chars_pass" in flags.columns
 
     def test_charged_mol_filter_applies_when_enabled(self, tmp_path):
-        mol_neutral = Chem.MolFromSmiles("CCO")
+        mol_neutral = Chem.MolFromSmiles(SMILES_ETHANOL)
         mol_charged = Chem.MolFromSmiles("CC(=O)[O-]")
 
         row_neutral = _compute_single_molecule_descriptors(mol_neutral, "m", "n-0")
-        row_neutral["smiles"] = "CCO"
+        row_neutral[COL_SMILES] = SMILES_ETHANOL
         row_charged = _compute_single_molecule_descriptors(mol_charged, "m", "c-0")
-        row_charged["smiles"] = "CC(=O)[O-]"
+        row_charged[COL_SMILES] = "CC(=O)[O-]"
 
         df = pd.DataFrame([row_neutral, row_charged])
 
@@ -375,9 +385,9 @@ class TestFilterMolecules:
         }
         filter_molecules(df, borders, str(tmp_path))
 
-        passed = pd.read_csv(tmp_path / "filtered_molecules.csv")
+        passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
         assert len(passed) == 1
-        assert passed.iloc[0]["smiles"] == "CCO"
+        assert passed.iloc[0][COL_SMILES] == SMILES_ETHANOL
 
         flags = pd.read_csv(tmp_path / "pass_flags.csv")
         assert "charged_mol_pass" in flags.columns
@@ -388,36 +398,36 @@ class TestDescriptorValues:
 
     def test_molecular_weight_benzene(self):
         """Benzene molecular weight should be ~78."""
-        mol = Chem.MolFromSmiles("c1ccccc1")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        mol = Chem.MolFromSmiles(SMILES_BENZENE)
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert 77 < result["molWt"] < 79
 
     def test_molecular_weight_aspirin(self):
         """Aspirin molecular weight should be ~180."""
-        mol = Chem.MolFromSmiles("CC(=O)Oc1ccccc1C(=O)O")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        mol = Chem.MolFromSmiles(SMILES_ASPIRIN)
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert 179 < result["molWt"] < 181
 
     def test_rotatable_bonds_ethane(self):
         """Ethane should have 0 rotatable bonds."""
         mol = Chem.MolFromSmiles("CC")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert result["n_rot_bonds"] == 0
 
     def test_rotatable_bonds_butane(self):
         """Butane should have 1 rotatable bond."""
         mol = Chem.MolFromSmiles("CCCC")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert result["n_rot_bonds"] == 1
 
     def test_hydrogen_donors_phenol(self):
         """Phenol should have 1 H-bond donor."""
         mol = Chem.MolFromSmiles("c1ccc(O)cc1")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert result["hbd"] == 1
 
@@ -425,18 +435,18 @@ class TestDescriptorValues:
         """Charged molecule should be detected."""
         # Uncharged benzene
         mol = Chem.MolFromSmiles("c1ccccc1")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
         assert result["charged_mol"] is True  # No formal charges
 
         # Carboxylate ion (charged)
         mol = Chem.MolFromSmiles("CC(=O)[O-]")
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
         assert result["charged_mol"] is False  # Has formal charge
 
     def test_qed_drug_like(self):
         """Drug-like molecules should have QED > 0.3."""
         mol = Chem.MolFromSmiles("CC(=O)Nc1ccc(O)cc1")  # paracetamol
-        result = _compute_single_molecule_descriptors(mol, "test", "idx")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert result["qed"] > 0.3
 
@@ -448,7 +458,7 @@ class TestDropFalseRowsAdvanced:
         """When filter_charged_mol is True, should filter by charged_mol_pass."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
                 "molWt_pass": [True, True, True],
                 "charged_mol_pass": [True, False, True],
             }
@@ -462,7 +472,7 @@ class TestDropFalseRowsAdvanced:
         """When filter_charged_mol is False, should not filter by charged_mol_pass."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
                 "molWt_pass": [True, True, True],
                 "charged_mol_pass": [True, False, True],
             }

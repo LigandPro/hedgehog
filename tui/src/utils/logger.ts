@@ -1,8 +1,9 @@
 import { appendFileSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import os from 'os';
+import path, { dirname } from 'path';
 import { formatTimestamp } from './format.js';
 
-const LOG_FILE = process.env.HEDGEHOG_TUI_LOG || '/tmp/hedgehog-tui.log';
+const LOG_FILE = process.env.HEDGEHOG_TUI_LOG || path.join(os.tmpdir(), 'hedgehog-tui.log');
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 

@@ -226,6 +226,15 @@ const STAGE_NAMES: Record<string, string> = {
 
 const PROGRESS_LOG_THRESHOLDS = [10, 25, 50, 75, 90, 100] as const;
 
+interface NotificationParams {
+  stage?: string;
+  current?: number;
+  total?: number;
+  message?: string;
+  level?: string;
+  results?: Record<string, unknown>;
+}
+
 function getStageName(stage: string): string {
   return STAGE_NAMES[stage] || stage;
 }
@@ -342,144 +351,161 @@ export function App(): React.ReactElement {
   useEffect(() => {
     if (!isBackendReady) return;
     const bridge = getBridge();
-    const unsubscribe = bridge.onNotification((method, params) => {
+
+    const handleProgress = (params: NotificationParams, selectedStages: string[]) => {
+      const { stage, current, total, message } = params;
+      if (!stage) return;
+      const progress = (total ?? 0) > 0 ? Math.round(((current ?? 0) / (total ?? 1)) * 100) : 0;
+      updateStage(stage, {
+        progress,
+        status: progress === 100 ? 'completed' : 'running',
+        message,
+      });
+      const stageIndex = selectedStages.indexOf(stage) + 1;
+      updatePipelineProgress({
+        currentStage: stage,
+        stageIndex: stageIndex > 0 ? stageIndex : 0,
+        totalStages: selectedStages.length,
+        stageProgress: progress,
+        latestMessage: message,
+      });
+
+      const lastLoggedThreshold = progressLogThresholdRef.current[stage] ?? 0;
+      let reachedThreshold: number | null = null;
+      for (const threshold of PROGRESS_LOG_THRESHOLDS) {
+        if (progress >= threshold && threshold > lastLoggedThreshold) {
+          reachedThreshold = threshold;
+        }
+      }
+      if (reachedThreshold !== null) {
+        progressLogThresholdRef.current[stage] = reachedThreshold;
+        addLog({
+          timestamp: new Date(),
+          level: 'info',
+          message: `Stage progress: ${getStageName(stage)} ${reachedThreshold}%`,
+        });
+      }
+    };
+
+    const handleLog = (params: NotificationParams) => {
+      if (!debugMode) return;
+      addLog({
+        timestamp: new Date(),
+        level: (params.level as 'info' | 'warn' | 'error' | 'debug') || 'info',
+        message: params.message ?? '',
+      });
+    };
+
+    const handleStageStart = (params: NotificationParams, selectedStages: string[]) => {
+      const stage = params.stage;
+      if (!stage) return;
+      progressLogThresholdRef.current[stage] = 0;
+      updateStage(stage, { status: 'running', progress: 0 });
+      const stageIndex = selectedStages.indexOf(stage) + 1;
+      updatePipelineProgress({
+        currentStage: stage,
+        stageIndex: stageIndex > 0 ? stageIndex : 0,
+        totalStages: selectedStages.length,
+        stageProgress: 0,
+      });
+      addLog({
+        timestamp: new Date(),
+        level: 'info',
+        message: `Stage started: ${getStageName(stage)}`,
+      });
+    };
+
+    const handleStageComplete = (params: NotificationParams) => {
+      const stage = params.stage;
+      if (!stage) return;
+      progressLogThresholdRef.current[stage] = 100;
+      updateStage(stage, { status: 'completed', progress: 100 });
+      addLog({
+        timestamp: new Date(),
+        level: 'info',
+        message: `Stage completed: ${getStageName(stage)}`,
+      });
+    };
+
+    const handleStageError = (params: NotificationParams) => {
+      const stage = params.stage;
+      if (!stage) return;
+      const message = params.message || 'Unknown error';
+      updateStage(stage, { status: 'error', message });
+      addLog({
+        timestamp: new Date(),
+        level: 'error',
+        message: `Stage failed: ${getStageName(stage)} - ${message}`,
+      });
+    };
+
+    const handleComplete = (params: NotificationParams, state: ReturnType<typeof useStore.getState>) => {
+      setRunning(false);
+      const currentJobId = state.currentJobId;
+      if (currentJobId) {
+        setSelectedJob(currentJobId);
+      }
+      showToast('success', 'Pipeline completed');
+      if (currentJobId) {
+        const results = params.results || {};
+        const moleculesProcessed = (results as Record<string, number>).molecules_processed || 0;
+        updateJobInHistory(currentJobId, {
+          status: 'completed',
+          endTime: new Date().toISOString(),
+          results: { moleculesProcessed },
+        });
+        bridge.updateJob(currentJobId, 'completed', { moleculesProcessed });
+      }
+      if (state.screen === 'pipelineRunner') {
+        setScreen('results');
+      }
+      progressLogThresholdRef.current = {};
+    };
+
+    const handleError = (params: NotificationParams, state: ReturnType<typeof useStore.getState>) => {
+      const message = params.message ?? 'Unknown error';
+      showToast('error', message);
+      setRunning(false);
+      progressLogThresholdRef.current = {};
+      const currentJobId = state.currentJobId;
+      if (currentJobId) {
+        updateJobInHistory(currentJobId, {
+          status: 'error',
+          endTime: new Date().toISOString(),
+          error: message,
+        });
+        bridge.updateJob(currentJobId, 'error', undefined, message);
+      }
+    };
+
+    const unsubscribe = bridge.onNotification((method, rawParams) => {
       const state = useStore.getState();
       const stageOrder = state.wizard.stageOrder;
       const selectedStages = stageOrder.filter((s) => state.wizard.selectedStages.includes(s));
+      const params = rawParams as NotificationParams;
 
-      if (method === 'progress') {
-        const { stage, current, total, message } = params as any;
-        const progress = total > 0 ? Math.round((current / total) * 100) : 0;
-        updateStage(stage, {
-          progress,
-          status: progress === 100 ? 'completed' : 'running',
-          message,
-        });
-        const stageIndex = selectedStages.indexOf(stage) + 1;
-        updatePipelineProgress({
-          currentStage: stage,
-          stageIndex: stageIndex > 0 ? stageIndex : 0,
-          totalStages: selectedStages.length,
-          stageProgress: progress,
-          latestMessage: message,
-        });
-
-        if (stage) {
-          const lastLoggedThreshold = progressLogThresholdRef.current[stage] ?? 0;
-          let reachedThreshold: number | null = null;
-
-          for (const threshold of PROGRESS_LOG_THRESHOLDS) {
-            if (progress >= threshold && threshold > lastLoggedThreshold) {
-              reachedThreshold = threshold;
-            }
-          }
-
-          if (reachedThreshold !== null) {
-            progressLogThresholdRef.current[stage] = reachedThreshold;
-            addLog({
-              timestamp: new Date(),
-              level: 'info',
-              message: `Stage progress: ${getStageName(stage)} ${reachedThreshold}%`,
-            });
-          }
-        }
-        return;
-      }
-
-      if (method === 'log') {
-        if (!debugMode) return;
-        addLog({
-          timestamp: new Date(),
-          level: (params as any).level || 'info',
-          message: (params as any).message,
-        });
-        return;
-      }
-
-      if (method === 'stage_start') {
-        const stage = (params as any).stage;
-        progressLogThresholdRef.current[stage] = 0;
-        updateStage(stage, { status: 'running', progress: 0 });
-        const stageIndex = selectedStages.indexOf(stage) + 1;
-        updatePipelineProgress({
-          currentStage: stage,
-          stageIndex: stageIndex > 0 ? stageIndex : 0,
-          totalStages: selectedStages.length,
-          stageProgress: 0,
-        });
-        addLog({
-          timestamp: new Date(),
-          level: 'info',
-          message: `Stage started: ${getStageName(stage)}`,
-        });
-        return;
-      }
-
-      if (method === 'stage_complete') {
-        const stage = (params as any).stage;
-        progressLogThresholdRef.current[stage] = 100;
-        updateStage(stage, { status: 'completed', progress: 100 });
-        addLog({
-          timestamp: new Date(),
-          level: 'info',
-          message: `Stage completed: ${getStageName(stage)}`,
-        });
-        return;
-      }
-
-      if (method === 'stage_error') {
-        const stage = (params as any).stage;
-        const message = (params as any).message || 'Unknown error';
-        updateStage(stage, { status: 'error', message });
-        addLog({
-          timestamp: new Date(),
-          level: 'error',
-          message: `Stage failed: ${getStageName(stage)} - ${message}`,
-        });
-        return;
-      }
-
-      if (method === 'complete') {
-        setRunning(false);
-        const currentJobId = state.currentJobId;
-        if (currentJobId) {
-          setSelectedJob(currentJobId);
-        }
-        showToast('success', 'Pipeline completed');
-        if (currentJobId) {
-          const results = (params as any).results || {};
-          updateJobInHistory(currentJobId, {
-            status: 'completed',
-            endTime: new Date().toISOString(),
-            results: {
-              moleculesProcessed: results.molecules_processed || 0,
-            },
-          });
-          bridge.updateJob(currentJobId, 'completed', {
-            moleculesProcessed: results.molecules_processed || 0,
-          });
-        }
-        if (state.screen === 'pipelineRunner') {
-          setScreen('results');
-        }
-        progressLogThresholdRef.current = {};
-        return;
-      }
-
-      if (method === 'error') {
-        const message = (params as any).message;
-        showToast('error', message);
-        setRunning(false);
-        progressLogThresholdRef.current = {};
-        const currentJobId = state.currentJobId;
-        if (currentJobId) {
-          updateJobInHistory(currentJobId, {
-            status: 'error',
-            endTime: new Date().toISOString(),
-            error: message,
-          });
-          bridge.updateJob(currentJobId, 'error', undefined, message);
-        }
+      switch (method) {
+        case 'progress':
+          handleProgress(params, selectedStages);
+          break;
+        case 'log':
+          handleLog(params);
+          break;
+        case 'stage_start':
+          handleStageStart(params, selectedStages);
+          break;
+        case 'stage_complete':
+          handleStageComplete(params);
+          break;
+        case 'stage_error':
+          handleStageError(params);
+          break;
+        case 'complete':
+          handleComplete(params, state);
+          break;
+        case 'error':
+          handleError(params, state);
+          break;
       }
     });
 

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.synthesis.utils import *
 
@@ -69,7 +70,7 @@ def main(config: dict, reporter=None) -> None:
     Args:
         config: Configuration dictionary containing pipeline settings
     """
-    folder_to_save = process_path(config["folder_to_save"])
+    folder_to_save = process_path(config[KEY_FOLDER_TO_SAVE])
     output_folder = Path(folder_to_save) / "stages" / "04_synthesis"
     output_folder.mkdir(parents=True, exist_ok=True)
     config_synthesis = load_config(config["config_synthesis"])

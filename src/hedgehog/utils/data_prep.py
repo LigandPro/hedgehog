@@ -4,6 +4,8 @@ from typing import cast
 
 import pandas as pd
 
+from hedgehog._constants import KEY_FOLDER_TO_SAVE
+
 # Constants
 SMILES_COLUMN = "smiles"
 MODEL_NAME_COLUMN = "model_name"
@@ -301,7 +303,7 @@ def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     applies sampling if configured, and assigns molecular indices.
     """
     generated_mols_path = config["generated_mols_path"]
-    folder_to_save = Path(config["folder_to_save"])
+    folder_to_save = Path(config[KEY_FOLDER_TO_SAVE])
     save_sampled_mols = config.get("save_sampled_mols", False)
     sample_size: int | None = (
         cast(int | None, config.get("sample_size")) if save_sampled_mols else None

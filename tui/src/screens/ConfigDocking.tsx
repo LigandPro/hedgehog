@@ -114,6 +114,16 @@ function getFieldColor(type: FieldType, value: unknown): 'green' | 'red' | 'cyan
   return 'yellow';
 }
 
+function formatFieldValue(fieldType: FieldType, value: unknown): string {
+  if (fieldType === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+  if (value !== undefined && value !== null) {
+    return String(value);
+  }
+  return '(not set)';
+}
+
 export function ConfigDocking(): React.ReactElement {
   const setScreen = useStore((state) => state.setScreen);
   const config = useStore((state) => state.configs.docking);
@@ -128,7 +138,7 @@ export function ConfigDocking(): React.ReactElement {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [editValue, setEditValue] = useState('');
-  const [values, setValues] = useState<Record<string, any>>({});
+  const [values, setValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
   const [browsingField, setBrowsingField] = useState<FormField | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -170,7 +180,7 @@ export function ConfigDocking(): React.ReactElement {
     if (!config && isBackendReady) {
       loadConfig();
     } else if (config) {
-      setValues(config as any);
+      setValues(config as unknown as Record<string, unknown>);
       setLoading(false);
     }
   }, [config, isBackendReady]);
@@ -180,7 +190,7 @@ export function ConfigDocking(): React.ReactElement {
       const bridge = getBridge();
       const data = await bridge.loadConfig('docking') as unknown as DockingConfig;
       setConfig('docking', data);
-      setValues(data as any);
+      setValues(data as unknown as Record<string, unknown>);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -236,30 +246,52 @@ export function ConfigDocking(): React.ReactElement {
   const displayFields = filteredFields;
   const totalFields = displayFields.length;
 
+  const handleEditModeInput = (key: { escape?: boolean; return?: boolean }) => {
+    if (key.escape) {
+      setEditMode(false);
+      return;
+    }
+    if (key.return) {
+      const field = displayFields[selectedIndex];
+      if (field) {
+        let newValue: string | number | undefined = editValue;
+        if (field.type === 'number') {
+          newValue = editValue === '' ? undefined : parseFloat(editValue);
+        }
+        setValue(field, newValue);
+      }
+      setEditMode(false);
+    }
+  };
+
+  const handleFieldAction = () => {
+    const field = displayFields[selectedIndex];
+    if (!field) return;
+    const value = getValue(field);
+
+    if (field.type === 'boolean') {
+      setValue(field, !value);
+    } else if (field.type === 'select' && field.options) {
+      const currentIdx = field.options.indexOf(value as string);
+      const nextIdx = (currentIdx + 1) % field.options.length;
+      setValue(field, field.options[nextIdx]);
+    } else if (field.type === 'path') {
+      setBrowsingField(field);
+    } else {
+      setEditValue(String(value ?? ''));
+      setEditMode(true);
+    }
+  };
+
   useInput((input, key) => {
     if (loading || browsingField) return;
 
-    // Handle search input first
     if (handleSearchInput(input, key)) {
       return;
     }
 
     if (editMode) {
-      if (key.escape) {
-        setEditMode(false);
-      } else if (key.return) {
-        const field = displayFields[selectedIndex];
-        if (field) {
-          let newValue: any = editValue;
-
-          if (field.type === 'number') {
-            newValue = editValue === '' ? undefined : parseFloat(editValue);
-          }
-
-          setValue(field, newValue);
-        }
-        setEditMode(false);
-      }
+      handleEditModeInput(key);
       return;
     }
 
@@ -284,22 +316,7 @@ export function ConfigDocking(): React.ReactElement {
       setSelectedIndex(newIndex);
       setScrollOffset(Math.min(Math.max(0, totalFields - visibleRows), scrollOffset + visibleRows));
     } else if (key.return || input === 'e') {
-      const field = displayFields[selectedIndex];
-      if (!field) return;
-      const value = getValue(field);
-
-      if (field.type === 'boolean') {
-        setValue(field, !value);
-      } else if (field.type === 'select' && field.options) {
-        const currentIdx = field.options.indexOf(value as string);
-        const nextIdx = (currentIdx + 1) % field.options.length;
-        setValue(field, field.options[nextIdx]);
-      } else if (field.type === 'path') {
-        setBrowsingField(field);
-      } else {
-        setEditValue(String(value ?? ''));
-        setEditMode(true);
-      }
+      handleFieldAction();
     } else if (input === 's') {
       saveConfig();
     } else if (key.escape || key.leftArrow || input === 'q') {
@@ -396,7 +413,7 @@ export function ConfigDocking(): React.ReactElement {
                     </Text>
                     <Box width={20}>
                       {labelParts.map((part, pi) => (
-                        <Text key={pi} dimColor={!part.highlighted} color={part.highlighted ? 'yellow' : undefined} bold={part.highlighted}>
+                        <Text key={`${part.text}-${pi}`} dimColor={!part.highlighted} color={part.highlighted ? 'yellow' : undefined} bold={part.highlighted}>
                           {part.text}
                         </Text>
                       ))}
@@ -411,11 +428,7 @@ export function ConfigDocking(): React.ReactElement {
                       </Box>
                     ) : (
                       <Text color={getFieldColor(field.type, value)}>
-                        {field.type === 'boolean'
-                          ? (value ? 'Yes' : 'No')
-                          : value !== undefined && value !== null
-                            ? String(value)
-                            : '(not set)'}
+                        {formatFieldValue(field.type, value)}
                       </Text>
                     )}
                   </Box>

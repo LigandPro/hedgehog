@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 from jinja2 import Environment, PackageLoader
 
+from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
 
 logger = logging.getLogger(__name__)
@@ -2166,7 +2167,7 @@ class ReportGenerator:
     def _get_config_summary(self) -> dict[str, Any]:
         """Get configuration summary."""
         # Get folder from config or use base_path
-        folder = self.config.get("folder_to_save", "")
+        folder = self.config.get(KEY_FOLDER_TO_SAVE, "")
         if not folder:
             folder = str(self.base_path)
 

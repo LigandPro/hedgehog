@@ -13,6 +13,11 @@ import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
+from tests.constants import (
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -67,7 +72,7 @@ class TestPosebustersFastFilter:
         """Filter should return DataFrame with all expected columns."""
         from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
 
-        mol = _mol_with_3d("CCO")
+        mol = _mol_with_3d(SMILES_ETHANOL)
         conf = mol.GetConformer()
         ligand_center = np.mean(conf.GetPositions(), axis=0)
 
@@ -101,7 +106,7 @@ class TestPosebustersFastFilter:
         """A molecule placed far from the protein should fail not_too_far_away."""
         from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
 
-        mol = _mol_with_3d("CCO")
+        mol = _mol_with_3d(SMILES_ETHANOL)
         # Place protein atoms very far away
         protein_coords = np.array([[100.0, 100.0, 100.0], [101.0, 100.0, 100.0]])
         pdb_path = _write_protein_pdb(tmp_path, protein_coords)
@@ -136,7 +141,11 @@ class TestPosebustersFastFilter:
         """Should process multiple molecules and return correct length."""
         from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
 
-        mols = [_mol_with_3d("CCO"), _mol_with_3d("c1ccccc1"), _mol_with_3d("CC")]
+        mols = [
+            _mol_with_3d(SMILES_ETHANOL),
+            _mol_with_3d(SMILES_BENZENE),
+            _mol_with_3d("CC"),
+        ]
 
         # Place protein near all of them
         center = np.mean(mols[0].GetConformer().GetPositions(), axis=0)
@@ -156,7 +165,7 @@ class TestPosebustersFastFilter:
         bad_pdb = tmp_path / "protein.pdb"
         bad_pdb.write_text("NOT A VALID PDB")
 
-        mol = _mol_with_3d("CCO")
+        mol = _mol_with_3d(SMILES_ETHANOL)
         config: dict[str, Any] = {"n_jobs": 1}
         df = apply_posecheck_fast_filter([mol], bad_pdb, config)
 
@@ -176,7 +185,7 @@ class TestSymmetryRmsdFilter:
         """A normal molecule should have plausible conformer RMSD."""
         from hedgehog.docking_filters.utils import apply_symmetry_rmsd_filter
 
-        mol = _mol_with_3d("CCO")
+        mol = _mol_with_3d(SMILES_ETHANOL)
         config: dict[str, Any] = {
             "num_conformers": 10,
             "max_rmsd_to_conformer": 5.0,
@@ -196,7 +205,7 @@ class TestSymmetryRmsdFilter:
         """GetBestRMS (symmetry-aware) should be ≤ AlignMol (identity permutation)."""
         from rdkit.Chem import rdMolAlign
 
-        mol = _mol_with_3d("c1ccccc1")  # benzene — highly symmetric
+        mol = _mol_with_3d(SMILES_BENZENE)  # benzene — highly symmetric
         mol_h = Chem.AddHs(mol, addCoords=True)
 
         params = AllChem.ETKDGv3()
@@ -222,7 +231,7 @@ class TestSymmetryRmsdFilter:
         """Should process a batch correctly."""
         from hedgehog.docking_filters.utils import apply_symmetry_rmsd_filter
 
-        mols = [_mol_with_3d("CCO"), _mol_with_3d("c1ccccc1")]
+        mols = [_mol_with_3d(SMILES_ETHANOL), _mol_with_3d(SMILES_BENZENE)]
         config: dict[str, Any] = {
             "num_conformers": 5,
             "max_rmsd_to_conformer": 5.0,
@@ -278,7 +287,7 @@ class TestBackendDispatch:
 
             # Simulate the dispatch logic from main.py
             pq_config: dict[str, Any] = {"enabled": True, "backend": "posecheck_fast"}
-            mols_active = [_mol_with_3d("CCO")]
+            mols_active = [_mol_with_3d(SMILES_ETHANOL)]
             protein_pdb = tmp_path / "protein.pdb"
 
             pq_backend = pq_config.get("backend", "posecheck_fast")
@@ -308,7 +317,7 @@ class TestBackendDispatch:
             )
 
             pq_config: dict[str, Any] = {"enabled": True, "backend": "posecheck"}
-            mols_active = [_mol_with_3d("CCO")]
+            mols_active = [_mol_with_3d(SMILES_ETHANOL)]
             protein_pdb = tmp_path / "protein.pdb"
 
             pq_backend = pq_config.get("backend", "posecheck_fast")
@@ -340,7 +349,7 @@ class TestBackendDispatch:
             )
 
             cd_config: dict[str, Any] = {"enabled": True, "backend": "symmetry_rmsd"}
-            mols_active = [_mol_with_3d("CCO")]
+            mols_active = [_mol_with_3d(SMILES_ETHANOL)]
 
             cd_backend = cd_config.get("backend", "symmetry_rmsd")
             if cd_backend == "symmetry_rmsd":
@@ -371,7 +380,7 @@ class TestBackendDispatch:
             )
 
             cd_config: dict[str, Any] = {"enabled": True, "backend": "naive"}
-            mols_active = [_mol_with_3d("CCO")]
+            mols_active = [_mol_with_3d(SMILES_ETHANOL)]
 
             cd_backend = cd_config.get("backend", "symmetry_rmsd")
             if cd_backend == "symmetry_rmsd":
@@ -393,8 +402,8 @@ class TestShepherdBackends:
     ) -> None:
         from hedgehog.docking_filters.utils import apply_shepherd_score_filter
 
-        mols = [_mol_with_3d("CCO"), _mol_with_3d("CCN")]
-        ref = _mol_with_3d("CCO")
+        mols = [_mol_with_3d(SMILES_ETHANOL), _mol_with_3d("CCN")]
+        ref = _mol_with_3d(SMILES_ETHANOL)
 
         monkeypatch.setattr(
             "hedgehog.docking_filters.utils._resolve_shepherd_worker_command",
@@ -441,8 +450,8 @@ class TestShepherdBackends:
     def test_shepherd_worker_missing_soft_skips(self, monkeypatch) -> None:
         from hedgehog.docking_filters.utils import apply_shepherd_score_filter
 
-        mols = [_mol_with_3d("CCO"), _mol_with_3d("CCN")]
-        ref = _mol_with_3d("CCO")
+        mols = [_mol_with_3d(SMILES_ETHANOL), _mol_with_3d("CCN")]
+        ref = _mol_with_3d(SMILES_ETHANOL)
 
         def _missing_worker():
             raise RuntimeError("worker command not found")
@@ -462,8 +471,8 @@ class TestShepherdBackends:
     def test_shepherd_auto_attempts_worker_auto_install(self, monkeypatch) -> None:
         from hedgehog.docking_filters.utils import apply_shepherd_score_filter
 
-        mols = [_mol_with_3d("CCO")]
-        ref = _mol_with_3d("CCO")
+        mols = [_mol_with_3d(SMILES_ETHANOL)]
+        ref = _mol_with_3d(SMILES_ETHANOL)
         calls = {"resolve": 0, "install": 0}
 
         def _resolve_cmd():
@@ -522,8 +531,8 @@ class TestShepherdBackends:
     def test_shepherd_auto_repairs_broken_worker_and_retries(self, monkeypatch) -> None:
         from hedgehog.docking_filters.utils import apply_shepherd_score_filter
 
-        mols = [_mol_with_3d("CCO")]
-        ref = _mol_with_3d("CCO")
+        mols = [_mol_with_3d(SMILES_ETHANOL)]
+        ref = _mol_with_3d(SMILES_ETHANOL)
         calls = {"install": 0, "run": 0}
 
         monkeypatch.setattr(
@@ -583,8 +592,8 @@ class TestShepherdBackends:
     ) -> None:
         from hedgehog.docking_filters.utils import apply_shepherd_score_filter
 
-        mols = [_mol_with_3d("CCO")]
-        ref = _mol_with_3d("CCO")
+        mols = [_mol_with_3d(SMILES_ETHANOL)]
+        ref = _mol_with_3d(SMILES_ETHANOL)
 
         def _raise_import(*_args, **_kwargs):
             raise ModuleNotFoundError("No module named 'shepherd_score'")

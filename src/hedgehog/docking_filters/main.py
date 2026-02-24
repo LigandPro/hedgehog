@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 from rdkit import Chem
 
+from hedgehog._constants import CFG_DOCKING, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.utils.parallel import resolve_n_jobs
 
@@ -205,7 +206,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     Returns:
         DataFrame with filtered molecules and metrics, or None if no molecules pass
     """
-    base_folder = Path(config["folder_to_save"]).resolve()
+    base_folder = Path(config[KEY_FOLDER_TO_SAVE]).resolve()
 
     # Get filter config (pipeline config contains file paths, not dicts)
     filter_cfg_path = config.get("config_docking_filters")
@@ -256,7 +257,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
     # Load docking config (optional; used as fallback for receptor path)
     docking_config: dict[str, Any] = {}
-    docking_cfg_path = config.get("config_docking")
+    docking_cfg_path = config.get(CFG_DOCKING)
     if docking_cfg_path:
         try:
             docking_config = load_config(docking_cfg_path)

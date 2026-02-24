@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from hedgehog._constants import CFG_DESCRIPTORS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.utils import (
     compute_metrics,
@@ -24,7 +25,7 @@ def main(data, config, subfolder=None, reporter=None):
         logger.warning("No molecules provided for descriptor calculation. Skipping.")
         return None
 
-    folder_to_save = Path(process_path(config["folder_to_save"]))
+    folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     subfolder = subfolder or str(Path("stages") / "01_descriptors_initial")
     descriptors_folder = folder_to_save / subfolder
 
@@ -46,7 +47,7 @@ def main(data, config, subfolder=None, reporter=None):
     if reporter is not None:
         reporter.progress(10, stage_total, message="Loading descriptor config")
 
-    config_descriptors = load_config(config["config_descriptors"])
+    config_descriptors = load_config(config[CFG_DESCRIPTORS])
     metrics_df = compute_metrics(
         data,
         metrics_folder,
