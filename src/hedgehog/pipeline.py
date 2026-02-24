@@ -8,13 +8,13 @@ import pandas as pd
 import yaml
 
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.descriptors.main import main as descriptors_main
+from hedgehog.docking.utils import run_docking as docking_main
+from hedgehog.docking_filters.main import docking_filters_main
+from hedgehog.molprep.main import main as mol_prep_main
 from hedgehog.reporting import ReportGenerator
-from hedgehog.stages.descriptors.main import main as descriptors_main
-from hedgehog.stages.docking.utils import run_docking as docking_main
-from hedgehog.stages.dockingFilters.main import docking_filters_main
-from hedgehog.stages.molPrep.main import main as mol_prep_main
-from hedgehog.stages.structFilters.main import main as structural_filters_main
-from hedgehog.stages.synthesis.main import main as synthesis_main
+from hedgehog.struct_filters.main import main as structural_filters_main
+from hedgehog.synthesis.main import main as synthesis_main
 from hedgehog.utils.input_paths import find_latest_input_source as _find_input
 
 # Directory names

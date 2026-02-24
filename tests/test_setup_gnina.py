@@ -590,7 +590,7 @@ class TestResolveDockingBinaryGninaFallback:
             lambda: "/home/user/.hedgehog/bin/gnina",
         )
 
-        from hedgehog.stages.docking.utils import _resolve_docking_binary
+        from hedgehog.docking.utils import _resolve_docking_binary
 
         result = _resolve_docking_binary("gnina", "gnina")
         assert result == "/home/user/.hedgehog/bin/gnina"
@@ -604,7 +604,7 @@ class TestResolveDockingBinaryGninaFallback:
 
         monkeypatch.setattr("hedgehog.setup._gnina.ensure_gnina", raise_runtime)
 
-        from hedgehog.stages.docking.utils import _resolve_docking_binary
+        from hedgehog.docking.utils import _resolve_docking_binary
 
         with pytest.raises(FileNotFoundError, match="declined"):
             _resolve_docking_binary("gnina", "gnina")
@@ -613,7 +613,7 @@ class TestResolveDockingBinaryGninaFallback:
         """smina has no auto-install fallback, so FileNotFoundError directly."""
         monkeypatch.setattr("shutil.which", lambda _: None)
 
-        from hedgehog.stages.docking.utils import _resolve_docking_binary
+        from hedgehog.docking.utils import _resolve_docking_binary
 
         with pytest.raises(FileNotFoundError, match="smina"):
             _resolve_docking_binary("smina", "smina")

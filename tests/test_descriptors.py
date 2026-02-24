@@ -3,7 +3,7 @@
 import pandas as pd
 from rdkit import Chem
 
-from hedgehog.stages.descriptors.utils import (
+from hedgehog.descriptors.utils import (
     _compute_single_molecule_descriptors,
     _get_border_values,
     compute_metrics,
