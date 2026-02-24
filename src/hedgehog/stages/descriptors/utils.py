@@ -867,80 +867,44 @@ def _get_boundary_position(ax, val, col, discrete_feats, fallback_offset=0):
 
 def _draw_boundary_lines(ax, col, min_val, max_val, discrete_feats):
     """Draw vertical lines at min/max boundaries."""
-    # Draw min boundary line
-    if min_val is not None:
-        pos = _get_boundary_position(ax, min_val, col, discrete_feats)
-        if pos is not None:
-            if col in discrete_feats:
-                ax.axvline(
-                    pos - 0.5,
-                    color="red",
-                    linestyle="--",
-                    linewidth=1.5,
-                    label=f"min: {min_val}",
-                )
-            else:
-                ax.axvline(
-                    min_val,
-                    color="red",
-                    linestyle="--",
-                    linewidth=1.5,
-                    label=f"min: {min_val}",
-                )
-        else:
-            ax.axvline(
-                0, color="red", linestyle="--", linewidth=1.5, label=f"min: {min_val}"
-            )
+    # Small nudge offsets for continuous max boundaries that need
+    # a tiny shift to avoid sitting exactly on the data edge.
+    _MAX_NUDGE = {"fsp3": 0.01, "n_rigid_bonds": 0.0000001}
 
-    # Draw max boundary line
-    if max_val is not None and max_val != "inf":
-        pos = _get_boundary_position(ax, max_val, col, discrete_feats)
+    boundaries = [
+        (min_val, "red", "min", -0.5, 0),
+        (max_val, "blue", "max", +0.5, None),
+    ]
+    for val, color, label_prefix, discrete_offset, _fallback_pos in boundaries:
+        if val is None or val == "inf":
+            continue
+
+        pos = _get_boundary_position(ax, val, col, discrete_feats)
         if pos is not None:
             if col in discrete_feats:
-                ax.axvline(
-                    pos + 0.5,
-                    color="blue",
-                    linestyle="--",
-                    linewidth=1.5,
-                    label=f"max: {max_val}",
-                )
-            elif col == "fsp3":
-                ax.axvline(
-                    max_val + 0.01,
-                    color="blue",
-                    linestyle="--",
-                    linewidth=1.5,
-                    label=f"max: {max_val}",
-                )
-            elif col == "n_rigid_bonds":
-                ax.axvline(
-                    max_val + 0.0000001,
-                    color="blue",
-                    linestyle="--",
-                    linewidth=1.5,
-                    label=f"max: {max_val}",
-                )
+                x = pos + discrete_offset
+            elif label_prefix == "max" and col in _MAX_NUDGE:
+                x = val + _MAX_NUDGE[col]
             else:
-                ax.axvline(
-                    max_val,
-                    color="blue",
-                    linestyle="--",
-                    linewidth=1.5,
-                    label=f"max: {max_val}",
-                )
+                x = val
         else:
-            tick_len = (
-                len(ax._discrete_tick_values) - 1
-                if hasattr(ax, "_discrete_tick_values")
-                else max_val
-            )
-            ax.axvline(
-                tick_len,
-                color="blue",
-                linestyle="--",
-                linewidth=1.5,
-                label=f"max: {max_val}",
-            )
+            # Fallback position when value is not found among discrete ticks
+            if label_prefix == "min":
+                x = 0
+            else:
+                x = (
+                    len(ax._discrete_tick_values) - 1
+                    if hasattr(ax, "_discrete_tick_values")
+                    else val
+                )
+
+        ax.axvline(
+            x,
+            color=color,
+            linestyle="--",
+            linewidth=1.5,
+            label=f"{label_prefix}: {val}",
+        )
 
 
 def _draw_boundary_spans(ax, col, min_val, max_val, discrete_feats):

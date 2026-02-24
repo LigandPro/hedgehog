@@ -359,58 +359,6 @@ def _load_rascore():
     return _get_cached("rascore_booster", _load_rascore_impl)
 
 
-def _calculate_sa_score(smiles):
-    """Calculate Synthetic Accessibility score (1=easy to 10=hard).
-
-    Uses RDKit's SA Score calculator from contrib.
-    Returns np.nan if calculation fails or module not available.
-
-    Args:
-        smiles: SMILES string
-
-    Returns:
-        SA score (1-10, lower is better) or np.nan
-    """
-    sascorer = _load_sascorer()
-    if not sascorer:
-        return np.nan
-
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return np.nan
-        return sascorer.calculateScore(mol)
-    except Exception as e:
-        logger.debug("Failed to calculate SA score for %s: %s", smiles, e)
-        return np.nan
-
-
-def _calculate_syba_score(smiles):
-    """Calculate SYBA (SYnthetic Bayesian Accessibility) score.
-
-    Uses SYBA model. Higher scores indicate more synthetically accessible.
-    Returns np.nan if calculation fails or module not available.
-
-    Args:
-        smiles: SMILES string
-
-    Returns:
-        SYBA score or np.nan
-    """
-    syba_model = _load_syba_model()
-    if not syba_model:
-        return np.nan
-
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return np.nan
-        return syba_model.predict(mol=mol)
-    except Exception as e:
-        logger.debug("Failed to calculate SYBA score for %s: %s", smiles, e)
-        return np.nan
-
-
 def _calculate_sa_score_single(smiles: str) -> float | None:
     """Calculate SA Score for a single SMILES string.
 
