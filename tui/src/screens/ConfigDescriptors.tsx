@@ -78,6 +78,16 @@ const settingsFields: SettingField[] = [
   { key: 'filter_charged_mol', label: 'Filter Charged', type: 'boolean', path: ['borders', 'filter_charged_mol'], description: 'Remove molecules with formal charges' },
 ];
 
+function formatSettingValue(fieldType: string, value: unknown): string {
+  if (fieldType === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+  if (Array.isArray(value)) {
+    return value.join(', ');
+  }
+  return String(value ?? '');
+}
+
 type ViewMode = 'settings' | 'borders';
 
 export function ConfigDescriptors(): React.ReactElement {
@@ -350,11 +360,7 @@ export function ConfigDescriptors(): React.ReactElement {
                           ? (value ? 'green' : 'red')
                           : 'yellow'
                       }>
-                        {field.type === 'boolean'
-                          ? (value ? 'Yes' : 'No')
-                          : Array.isArray(value)
-                            ? value.join(', ')
-                            : String(value ?? '')}
+                        {formatSettingValue(field.type, value)}
                       </Text>
                     )}
                   </Box>

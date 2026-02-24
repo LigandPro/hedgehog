@@ -17,6 +17,14 @@ from hedgehog.pipeline import (
     _directory_has_files,
     _file_exists_and_not_empty,
 )
+from tests.constants import (
+    COL_MODEL_NAME,
+    COL_MOL_IDX,
+    COL_SMILES,
+    FILE_FILTERED_MOLECULES,
+    MODEL_TEST,
+    SMILES_ETHANOL,
+)
 
 
 class TestFileExistsAndNotEmpty:
@@ -97,8 +105,10 @@ class TestDataChecker:
         # Create synthesis output
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        output_file = synthesis_dir / "filtered_molecules.csv"
-        output_file.write_text("smiles,model_name\nCCO,test")
+        output_file = synthesis_dir / FILE_FILTERED_MOLECULES
+        output_file.write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME}\n{SMILES_ETHANOL},{MODEL_TEST}"
+        )
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -116,7 +126,7 @@ class TestDataChecker:
         """Check stage data when file exists but is empty."""
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        output_file = synthesis_dir / "filtered_molecules.csv"
+        output_file = synthesis_dir / FILE_FILTERED_MOLECULES
         output_file.touch()  # Empty file
 
         config = {"folder_to_save": str(tmp_path)}
@@ -128,8 +138,8 @@ class TestDataChecker:
         """Header-only stage CSV should be treated as having zero molecules."""
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        output_file = synthesis_dir / "filtered_molecules.csv"
-        output_file.write_text("smiles,model_name,mol_idx\n")
+        output_file = synthesis_dir / FILE_FILTERED_MOLECULES
+        output_file.write_text(f"{COL_SMILES},{COL_MODEL_NAME},{COL_MOL_IDX}\n")
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -142,7 +152,7 @@ class TestDataChecker:
         legacy_dir = tmp_path / "Synthesis"
         legacy_dir.mkdir()
         output_file = legacy_dir / "passSynthesisSMILES.csv"
-        output_file.write_text("smiles\nCCO")
+        output_file.write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -153,8 +163,10 @@ class TestDataChecker:
         """Check stage data for descriptors output."""
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        output_file = desc_dir / "filtered_molecules.csv"
-        output_file.write_text("smiles,model_name\nCCO,test")
+        output_file = desc_dir / FILE_FILTERED_MOLECULES
+        output_file.write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME}\n{SMILES_ETHANOL},{MODEL_TEST}"
+        )
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -165,7 +177,9 @@ class TestDataChecker:
         """Check stage data for MolPrep output."""
         prep_dir = tmp_path / "stages" / "00_mol_prep"
         prep_dir.mkdir(parents=True)
-        (prep_dir / "filtered_molecules.csv").write_text("smiles,model_name\nCCO,test")
+        (prep_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME}\n{SMILES_ETHANOL},{MODEL_TEST}"
+        )
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -180,7 +194,9 @@ class TestPipelineStageRunner:
         """Find latest data source when synthesis output exists."""
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (synthesis_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -193,7 +209,9 @@ class TestPipelineStageRunner:
         """Find latest data source when only descriptors output exists."""
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -206,7 +224,9 @@ class TestPipelineStageRunner:
         """Find latest data source when only MolPrep output exists."""
         prep_dir = tmp_path / "stages" / "00_mol_prep"
         prep_dir.mkdir(parents=True)
-        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (prep_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -229,11 +249,15 @@ class TestPipelineStageRunner:
         # Create both synthesis and descriptors outputs
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (synthesis_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
@@ -321,9 +345,9 @@ class TestFinalOutputWithDockingScores:
         pipeline = self._pipeline(tmp_path)
         final_data = pd.DataFrame(
             {
-                "smiles": ["CCO", "CCC"],
-                "model_name": ["model_a", "model_b"],
-                "mol_idx": ["m1", "m2"],
+                COL_SMILES: [SMILES_ETHANOL, "CCC"],
+                COL_MODEL_NAME: ["model_a", "model_b"],
+                COL_MOL_IDX: ["m1", "m2"],
                 "sa_score": [2.1, 3.4],
                 "custom_flag": [True, False],
             }
@@ -380,18 +404,18 @@ class TestFinalOutputWithDockingScores:
 
         final_data = pd.DataFrame(
             {
-                "smiles": ["CCO", "CCC", "CCN"],
-                "model_name": ["model_a", "model_a", "model_b"],
-                "mol_idx": ["mol-1", "mol-2", "mol-3"],
+                COL_SMILES: [SMILES_ETHANOL, "CCC", "CCN"],
+                COL_MODEL_NAME: ["model_a", "model_a", "model_b"],
+                COL_MOL_IDX: ["mol-1", "mol-2", "mol-3"],
             }
         )
         pipeline._save_final_output(final_data, len(final_data))
 
         output_path = tmp_path / "output" / "final_molecules.csv"
         out = pd.read_csv(output_path).assign(
-            mol_idx=lambda df: df["mol_idx"].astype(str)
+            mol_idx=lambda df: df[COL_MOL_IDX].astype(str)
         )
-        rows = out.set_index("mol_idx")
+        rows = out.set_index(COL_MOL_IDX)
 
         assert rows.loc["mol-1", "gnina_affinity"] == pytest.approx(-8.4)
         assert rows.loc["mol-1", "gnina_cnnscore"] == pytest.approx(0.73)
@@ -408,15 +432,15 @@ class TestFinalOutputWithDockingScores:
     def test_empty_final_output_has_stable_header(self, tmp_path):
         """Empty final output should still expose a stable score schema."""
         pipeline = self._pipeline(tmp_path)
-        empty_data = pd.DataFrame(columns=["smiles", "model_name", "mol_idx"])
+        empty_data = pd.DataFrame(columns=[COL_SMILES, COL_MODEL_NAME, COL_MOL_IDX])
 
         pipeline._save_final_output(empty_data, 0)
 
         output_path = tmp_path / "output" / "final_molecules.csv"
         out = pd.read_csv(output_path)
         assert list(out.columns) == [
-            "smiles",
-            "model_name",
-            "mol_idx",
+            COL_SMILES,
+            COL_MODEL_NAME,
+            COL_MOL_IDX,
             *DOCKING_SCORE_COLUMNS,
         ]

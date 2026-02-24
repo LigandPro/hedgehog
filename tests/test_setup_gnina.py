@@ -238,7 +238,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -276,7 +276,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -314,7 +314,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -344,7 +344,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -402,7 +402,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         def fake_urlopen(req, *a, **kw):
             url = getattr(req, "full_url", str(req))
@@ -441,7 +441,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setenv("HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES", "3000000000")
         monkeypatch.setattr(
@@ -485,7 +485,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         def fake_urlopen(req, *a, **kw):
             url = getattr(req, "full_url", str(req))
@@ -530,7 +530,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "gpu")
         monkeypatch.setattr(
@@ -567,7 +567,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "auto")
         monkeypatch.setattr("hedgehog.setup._gnina._has_nvidia_gpu", lambda: True)

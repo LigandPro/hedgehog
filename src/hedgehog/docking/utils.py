@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from hedgehog._constants import CFG_DOCKING, KEY_FOLDER_TO_SAVE, TOOL_GNINA, TOOL_SMINA
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.input_paths import find_latest_input_source
@@ -81,7 +82,7 @@ def _resolve_docking_binary(config_path: str, tool_name: str) -> str:
             found,
         )
 
-    if tool_name == "gnina":
+    if tool_name == TOOL_GNINA:
         from hedgehog.setup import ensure_gnina
 
         try:
@@ -359,7 +360,7 @@ def _emit_post_docking_warnings(
                     counts["unique_molecules"],
                 )
 
-        if tool_name.lower() == "gnina" and output_sdf and output_sdf.exists():
+        if tool_name.lower() == TOOL_GNINA and output_sdf and output_sdf.exists():
             zero, total = _gnina_zero_affinity_count(output_sdf)
             if total > 0 and zero > 0:
                 logger.warning(
@@ -376,7 +377,7 @@ def _emit_post_docking_warnings(
 def _skip_keys_for_tool(tool_name: str) -> set[str]:
     """Return the set of config keys to skip for a given docking tool."""
     keys = {"bin", "center", "size"}
-    if tool_name == "gnina":
+    if tool_name == TOOL_GNINA:
         keys.update({"env_path", "ld_library_path", "activate", "output_dir", "no_gpu"})
     return keys
 
@@ -595,7 +596,7 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         f.write(f'mkdir -p "$(dirname "{protein_output_abs_path}")"\n')
         f.write(f'touch "{protein_output_abs_path}" 2>/dev/null || true\n')
 
-    tool_label = f" for {tool_name.upper()}" if tool_name == "gnina" else ""
+    tool_label = f" for {tool_name.upper()}" if tool_name == TOOL_GNINA else ""
     f.write(f'echo "Running protein preparation{tool_label}..."\n')
     f.write(f"{protein_prep_cmd_str} || PREP_EXIT_CODE=$?\n")
     f.write('if [ ! -z "$PREP_EXIT_CODE" ]; then\n')
@@ -638,10 +639,10 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         f.write("  exit 1\n")
         f.write("else\n")
         success_msg = "Protein preparation completed successfully"
-        if tool_name == "gnina":
+        if tool_name == TOOL_GNINA:
             success_msg += f": {protein_output_abs_path}"
         f.write(f'  echo "{success_msg}"\n')
-        if tool_name == "gnina":
+        if tool_name == TOOL_GNINA:
             f.write(
                 f'  ls -lh "{protein_output_abs_path}" 2>/dev/null || ls -lh "{protein_output_file}" 2>/dev/null || true\n'
             )
@@ -720,6 +721,41 @@ def _write_docking_command_bash(f, ligands_dir, docking_bin, config_file, tool_n
     f.write("fi\n")
 
 
+def _build_docker_gnina_command(
+    container_cfg: dict,
+    ligands_dir: Path,
+    no_gpu_enabled: bool,
+    placeholder: str,
+) -> str:
+    """Build a Docker-wrapped GNINA command template."""
+    container_bin = str(container_cfg.get("bin", "gnina")).strip() or "gnina"
+    gpu_request = container_cfg.get("gpus", "all")
+    mounts = container_cfg.get("mounts") or ["/mnt:/mnt", "/home:/home", "/tmp:/tmp"]
+
+    mount_entries = [str(entry).strip() for entry in mounts if str(entry).strip()]
+    bind_ligands_dir = f"{ligands_dir}:{ligands_dir}"
+    if bind_ligands_dir not in mount_entries:
+        mount_entries.append(bind_ligands_dir)
+
+    cmd_parts = [
+        "docker run --rm",
+        '--user "$(id -u):$(id -g)"',
+        f"-w {shlex.quote(str(ligands_dir))}",
+    ]
+    if gpu_request not in (None, "", False):
+        cmd_parts.append(f"--gpus {shlex.quote(str(gpu_request))}")
+    if container_cfg.get("propagate_cuda_visible_devices", True):
+        cmd_parts.append('-e CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"')
+    for mount in mount_entries:
+        cmd_parts.append(f"-v {shlex.quote(mount)}")
+    cmd_parts.append(shlex.quote(str(container_cfg["image"])))
+    cmd_parts.append(shlex.quote(container_bin))
+    cmd_parts.append(f"--config {placeholder}")
+    if no_gpu_enabled:
+        cmd_parts.append("--no_gpu")
+    return " ".join(cmd_parts)
+
+
 def _build_gnina_command_template(cfg: dict, gnina_bin: str, ligands_dir: Path) -> str:
     """Build a GNINA command template with config placeholder.
 
@@ -751,34 +787,9 @@ def _build_gnina_command_template(cfg: dict, gnina_bin: str, ligands_dir: Path) 
         )
         return host_cmd
 
-    container_bin = str(container_cfg.get("bin", "gnina")).strip() or "gnina"
-    gpu_request = container_cfg.get("gpus", "all")
-    mounts = container_cfg.get("mounts")
-    if not mounts:
-        mounts = ["/mnt:/mnt", "/home:/home", "/tmp:/tmp"]
-
-    mount_entries = [str(entry).strip() for entry in mounts if str(entry).strip()]
-    bind_ligands_dir = f"{ligands_dir}:{ligands_dir}"
-    if bind_ligands_dir not in mount_entries:
-        mount_entries.append(bind_ligands_dir)
-
-    cmd_parts = [
-        "docker run --rm",
-        '--user "$(id -u):$(id -g)"',
-        f"-w {shlex.quote(str(ligands_dir))}",
-    ]
-    if gpu_request not in (None, "", False):
-        cmd_parts.append(f"--gpus {shlex.quote(str(gpu_request))}")
-    if container_cfg.get("propagate_cuda_visible_devices", True):
-        cmd_parts.append('-e CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"')
-    for mount in mount_entries:
-        cmd_parts.append(f"-v {shlex.quote(mount)}")
-    cmd_parts.append(shlex.quote(str(image)))
-    cmd_parts.append(shlex.quote(container_bin))
-    cmd_parts.append(f"--config {placeholder}")
-    if no_gpu_enabled:
-        cmd_parts.append("--no_gpu")
-    return " ".join(cmd_parts)
+    return _build_docker_gnina_command(
+        container_cfg, ligands_dir, no_gpu_enabled, placeholder
+    )
 
 
 def _create_smina_script(
@@ -804,7 +815,9 @@ def _create_smina_script(
 
         _write_docking_command_bash(f, ligands_dir, smina_bin, config_file, "smina")
 
-    os.chmod(script_path, 0o755)
+    os.chmod(
+        script_path, 0o700
+    )  # Owner-only: generated script, no need for group/world access
     return script_path
 
 
@@ -894,7 +907,9 @@ def _create_smina_per_molecule_script(
         f.write("    exit 1\n")
         f.write("fi\n")
 
-    os.chmod(script_path, 0o755)
+    os.chmod(
+        script_path, 0o700
+    )  # Owner-only: generated script, no need for group/world access
     return script_path
 
 
@@ -1134,6 +1149,7 @@ def _count_visible_nvidia_gpus() -> int:
     if not nvidia_smi:
         return 0
     try:
+        # Security: using list args (shell=False) to prevent command injection
         result = subprocess.run(
             [nvidia_smi, "-L"],
             capture_output=True,
@@ -1315,45 +1331,57 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     return str(sdf_path.resolve()), None
 
 
+def _detect_conda_sh() -> str:
+    """Auto-detect conda.sh from common installation paths."""
+    for candidate in ("miniforge", "miniconda3", "mambaforge", "anaconda3"):
+        path = Path(os.path.expanduser(f"~/{candidate}/etc/profile.d/conda.sh"))
+        if path.exists():
+            return str(path)
+    return os.path.expanduser("~/miniconda3/etc/profile.d/conda.sh")
+
+
+def _resolve_gnina_activate(cfg, env_path):
+    """Resolve GNINA conda activation command."""
+    gnina_activate = cfg.get("gnina_activate")
+    if gnina_activate or not env_path:
+        return gnina_activate
+
+    conda_sh = cfg.get("conda_sh") or _detect_conda_sh()
+    return f"source {conda_sh} && conda activate {env_path}"
+
+
+def _resolve_env_library_paths(env_path):
+    """Collect library paths from a conda/virtualenv environment directory."""
+    env_lib_paths: list[str] = []
+    env_path_obj = Path(env_path)
+    if not env_path_obj.exists():
+        return env_lib_paths
+
+    torch_libs = sorted(env_path_obj.glob("lib/python*/site-packages/torch/lib"))
+    env_lib_paths.extend(str(path) for path in torch_libs if path.is_dir())
+
+    nvidia_libs = sorted(env_path_obj.glob("lib/python*/site-packages/nvidia/*/lib"))
+    env_lib_paths.extend(str(path) for path in nvidia_libs if path.is_dir())
+
+    lib_dir = env_path_obj / "lib"
+    if lib_dir.is_dir():
+        env_lib_paths.append(str(lib_dir))
+
+    return env_lib_paths
+
+
 def _get_gnina_environment(cfg, base_folder):
     """Get GNINA activation command and LD_LIBRARY_PATH."""
     gnina_config = cfg.get("gnina_config", {})
     env_path = gnina_config.get("env_path") or cfg.get("gnina_env_path")
 
-    gnina_activate = cfg.get("gnina_activate")
-    if not gnina_activate and env_path:
-        conda_sh = cfg.get("conda_sh")
-        if not conda_sh:
-            # Auto-detect conda.sh from common installation paths
-            for candidate in ("miniforge", "miniconda3", "mambaforge", "anaconda3"):
-                path = Path(os.path.expanduser(f"~/{candidate}/etc/profile.d/conda.sh"))
-                if path.exists():
-                    conda_sh = str(path)
-                    break
-            if not conda_sh:
-                conda_sh = os.path.expanduser("~/miniconda3/etc/profile.d/conda.sh")
-        gnina_activate = f"source {conda_sh} && conda activate {env_path}"
+    gnina_activate = _resolve_gnina_activate(cfg, env_path)
 
     ld_library_path = cfg.get("gnina_ld_library_path")
     if not ld_library_path and env_path:
-        env_lib_paths: list[str] = []
-        env_path_obj = Path(env_path)
-        if env_path_obj.exists():
-            torch_libs = sorted(
-                env_path_obj.glob("lib/python*/site-packages/torch/lib")
-            )
-            env_lib_paths.extend(str(path) for path in torch_libs if path.is_dir())
-
-            nvidia_libs = sorted(
-                env_path_obj.glob("lib/python*/site-packages/nvidia/*/lib")
-            )
-            env_lib_paths.extend(str(path) for path in nvidia_libs if path.is_dir())
-
-            lib_dir = env_path_obj / "lib"
-            if lib_dir.is_dir():
-                env_lib_paths.append(str(lib_dir))
-
-        ld_library_path = _join_existing_library_paths(env_lib_paths)
+        ld_library_path = _join_existing_library_paths(
+            _resolve_env_library_paths(env_path)
+        )
 
     # Auto-detect from PyTorch or conda when no env_path is configured
     if not ld_library_path:
@@ -1494,7 +1522,9 @@ def _create_gnina_script(
         f.write("  exit 1\n")
         f.write("fi\n")
 
-    os.chmod(script_path, 0o755)
+    os.chmod(
+        script_path, 0o700
+    )  # Owner-only: generated script, no need for group/world access
     return script_path
 
 
@@ -1609,7 +1639,9 @@ def _create_gnina_per_molecule_script(
         f.write('echo "ERROR: All molecules failed docking"\n')
         f.write("exit 1\n")
 
-    os.chmod(script_path, 0o755)
+    os.chmod(
+        script_path, 0o700
+    )  # Owner-only: generated script, no need for group/world access
     return script_path
 
 
@@ -1949,9 +1981,9 @@ def _parse_tools_config(cfg):
         tools_list = ["both"]
 
     if "both" in tools_list or not tools_list:
-        return ["smina", "gnina"]
+        return [TOOL_SMINA, TOOL_GNINA]
 
-    return [t for t in tools_list if t in ["smina", "gnina"]]
+    return [t for t in tools_list if t in [TOOL_SMINA, TOOL_GNINA]]
 
 
 def _prepare_receptor_if_needed(
@@ -2000,11 +2032,11 @@ def _setup_smina(
             return None
 
         smina_config = cfg.get("smina_config", {})
-        smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin", "smina")
-        smina_bin = _resolve_docking_binary(smina_bin_cfg, "smina")
+        smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin", TOOL_SMINA)
+        smina_bin = _resolve_docking_binary(smina_bin_cfg, TOOL_SMINA)
 
         ligands_path, prep_cmd = _prepare_ligands_for_docking(
-            ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name="smina"
+            ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name=TOOL_SMINA
         )
 
         smina_output_dir = ligands_dir / "smina"
@@ -2082,7 +2114,7 @@ def _setup_gnina_per_molecule(
     ligands_path_obj = Path(ligands_path)
     if prep_cmd:
         ready = _materialize_prepared_ligands(
-            prep_cmd, ligands_path_obj, ligands_dir, tool_name="gnina"
+            prep_cmd, ligands_path_obj, ligands_dir, tool_name=TOOL_GNINA
         )
     else:
         ready = ligands_path_obj.exists()
@@ -2130,6 +2162,84 @@ def _setup_gnina_per_molecule(
     return script_path
 
 
+def _restore_gnina_receptor(cfg):
+    """Validate and restore GNINA receptor_pdb config entry.
+
+    Returns the receptor path string, or None if unrecoverable.
+    """
+    original_receptor = cfg.get("receptor_pdb")
+    if not original_receptor:
+        logger.error("GNINA: receptor_pdb is missing in config")
+        return None
+
+    if "protein_prepared.pdb" not in original_receptor:
+        return original_receptor
+
+    logger.warning(
+        "GNINA: Config has prepared path: %s, this should have been restored",
+        original_receptor,
+    )
+    project_root = Path(__file__).parent.parent.parent.parent
+    possible_originals = [
+        project_root / "data/test/7EW9_apo.pdb",
+    ]
+    for possible in possible_originals:
+        if possible.exists():
+            cfg["receptor_pdb"] = str(possible.resolve())
+            return cfg["receptor_pdb"]
+
+    logger.error("GNINA: Could not find original receptor file")
+    return None
+
+
+def _resolve_gnina_parallelism(cfg, gnina_config):
+    """Resolve GNINA CPU-per-process, GPU count, and parallel jobs."""
+    gnina_cpu_default = gnina_config.get("cpu", 8)
+    cpu_per_process = _parse_positive_int(
+        cfg.get("gnina_per_process_cpu", gnina_cpu_default), 8
+    )
+    no_gpu_enabled = _parse_bool_config(gnina_config.get("no_gpu", False))
+    gpu_count = 0 if no_gpu_enabled else _count_visible_nvidia_gpus()
+    parallel_jobs = _resolve_gnina_parallel_jobs(cfg, cpu_per_process)
+    if gpu_count > 0 and cfg.get("gnina_parallel_jobs") is None:
+        parallel_jobs = 1
+    return cpu_per_process, gpu_count, parallel_jobs
+
+
+def _setup_gnina_batch_mode(
+    cfg,
+    ligands_dir,
+    receptor,
+    ligands_path,
+    prep_cmd,
+    output_sdf,
+    gnina_command_template,
+    activate_cmd,
+    ld_library_path,
+    protein_prep_cmd,
+):
+    """Setup GNINA in legacy batch mode. Returns script path."""
+    config_file = ligands_dir / "_workdir" / "gnina_config.ini"
+    _create_gnina_config_file(
+        cfg, ligands_dir, receptor, ligands_path, output_sdf, config_file
+    )
+
+    prepared_output_relative = _extract_prepared_output_from_cmd(prep_cmd)
+    script_path = _create_gnina_script(
+        ligands_dir,
+        gnina_command_template,
+        config_file,
+        activate_cmd,
+        ld_library_path,
+        prep_cmd,
+        prepared_output_relative,
+        protein_prep_cmd,
+        receptor,
+    )
+    logger.info("GNINA batch configuration prepared")
+    return script_path
+
+
 def _setup_gnina(
     cfg,
     base_folder,
@@ -2140,29 +2250,9 @@ def _setup_gnina(
 ):
     """Setup GNINA docking configuration and script with per-molecule processing."""
     try:
-        original_receptor = cfg.get("receptor_pdb")
+        original_receptor = _restore_gnina_receptor(cfg)
         if not original_receptor:
-            logger.error("GNINA: receptor_pdb is missing in config")
             return None
-
-        if "protein_prepared.pdb" in original_receptor:
-            logger.warning(
-                "GNINA: Config has prepared path: %s, this should have been restored",
-                original_receptor,
-            )
-            project_root = Path(__file__).parent.parent.parent.parent
-            possible_originals = [
-                project_root / "data/test/7EW9_apo.pdb",
-            ]
-            original_receptor = None
-            for possible in possible_originals:
-                if possible.exists():
-                    original_receptor = str(possible.resolve())
-                    break
-            if not original_receptor:
-                logger.error("GNINA: Could not find original receptor file")
-                return None
-            cfg["receptor_pdb"] = original_receptor
 
         receptor, protein_prep_cmd = _get_receptor_and_prep_cmd(
             cfg, ligands_dir, protein_preparation_tool, "gnina"
@@ -2171,7 +2261,7 @@ def _setup_gnina(
             return None
 
         ligands_path, prep_cmd = _prepare_ligands_for_docking(
-            ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name="gnina"
+            ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name=TOOL_GNINA
         )
 
         gnina_dir = _get_gnina_output_directory(cfg, base_folder)
@@ -2179,22 +2269,16 @@ def _setup_gnina(
         output_sdf = gnina_dir / "gnina_out.sdf"
 
         gnina_config = cfg.get("gnina_config", {})
-        gnina_bin_cfg = gnina_config.get("bin") or cfg.get("gnina_bin", "gnina")
-        gnina_bin = _resolve_docking_binary(gnina_bin_cfg, "gnina")
+        gnina_bin_cfg = gnina_config.get("bin") or cfg.get("gnina_bin", TOOL_GNINA)
+        gnina_bin = _resolve_docking_binary(gnina_bin_cfg, TOOL_GNINA)
         gnina_command_template = _build_gnina_command_template(
             cfg, gnina_bin, ligands_dir
         )
         activate_cmd, ld_library_path = _get_gnina_environment(cfg, base_folder)
 
-        gnina_cpu_default = gnina_config.get("cpu", 8)
-        cpu_per_process = _parse_positive_int(
-            cfg.get("gnina_per_process_cpu", gnina_cpu_default), 8
+        cpu_per_process, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
+            cfg, gnina_config
         )
-        no_gpu_enabled = _parse_bool_config(gnina_config.get("no_gpu", False))
-        gpu_count = 0 if no_gpu_enabled else _count_visible_nvidia_gpus()
-        parallel_jobs = _resolve_gnina_parallel_jobs(cfg, cpu_per_process)
-        if gpu_count > 0 and cfg.get("gnina_parallel_jobs") is None:
-            parallel_jobs = 1
 
         if cfg.get("per_molecule_docking", True):
             script = _setup_gnina_per_molecule(
@@ -2214,26 +2298,18 @@ def _setup_gnina(
             if script:
                 return script
 
-        # Fallback to legacy batch mode
-        config_file = ligands_dir / "_workdir" / "gnina_config.ini"
-        _create_gnina_config_file(
-            cfg, ligands_dir, receptor, ligands_path, output_sdf, config_file
-        )
-
-        prepared_output_relative = _extract_prepared_output_from_cmd(prep_cmd)
-        script_path = _create_gnina_script(
+        return _setup_gnina_batch_mode(
+            cfg,
             ligands_dir,
+            receptor,
+            ligands_path,
+            prep_cmd,
+            output_sdf,
             gnina_command_template,
-            config_file,
             activate_cmd,
             ld_library_path,
-            prep_cmd,
-            prepared_output_relative,
             protein_prep_cmd,
-            receptor,
         )
-        logger.info("GNINA batch configuration prepared")
-        return script_path
     except Exception as e:
         logger.error("Failed to setup GNINA: %s", e)
         return None
@@ -2328,24 +2404,29 @@ def _execute_protein_preparation(cfg, ligands_dir, protein_preparation_tool) -> 
         )
 
     if not _wait_for_prepared_file(prepared_receptor_path):
-        prepared_path = Path(prepared_receptor_path)
-        if not prepared_path.exists():
-            logger.error(
-                "Protein preparation failed - output file not found after 300s: %s",
-                prepared_receptor_path,
-            )
-            logger.error("Command output: %s", result.stdout)
-            logger.error("Command error: %s", result.stderr)
-        else:
-            logger.error(
-                "Protein preparation failed - output file is empty: %s",
-                prepared_receptor_path,
-            )
+        _log_prep_wait_failure(prepared_receptor_path, result)
         return False
 
     logger.info("Protein prepared successfully: %s", prepared_receptor_path)
     cfg["receptor_pdb"] = prepared_receptor_path
     return True
+
+
+def _log_prep_wait_failure(prepared_receptor_path, result):
+    """Log details when prepared protein file fails to appear or is empty."""
+    prepared_path = Path(prepared_receptor_path)
+    if not prepared_path.exists():
+        logger.error(
+            "Protein preparation failed - output file not found after 300s: %s",
+            prepared_receptor_path,
+        )
+        logger.error("Command output: %s", result.stdout)
+        logger.error("Command error: %s", result.stderr)
+    else:
+        logger.error(
+            "Protein preparation failed - output file is empty: %s",
+            prepared_receptor_path,
+        )
 
 
 def _create_progress_tracker(reporter, selected_tools, ligands_dir, gnina_output_sdf):
@@ -2365,12 +2446,12 @@ def _create_progress_tracker(reporter, selected_tools, ligands_dir, gnina_output
 
     def _count_done() -> int:
         done = 0
-        if "smina" in tool_totals:
-            done += min(_count_smina_done(ligands_dir), tool_totals["smina"])
-        if "gnina" in tool_totals:
+        if TOOL_SMINA in tool_totals:
+            done += min(_count_smina_done(ligands_dir), tool_totals[TOOL_SMINA])
+        if TOOL_GNINA in tool_totals:
             done += min(
                 _count_gnina_done(ligands_dir, gnina_output_sdf),
-                tool_totals["gnina"],
+                tool_totals[TOOL_GNINA],
             )
         return done
 
@@ -2428,34 +2509,34 @@ def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, report
             reporter, selected_tools, ligands_dir, gnina_output_sdf
         )
 
-    if "smina" in job_ids:
+    if TOOL_SMINA in job_ids:
         logger.info("Running SMINA docking")
-        tick = make_tick("smina") if make_tick and not background else None
-        run_status["smina"] = _run_smina(
-            ligands_dir, background, job_ids["smina"], tick=tick
+        tick = make_tick(TOOL_SMINA) if make_tick and not background else None
+        run_status[TOOL_SMINA] = _run_smina(
+            ligands_dir, background, job_ids[TOOL_SMINA], tick=tick
         )
-        if not background and run_status["smina"].get("status") == "completed":
+        if not background and run_status[TOOL_SMINA].get("status") == "completed":
             _emit_post_docking_warnings(
-                "smina", ligands_dir / "_workdir" / "smina_run.log"
+                TOOL_SMINA, ligands_dir / "_workdir" / "smina_run.log"
             )
 
-    if "gnina" in job_ids:
+    if TOOL_GNINA in job_ids:
         logger.info("Running GNINA docking")
         try:
             output_sdf = gnina_output_sdf
-            tick = make_tick("gnina") if make_tick and not background else None
-            run_status["gnina"] = _run_gnina(
-                ligands_dir, output_sdf, background, job_ids["gnina"], tick=tick
+            tick = make_tick(TOOL_GNINA) if make_tick and not background else None
+            run_status[TOOL_GNINA] = _run_gnina(
+                ligands_dir, output_sdf, background, job_ids[TOOL_GNINA], tick=tick
             )
-            if not background and run_status["gnina"].get("status") == "completed":
+            if not background and run_status[TOOL_GNINA].get("status") == "completed":
                 _emit_post_docking_warnings(
-                    "gnina",
+                    TOOL_GNINA,
                     ligands_dir / "_workdir" / "gnina_run.log",
                     output_sdf=output_sdf,
                 )
         except Exception as e:
             logger.error("GNINA execution failed: %s", e)
-            run_status["gnina"] = {"status": "failed", "error": str(e)}
+            run_status[TOOL_GNINA] = {"status": "failed", "error": str(e)}
 
     try:
         _update_metadata_with_run_status(ligands_dir, run_status)
@@ -2468,15 +2549,76 @@ def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, report
     return _evaluate_run_results(selected_tools, run_status, reporter, progress_total)
 
 
+def _setup_docking_tools(
+    cfg, tools_list, base_folder, ligands_dir, ligands_csv, ligand_preparation_tool
+):
+    """Configure docking tools and return (scripts_prepared, job_ids, tools_list).
+
+    tools_list may be modified in-place if GNINA setup fails.
+    """
+    scripts_prepared = []
+    job_ids = {}
+
+    if TOOL_SMINA in tools_list:
+        script = _setup_smina(
+            cfg,
+            ligands_dir,
+            ligands_csv,
+            None,
+            base_folder,
+            ligand_preparation_tool=ligand_preparation_tool,
+        )
+        if script:
+            scripts_prepared.append(str(script))
+            job_ids[TOOL_SMINA] = _generate_job_id(TOOL_SMINA)
+
+    if TOOL_GNINA in tools_list:
+        try:
+            script = _setup_gnina(
+                cfg,
+                base_folder,
+                ligands_dir,
+                ligands_csv,
+                ligand_preparation_tool,
+                None,
+            )
+            if script:
+                scripts_prepared.append(str(script))
+                job_ids[TOOL_GNINA] = _generate_job_id(TOOL_GNINA)
+        except Exception as e:
+            logger.warning("GNINA setup failed, continuing without GNINA: %s", e)
+            tools_list[:] = [t for t in tools_list if t != TOOL_GNINA]
+
+    return scripts_prepared, job_ids
+
+
+def _emit_manual_mode_warnings(cfg, tools_list, ligands_dir, base_folder):
+    """Emit post-docking warnings in manual (non-auto_run) mode."""
+    try:
+        if "smina" in tools_list:
+            _emit_post_docking_warnings(
+                "smina", ligands_dir / "_workdir" / "smina_run.log"
+            )
+        if "gnina" in tools_list:
+            gnina_dir = _get_gnina_output_directory(cfg, base_folder)
+            _emit_post_docking_warnings(
+                "gnina",
+                ligands_dir / "_workdir" / "gnina_run.log",
+                output_sdf=gnina_dir / "gnina_out.sdf",
+            )
+    except Exception:
+        pass
+
+
 def run_docking(config, reporter=None):
     """Main docking orchestration function."""
     # 1. Load config and validate input
-    cfg = load_config(config["config_docking"])
+    cfg = load_config(config[CFG_DOCKING])
     if not cfg.get("run", False):
         logger.info("Docking disabled in config")
         return False
 
-    base_folder = Path(config["folder_to_save"]).resolve()
+    base_folder = Path(config[KEY_FOLDER_TO_SAVE]).resolve()
     source = _find_latest_input_source(base_folder)
     if source is None:
         logger.warning(
@@ -2517,44 +2659,14 @@ def run_docking(config, reporter=None):
             return False
 
     # 3. Tool setup
-    scripts_prepared = []
-    job_ids = {}
-    overall_job_id = _generate_job_id("dock")
-
-    if "smina" in tools_list:
-        script = _setup_smina(
-            cfg,
-            ligands_dir,
-            ligands_csv,
-            None,
-            base_folder,
-            ligand_preparation_tool=ligand_preparation_tool,
-        )
-        if script:
-            scripts_prepared.append(str(script))
-            job_ids["smina"] = _generate_job_id("smina")
-
-    if "gnina" in tools_list:
-        try:
-            script = _setup_gnina(
-                cfg,
-                base_folder,
-                ligands_dir,
-                ligands_csv,
-                ligand_preparation_tool,
-                None,
-            )
-            if script:
-                scripts_prepared.append(str(script))
-                job_ids["gnina"] = _generate_job_id("gnina")
-        except Exception as e:
-            logger.warning("GNINA setup failed, continuing without GNINA: %s", e)
-            tools_list = [t for t in tools_list if t != "gnina"]
-
+    scripts_prepared, job_ids = _setup_docking_tools(
+        cfg, tools_list, base_folder, ligands_dir, ligands_csv, ligand_preparation_tool
+    )
     if not scripts_prepared:
         logger.error("No docking tools were successfully configured")
         return False
 
+    overall_job_id = _generate_job_id("dock")
     try:
         _save_job_metadata(
             ligands_dir,
@@ -2580,19 +2692,5 @@ def run_docking(config, reporter=None):
         )
 
     # 5. Post-run warnings for manual mode
-    try:
-        if "smina" in tools_list:
-            _emit_post_docking_warnings(
-                "smina", ligands_dir / "_workdir" / "smina_run.log"
-            )
-        if "gnina" in tools_list:
-            gnina_dir = _get_gnina_output_directory(cfg, base_folder)
-            _emit_post_docking_warnings(
-                "gnina",
-                ligands_dir / "_workdir" / "gnina_run.log",
-                output_sdf=gnina_dir / "gnina_out.sdf",
-            )
-    except Exception:
-        pass
-
+    _emit_manual_mode_warnings(cfg, tools_list, ligands_dir, base_folder)
     return True

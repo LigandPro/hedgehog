@@ -11,6 +11,7 @@ from medchem.rules._utils import n_fused_aromatic_rings
 from rdkit import Chem, RDLogger, rdBase
 from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
+from hedgehog._constants import CFG_DESCRIPTORS
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.struct_filters.utils import process_path
 from hedgehog.utils.mce18 import compute_mce18
@@ -168,7 +169,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     n_aromatic_atoms = sum(
         1 for a in mol_n.GetAtoms() if a.GetIsAromatic() and a.GetAtomicNum() > 1
     )
-    molWt = Descriptors.ExactMolWt(mol_n)
+    mol_wt = Descriptors.ExactMolWt(mol_n)
     clogp = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
@@ -190,12 +191,12 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         "is_neutral": is_neutral,
         "has_formal_charge": has_formal_charge,
         "charged_mol": charged_mol,  # DEPRECATED: use is_neutral instead
-        "molWt": molWt,
+        "molWt": mol_wt,
         "logP": Descriptors.MolLogP(mol_n),
         "clogP": clogp,
         "sw": 0.16
         - 0.63 * clogp
-        - 0.0062 * molWt
+        - 0.0062 * mol_wt
         + 0.066 * n_rot_bonds
         - 0.74 * n_aromatic_atoms,
         "ring_size": rings,
@@ -1076,7 +1077,7 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     """
     folder_to_save = Path(process_path(folder_to_save))
 
-    descriptors_config = load_config(config["config_descriptors"])
+    descriptors_config = load_config(config[CFG_DESCRIPTORS])
     borders = descriptors_config["borders"]
     if "charged_mol_allowed" in borders:
         borders["charged_mol_allowed"] = int(borders["charged_mol_allowed"])

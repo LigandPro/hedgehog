@@ -1,5 +1,6 @@
 """Pipeline execution handler for TUI backend."""
 
+import os
 import tempfile
 import threading
 import uuid
@@ -106,6 +107,7 @@ class PipelineJob:
                     tmp = tempfile.NamedTemporaryFile(
                         mode="w", suffix=".yml", delete=False
                     )
+                    os.chmod(tmp.name, 0o600)  # Restrict to owner-only read/write
                     yaml.safe_dump(sub_cfg, tmp)
                     tmp.close()
                     self._temp_files.append(Path(tmp.name))

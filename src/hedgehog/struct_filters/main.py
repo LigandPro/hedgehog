@@ -3,6 +3,7 @@ from time import perf_counter
 
 import pandas as pd
 
+from hedgehog._constants import CFG_DESCRIPTORS, CFG_STRUCT_FILTERS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.struct_filters.utils import (
     combine_filter_results_in_memory,
@@ -80,9 +81,9 @@ def _get_input_path(config, stage_dir, folder_to_save):
         Path to input file
     """
     descriptors_enabled = False
-    if "config_descriptors" in config:
+    if CFG_DESCRIPTORS in config:
         try:
-            desc_config = load_config(config["config_descriptors"])
+            desc_config = load_config(config[CFG_DESCRIPTORS])
             descriptors_enabled = desc_config.get("run", False)
         except Exception:
             pass
@@ -193,20 +194,20 @@ def _save_filter_results(output_dir, filter_name, metrics_df, extended_df):
     filtered_mols.to_csv(filter_subdir / "filtered_molecules.csv", index=False)
 
 
-def _get_enabled_filters(config_structFilters):
+def _get_enabled_filters(config_struct_filters):
     """Extract enabled filters from configuration."""
     return {
         k.replace("calculate_", ""): v
-        for k, v in config_structFilters.items()
+        for k, v in config_struct_filters.items()
         if "calculate_" in k and v
     }
 
 
 def _write_stage_readme(
-    output_dir: Path, stage_dir: str, config_structFilters: dict
+    output_dir: Path, stage_dir: str, config_struct_filters: dict
 ) -> None:
     """Write a README.md into the stage output directory describing available filters and outputs."""
-    enabled = sorted(_get_enabled_filters(config_structFilters).keys())
+    enabled = sorted(_get_enabled_filters(config_struct_filters).keys())
     all_known = sorted(_FILTER_DESCRIPTIONS.keys(), key=lambda x: x.lower())
     disabled = [f for f in all_known if f not in enabled]
 
@@ -226,7 +227,7 @@ def _write_stage_readme(
     lines.append("## Filters")
     lines.append("")
     lines.append(
-        "Each filter is controlled via `config_structFilters.yml` keys like `calculate_<filter_name>: true`."
+        "Each filter is controlled via `config_struct_filters.yml` keys like `calculate_<filter_name>: true`."
     )
     lines.append("")
     lines.append("### Enabled in this run")
@@ -282,9 +283,9 @@ def _write_stage_readme(
     (output_dir / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def _resolve_parse_input_n_jobs(config_structFilters: dict, config: dict) -> int:
+def _resolve_parse_input_n_jobs(config_struct_filters: dict, config: dict) -> int:
     """Resolve workers for one-time SMILES parsing."""
-    raw = config_structFilters.get("parse_input_n_jobs", -1)
+    raw = config_struct_filters.get("parse_input_n_jobs", -1)
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -325,39 +326,17 @@ def _log_stage_timings(timings: dict[str, float]) -> None:
         logger.info("  %-28s %.3f", name, value)
 
 
-def main(config, stage_dir, reporter=None):
-    """Main entry point for structural filters stage.
-
-    Args:
-        config: Configuration dictionary
-        stage_dir: Stage directory path (e.g., 'stages/03_structural_filters_post')
-    """
-    sample_size = config["sample_size"]
-    folder_to_save = Path(process_path(config["folder_to_save"]))
-    output_dir = folder_to_save / stage_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    input_path = _get_input_path(config, stage_dir, folder_to_save)
-
-    try:
-        input_df, model_name = _load_input_data(input_path)
-    except Exception as e:
-        logger.error("Could not load input data from %s: %s", input_path, e)
-        raise
-
-    config_structFilters = load_config(config["config_structFilters"])
-    _write_stage_readme(output_dir, stage_dir, config_structFilters)
-    filters_to_calculate = _get_enabled_filters(config_structFilters)
-
-    parse_input_n_jobs = _resolve_parse_input_n_jobs(config_structFilters, config)
+def _resolve_stage_options(config_struct_filters, config):
+    """Extract and validate stage-level options from config."""
+    parse_input_n_jobs = _resolve_parse_input_n_jobs(config_struct_filters, config)
     write_per_filter_outputs = bool(
-        config_structFilters.get("write_per_filter_outputs", True)
+        config_struct_filters.get("write_per_filter_outputs", True)
     )
-    generate_plots = bool(config_structFilters.get("generate_plots", True))
+    generate_plots = bool(config_struct_filters.get("generate_plots", True))
     generate_failure_analysis = bool(
-        config_structFilters.get("generate_failure_analysis", True)
+        config_struct_filters.get("generate_failure_analysis", True)
     )
-    combine_in_memory = bool(config_structFilters.get("combine_in_memory", True))
+    combine_in_memory = bool(config_struct_filters.get("combine_in_memory", True))
     if not write_per_filter_outputs and not combine_in_memory:
         logger.warning(
             "write_per_filter_outputs=false with combine_in_memory=false is invalid. "
@@ -374,6 +353,131 @@ def main(config, stage_dir, reporter=None):
         generate_failure_analysis,
         combine_in_memory,
     )
+    return {
+        "parse_input_n_jobs": parse_input_n_jobs,
+        "write_per_filter_outputs": write_per_filter_outputs,
+        "generate_plots": generate_plots,
+        "generate_failure_analysis": generate_failure_analysis,
+        "combine_in_memory": combine_in_memory,
+    }
+
+
+def _make_alerts_progress_cb(reporter, base, molecule_total, stage_total, filter_name):
+    """Build a progress callback for the common_alerts filter."""
+
+    def _alerts_progress(
+        done: int, total: int, base_value: int = base, name: str = filter_name
+    ) -> None:
+        if total <= 0:
+            stage_done = 0
+        else:
+            stage_done = int(round((done / total) * molecule_total))
+        stage_done = max(0, min(molecule_total, stage_done))
+        reporter.progress(
+            base_value + stage_done,
+            stage_total,
+            message=f"StructFilters: {name}",
+        )
+
+    return _alerts_progress
+
+
+def _compute_filter(
+    config,
+    filter_name,
+    apply_func,
+    prepared_payload,
+    is_csv,
+    input_df,
+    input_path,
+    sample_size,
+    progress_cb,
+):
+    """Dispatch a single filter computation to the appropriate processing path."""
+    if prepared_payload is not None:
+        return process_prepared_payload(
+            config, prepared_payload, apply_func, progress_cb=progress_cb
+        )
+    if is_csv:
+        return process_one_dataframe(
+            config, input_df, apply_func, sample_size, progress_cb=progress_cb
+        )
+    return process_one_file(
+        config, input_path, apply_func, sample_size, progress_cb=progress_cb
+    )
+
+
+def _run_post_filter_phases(
+    config,
+    config_struct_filters,
+    stage_dir,
+    output_dir,
+    input_df,
+    pass_mask_by_filter,
+    opts,
+    timings,
+):
+    """Execute combine, plot, failure-analysis, and inject phases."""
+    combine_started = perf_counter()
+    is_single_stage = config.get("_run_single_stage_override") == "struct_filters"
+    if config_struct_filters.get("filter_data", False) or is_single_stage:
+        if opts["combine_in_memory"]:
+            combine_filter_results_in_memory(output_dir, input_df, pass_mask_by_filter)
+        else:
+            filter_data(config, stage_dir)
+    timings["combine"] = perf_counter() - combine_started
+
+    plot_started = perf_counter()
+    if opts["generate_plots"] and opts["write_per_filter_outputs"]:
+        plot_calculated_stats(config, stage_dir)
+        plot_restriction_ratios(config, stage_dir)
+    elif opts["generate_plots"]:
+        logger.info("Skipping plots because write_per_filter_outputs is disabled.")
+    timings["plots"] = perf_counter() - plot_started
+
+    fail_analysis_started = perf_counter()
+    is_post_desc = _is_post_descriptors_stage(stage_dir)
+    if (
+        is_post_desc
+        and opts["generate_failure_analysis"]
+        and opts["write_per_filter_outputs"]
+    ):
+        plot_filter_failures_analysis(config, stage_dir)
+    elif is_post_desc and opts["generate_failure_analysis"]:
+        logger.info(
+            "Skipping failure analysis because write_per_filter_outputs is disabled."
+        )
+    timings["failure_analysis"] = perf_counter() - fail_analysis_started
+
+    inject_started = perf_counter()
+    inject_identity_columns_to_all_csvs(config, stage_dir)
+    timings["inject_identity"] = perf_counter() - inject_started
+
+
+def main(config, stage_dir, reporter=None):
+    """Main entry point for structural filters stage.
+
+    Args:
+        config: Configuration dictionary
+        stage_dir: Stage directory path (e.g., 'stages/03_structural_filters_post')
+    """
+    sample_size = config["sample_size"]
+    folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
+    output_dir = folder_to_save / stage_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    input_path = _get_input_path(config, stage_dir, folder_to_save)
+
+    try:
+        input_df, model_name = _load_input_data(input_path)
+    except Exception as e:
+        logger.error("Could not load input data from %s: %s", input_path, e)
+        raise
+
+    config_struct_filters = load_config(config[CFG_STRUCT_FILTERS])
+    _write_stage_readme(output_dir, stage_dir, config_struct_filters)
+    filters_to_calculate = _get_enabled_filters(config_struct_filters)
+    opts = _resolve_stage_options(config_struct_filters, config)
 
     is_csv = input_path.lower().endswith(".csv")
     filter_names = list(filters_to_calculate)
@@ -388,7 +492,7 @@ def main(config, stage_dir, reporter=None):
         prepared_payload = prepare_structfilters_input(
             input_df,
             sample_size,
-            parse_input_n_jobs,
+            opts["parse_input_n_jobs"],
         )
     timings["input_parse"] = perf_counter() - parse_started
 
@@ -404,36 +508,22 @@ def main(config, stage_dir, reporter=None):
         apply_func = filter_function_applier(filter_name)
         progress_cb = None
         if reporter is not None and filter_name == "common_alerts":
-
-            def _alerts_progress(
-                done: int, total: int, base_value: int = base, name: str = filter_name
-            ) -> None:
-                if total <= 0:
-                    stage_done = 0
-                else:
-                    stage_done = int(round((done / total) * molecule_total))
-                stage_done = max(0, min(molecule_total, stage_done))
-                reporter.progress(
-                    base_value + stage_done,
-                    stage_total,
-                    message=f"StructFilters: {name}",
-                )
-
-            progress_cb = _alerts_progress
+            progress_cb = _make_alerts_progress_cb(
+                reporter, base, molecule_total, stage_total, filter_name
+            )
 
         compute_started = perf_counter()
-        if prepared_payload is not None:
-            filter_results = process_prepared_payload(
-                config, prepared_payload, apply_func, progress_cb=progress_cb
-            )
-        elif is_csv:
-            filter_results = process_one_dataframe(
-                config, input_df, apply_func, sample_size, progress_cb=progress_cb
-            )
-        else:
-            filter_results = process_one_file(
-                config, input_path, apply_func, sample_size, progress_cb=progress_cb
-            )
+        filter_results = _compute_filter(
+            config,
+            filter_name,
+            apply_func,
+            prepared_payload,
+            is_csv,
+            input_df,
+            input_path,
+            sample_size,
+            progress_cb,
+        )
         timings[f"filter_compute:{filter_name}"] = perf_counter() - compute_started
 
         if filter_results is None:
@@ -442,10 +532,10 @@ def main(config, stage_dir, reporter=None):
 
         post_started = perf_counter()
         final_res, final_extended = get_basic_stats(
-            config_structFilters, filter_results, model_name, filter_name=filter_name
+            config_struct_filters, filter_results, model_name, filter_name=filter_name
         )
         pass_mask_by_filter[filter_name] = _build_filter_pass_mask(final_extended)
-        if write_per_filter_outputs:
+        if opts["write_per_filter_outputs"]:
             _save_filter_results(output_dir, filter_name, final_res, final_extended)
         timings[f"filter_post:{filter_name}"] = perf_counter() - post_started
         if reporter is not None:
@@ -455,39 +545,17 @@ def main(config, stage_dir, reporter=None):
                 message=f"StructFilters: {filter_name}",
             )
 
-    combine_started = perf_counter()
-    is_single_stage = config.get("_run_single_stage_override") == "struct_filters"
-    if config_structFilters.get("filter_data", False) or is_single_stage:
-        if combine_in_memory:
-            combine_filter_results_in_memory(output_dir, input_df, pass_mask_by_filter)
-        else:
-            filter_data(config, stage_dir)
-    timings["combine"] = perf_counter() - combine_started
+    _run_post_filter_phases(
+        config,
+        config_struct_filters,
+        stage_dir,
+        output_dir,
+        input_df,
+        pass_mask_by_filter,
+        opts,
+        timings,
+    )
 
-    plot_started = perf_counter()
-    if generate_plots and write_per_filter_outputs:
-        plot_calculated_stats(config, stage_dir)
-        plot_restriction_ratios(config, stage_dir)
-    elif generate_plots and not write_per_filter_outputs:
-        logger.info("Skipping plots because write_per_filter_outputs is disabled.")
-    timings["plots"] = perf_counter() - plot_started
-
-    fail_analysis_started = perf_counter()
-    if (
-        _is_post_descriptors_stage(stage_dir)
-        and generate_failure_analysis
-        and write_per_filter_outputs
-    ):
-        plot_filter_failures_analysis(config, stage_dir)
-    elif _is_post_descriptors_stage(stage_dir) and generate_failure_analysis:
-        logger.info(
-            "Skipping failure analysis because write_per_filter_outputs is disabled."
-        )
-    timings["failure_analysis"] = perf_counter() - fail_analysis_started
-
-    inject_started = perf_counter()
-    inject_identity_columns_to_all_csvs(config, stage_dir)
-    timings["inject_identity"] = perf_counter() - inject_started
     timings["total"] = perf_counter() - stage_started
     _log_stage_timings(timings)
 

@@ -1,7 +1,7 @@
 """Tests for synthesis/utils.py."""
 
 import json
-import pickle
+import pickle  # noqa: S403 — test-only, trusted data
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,6 +27,13 @@ from hedgehog.synthesis.utils import (
 from hedgehog.synthesis.utils import (
     _calculate_syba_score_single as _calculate_syba_score,
 )
+from tests.constants import (
+    COL_MODEL_NAME,
+    COL_SMILES,
+    FILE_FILTERED_MOLECULES,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
+)
 
 
 class _DummyRascoreClassifier:
@@ -45,13 +52,13 @@ class TestCalculateSaScore:
 
     def test_valid_smiles_benzene(self):
         """SA score for benzene - should be a valid score."""
-        score = _calculate_sa_score("c1ccccc1")
+        score = _calculate_sa_score(SMILES_BENZENE)
         if not np.isnan(score):
             assert 1 <= score <= 10
 
     def test_valid_smiles_ethanol(self):
         """SA score for ethanol - should be easy to synthesize."""
-        score = _calculate_sa_score("CCO")
+        score = _calculate_sa_score(SMILES_ETHANOL)
         if not np.isnan(score):
             assert 1 <= score <= 10
             # Simple molecules should have low SA score
@@ -74,7 +81,7 @@ class TestCalculateSybaScore:
 
     def test_valid_smiles(self):
         """SYBA score for valid SMILES."""
-        score = _calculate_syba_score("c1ccccc1")
+        score = _calculate_syba_score(SMILES_BENZENE)
         # Score can be NaN if SYBA model not available
         if not np.isnan(score):
             assert isinstance(score, (int, float))
@@ -179,8 +186,8 @@ class TestMergeRetrosynthesisResults:
         """Basic merge of retrosynthesis results."""
         input_df = pd.DataFrame(
             {
-                "smiles": ["a", "b", "c"],
-                "model_name": ["m1", "m1", "m1"],
+                COL_SMILES: ["a", "b", "c"],
+                COL_MODEL_NAME: ["m1", "m1", "m1"],
             }
         )
         retro_df = pd.DataFrame(
@@ -202,8 +209,8 @@ class TestMergeRetrosynthesisResults:
         """Merge when retro results have fewer rows than input."""
         input_df = pd.DataFrame(
             {
-                "smiles": ["a", "b", "c", "d"],
-                "model_name": ["m1", "m1", "m1", "m1"],
+                COL_SMILES: ["a", "b", "c", "d"],
+                COL_MODEL_NAME: ["m1", "m1", "m1", "m1"],
             }
         )
         retro_df = pd.DataFrame(
@@ -227,8 +234,8 @@ class TestMergeRetrosynthesisResults:
         """Original columns from input should be preserved."""
         input_df = pd.DataFrame(
             {
-                "smiles": ["a", "b"],
-                "model_name": ["m1", "m2"],
+                COL_SMILES: ["a", "b"],
+                COL_MODEL_NAME: ["m1", "m2"],
                 "mol_idx": ["idx-0", "idx-1"],
             }
         )
@@ -241,8 +248,8 @@ class TestMergeRetrosynthesisResults:
         )
         result = merge_retrosynthesis_results(input_df, retro_df)
 
-        assert "smiles" in result.columns
-        assert "model_name" in result.columns
+        assert COL_SMILES in result.columns
+        assert COL_MODEL_NAME in result.columns
         assert "mol_idx" in result.columns
 
 
@@ -297,7 +304,7 @@ class TestPrepareInputSmiles:
 
     def test_basic_output(self, tmp_path):
         """Should write SMILES to output file."""
-        df = pd.DataFrame({"smiles": ["CCO", "c1ccccc1", "CC"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC"]})
         output_file = tmp_path / "output.smi"
 
         count = prepare_input_smiles(df, output_file)
@@ -305,12 +312,12 @@ class TestPrepareInputSmiles:
         assert count == 3
         assert output_file.exists()
         content = output_file.read_text()
-        assert "CCO" in content
-        assert "c1ccccc1" in content
+        assert SMILES_ETHANOL in content
+        assert SMILES_BENZENE in content
 
     def test_creates_parent_dirs(self, tmp_path):
         """Should create parent directories if needed."""
-        df = pd.DataFrame({"smiles": ["CCO"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL]})
         output_file = tmp_path / "nested" / "deep" / "output.smi"
 
         prepare_input_smiles(df, output_file)
@@ -319,7 +326,7 @@ class TestPrepareInputSmiles:
 
     def test_skips_nan(self, tmp_path):
         """Should skip NaN SMILES."""
-        df = pd.DataFrame({"smiles": ["CCO", np.nan, "CC"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL, np.nan, "CC"]})
         output_file = tmp_path / "output.smi"
 
         count = prepare_input_smiles(df, output_file)
@@ -527,7 +534,7 @@ class TestGetInputPath:
         """Should find structural filters output first."""
         sf_dir = tmp_path / "stages" / "03_structural_filters_post"
         sf_dir.mkdir(parents=True)
-        (sf_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (sf_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
         config = {"generated_mols_path": "/fallback/path.csv"}
         result = get_input_path(config, str(tmp_path))
@@ -538,7 +545,9 @@ class TestGetInputPath:
         """Should find descriptors output if no struct filters."""
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         config = {"generated_mols_path": "/fallback/path.csv"}
         result = get_input_path(config, str(tmp_path))
@@ -586,7 +595,7 @@ class TestCalculateRaScores:
 
     def test_valid_smiles(self):
         """RA scores for known synthesizable molecules should be high."""
-        scores = _calculate_ra_scores_batch(["c1ccccc1", "CCO"])
+        scores = _calculate_ra_scores_batch([SMILES_BENZENE, SMILES_ETHANOL])
         assert len(scores) == 2
         for s in scores:
             assert not np.isnan(s)
@@ -600,7 +609,9 @@ class TestCalculateRaScores:
 
     def test_mixed_valid_invalid(self):
         """Batch with valid and invalid SMILES."""
-        scores = _calculate_ra_scores_batch(["c1ccccc1", "not_a_molecule", "CCO"])
+        scores = _calculate_ra_scores_batch(
+            [SMILES_BENZENE, "not_a_molecule", SMILES_ETHANOL]
+        )
         assert len(scores) == 3
         assert not np.isnan(scores[0])
         assert np.isnan(scores[1])
@@ -656,7 +667,7 @@ class TestRascoreAutoInstall:
             "_load_rascore",
             lambda: {"kind": "pickle_classifier", "model": _DummyRascoreClassifier()},
         )
-        scores = _calculate_ra_scores_batch(["CCO", "invalid_smiles"])
+        scores = _calculate_ra_scores_batch([SMILES_ETHANOL, "invalid_smiles"])
 
         assert len(scores) == 2
         assert scores[0] == pytest.approx(0.8)
@@ -683,7 +694,7 @@ class TestRascoreAutoInstall:
         monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
         monkeypatch.setattr(synthesis_utils.subprocess, "run", _fake_run)
 
-        scores = _calculate_ra_scores_batch(["CCO", "invalid_smiles"])
+        scores = _calculate_ra_scores_batch([SMILES_ETHANOL, "invalid_smiles"])
 
         assert called["run"] is True
         assert len(scores) == 2

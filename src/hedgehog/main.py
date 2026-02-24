@@ -20,6 +20,12 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from hedgehog._constants import (
+    CFG_DESCRIPTORS,
+    CFG_DOCKING,
+    CFG_STRUCT_FILTERS,
+    KEY_FOLDER_TO_SAVE,
+)
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
 from hedgehog.pipeline import calculate_metrics
 from hedgehog.utils.data_prep import prepare_input_data
@@ -328,7 +334,7 @@ def _resolve_output_folder(
     generated_mols_path: str | None,
 ) -> Path:
     """Determine and log the appropriate output folder based on CLI flags."""
-    original_folder = Path(config_dict["folder_to_save"])
+    original_folder = Path(config_dict[KEY_FOLDER_TO_SAVE])
 
     if reuse_folder:
         logger.info(
@@ -826,7 +832,7 @@ def run(
         folder_to_save = _resolve_output_folder(
             config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
         )
-    config_dict["folder_to_save"] = str(folder_to_save)
+    config_dict[KEY_FOLDER_TO_SAVE] = str(folder_to_save)
     LoggerSingleton().configure_log_directory(folder_to_save)
 
     _preprocess_input(config_dict, folder_to_save)
@@ -901,14 +907,14 @@ def report(
     else:
         config = {}
 
-    config["folder_to_save"] = str(results_path)
+    config[KEY_FOLDER_TO_SAVE] = str(results_path)
 
     # Point sub-config keys to actual files in the run's configs directory
     sub_config_keys = [
-        "config_descriptors",
-        "config_structFilters",
+        CFG_DESCRIPTORS,
+        CFG_STRUCT_FILTERS,
         "config_synthesis",
-        "config_docking",
+        CFG_DOCKING,
         "config_docking_filters",
         "config_moleval",
     ]

@@ -58,66 +58,72 @@ export function Welcome(): React.ReactElement {
     });
   };
 
+  const executeAction = (action: Screen | 'exit') => {
+    if (action === 'exit') {
+      exit();
+    } else {
+      setScreen(action);
+    }
+  };
+
+  const handleUpNavigation = () => {
+    if (section === 'actions') {
+      setFocusedIndex(Math.max(0, focusedIndex - 1));
+    } else if (focusedIndex === 0) {
+      setSection('actions');
+      setFocusedIndex(QUICK_ACTIONS.length - 1);
+    } else {
+      setFocusedIndex(focusedIndex - 1);
+    }
+  };
+
+  const handleDownNavigation = () => {
+    if (section === 'actions') {
+      if (focusedIndex === QUICK_ACTIONS.length - 1 && recentJobs.length > 0) {
+        setSection('recent');
+        setFocusedIndex(0);
+      } else {
+        setFocusedIndex(Math.min(QUICK_ACTIONS.length - 1, focusedIndex + 1));
+      }
+    } else {
+      setFocusedIndex(Math.min(recentJobs.length - 1, focusedIndex + 1));
+    }
+  };
+
+  const handleSelectAction = () => {
+    if (section === 'actions') {
+      executeAction(QUICK_ACTIONS[focusedIndex].action);
+    } else if (section === 'recent' && recentJobs[focusedIndex]) {
+      setSelectedJob(recentJobs[focusedIndex].id);
+      setScreen('results');
+    }
+  };
+
   useInput((input, key) => {
     // Quick action shortcuts
     for (const item of QUICK_ACTIONS) {
       if (input === item.key) {
-        if (item.action === 'exit') {
-          exit();
-        } else {
-          setScreen(item.action);
-        }
+        executeAction(item.action);
         return;
       }
     }
 
-    // [p] Go to running pipeline
     if (input === 'p' && isRunning) {
       setScreen('pipelineRunner');
       return;
     }
 
-    // Delete job with 'd' when in recent section
     if (input === 'd' && section === 'recent') {
       deleteSelectedJob();
       return;
     }
 
-    // Navigation
     if (key.upArrow) {
-      if (section === 'actions') {
-        setFocusedIndex(Math.max(0, focusedIndex - 1));
-      } else if (section === 'recent') {
-        if (focusedIndex === 0) {
-          setSection('actions');
-          setFocusedIndex(QUICK_ACTIONS.length - 1);
-        } else {
-          setFocusedIndex(focusedIndex - 1);
-        }
-      }
+      handleUpNavigation();
     } else if (key.downArrow) {
-      if (section === 'actions') {
-        if (focusedIndex === QUICK_ACTIONS.length - 1 && recentJobs.length > 0) {
-          setSection('recent');
-          setFocusedIndex(0);
-        } else {
-          setFocusedIndex(Math.min(QUICK_ACTIONS.length - 1, focusedIndex + 1));
-        }
-      } else if (section === 'recent') {
-        setFocusedIndex(Math.min(recentJobs.length - 1, focusedIndex + 1));
-      }
+      handleDownNavigation();
     } else if (key.return || key.rightArrow) {
-      if (section === 'actions') {
-        const item = QUICK_ACTIONS[focusedIndex];
-        if (item.action === 'exit') {
-          exit();
-        } else {
-          setScreen(item.action);
-        }
-      } else if (section === 'recent' && recentJobs[focusedIndex]) {
-        setSelectedJob(recentJobs[focusedIndex].id);
-        setScreen('results');
-      }
+      handleSelectAction();
     } else if (key.escape) {
       exit();
     }

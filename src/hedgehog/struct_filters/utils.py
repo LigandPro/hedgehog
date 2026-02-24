@@ -67,11 +67,11 @@ def _silence_worker_stdio() -> None:
         pass
 
 
-def _resolve_scheduler(config_structFilters, scheduler_key, default="processes"):
+def _resolve_scheduler(config_struct_filters, scheduler_key, default="processes"):
     """Resolve scheduler name for medchem parallel APIs."""
-    scheduler_raw = config_structFilters.get(scheduler_key)
+    scheduler_raw = config_struct_filters.get(scheduler_key)
     if scheduler_raw is None:
-        scheduler_raw = config_structFilters.get("parallel_scheduler", default)
+        scheduler_raw = config_struct_filters.get("parallel_scheduler", default)
     scheduler = str(scheduler_raw).strip().lower()
     if scheduler not in _VALID_SCHEDULERS:
         logger.warning(
@@ -202,6 +202,7 @@ except ImportError:
     LILLY_AVAILABLE = False
     LillyDemeritsFilters = None
 
+from hedgehog._constants import CFG_STRUCT_FILTERS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
@@ -271,7 +272,7 @@ def camelcase(any_str):
 
 def build_identity_map_from_descriptors(config):
     """Build a map of (smiles, model_name) -> mol_idx from descriptors output."""
-    base_folder = Path(process_path(config["folder_to_save"]))
+    base_folder = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     id_path = base_folder / "Descriptors" / "passDescriptorsSMILES.csv"
 
     try:
@@ -497,6 +498,36 @@ def process_prepared_payload(config, prepared_payload, apply_filter, progress_cb
     return apply_filter(config, mols, smiles)
 
 
+def _filter_valid_molecule_tuples(smiles):
+    """Filter out invalid molecules from a list of (smiles, model, mol, ...) tuples."""
+    cleaned = []
+    for item in smiles:
+        if len(item) < 3:
+            continue
+        smi, model, mol = item[0], item[1], item[2]
+        if mol is None:
+            continue
+        if len(item) >= 4:
+            cleaned.append((smi, model, mol, item[3]))
+        else:
+            cleaned.append((smi, model, mol))
+    return cleaned
+
+
+def _invoke_filter(apply_filter, config, mols, smiles, progress_cb=None):
+    """Invoke a filter function with optional progress callback.
+
+    Tries passing progress_cb as a keyword argument first; falls back to
+    calling without it if the filter does not accept that parameter.
+    """
+    if progress_cb is not None:
+        try:
+            return apply_filter(config, mols, smiles, progress_cb=progress_cb)
+        except TypeError:
+            pass
+    return apply_filter(config, mols, smiles)
+
+
 def process_one_dataframe(config, df, apply_filter, subsample, progress_cb=None):
     """Process a DataFrame directly without re-reading from file.
 
@@ -537,29 +568,13 @@ def process_one_dataframe(config, df, apply_filter, subsample, progress_cb=None)
             zip(smiles_list, [None] * len(smiles_list), mols, mol_indices, strict=False)
         )
 
-    # Filter out invalid molecules
-    cleaned = []
-    for item in smiles:
-        if len(item) >= 3:
-            smi, model, mol = item[0], item[1], item[2]
-            if mol is not None:
-                if len(item) >= 4:
-                    mol_idx = item[3]
-                    cleaned.append((smi, model, mol, mol_idx))
-                else:
-                    cleaned.append((smi, model, mol))
-    smiles = cleaned
+    smiles = _filter_valid_molecule_tuples(smiles)
     mols = [it[2] for it in smiles]
 
     if len(mols) == 0:
         return None
 
-    if progress_cb is not None:
-        try:
-            return apply_filter(config, mols, smiles, progress_cb=progress_cb)
-        except TypeError:
-            pass
-    return apply_filter(config, mols, smiles)
+    return _invoke_filter(apply_filter, config, mols, smiles, progress_cb)
 
 
 def process_one_file(config, input_path, apply_filter, subsample, progress_cb=None):
@@ -608,89 +623,73 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
     elif input_type == "sdf":
         mols, smiles = sdf_to_mols(input_path, subsample)
 
-    if isinstance(smiles[0], tuple):
-        cleaned = []
-        for item in smiles:
-            if len(item) >= 3:
-                smi, model, mol = item[0], item[1], item[2]
-                if mol is not None:
-                    if len(item) >= 4:
-                        mol_idx = item[3]
-                        cleaned.append((smi, model, mol, mol_idx))
-                    else:
-                        cleaned.append((smi, model, mol))
-        smiles = cleaned
+    is_tuple_format = isinstance(smiles[0], tuple)
+    if is_tuple_format:
+        smiles = _filter_valid_molecule_tuples(smiles)
         mols = [it[2] for it in smiles]
     else:
         mols, smiles = dropna(mols, smiles)
 
     assert len(mols) == len(smiles), f"{len(mols)}, {len(smiles)}"
-    if not isinstance(smiles[0], tuple):
+    if not is_tuple_format:
         assert len(mols) <= subsample
 
     for mol, smi in zip(mols, smiles, strict=False):
         smi_val = smi[0] if isinstance(smi, tuple) else smi
         assert mol is not None, f"{smi_val}"
 
-    final_result = None
-    if len(mols) > 0:
-        if isinstance(smiles[0], tuple):
-            if progress_cb is not None:
-                try:
-                    final_result = apply_filter(
-                        config, mols, smiles, progress_cb=progress_cb
-                    )
-                except TypeError:
-                    final_result = apply_filter(config, mols, smiles)
-            else:
-                final_result = apply_filter(config, mols, smiles)
-        else:
-            if progress_cb is not None:
-                try:
-                    final_result = apply_filter(config, mols, progress_cb=progress_cb)
-                except TypeError:
-                    final_result = apply_filter(config, mols)
-            else:
-                final_result = apply_filter(config, mols)
+    if len(mols) == 0:
+        return None
 
-    return final_result
+    if is_tuple_format:
+        return _invoke_filter(apply_filter, config, mols, smiles, progress_cb)
+
+    if progress_cb is not None:
+        try:
+            return apply_filter(config, mols, progress_cb=progress_cb)
+        except TypeError:
+            pass
+    return apply_filter(config, mols)
 
 
-def add_model_name_col(final_result, smiles_with_model):
-    """Add smiles, model_name, and mol_idx columns from input data."""
-    expected_len = len(smiles_with_model)
+def _align_result_length(final_result, expected_len, smiles_with_model):
+    """Pad or trim final_result to match expected_len.
+
+    Returns the adjusted DataFrame.
+    """
     actual_len = len(final_result)
+    if actual_len == expected_len:
+        return final_result
 
-    if actual_len != expected_len:
-        logger.error(
-            "Length mismatch in add_model_name_col: final_result has %d rows, "
-            "but smiles_with_model has %d items.",
-            actual_len,
-            expected_len,
+    logger.error(
+        "Length mismatch in add_model_name_col: final_result has %d rows, "
+        "but smiles_with_model has %d items.",
+        actual_len,
+        expected_len,
+    )
+
+    if actual_len < expected_len:
+        logger.warning(
+            "Padding final_result from %d to %d rows.", actual_len, expected_len
         )
-
-        if actual_len < expected_len:
-            logger.warning(
-                "Padding final_result from %d to %d rows.", actual_len, expected_len
+        if len(final_result) > 0:
+            template_row = final_result.iloc[-1].to_dict()
+            final_result = _pad_dataframe_to_length(
+                final_result, expected_len, template_row
             )
-            if len(final_result) > 0:
-                template_row = final_result.iloc[-1].to_dict()
-                final_result = _pad_dataframe_to_length(
-                    final_result, expected_len, template_row
-                )
-                logger.info("Padded to %d rows.", len(final_result))
-            else:
-                logger.error("final_result is empty. Creating all rows from scratch.")
-                smiles_list = [
-                    item[0] if isinstance(item, tuple) and len(item) > 0 else None
-                    for item in smiles_with_model
-                ]
-                final_result = _create_failed_dataframe(expected_len, smiles_list)
+            logger.info("Padded to %d rows.", len(final_result))
         else:
-            logger.warning(
-                "Trimming final_result from %d to %d rows.", actual_len, expected_len
-            )
-            final_result = final_result.iloc[:expected_len].reset_index(drop=True)
+            logger.error("final_result is empty. Creating all rows from scratch.")
+            smiles_list = [
+                item[0] if isinstance(item, tuple) and len(item) > 0 else None
+                for item in smiles_with_model
+            ]
+            final_result = _create_failed_dataframe(expected_len, smiles_list)
+    else:
+        logger.warning(
+            "Trimming final_result from %d to %d rows.", actual_len, expected_len
+        )
+        final_result = final_result.iloc[:expected_len].reset_index(drop=True)
 
     if len(final_result) != expected_len:
         msg = (
@@ -698,6 +697,14 @@ def add_model_name_col(final_result, smiles_with_model):
             f"still doesn't match expected ({expected_len})."
         )
         raise ValueError(msg)
+
+    return final_result
+
+
+def add_model_name_col(final_result, smiles_with_model):
+    """Add smiles, model_name, and mol_idx columns from input data."""
+    expected_len = len(smiles_with_model)
+    final_result = _align_result_length(final_result, expected_len, smiles_with_model)
 
     smiles_vals = [item[0] for item in smiles_with_model]
     model_vals = [
@@ -786,24 +793,9 @@ def _init_alert_worker_quiet(
     _init_alert_worker(compiled_smarts, rule_set_names)
 
 
-def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_cb=None):
-    logger.info("Calculating Common Alerts...")
-
-    # Load config and filter alerts ONCE outside
-    config_structFilters = load_config(config["config_structFilters"])
-    alert_data = filter_alerts(config_structFilters)
-
-    # Get rule set names for column creation
-    rule_set_names = alert_data["rule_set_name"].unique().tolist()
-
-    logger.info(
-        "Processing %d filtered molecules with %d alert rule sets",
-        len(mols),
-        len(rule_set_names),
-    )
-
-    # Pre-compile SMARTS patterns once to avoid recompiling per molecule.
-    compiled_smarts: list[tuple[str, Chem.Mol, str]] = []
+def _compile_alert_smarts(alert_data) -> list[tuple[str, object, str]]:
+    """Pre-compile SMARTS patterns from alert data to avoid per-molecule recompilation."""
+    compiled: list[tuple[str, object, str]] = []
     for _, row in alert_data.iterrows():
         smarts = row.get("smarts")
         ruleset = row.get("rule_set_name")
@@ -811,16 +803,16 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
         if not isinstance(smarts, str) or not isinstance(ruleset, str):
             continue
         patt = Chem.MolFromSmarts(smarts)
-        if patt is None:
-            continue
-        compiled_smarts.append((ruleset, patt, str(desc)))
+        if patt is not None:
+            compiled.append((ruleset, patt, str(desc)))
+    return compiled
 
-    # Parallel per-molecule alert checking.
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    logger.info("Common Alerts workers: %d", n_jobs)
-    items = [(i, mol) for i, mol in enumerate(mols)]
-    total_items = len(items)
 
+def _setup_alerts_progress(total_items, progress_cb):
+    """Set up progress tracking and heartbeat thread for structural alerts.
+
+    Returns (progress_wrapper, heartbeat_stop, heartbeat_thread).
+    """
     progress_log_step = max(1, min(500, total_items // 20)) if total_items else 1
     heartbeat_interval_seconds = 30.0
     logger.info(
@@ -886,32 +878,11 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
         )
         heartbeat_thread.start()
 
-    worker_initializer = (
-        _init_alert_worker_quiet
-        if n_jobs > 1 and len(items) > 1
-        else _init_alert_worker
-    )
-    try:
-        results_list = parallel_map(
-            _check_alerts_single_mol,
-            items,
-            n_jobs,
-            progress=_progress_wrapper,
-            initializer=worker_initializer,
-            initargs=(compiled_smarts, rule_set_names),
-        )
-    finally:
-        heartbeat_stop.set()
-        if heartbeat_thread is not None:
-            heartbeat_thread.join(timeout=0.1)
+    return _progress_wrapper, heartbeat_stop, heartbeat_thread
 
-    logger.info(
-        "Common Alerts completed: %d/%d molecules (%.1f%%)",
-        total_items,
-        total_items,
-        100.0 if total_items else 0.0,
-    )
 
+def _build_alerts_results(results_list, mols):
+    """Reconstruct alerts results DataFrame from parallel worker output."""
     # Restore mol column (RDKit Mol objects are not picklable across processes).
     for row_data in results_list:
         idx = row_data.pop("_mol_idx")
@@ -927,18 +898,76 @@ def apply_structural_alerts(config, mols, smiles_modelName_mols=None, progress_c
     ]
     results["pass"] = results[pass_cols].all(axis=1)
     results["pass_any"] = results[pass_cols].any(axis=1)
-
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
     return results
 
 
-def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
+def apply_structural_alerts(
+    config, mols, smiles_model_name_mols=None, progress_cb=None
+):
+    logger.info("Calculating Common Alerts...")
+
+    # Load config and filter alerts ONCE outside
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    alert_data = filter_alerts(config_sf)
+
+    rule_set_names = alert_data["rule_set_name"].unique().tolist()
+
+    logger.info(
+        "Processing %d filtered molecules with %d alert rule sets",
+        len(mols),
+        len(rule_set_names),
+    )
+
+    compiled_smarts = _compile_alert_smarts(alert_data)
+
+    n_jobs = resolve_n_jobs(config_sf, config)
+    logger.info("Common Alerts workers: %d", n_jobs)
+    items = [(i, mol) for i, mol in enumerate(mols)]
+    total_items = len(items)
+
+    progress_wrapper, heartbeat_stop, heartbeat_thread = _setup_alerts_progress(
+        total_items, progress_cb
+    )
+
+    worker_initializer = (
+        _init_alert_worker_quiet
+        if n_jobs > 1 and len(items) > 1
+        else _init_alert_worker
+    )
+    try:
+        results_list = parallel_map(
+            _check_alerts_single_mol,
+            items,
+            n_jobs,
+            progress=progress_wrapper,
+            initializer=worker_initializer,
+            initargs=(compiled_smarts, rule_set_names),
+        )
+    finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=0.1)
+
+    logger.info(
+        "Common Alerts completed: %d/%d molecules (%.1f%%)",
+        total_items,
+        total_items,
+        100.0 if total_items else 0.0,
+    )
+
+    results = _build_alerts_results(results_list, mols)
+
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
+    return results
+
+
+def apply_molgraph_stats(config, mols, smiles_model_name_mols=None):
     logger.info("Calculating Molecular Graph statistics...")
     severities = list(range(1, 12))
-    config_structFilters = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = _resolve_scheduler(config_structFilters, "molgraph_scheduler")
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "molgraph_scheduler")
     logger.info("MolGraph workers: %d", n_jobs)
 
     results = {"mol": mols}
@@ -954,16 +983,16 @@ def apply_molgraph_stats(config, mols, smiles_modelName_mols=None):
         results[f"pass_{s}"] = out
     results = pd.DataFrame(results)
 
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
     return results
 
 
-def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
+def apply_molcomplexity_filters(config, mols, smiles_model_name_mols=None):
     logger.info("Calculating Complexity filters...")
-    config_path = config.get("config_structFilters")
-    config_structFilters = load_config(config_path) if config_path else {}
-    n_jobs = resolve_n_jobs(config_structFilters, config)
+    config_path = config.get(CFG_STRUCT_FILTERS)
+    config_sf = load_config(config_path) if config_path else {}
+    n_jobs = resolve_n_jobs(config_sf, config)
     logger.info("MolComplexity workers: %d", n_jobs)
 
     alert_names = mc.complexity.ComplexityFilter.list_default_available_filters()
@@ -984,15 +1013,15 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
         row["mol"] = mols[mol_idx]
     final_result = pd.DataFrame(rows)
 
-    if smiles_modelName_mols is not None:
-        final_result = add_model_name_col(final_result, smiles_modelName_mols)
+    if smiles_model_name_mols is not None:
+        final_result = add_model_name_col(final_result, smiles_model_name_mols)
     return final_result
 
 
 def _apply_simple_medchem_filter(
     config,
     mols,
-    smiles_modelName_mols,
+    smiles_model_name_mols,
     filter_name,
     mc_func,
     scheduler_key,
@@ -1003,7 +1032,7 @@ def _apply_simple_medchem_filter(
     Args:
         config: Pipeline configuration dictionary.
         mols: List of RDKit molecule objects.
-        smiles_modelName_mols: Optional list of (smiles, model_name, mol, mol_idx) tuples.
+        smiles_model_name_mols: Optional list of (smiles, model_name, mol, mol_idx) tuples.
         filter_name: Human-readable filter name for logging.
         mc_func: The medchem functional filter callable.
         scheduler_key: Config key used to resolve the parallel scheduler.
@@ -1011,7 +1040,7 @@ def _apply_simple_medchem_filter(
             additional keyword arguments for *mc_func*.
     """
     logger.info("Calculating %s filter...", filter_name)
-    config_sf = load_config(config["config_structFilters"])
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
     n_jobs = resolve_n_jobs(config_sf, config)
     scheduler = _resolve_scheduler(config_sf, scheduler_key)
     logger.info("%s workers: %d", filter_name, n_jobs)
@@ -1026,38 +1055,38 @@ def _apply_simple_medchem_filter(
         kwargs.update(extra_kwargs(config_sf))
     out = mc_func(**kwargs)
     results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
     return results
 
 
-def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
+def apply_bredt_filter(config, mols, smiles_model_name_mols=None):
     return _apply_simple_medchem_filter(
         config,
         mols,
-        smiles_modelName_mols,
+        smiles_model_name_mols,
         "Bredt",
         mc.functional.bredt_filter,
         "bredt_scheduler",
     )
 
 
-def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
+def apply_protecting_groups(config, mols, smiles_model_name_mols=None):
     return _apply_simple_medchem_filter(
         config,
         mols,
-        smiles_modelName_mols,
+        smiles_model_name_mols,
         "Protecting Groups",
         mc.functional.protecting_groups_filter,
         "protecting_groups_scheduler",
     )
 
 
-def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
+def apply_ring_infraction(config, mols, smiles_model_name_mols=None):
     return _apply_simple_medchem_filter(
         config,
         mols,
-        smiles_modelName_mols,
+        smiles_model_name_mols,
         "Ring Infraction",
         mc.functional.ring_infraction_filter,
         "ring_infraction_scheduler",
@@ -1067,11 +1096,11 @@ def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
     )
 
 
-def apply_stereo_center(config, mols, smiles_modelName_mols=None):
+def apply_stereo_center(config, mols, smiles_model_name_mols=None):
     return _apply_simple_medchem_filter(
         config,
         mols,
-        smiles_modelName_mols,
+        smiles_model_name_mols,
         "Stereo Center",
         mc.functional.num_stereo_center_filter,
         "stereo_center_scheduler",
@@ -1082,11 +1111,11 @@ def apply_stereo_center(config, mols, smiles_modelName_mols=None):
     )
 
 
-def apply_halogenicity(config, mols, smiles_modelName_mols=None):
+def apply_halogenicity(config, mols, smiles_model_name_mols=None):
     return _apply_simple_medchem_filter(
         config,
         mols,
-        smiles_modelName_mols,
+        smiles_model_name_mols,
         "Halogenicity",
         mc.functional.halogenicity_filter,
         "halogenicity_scheduler",
@@ -1098,11 +1127,11 @@ def apply_halogenicity(config, mols, smiles_modelName_mols=None):
     )
 
 
-def apply_symmetry(config, mols, smiles_modelName_mols=None):
+def apply_symmetry(config, mols, smiles_model_name_mols=None):
     return _apply_simple_medchem_filter(
         config,
         mols,
-        smiles_modelName_mols,
+        smiles_model_name_mols,
         "Symmetry",
         mc.functional.symmetry_filter,
         "symmetry_scheduler",
@@ -1112,11 +1141,11 @@ def apply_symmetry(config, mols, smiles_modelName_mols=None):
     )
 
 
-def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
+def apply_nibr_filter(config, mols, smiles_model_name_mols=None):
     logger.info("Calculating NIBR filter...")
-    config_structFilters = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = _resolve_scheduler(config_structFilters, "nibr_scheduler")
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "nibr_scheduler")
     logger.info("NIBR workers: %d", n_jobs)
 
     indexed_mols = list(enumerate(mols))
@@ -1158,8 +1187,8 @@ def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
         results["mol"] = [mols[i] for i in results["_mol_idx"]]
         results = results.drop(columns=["_mol_idx"])
 
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
     return results
 
 
@@ -1273,20 +1302,20 @@ def _reconstruct_full_results(results, valid_indices, expected_len, input_smiles
     return pd.DataFrame(complete_results)
 
 
-def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
+def apply_lilly_filter(config, mols, smiles_model_name_mols=None):
     """Apply Lilly demerits filter to molecules."""
     if not LILLY_AVAILABLE:
         raise ImportError(
             "Lilly demerits filter is not available. "
             "This filter requires conda/mamba-installed binaries. "
             "Install with: conda install lilly-medchem-rules\n"
-            "Or disable this filter by setting 'calculate_lilly: False' in config_structFilters.yml"
+            "Or disable this filter by setting 'calculate_lilly: False' in config_sf.yml"
         )
 
     logger.info("Calculating Lilly filter...")
-    config_structFilters = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = _resolve_scheduler(config_structFilters, "lilly_scheduler")
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "lilly_scheduler")
     if scheduler != "threads":
         logger.warning(
             "Lilly supports only threads scheduler. Falling back to 'threads' (got '%s').",
@@ -1295,11 +1324,11 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
         scheduler = "threads"
     logger.info("Lilly workers: %d", n_jobs)
 
-    if smiles_modelName_mols is not None:
-        expected_len = len(smiles_modelName_mols)
+    if smiles_model_name_mols is not None:
+        expected_len = len(smiles_model_name_mols)
         input_smiles = [
             item[0] if isinstance(item, tuple) and len(item) > 0 else None
-            for item in smiles_modelName_mols
+            for item in smiles_model_name_mols
         ]
     else:
         expected_len = len(mols)
@@ -1324,8 +1353,8 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
         results = _create_failed_dataframe(
             expected_len, input_smiles, "invalid_molecule"
         )
-        if smiles_modelName_mols is not None:
-            results = add_model_name_col(results, smiles_modelName_mols)
+        if smiles_model_name_mols is not None:
+            results = add_model_name_col(results, smiles_model_name_mols)
         return results
 
     # Run Lilly across worker processes, one thread-backed call per worker.
@@ -1392,8 +1421,8 @@ def apply_lilly_filter(config, mols, smiles_modelName_mols=None):
             f"CRITICAL: Results length ({len(results)}) doesn't match expected ({expected_len})"
         )
 
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
     return results
 
 
@@ -1626,15 +1655,15 @@ def check_paths(config, paths):
 
 def plot_calculated_stats(config, stage_dir):
     """Plot calculated statistics for structural filters."""
-    folder_to_save = Path(process_path(config["folder_to_save"]))
-    config_structFilters = load_config(config["config_structFilters"])
+    folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
 
     struct_folder = folder_to_save / stage_dir
     paths = list(struct_folder.glob("*/metrics.csv"))
     if not paths:
         paths = list(struct_folder.glob("*metrics.csv"))
     paths = [str(p) for p in paths]
-    check_paths(config_structFilters, paths)
+    check_paths(config_sf, paths)
 
     datas = []
     filter_names = []
@@ -1836,17 +1865,17 @@ def plot_calculated_stats(config, stage_dir):
 
 def plot_restriction_ratios(config, stage_dir):
     """Plot restriction ratios for structural filters."""
-    folder_to_save = Path(process_path(config["folder_to_save"]))
-    folder_name = config["folder_to_save"].split("/")[-1]
+    folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
+    folder_name = config[KEY_FOLDER_TO_SAVE].split("/")[-1]
 
-    config_structFilters = load_config(config["config_structFilters"])
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
 
     struct_folder = folder_to_save / stage_dir
     paths = list(struct_folder.glob("*/metrics.csv"))
     if not paths:
         paths = list(struct_folder.glob("*metrics.csv"))
     paths = [str(p) for p in paths]
-    check_paths(config_structFilters, paths)
+    check_paths(config_sf, paths)
 
     if not paths:
         logger.error("No data files found in %s", str(folder_to_save))
@@ -2053,7 +2082,7 @@ def filter_data(config, stage_dir):
         config: Configuration dictionary
         stage_dir: Stage directory path
     """
-    base_folder = Path(process_path(config["folder_to_save"]))
+    base_folder = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     folder_to_save = base_folder / stage_dir
 
     paths = list(folder_to_save.glob("*/filtered_molecules.csv"))
@@ -2215,7 +2244,7 @@ def filter_data(config, stage_dir):
 
 def inject_identity_columns_to_all_csvs(config, stage_dir):
     """Ensure identity columns are ordered consistently in all CSVs."""
-    base_folder = Path(process_path(config["folder_to_save"]))
+    base_folder = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     target_folder = base_folder / stage_dir
 
     csv_paths = [str(p) for p in target_folder.glob("*.csv")]
@@ -2280,6 +2309,31 @@ def _calculate_grid_layout(num_items):
     return rows, cols
 
 
+def _parse_failure_reasons(df, col, filter_name):
+    """Parse semicolon-delimited reasons from failed molecules for one filter column.
+
+    Returns (sorted_reasons_list, reason_counts_dict).
+    """
+    reasons_col = f"reasons_{filter_name}"
+    if reasons_col not in df.columns:
+        return [], {}
+
+    failed_molecules = df[~df[col]]
+    reasons_data = failed_molecules[reasons_col].dropna()
+
+    reason_counts: dict[str, int] = {}
+    for reasons_str in reasons_data:
+        if not (pd.notna(reasons_str) and str(reasons_str).strip()):
+            continue
+        for reason in str(reasons_str).split(";"):
+            reason = reason.strip()
+            if reason:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+    sorted_reasons = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)
+    return sorted_reasons, reason_counts
+
+
 def analyze_filter_failures(file_path):
     """Analyze filter failures from extended CSV file and generate visualizations."""
     logger.debug("Analyzing filter failures from: %s", file_path)
@@ -2309,22 +2363,9 @@ def analyze_filter_failures(file_path):
             "percentage": (failures / total) * 100,
         }
 
-        reasons_col = f"reasons_{filter_name}"
-        if reasons_col in df.columns:
-            failed_molecules = df[~df[col]]
-            reasons_data = failed_molecules[reasons_col].dropna()
-
-            reason_counts = {}
-            for reasons_str in reasons_data:
-                if pd.notna(reasons_str) and str(reasons_str).strip():
-                    for reason in str(reasons_str).split(";"):
-                        reason = reason.strip()
-                        if reason:
-                            reason_counts[reason] = reason_counts.get(reason, 0) + 1
-
-            filter_reasons[filter_name] = sorted(
-                reason_counts.items(), key=lambda x: x[1], reverse=True
-            )
+        sorted_reasons, reason_counts = _parse_failure_reasons(df, col, filter_name)
+        if sorted_reasons:
+            filter_reasons[filter_name] = sorted_reasons
             all_detailed_reasons[filter_name] = reason_counts
 
     _create_main_filter_plot(filter_failures, file_path)
@@ -2637,7 +2678,7 @@ def _create_summary_table(filter_failures, filter_reasons, file_path):
 
 def plot_filter_failures_analysis(config, stage_dir):
     """Analyze and plot filter failures for extended CSV files."""
-    folder_to_save = Path(process_path(config["folder_to_save"]))
+    folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     struct_folder = folder_to_save / stage_dir
 
     if not struct_folder.exists():

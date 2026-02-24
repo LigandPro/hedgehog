@@ -599,13 +599,11 @@ def plot_model_stacked_losses(model_stats: list[dict[str, Any]]) -> str:
 
 def plot_descriptor_distributions(
     descriptor_data: dict[str, list[float]],
-    model_names: list[str] | None = None,
 ) -> str:
     """Create violin/box plots for descriptor distributions.
 
     Args:
         descriptor_data: Dict mapping descriptor names to values
-        model_names: Optional list of model names for grouping
 
     Returns:
         HTML string of the plotly figure
