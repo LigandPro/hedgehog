@@ -68,7 +68,7 @@ If you prefer to install manually:
     mkdir -p public aizynthfinder/data
     # Using uv run
     uv run python -m aizynthfinder.tools.download_public_data ./public
-    mv ../../../src/hedgehog/stages/synthesis/logging.yml aizynthfinder/data/
+    mv ../../../src/hedgehog/synthesis/logging.yml aizynthfinder/data/
     ```
 3. **Continue environment setup** following main [README.md](../README.md)
 

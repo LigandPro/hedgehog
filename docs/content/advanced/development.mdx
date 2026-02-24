@@ -45,6 +45,38 @@ lefthook run pre-commit
 lefthook run pre-push
 ```
 
+## Documentation Sync With Code
+
+When code structure changes, update docs in the same PR. Use this quick loop:
+
+1. Detect stale path patterns in docs:
+
+```bash
+rg -n "src/hedgehog/stages/|structFilters/|dockingFilters/" docs/content modules/README.md | rg -v "rg -n "
+```
+
+2. Confirm current package layout:
+
+```bash
+find src/hedgehog -maxdepth 1 -type d | sort
+```
+
+3. Rebuild docs:
+
+```bash
+cd docs && pnpm install --frozen-lockfile && pnpm build
+```
+
+`pnpm build` runs a prebuild step that generates `docs/content/api/index.mdx`
+from runtime introspection (`scripts/generate_api_docs.py`). Do not edit the
+generated API page manually.
+
+4. If CLI behavior changed, refresh `docs/content/cli.mdx` from:
+   - `uv run hedgehog --help`
+   - `uv run hedge --help`
+   - `uv run hedgehog run --help`
+   - `uv run hedgehog version`
+
 ## Temporary Skip (Use Sparingly)
 
 You can skip a specific command once:

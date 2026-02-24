@@ -79,8 +79,10 @@ def compute_stage_metrics(
     n_jobs = resolve_n_jobs(stage_config=config, default=-1)
     device = config.get("device", "cpu")
     max_molecules = config.get("max_molecules", 2000)
-
-    gm = GetMetrics(n_jobs=n_jobs, device=device, run_fcd=False)
+    # Avoid spawning unnecessary processes for tiny datasets.
+    # This keeps the report phase lightweight and avoids exhausting file descriptors
+    # on systems with conservative per-process limits.
+    n_jobs = max(1, n_jobs)
 
     by_stage: dict[str, dict[str, float]] = {}
     all_metrics: set[str] = set()
@@ -93,7 +95,11 @@ def compute_stage_metrics(
         if len(smiles_list) > max_molecules:
             smiles_list = rng.sample(smiles_list, max_molecules)
 
+        stage_jobs = max(1, min(n_jobs, len(smiles_list)))
+        gm: Any | None = None
+
         try:
+            gm = GetMetrics(n_jobs=stage_jobs, device=device, run_fcd=False)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 raw_metrics = gm.calculate(
@@ -104,6 +110,12 @@ def compute_stage_metrics(
         except Exception as e:
             logger.warning("MolEval failed for stage %s: %s", stage_name, e)
             continue
+        finally:
+            if gm is not None:
+                try:
+                    gm.close_pool()
+                except Exception as e:
+                    logger.debug("Failed to close MolEval process pool: %s", e)
 
         filtered = _filter_metrics(raw_metrics, config)
 

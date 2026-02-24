@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next --turbopack",
+    "prebuild": "cd .. && uv run python scripts/generate_api_docs.py --output docs/content/api/index.mdx",
     "build": "next build",
     "postbuild": "pagefind --site .next/server/app --output-path public/_pagefind",
     "start": "next start"

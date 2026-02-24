@@ -217,6 +217,37 @@ class TestComputeStageMetrics:
         assert len(captured_inputs) == 2
         assert captured_inputs[0] == captured_inputs[1]
 
+    def test_compute_stage_metrics_closes_pool_on_success(self):
+        with patch("hedgehog.vendor.moleval.metrics.metrics.GetMetrics") as MockGM:
+            instance = MockGM.return_value
+            instance.calculate.return_value = {"IntDiv1": 0.85, "Validity": 1.0}
+
+            result = moleval_metrics.compute_stage_metrics(
+                {"Input": ["CCO"], "Descriptors": ["CCO", "CCN"]},
+                {"run": True, "n_jobs": -1, "device": "cpu", "max_molecules": 2000},
+            )
+
+            # One stage has 1 molecule, so parallelism should stay at 1 core.
+            assert MockGM.call_args_list[0].kwargs["n_jobs"] == 1
+            # second stage has 2 molecules; with n_jobs=-1 resolved via tests config is >2.
+            assert MockGM.call_args_list[1].kwargs["n_jobs"] == 2
+            assert result["by_stage"]["Input"]["IntDiv1"] == 0.85
+            assert result["by_stage"]["Descriptors"]["IntDiv1"] == 0.85
+            assert instance.close_pool.call_count == 2
+
+    def test_compute_stage_metrics_closes_pool_on_error(self):
+        with patch("hedgehog.vendor.moleval.metrics.metrics.GetMetrics") as MockGM:
+            instance = MockGM.return_value
+            instance.calculate.side_effect = OSError(24, "Too many open files")
+
+            result = moleval_metrics.compute_stage_metrics(
+                {"Input": ["CCO", "CCN"]},
+                {"run": True, "n_jobs": 1, "device": "cpu"},
+            )
+
+            assert result == {}
+            assert instance.close_pool.call_count == 1
+
 
 # =====================================================================
 # ReportGenerator integration tests
