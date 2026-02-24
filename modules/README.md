@@ -70,7 +70,7 @@ If you prefer to install manually:
     uv run python -m aizynthfinder.tools.download_public_data ./public
     mv ../../../src/hedgehog/stages/synthesis/logging.yml aizynthfinder/data/
     ```
-3. **Continue environment setup** following main [README.md](/README.md)
+3. **Continue environment setup** following main [README.md](../README.md)
 
 **Configure** in `configs/config_synthesis.yml`:
     - Set `run: True` to enable the stage
