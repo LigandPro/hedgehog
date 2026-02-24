@@ -35,7 +35,6 @@ if _LILLY_BIN_PATH.exists():
 
 _VALID_SCHEDULERS = {"threads", "processes"}
 _COMPLEXITY_FILTERS_CACHE = {}
-_COMPLEXITY_FILTERS_LOCK = threading.Lock()
 _MOLCOMPLEXITY_ALERT_NAMES: list[str] | None = None
 _ALERT_COMPILED_SMARTS: list[tuple[str, object, str]] | None = None
 _ALERT_RULESET_NAMES: list[str] | None = None
@@ -88,14 +87,13 @@ def _resolve_scheduler(config_structFilters, scheduler_key, default="processes")
 
 def _get_complexity_filter(metric_name):
     """Get cached complexity filter instance for worker process."""
-    with _COMPLEXITY_FILTERS_LOCK:
-        complexity_filter = _COMPLEXITY_FILTERS_CACHE.get(metric_name)
-        if complexity_filter is None:
-            complexity_filter = mc.complexity.ComplexityFilter(
-                complexity_metric=metric_name
-            )
-            _COMPLEXITY_FILTERS_CACHE[metric_name] = complexity_filter
-        return complexity_filter
+    complexity_filter = _COMPLEXITY_FILTERS_CACHE.get(metric_name)
+    if complexity_filter is None:
+        complexity_filter = mc.complexity.ComplexityFilter(
+            complexity_metric=metric_name
+        )
+        _COMPLEXITY_FILTERS_CACHE[metric_name] = complexity_filter
+    return complexity_filter
 
 
 def _compute_molcomplexity_one(args):
@@ -195,26 +193,7 @@ def _process_nibr_chunk(args):
     return chunk_df.to_dict("records")
 
 
-_mc = None
-
-
-def _get_mc():
-    """Lazy-load medchem module on first access."""
-    global _mc
-    if _mc is None:
-        _mc = _import_medchem_quietly()
-    return _mc
-
-
-# Backward-compatible module-level attribute for existing references
-class _LazyMedchem:
-    """Proxy that delays medchem import until first attribute access."""
-
-    def __getattr__(self, name):
-        return getattr(_get_mc(), name)
-
-
-mc = _LazyMedchem()
+mc = _import_medchem_quietly()
 
 try:
     from medchem.structural.lilly_demerits import LillyDemeritsFilters
@@ -600,8 +579,7 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
         DataFrame with filter results or None if no molecules to process
     """
     input_type = input_path[input_path.rfind(".") + 1 :]
-    if input_type not in {"csv", "smi", "sdf", "txt"}:
-        raise ValueError(f"Unsupported input file type: .{input_type}")
+    assert input_type in {"csv", "smi", "sdf", "txt"}
 
     if input_type == "csv":
         data = pd.read_csv(input_path)
@@ -611,7 +589,7 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
         with open(input_path) as file:
             lines = [line.rstrip("\n") for line in file]
 
-        if subsample is not None and subsample <= len(lines):
+        if subsample <= len(lines):
             lines = np.random.permutation(lines)[:subsample].tolist()
 
         smiles = []
@@ -631,10 +609,6 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
     elif input_type == "sdf":
         mols, smiles = sdf_to_mols(input_path, subsample)
 
-    if not smiles:
-        logger.warning("No valid molecules in file: %s", input_path)
-        return None
-
     if isinstance(smiles[0], tuple):
         cleaned = []
         for item in smiles:
@@ -651,12 +625,13 @@ def process_one_file(config, input_path, apply_filter, subsample, progress_cb=No
     else:
         mols, smiles = dropna(mols, smiles)
 
-    if len(mols) != len(smiles):
-        raise ValueError(
-            f"Molecule/SMILES length mismatch: {len(mols)} vs {len(smiles)}"
-        )
-    if not mols:
-        return None
+    assert len(mols) == len(smiles), f"{len(mols)}, {len(smiles)}"
+    if not isinstance(smiles[0], tuple):
+        assert len(mols) <= subsample
+
+    for mol, smi in zip(mols, smiles, strict=False):
+        smi_val = smi[0] if isinstance(smi, tuple) else smi
+        assert mol is not None, f"{smi_val}"
 
     final_result = None
     if len(mols) > 0:
@@ -1015,129 +990,127 @@ def apply_molcomplexity_filters(config, mols, smiles_modelName_mols=None):
     return final_result
 
 
-def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Bredt filter...")
-    config_structFilters = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = _resolve_scheduler(config_structFilters, "bredt_scheduler")
-    logger.info("Bredt workers: %d", n_jobs)
-    out = mc.functional.bredt_filter(
+def _apply_simple_medchem_filter(
+    config,
+    mols,
+    smiles_modelName_mols,
+    filter_name,
+    mc_func,
+    scheduler_key,
+    extra_kwargs=None,
+):
+    """Generic helper for simple medchem filters that share the same skeleton.
+
+    Args:
+        config: Pipeline configuration dictionary.
+        mols: List of RDKit molecule objects.
+        smiles_modelName_mols: Optional list of (smiles, model_name, mol, mol_idx) tuples.
+        filter_name: Human-readable filter name for logging.
+        mc_func: The medchem functional filter callable.
+        scheduler_key: Config key used to resolve the parallel scheduler.
+        extra_kwargs: Optional callable ``(config_sf) -> dict`` that returns
+            additional keyword arguments for *mc_func*.
+    """
+    logger.info("Calculating %s filter...", filter_name)
+    config_sf = load_config(config["config_structFilters"])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, scheduler_key)
+    logger.info("%s workers: %d", filter_name, n_jobs)
+    kwargs = dict(
         mols=mols,
         n_jobs=n_jobs,
         scheduler=scheduler,
         progress=False,
         return_idx=False,
     )
+    if extra_kwargs:
+        kwargs.update(extra_kwargs(config_sf))
+    out = mc_func(**kwargs)
     results = pd.DataFrame({"mol": mols, "pass": out})
     if smiles_modelName_mols is not None:
         results = add_model_name_col(results, smiles_modelName_mols)
     return results
+
+
+def apply_bredt_filter(config, mols, smiles_modelName_mols=None):
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Bredt",
+        mc.functional.bredt_filter,
+        "bredt_scheduler",
+    )
 
 
 def apply_protecting_groups(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Protecting Groups filter...")
-    config_structFilters = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_structFilters, config)
-    scheduler = _resolve_scheduler(config_structFilters, "protecting_groups_scheduler")
-    logger.info("Protecting Groups workers: %d", n_jobs)
-    out = mc.functional.protecting_groups_filter(
-        mols=mols,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Protecting Groups",
+        mc.functional.protecting_groups_filter,
+        "protecting_groups_scheduler",
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_ring_infraction(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Ring Infraction filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "ring_infraction_scheduler")
-    logger.info("Ring Infraction workers: %d", n_jobs)
-    min_size = config_sf.get("ring_infraction_hetcycle_min_size", 4)
-    out = mc.functional.ring_infraction_filter(
-        mols=mols,
-        hetcycle_min_size=min_size,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Ring Infraction",
+        mc.functional.ring_infraction_filter,
+        "ring_infraction_scheduler",
+        extra_kwargs=lambda cfg: {
+            "hetcycle_min_size": cfg.get("ring_infraction_hetcycle_min_size", 4),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_stereo_center(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Stereo Center filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "stereo_center_scheduler")
-    logger.info("Stereo Center workers: %d", n_jobs)
-    max_centers = config_sf.get("stereo_max_centers", 4)
-    max_undefined = config_sf.get("stereo_max_undefined", 2)
-    out = mc.functional.num_stereo_center_filter(
-        mols=mols,
-        max_stereo_centers=max_centers,
-        max_undefined_stereo_centers=max_undefined,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Stereo Center",
+        mc.functional.num_stereo_center_filter,
+        "stereo_center_scheduler",
+        extra_kwargs=lambda cfg: {
+            "max_stereo_centers": cfg.get("stereo_max_centers", 4),
+            "max_undefined_stereo_centers": cfg.get("stereo_max_undefined", 2),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_halogenicity(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Halogenicity filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "halogenicity_scheduler")
-    logger.info("Halogenicity workers: %d", n_jobs)
-    out = mc.functional.halogenicity_filter(
-        mols=mols,
-        thresh_F=config_sf.get("halogenicity_thresh_F", 6),
-        thresh_Br=config_sf.get("halogenicity_thresh_Br", 3),
-        thresh_Cl=config_sf.get("halogenicity_thresh_Cl", 3),
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Halogenicity",
+        mc.functional.halogenicity_filter,
+        "halogenicity_scheduler",
+        extra_kwargs=lambda cfg: {
+            "thresh_F": cfg.get("halogenicity_thresh_F", 6),
+            "thresh_Br": cfg.get("halogenicity_thresh_Br", 3),
+            "thresh_Cl": cfg.get("halogenicity_thresh_Cl", 3),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_symmetry(config, mols, smiles_modelName_mols=None):
-    logger.info("Calculating Symmetry filter...")
-    config_sf = load_config(config["config_structFilters"])
-    n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "symmetry_scheduler")
-    logger.info("Symmetry workers: %d", n_jobs)
-    threshold = config_sf.get("symmetry_threshold", 0.8)
-    out = mc.functional.symmetry_filter(
-        mols=mols,
-        symmetry_threshold=threshold,
-        n_jobs=n_jobs,
-        scheduler=scheduler,
-        progress=False,
-        return_idx=False,
+    return _apply_simple_medchem_filter(
+        config,
+        mols,
+        smiles_modelName_mols,
+        "Symmetry",
+        mc.functional.symmetry_filter,
+        "symmetry_scheduler",
+        extra_kwargs=lambda cfg: {
+            "symmetry_threshold": cfg.get("symmetry_threshold", 0.8),
+        },
     )
-    results = pd.DataFrame({"mol": mols, "pass": out})
-    if smiles_modelName_mols is not None:
-        results = add_model_name_col(results, smiles_modelName_mols)
-    return results
 
 
 def apply_nibr_filter(config, mols, smiles_modelName_mols=None):
@@ -1474,6 +1447,110 @@ def _create_base_stats_df(model_name, num_mol, **extra_columns):
     return pd.DataFrame(data)
 
 
+def _stats_common_alerts(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for common_alerts filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        all_banned_ratio=(~filter_results["pass"]).mean(),
+        any_banned_ratio=(~filter_results["pass_any"]).mean(),
+    )
+    for name in config["include_rulesets"]:
+        res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
+    return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+
+def _stats_molgraph(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for molgraph_stats filter."""
+    res_df = _create_base_stats_df(model_name, num_mol)
+    for i in range(1, 12):
+        res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_{i}"].mean()
+    res_df, filter_extended = common_postprocessing_statistics(
+        filter_results, res_df, stat, extend
+    )
+    pass_cols = [
+        col
+        for col in filter_extended.columns
+        if col.startswith("pass_") and col != "pass_any"
+    ]
+    filter_extended["pass"] = filter_extended[pass_cols].all(axis=1)
+    return res_df, filter_extended
+
+
+def _stats_molcomplexity(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for molcomplexity filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        all_banned_ratio=1 - filter_results["pass"].mean(),
+        any_banned_ratio=1 - filter_results["pass_any"].mean(),
+    )
+    for name in mc.complexity.ComplexityFilter.list_default_available_filters():
+        res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
+    return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+
+def _stats_simple_banned(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for simple banned-ratio filters (bredt, protecting_groups, etc.)."""
+    res_df = _create_base_stats_df(model_name, num_mol)
+    res_df["banned_ratio"] = 1 - filter_results["pass"].mean()
+    return common_postprocessing_statistics(filter_results, res_df, stat, extend)
+
+
+def _stats_nibr(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for NIBR filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        mean_severity=filter_results.severity.mean(),
+        max_severity=filter_results.severity.max(),
+        mean_n_covalent_motif=filter_results.n_covalent_motif.mean(),
+        mean_nonzero_special_mol=(filter_results.special_mol > 0).mean(),
+    )
+    pass_col = _get_pass_column(filter_results, "severity", lambda x: x == 0)
+    res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
+    res_df, filter_extended = common_postprocessing_statistics(
+        filter_results, res_df, stat, extend
+    )
+    filter_extended = _ensure_pass_column_in_extended(
+        filter_extended, pass_col, filter_results, "severity"
+    )
+    return res_df, filter_extended
+
+
+def _stats_lilly(config, filter_results, model_name, num_mol, stat, extend):
+    """Compute statistics for lilly filter."""
+    res_df = _create_base_stats_df(
+        model_name,
+        num_mol,
+        mean_noNA_demerit_score=filter_results.demerit_score.dropna().mean(),
+    )
+    pass_col = _get_pass_column(filter_results, "demerit_score", lambda x: x == 0)
+    res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
+    res_df, filter_extended = common_postprocessing_statistics(
+        filter_results, res_df, stat, extend
+    )
+    filter_extended = _ensure_pass_column_in_extended(
+        filter_extended, pass_col, filter_results, "demerit_score"
+    )
+    return res_df, filter_extended
+
+
+_STATS_REGISTRY = {
+    "common_alerts": _stats_common_alerts,
+    "molgraph_stats": _stats_molgraph,
+    "molcomplexity": _stats_molcomplexity,
+    "bredt": _stats_simple_banned,
+    "protecting_groups": _stats_simple_banned,
+    "ring_infraction": _stats_simple_banned,
+    "stereo_center": _stats_simple_banned,
+    "halogenicity": _stats_simple_banned,
+    "symmetry": _stats_simple_banned,
+    "NIBR": _stats_nibr,
+    "lilly": _stats_lilly,
+}
+
+
 def get_basic_stats(
     config, filter_results, model_name, filter_name, stat=None, extend=None
 ):
@@ -1501,102 +1578,15 @@ def get_basic_stats(
             all_extended, ignore_index=True
         )
 
-    filter_results.dropna(subset="mol", inplace=True)
     num_mol = len(filter_results)
+    filter_results.dropna(subset="mol", inplace=True)
     if isinstance(model_name, str):
         filter_results["model_name"] = model_name
 
-    if filter_name == "common_alerts":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            all_banned_ratio=(~filter_results["pass"]).mean(),
-            any_banned_ratio=(~filter_results["pass_any"]).mean(),
-        )
-        for name in config["include_rulesets"]:
-            res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
-        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
-
-    if filter_name == "molgraph_stats":
-        res_df = _create_base_stats_df(model_name, num_mol)
-        for i in range(1, 12):
-            res_df[f"banned_ratio_s_{i}"] = 1 - filter_results[f"pass_{i}"].mean()
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
-        pass_cols = [
-            col
-            for col in filter_extended.columns
-            if col.startswith("pass_") and col != "pass_any"
-        ]
-        filter_extended["pass"] = filter_extended[pass_cols].all(axis=1)
-        return res_df, filter_extended
-
-    if filter_name == "molcomplexity":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            all_banned_ratio=1 - filter_results["pass"].mean(),
-            any_banned_ratio=1 - filter_results["pass_any"].mean(),
-        )
-        for name in mc.complexity.ComplexityFilter.list_default_available_filters():
-            res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
-        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
-
-    if filter_name in (
-        "bredt",
-        "protecting_groups",
-        "ring_infraction",
-        "stereo_center",
-        "halogenicity",
-        "symmetry",
-    ):
-        res_df = _create_base_stats_df(model_name, num_mol)
-        res_df["banned_ratio"] = 1 - filter_results["pass"].mean()
-        return common_postprocessing_statistics(filter_results, res_df, stat, extend)
-
-    if filter_name == "NIBR":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            mean_severity=filter_results.severity.mean(),
-            max_severity=filter_results.severity.max(),
-            mean_n_covalent_motif=filter_results.n_covalent_motif.mean(),
-            mean_nonzero_special_mol=(filter_results.special_mol > 0).mean(),
-        )
-        pass_col = _get_pass_column(filter_results, "severity", lambda x: x == 0)
-        res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
-        filter_extended = _ensure_pass_column_in_extended(
-            filter_extended, pass_col, filter_results, "severity"
-        )
-        return res_df, filter_extended
-
-    if filter_name == "lilly":
-        res_df = _create_base_stats_df(
-            model_name,
-            num_mol,
-            mean_noNA_demerit_score=filter_results.demerit_score.dropna().mean(),
-        )
-        # If all demerit_score values are NaN, molecules were not scored (not failed)
-        if (
-            "demerit_score" in filter_results.columns
-            and filter_results["demerit_score"].isna().all()
-        ):
-            filter_results["pass"] = True
-        pass_col = _get_pass_column(filter_results, "demerit_score", lambda x: x == 0)
-        res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
-        res_df, filter_extended = common_postprocessing_statistics(
-            filter_results, res_df, stat, extend
-        )
-        filter_extended = _ensure_pass_column_in_extended(
-            filter_extended, pass_col, filter_results, "demerit_score"
-        )
-        return res_df, filter_extended
-
-    raise ValueError(f"Filter {filter_name} not found")
+    handler = _STATS_REGISTRY.get(filter_name)
+    if handler is None:
+        raise ValueError(f"Filter {filter_name} not found")
+    return handler(config, filter_results, model_name, num_mol, stat, extend)
 
 
 def check_paths(config, paths):
@@ -1807,29 +1797,29 @@ def plot_calculated_stats(config, stage_dir):
         ax.xaxis.set_major_formatter(plt.FuncFormatter(format_number))
         ax.set_xlim(left=0)
 
-        ax.set_xlabel(
-            f"Number of Molecules (Total: {format_number(total_mols)})",
-            fontsize=12,
-            labelpad=10,
-        )
-        ax.set_ylabel("Models", fontsize=12, labelpad=10)
+    ax.set_xlabel(
+        f"Number of Molecules (Total: {format_number(total_mols)})",
+        fontsize=12,
+        labelpad=10,
+    )
+    ax.set_ylabel("Models", fontsize=12, labelpad=10)
 
-        ax.grid(True, axis="x", alpha=0.2, linestyle="--")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+    ax.grid(True, axis="x", alpha=0.2, linestyle="--")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
-        sorted_indices = np.argsort(banned_percentages)[::-1]
-        sorted_handles = [total] + [banned_bars[i] for i in sorted_indices]
+    sorted_indices = np.argsort(banned_percentages)[::-1]
+    sorted_handles = [total] + [banned_bars[i] for i in sorted_indices]
 
-        legend = ax.legend(
-            handles=sorted_handles,
-            loc="center left",
-            bbox_to_anchor=(1.02, 0.5),
-            fontsize=11,
-            ncol=1,
-        )
-        legend.get_frame().set_alpha(0.9)
-        legend.get_frame().set_edgecolor("lightgray")
+    legend = ax.legend(
+        handles=sorted_handles,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        fontsize=11,
+        ncol=1,
+    )
+    legend.get_frame().set_alpha(0.9)
+    legend.get_frame().set_edgecolor("lightgray")
 
     plt.subplots_adjust(right=0.85, hspace=0.6, wspace=0.5)
 
@@ -1943,24 +1933,6 @@ def plot_restriction_ratios(config, stage_dir):
             if "any" in data.columns:
                 data.drop(columns=["any"], inplace=True)
 
-            numeric_data = data.select_dtypes(include="number")
-            if numeric_data.empty:
-                ax.text(
-                    0.5,
-                    0.5,
-                    "No numeric data available",
-                    horizontalalignment="center",
-                    verticalalignment="center",
-                    transform=ax.transAxes,
-                )
-                ax.set_title(
-                    f"{clean_name(filter_name)} Filter",
-                    pad=10,
-                    fontsize=11,
-                    fontweight="bold",
-                )
-                continue
-
             custom_cmap = LinearSegmentedColormap.from_list(
                 "custom", ["white", "#B29EEE"]
             )
@@ -1971,7 +1943,7 @@ def plot_restriction_ratios(config, stage_dir):
                 ax=ax,
                 cbar_kws={"label": "Passed Molecules", "format": "%d"},
                 vmin=0,
-                vmax=numeric_data.max().max(),
+                vmax=max(data.max()),
                 fmt=".0f",
                 annot=True,
                 annot_kws={"size": 12, "rotation": 0, "color": "black"},

@@ -1,16 +1,111 @@
 """Plot generation functions for HEDGEHOG reports using Plotly."""
 
-import html
 import statistics
 from collections import Counter
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# Default color palette for models
-MODEL_COLORS = px.colors.qualitative.Set2
+# ---------------------------------------------------------------------------
+# Consolidated color palettes
+# ---------------------------------------------------------------------------
+PALETTES = {
+    # Plotly Set2 for generic model coloring
+    "model": px.colors.qualitative.Set2,
+    # Purple gradient for single-model views
+    "purple": [
+        "rgba(139, 92, 246, 0.85)",  # Purple 500
+        "rgba(167, 139, 250, 0.85)",  # Purple 400
+        "rgba(196, 181, 253, 0.85)",  # Purple 300
+        "rgba(109, 40, 217, 0.85)",  # Purple 700
+        "rgba(124, 58, 237, 0.85)",  # Purple 600
+        "rgba(221, 214, 254, 0.85)",  # Purple 200
+        "rgba(91, 33, 182, 0.85)",  # Purple 800
+        "rgba(76, 29, 149, 0.85)",  # Purple 900
+    ],
+    # Distinct palette for Compare mode (easily distinguishable)
+    "compare": [
+        "rgba(59, 130, 246, 0.75)",  # Blue
+        "rgba(239, 68, 68, 0.75)",  # Red
+        "rgba(34, 197, 94, 0.75)",  # Green
+        "rgba(249, 115, 22, 0.75)",  # Orange
+        "rgba(168, 85, 247, 0.75)",  # Purple
+        "rgba(236, 72, 153, 0.75)",  # Pink
+        "rgba(20, 184, 166, 0.75)",  # Teal
+        "rgba(234, 179, 8, 0.75)",  # Yellow
+    ],
+    # Solid purple shades for Sankey compare links
+    "sankey_compare_solid": [
+        "rgba(139, 92, 246, 0.9)",  # Purple 500
+        "rgba(167, 139, 250, 0.9)",  # Purple 400
+        "rgba(196, 181, 253, 0.9)",  # Purple 300
+        "rgba(109, 40, 217, 0.9)",  # Purple 700
+        "rgba(124, 58, 237, 0.9)",  # Purple 600
+        "rgba(221, 214, 254, 0.9)",  # Purple 200
+        "rgba(91, 33, 182, 0.9)",  # Purple 800
+        "rgba(76, 29, 149, 0.9)",  # Purple 900
+    ],
+    # Light purple shades for Sankey compare flow links
+    "sankey_compare_light": [
+        "rgba(139, 92, 246, 0.5)",
+        "rgba(167, 139, 250, 0.5)",
+        "rgba(196, 181, 253, 0.6)",
+        "rgba(109, 40, 217, 0.5)",
+        "rgba(124, 58, 237, 0.5)",
+        "rgba(221, 214, 254, 0.7)",
+        "rgba(91, 33, 182, 0.5)",
+        "rgba(76, 29, 149, 0.5)",
+    ],
+    # Gray shades for Sankey compare lost molecules
+    "sankey_compare_lost": [
+        "rgba(156, 163, 175, 0.3)",  # Gray 400
+        "rgba(107, 114, 128, 0.3)",  # Gray 500
+        "rgba(75, 85, 99, 0.3)",  # Gray 600
+        "rgba(209, 213, 219, 0.4)",  # Gray 300
+        "rgba(55, 65, 81, 0.3)",  # Gray 700
+        "rgba(229, 231, 235, 0.5)",  # Gray 200
+        "rgba(31, 41, 55, 0.3)",  # Gray 800
+        "rgba(17, 24, 39, 0.3)",  # Gray 900
+    ],
+    # Line colors for MolEval stage line charts
+    "lines": [
+        "rgba(139, 92, 246, 1)",  # Purple 500
+        "rgba(109, 40, 217, 1)",  # Purple 700
+        "rgba(196, 181, 253, 1)",  # Purple 300
+        "rgba(124, 58, 237, 1)",  # Purple 600
+        "rgba(167, 139, 250, 1)",  # Purple 400
+        "rgba(76, 29, 149, 1)",  # Purple 900
+        "rgba(221, 214, 254, 1)",  # Purple 200
+        "rgba(91, 33, 182, 1)",  # Purple 800
+    ],
+}
+
+# Backward-compatible aliases used throughout the codebase
+MODEL_COLORS = PALETTES["model"]
+PURPLE_PALETTE = PALETTES["purple"]
+COMPARE_PALETTE = PALETTES["compare"]
+
+# Color schemes for synthesis score histograms
+SYNTHESIS_SCORE_COLORS = {
+    "sa": {
+        "fill": "rgba(139, 92, 246, 0.75)",
+        "line": "rgba(109, 40, 217, 1)",
+        "empty_msg": "No SA score data available",
+    },
+    "syba": {
+        "fill": "rgba(167, 139, 250, 0.75)",
+        "line": "rgba(124, 58, 237, 1)",
+        "empty_msg": "No SYBA score data available",
+    },
+    "ra": {
+        "fill": "rgba(34, 197, 94, 0.75)",
+        "line": "rgba(22, 163, 74, 1)",
+        "empty_msg": "No RA score data available",
+    },
+}
 
 # Shorter labels for Sankey nodes to prevent overlap
 _SANKEY_SHORT_LABELS = {
@@ -19,6 +114,112 @@ _SANKEY_SHORT_LABELS = {
     "Descriptors": "Descript.",
     "Docking Filters": "Dock. Filt.",
 }
+
+
+# ---------------------------------------------------------------------------
+# Shared Sankey data builder
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SankeyData:
+    """Shared node/link/position data for Sankey diagrams."""
+
+    labels: list[str] = field(default_factory=list)
+    node_colors: list[str] = field(default_factory=list)
+    x_positions: list[float] = field(default_factory=list)
+    y_positions: list[float] = field(default_factory=list)
+    sources: list[int] = field(default_factory=list)
+    targets: list[int] = field(default_factory=list)
+    values: list[int] = field(default_factory=list)
+    link_colors: list[str] = field(default_factory=list)
+    lost_nodes: list[dict[str, Any]] = field(default_factory=list)
+    stages: list[str] = field(default_factory=list)
+    counts: list[int] = field(default_factory=list)
+
+
+def _build_sankey_data(funnel_data: list[dict[str, Any]]) -> SankeyData | None:
+    """Build shared node/link/position data for single-model Sankey diagrams.
+
+    Args:
+        funnel_data: List of dicts with 'stage' and 'count' keys.
+
+    Returns:
+        SankeyData instance, or None when data is insufficient.
+    """
+    if not funnel_data or len(funnel_data) < 2:
+        return None
+
+    stages = [d["stage"] for d in funnel_data]
+    counts = [d["count"] for d in funnel_data]
+    short_stages = [_SANKEY_SHORT_LABELS.get(s, s) for s in stages]
+
+    stage_color = "rgba(139, 92, 246, 0.85)"  # Soft purple
+    lost_color = "rgba(156, 163, 175, 0.6)"  # Gray for lost molecules
+    main_flow_color = "rgba(139, 92, 246, 0.35)"
+    lost_flow_color = "rgba(156, 163, 175, 0.35)"
+
+    labels = list(short_stages)
+    node_colors = [stage_color] * len(stages)
+
+    # Add "Lost" nodes for each transition
+    lost_nodes: list[dict[str, Any]] = []
+    for i in range(len(stages) - 1):
+        lost_count = counts[i] - counts[i + 1]
+        if lost_count > 0:
+            labels.append(f"Lost ({short_stages[i + 1]})")
+            node_colors.append(lost_color)
+            lost_nodes.append(
+                {
+                    "from_idx": i,
+                    "to_idx": len(labels) - 1,
+                    "count": lost_count,
+                    "at_stage": stages[i + 1],
+                }
+            )
+
+    # Compute explicit x/y positions for snap arrangement
+    n = len(stages)
+    x_positions: list[float] = []
+    y_positions: list[float] = []
+    for i in range(n):
+        x_positions.append(i / (n - 1) if n > 1 else 0.5)
+        y_positions.append(0.3)
+    for lost in lost_nodes:
+        x_positions.append((lost["from_idx"] + 1) / (n - 1) if n > 1 else 0.5)
+        y_positions.append(0.7)
+
+    # Build links
+    sources: list[int] = []
+    targets: list[int] = []
+    values: list[int] = []
+    link_colors: list[str] = []
+
+    for i in range(len(stages) - 1):
+        sources.append(i)
+        targets.append(i + 1)
+        values.append(counts[i + 1])
+        link_colors.append(main_flow_color)
+
+    for lost in lost_nodes:
+        sources.append(lost["from_idx"])
+        targets.append(lost["to_idx"])
+        values.append(lost["count"])
+        link_colors.append(lost_flow_color)
+
+    return SankeyData(
+        labels=labels,
+        node_colors=node_colors,
+        x_positions=x_positions,
+        y_positions=y_positions,
+        sources=sources,
+        targets=targets,
+        values=values,
+        link_colors=link_colors,
+        lost_nodes=lost_nodes,
+        stages=stages,
+        counts=counts,
+    )
 
 
 def plot_funnel(funnel_data: list[dict[str, Any]]) -> str:
@@ -38,10 +239,7 @@ def plot_funnel(funnel_data: list[dict[str, Any]]) -> str:
 
     # Purple gradient for funnel segments
     n = len(stages)
-    colors = [
-        f"rgba(139, 92, 246, {max(0.1, 0.95 - i * (0.85 / max(n - 1, 1)))})"
-        for i in range(n)
-    ]
+    colors = [f"rgba(139, 92, 246, {0.95 - i * 0.1})" for i in range(n)]
 
     fig = go.Figure(
         go.Funnel(
@@ -79,92 +277,23 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
     Returns:
         HTML string of the plotly figure
     """
-    if not funnel_data or len(funnel_data) < 2:
+    sd = _build_sankey_data(funnel_data)
+    if sd is None:
         return _empty_plot("No funnel data available for Sankey diagram")
 
-    stages = [d["stage"] for d in funnel_data]
-    counts = [d["count"] for d in funnel_data]
-
-    # Use shorter labels to prevent overlap in dense diagrams
-    short_stages = [_SANKEY_SHORT_LABELS.get(s, s) for s in stages]
-
-    # Build Sankey nodes and links
-    # Nodes: stage names + "Lost at <stage>" for each transition
-    labels = list(short_stages)
-    node_colors = []
-
-    # Colors for main flow stages (soft purple palette)
-    stage_color = "rgba(139, 92, 246, 0.85)"  # Soft purple
-    lost_color = "rgba(156, 163, 175, 0.6)"  # Gray for lost molecules
-
-    for _ in stages:
-        node_colors.append(stage_color)
-
-    # Add "Lost" nodes for each transition
-    # Lost molecules branch FROM the previous stage (i), not from the filtering stage
-    lost_nodes = []
-    for i in range(len(stages) - 1):
-        lost_count = counts[i] - counts[i + 1]
-        if lost_count > 0:
-            lost_label = f"Lost ({short_stages[i + 1]})"
-            labels.append(lost_label)
-            node_colors.append(lost_color)
-            lost_nodes.append(
-                {
-                    "from_idx": i,
-                    "to_idx": len(labels) - 1,
-                    "count": lost_count,
-                    "at_stage": stages[i + 1],
-                }
+    # Build hover text from shared data
+    customdata: list[str] = []
+    for i, stage in enumerate(sd.stages):
+        if i == 0:
+            customdata.append(f"{stage}: {sd.counts[i]} molecules (100%)")
+        else:
+            pct = 100 * sd.counts[i] / sd.counts[0] if sd.counts[0] > 0 else 0
+            customdata.append(
+                f"{stage}: {sd.counts[i]} molecules ({pct:.1f}% of initial)"
             )
 
-    # Compute explicit x/y positions for snap arrangement
-    n = len(stages)
-    x_positions = []
-    y_positions = []
-    # Main stages: top row, evenly spaced
-    for i in range(n):
-        x_positions.append(i / (n - 1) if n > 1 else 0.5)
-        y_positions.append(0.3)
-    # Lost nodes: bottom row, aligned under the stage they branch from + 1
-    for lost in lost_nodes:
-        x_positions.append((lost["from_idx"] + 1) / (n - 1) if n > 1 else 0.5)
-        y_positions.append(0.7)
-
-    # Build links
-    sources = []
-    targets = []
-    values = []
-    link_colors = []
-
-    main_flow_color = "rgba(139, 92, 246, 0.35)"  # Soft purple
-    lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
-
-    # Main flow links: survivors flow to the next stage
-    for i in range(len(stages) - 1):
-        sources.append(i)
-        targets.append(i + 1)
-        values.append(counts[i + 1])
-        link_colors.append(main_flow_color)
-
-    # Lost flow links: branch FROM the previous stage (i)
-    for lost in lost_nodes:
-        sources.append(lost["from_idx"])
-        targets.append(lost["to_idx"])
-        values.append(lost["count"])
-        link_colors.append(lost_flow_color)
-
-    # Hover text
-    customdata = []
-    for i, stage in enumerate(stages):
-        if i == 0:
-            customdata.append(f"{stage}: {counts[i]} molecules (100%)")
-        else:
-            pct = 100 * counts[i] / counts[0] if counts[0] > 0 else 0
-            customdata.append(f"{stage}: {counts[i]} molecules ({pct:.1f}% of initial)")
-
-    for lost in lost_nodes:
-        pct = 100 * lost["count"] / counts[0] if counts[0] > 0 else 0
+    for lost in sd.lost_nodes:
+        pct = 100 * lost["count"] / sd.counts[0] if sd.counts[0] > 0 else 0
         customdata.append(
             f"Lost at {lost['at_stage']}: {lost['count']} molecules ({pct:.1f}% of initial)"
         )
@@ -177,18 +306,18 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
                     "pad": 40,
                     "thickness": 20,
                     "line": {"color": "rgba(0,0,0,0.15)", "width": 0.5},
-                    "label": labels,
-                    "color": node_colors,
-                    "x": x_positions,
-                    "y": y_positions,
+                    "label": sd.labels,
+                    "color": sd.node_colors,
+                    "x": sd.x_positions,
+                    "y": sd.y_positions,
                     "customdata": customdata,
                     "hovertemplate": "%{customdata}<extra></extra>",
                 },
                 link={
-                    "source": sources,
-                    "target": targets,
-                    "value": values,
-                    "color": link_colors,
+                    "source": sd.sources,
+                    "target": sd.targets,
+                    "value": sd.values,
+                    "color": sd.link_colors,
                     "hovertemplate": (
                         "From %{source.label}<br>"
                         "To %{target.label}<br>"
@@ -220,80 +349,16 @@ def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
     Returns:
         Dictionary with nodes, links, and layout for Plotly.js
     """
-    if not funnel_data or len(funnel_data) < 2:
+    sd = _build_sankey_data(funnel_data)
+    if sd is None:
         return {}
 
-    stages = [d["stage"] for d in funnel_data]
-    counts = [d["count"] for d in funnel_data]
-
-    short_stages = [_SANKEY_SHORT_LABELS.get(s, s) for s in stages]
-    labels = list(short_stages)
-    node_colors = []
-
-    stage_color = "rgba(139, 92, 246, 0.85)"
-    lost_color = "rgba(156, 163, 175, 0.6)"  # Gray for lost molecules
-
-    for _ in stages:
-        node_colors.append(stage_color)
-
-    lost_nodes = []
-    for i in range(len(stages) - 1):
-        lost_count = counts[i] - counts[i + 1]
-        if lost_count > 0:
-            lost_label = f"Lost ({short_stages[i + 1]})"
-            labels.append(lost_label)
-            node_colors.append(lost_color)
-            lost_nodes.append(
-                {
-                    "from_idx": i,
-                    "to_idx": len(labels) - 1,
-                    "count": lost_count,
-                }
-            )
-
-    # Compute explicit x/y positions for snap arrangement
-    n = len(stages)
-    x_positions = []
-    y_positions = []
-    for i in range(n):
-        x_positions.append(i / (n - 1) if n > 1 else 0.5)
-        y_positions.append(0.3)
-    for lost in lost_nodes:
-        x_positions.append((lost["from_idx"] + 1) / (n - 1) if n > 1 else 0.5)
-        y_positions.append(0.7)
-
-    sources = []
-    targets = []
-    values = []
-    link_colors = []
-
-    main_flow_color = "rgba(139, 92, 246, 0.35)"
-    lost_flow_color = "rgba(156, 163, 175, 0.35)"  # Gray for lost flow
-
-    # Survivors flow to the next stage
-    for i in range(len(stages) - 1):
-        sources.append(i)
-        targets.append(i + 1)
-        values.append(counts[i + 1])
-        link_colors.append(main_flow_color)
-
-    # Lost molecules branch FROM the previous stage (i)
-    for lost in lost_nodes:
-        sources.append(lost["from_idx"])
-        targets.append(lost["to_idx"])
-        values.append(lost["count"])
-        link_colors.append(lost_flow_color)
-
-    return {
-        "labels": labels,
-        "node_colors": node_colors,
-        "sources": sources,
-        "targets": targets,
-        "values": values,
-        "link_colors": link_colors,
-        "x_positions": x_positions,
-        "y_positions": y_positions,
-    }
+    result = asdict(sd)
+    # Remove fields not needed by client-side JS
+    result.pop("lost_nodes", None)
+    result.pop("stages", None)
+    result.pop("counts", None)
+    return result
 
 
 def plot_sankey_compare_json(
@@ -312,40 +377,9 @@ def plot_sankey_compare_json(
     if not funnel_by_model or not models:
         return {}
 
-    # Purple palette for models (different shades)
-    model_colors_solid = [
-        "rgba(139, 92, 246, 0.9)",  # Purple 500
-        "rgba(167, 139, 250, 0.9)",  # Purple 400
-        "rgba(196, 181, 253, 0.9)",  # Purple 300
-        "rgba(109, 40, 217, 0.9)",  # Purple 700
-        "rgba(124, 58, 237, 0.9)",  # Purple 600
-        "rgba(221, 214, 254, 0.9)",  # Purple 200
-        "rgba(91, 33, 182, 0.9)",  # Purple 800
-        "rgba(76, 29, 149, 0.9)",  # Purple 900
-    ]
-
-    model_colors_light = [
-        "rgba(139, 92, 246, 0.5)",
-        "rgba(167, 139, 250, 0.5)",
-        "rgba(196, 181, 253, 0.6)",
-        "rgba(109, 40, 217, 0.5)",
-        "rgba(124, 58, 237, 0.5)",
-        "rgba(221, 214, 254, 0.7)",
-        "rgba(91, 33, 182, 0.5)",
-        "rgba(76, 29, 149, 0.5)",
-    ]
-
-    # Gray shades for lost molecules
-    lost_colors = [
-        "rgba(156, 163, 175, 0.3)",  # Gray 400
-        "rgba(107, 114, 128, 0.3)",  # Gray 500
-        "rgba(75, 85, 99, 0.3)",  # Gray 600
-        "rgba(209, 213, 219, 0.4)",  # Gray 300
-        "rgba(55, 65, 81, 0.3)",  # Gray 700
-        "rgba(229, 231, 235, 0.5)",  # Gray 200
-        "rgba(31, 41, 55, 0.3)",  # Gray 800
-        "rgba(17, 24, 39, 0.3)",  # Gray 900
-    ]
+    model_colors_solid = PALETTES["sankey_compare_solid"]
+    model_colors_light = PALETTES["sankey_compare_light"]
+    lost_colors = PALETTES["sankey_compare_lost"]
 
     first_model_data = funnel_by_model.get(models[0], [])
     if not first_model_data:
@@ -953,31 +987,6 @@ def _empty_plot(message: str) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
-# Purple color palette for consistent styling (single model views)
-PURPLE_PALETTE = [
-    "rgba(139, 92, 246, 0.85)",  # Purple 500
-    "rgba(167, 139, 250, 0.85)",  # Purple 400
-    "rgba(196, 181, 253, 0.85)",  # Purple 300
-    "rgba(109, 40, 217, 0.85)",  # Purple 700
-    "rgba(124, 58, 237, 0.85)",  # Purple 600
-    "rgba(221, 214, 254, 0.85)",  # Purple 200
-    "rgba(91, 33, 182, 0.85)",  # Purple 800
-    "rgba(76, 29, 149, 0.85)",  # Purple 900
-]
-
-# Distinct color palette for Compare mode (easily distinguishable)
-COMPARE_PALETTE = [
-    "rgba(59, 130, 246, 0.75)",  # Blue
-    "rgba(239, 68, 68, 0.75)",  # Red
-    "rgba(34, 197, 94, 0.75)",  # Green
-    "rgba(249, 115, 22, 0.75)",  # Orange
-    "rgba(168, 85, 247, 0.75)",  # Purple
-    "rgba(236, 72, 153, 0.75)",  # Pink
-    "rgba(20, 184, 166, 0.75)",  # Teal
-    "rgba(234, 179, 8, 0.75)",  # Yellow
-]
-
-
 # =============================================================================
 # DESCRIPTORS (Stage 01) - Enhanced plots
 # =============================================================================
@@ -1201,13 +1210,10 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
             else "<td>-</td>"
             for d in descriptors
         ]
-        rows.append(
-            f"<tr><td><strong>{html.escape(str(model))}</strong></td>{''.join(cells)}</tr>"
-        )
+        rows.append(f"<tr><td><strong>{model}</strong></td>{''.join(cells)}</tr>")
 
     header = "<th>Model</th>" + "".join(
-        f"<th title='{html.escape(str(d))}'>{html.escape(str(readable_names.get(d, d)))}</th>"
-        for d in descriptors
+        f"<th title='{d}'>{readable_names.get(d, d)}</th>" for d in descriptors
     )
 
     return f"""
@@ -1366,10 +1372,7 @@ def plot_filter_top_reasons_bar(reasons_data: dict[str, int], top_n: int = 10) -
 
     # Create gradient colors
     n = len(reasons)
-    colors = [
-        f"rgba(139, 92, 246, {max(0.1, 0.95 - i * (0.85 / max(n - 1, 1)))})"
-        for i in range(n)
-    ]
+    colors = [f"rgba(139, 92, 246, {0.95 - i * 0.05})" for i in range(n)]
 
     fig = go.Figure(
         go.Bar(
@@ -1398,25 +1401,6 @@ def plot_filter_top_reasons_bar(reasons_data: dict[str, int], top_n: int = 10) -
 # =============================================================================
 # SYNTHESIS (Stage 04) - Enhanced plots
 # =============================================================================
-
-# Color schemes for synthesis score histograms
-SYNTHESIS_SCORE_COLORS = {
-    "sa": {
-        "fill": "rgba(139, 92, 246, 0.75)",
-        "line": "rgba(109, 40, 217, 1)",
-        "empty_msg": "No SA score data available",
-    },
-    "syba": {
-        "fill": "rgba(167, 139, 250, 0.75)",
-        "line": "rgba(124, 58, 237, 1)",
-        "empty_msg": "No SYBA score data available",
-    },
-    "ra": {
-        "fill": "rgba(34, 197, 94, 0.75)",
-        "line": "rgba(22, 163, 74, 1)",
-        "empty_msg": "No RA score data available",
-    },
-}
 
 
 def _plot_synthesis_score_histogram(
@@ -1700,10 +1684,7 @@ def plot_docking_top_molecules(
 
     # Gradient colors
     n = len(scores)
-    colors = [
-        f"rgba(139, 92, 246, {max(0.1, 0.95 - i * (0.85 / max(n - 1, 1)))})"
-        for i in range(n)
-    ]
+    colors = [f"rgba(139, 92, 246, {0.95 - i * 0.05})" for i in range(n)]
 
     fig = go.Figure(
         go.Bar(
@@ -2183,16 +2164,7 @@ def plot_moleval_stage_lines(
     if not available:
         return _empty_plot("No MolEval metrics data available")
 
-    line_colors = [
-        "rgba(139, 92, 246, 1)",  # Purple 500
-        "rgba(109, 40, 217, 1)",  # Purple 700
-        "rgba(196, 181, 253, 1)",  # Purple 300
-        "rgba(124, 58, 237, 1)",  # Purple 600
-        "rgba(167, 139, 250, 1)",  # Purple 400
-        "rgba(76, 29, 149, 1)",  # Purple 900
-        "rgba(221, 214, 254, 1)",  # Purple 200
-        "rgba(91, 33, 182, 1)",  # Purple 800
-    ]
+    line_colors = PALETTES["lines"]
 
     fig = go.Figure()
 

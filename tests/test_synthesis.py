@@ -13,8 +13,6 @@ import hedgehog.stages.synthesis.utils as synthesis_utils
 from hedgehog.stages.synthesis.utils import (
     _build_score_filter_mask,
     _calculate_ra_scores_batch,
-    _calculate_sa_score,
-    _calculate_syba_score,
     _get_rascore_model_path,
     apply_synthesis_score_filters,
     get_input_path,
@@ -22,6 +20,12 @@ from hedgehog.stages.synthesis.utils import (
     parse_retrosynthesis_results,
     prepare_input_smiles,
     run_aizynthfinder,
+)
+from hedgehog.stages.synthesis.utils import (
+    _calculate_sa_score_single as _calculate_sa_score,
+)
+from hedgehog.stages.synthesis.utils import (
+    _calculate_syba_score_single as _calculate_syba_score,
 )
 
 

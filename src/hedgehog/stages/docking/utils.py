@@ -71,10 +71,6 @@ def _resolve_docking_binary(config_path: str, tool_name: str) -> str:
     if os.path.isabs(config_path) and os.path.isfile(config_path):
         return config_path
 
-    # Handle relative paths (e.g., "./smina" or "bin/gnina")
-    if not os.path.isabs(config_path) and os.path.isfile(config_path):
-        return os.path.abspath(config_path)
-
     found = shutil.which(tool_name)
     if found and _is_real_binary(found):
         return found
@@ -216,16 +212,11 @@ def _sdf_center(sdf_path: Path) -> tuple[float, float, float] | None:
         return None
 
     suppl = Chem.SDMolSupplier(str(sdf_path))
-    try:
-        mol = next((m for m in suppl if m is not None), None)
-    finally:
-        del suppl
+    mol = next((m for m in suppl if m is not None), None)
     if mol is None or mol.GetNumConformers() == 0:
         return None
     conf = mol.GetConformer()
     n = mol.GetNumAtoms()
-    if n == 0:
-        return None
     sx = sy = sz = 0.0
     for i in range(n):
         p = conf.GetAtomPosition(i)
@@ -337,19 +328,16 @@ def _gnina_zero_affinity_count(output_sdf: Path) -> tuple[int, int]:
     total = 0
     zero = 0
     suppl = Chem.SDMolSupplier(str(output_sdf))
-    try:
-        for mol in suppl:
-            if mol is None:
+    for mol in suppl:
+        if mol is None:
+            continue
+        total += 1
+        if mol.HasProp("minimizedAffinity"):
+            try:
+                if float(mol.GetProp("minimizedAffinity")) == 0.0:
+                    zero += 1
+            except Exception:
                 continue
-            total += 1
-            if mol.HasProp("minimizedAffinity"):
-                try:
-                    if float(mol.GetProp("minimizedAffinity")) == 0.0:
-                        zero += 1
-                except Exception:
-                    continue
-    finally:
-        del suppl
     return (zero, total)
 
 
@@ -385,39 +373,83 @@ def _emit_post_docking_warnings(
         return
 
 
-def _validate_coord_list(values, label):
-    """Validate and convert a list of coordinate values to floats."""
-    if values is None:
+def _skip_keys_for_tool(tool_name: str) -> set[str]:
+    """Return the set of config keys to skip for a given docking tool."""
+    keys = {"bin", "center", "size"}
+    if tool_name == "gnina":
+        keys.update({"env_path", "ld_library_path", "activate", "output_dir", "no_gpu"})
+    return keys
+
+
+def _build_config_lines(
+    receptor: str,
+    ligand: str,
+    output: str,
+    tool_config: dict,
+    cfg: dict,
+    skip_keys: set[str],
+    autobox_path=None,
+) -> list[str]:
+    """Build docking config lines shared between batch and per-molecule modes."""
+    lines = [
+        f"receptor = {receptor}",
+        f"ligand = {ligand}",
+        f"out = {output}",
+    ]
+
+    center = tool_config.get("center") or cfg.get("center")
+    if center and isinstance(center, (list, tuple)) and len(center) >= 3:
+        lines.extend(
+            [
+                f"center_x = {center[0]}",
+                f"center_y = {center[1]}",
+                f"center_z = {center[2]}",
+            ]
+        )
+
+    size = tool_config.get("size") or cfg.get("size")
+    if size and isinstance(size, (list, tuple)) and len(size) >= 3:
+        lines.extend(
+            [f"size_x = {size[0]}", f"size_y = {size[1]}", f"size_z = {size[2]}"]
+        )
+
+    if autobox_path:
+        lines.append(f"autobox_ligand = {autobox_path}")
+
+    for key, value in tool_config.items():
+        if value is None or key in skip_keys or key == "autobox_ligand":
+            continue
+        if isinstance(value, (list, tuple)):
+            lines.append(f"{key} = [{', '.join(str(v) for v in value)}]")
+        elif isinstance(value, bool):
+            lines.append(f"{key} = {str(value).lower()}")
+        else:
+            lines.append(f"{key} = {value}")
+
+    return lines
+
+
+def _resolve_tool_autobox(tool_config: dict) -> str | None:
+    """Resolve the autobox_ligand path from tool config, returning absolute path or None."""
+    autobox_ligand = tool_config.get("autobox_ligand")
+    if not autobox_ligand:
         return None
-    if not isinstance(values, (list, tuple)) or len(values) < 3:
-        return values  # let downstream checks handle non-list/short values
-    try:
-        return [float(v) for v in values[:3]]
-    except (TypeError, ValueError) as e:
-        raise ValueError(
-            f"Invalid {label} values in docking config: {values!r} — {e}"
-        ) from e
+    project_root = Path(__file__).parent.parent.parent.parent.parent
+    autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
+    if autobox_path:
+        return str(autobox_path)
+    logger.warning(
+        "Could not resolve autobox_ligand path: %s. "
+        "Using as-is (may fail if relative path is incorrect).",
+        autobox_ligand,
+    )
+    return None
 
 
 def _create_docking_config_file(
     cfg, ligands_dir, receptor, ligands_path, output_sdf, config_path, tool_name
 ):
-    """Create docking tool config file from configuration arguments.
-
-    Shared implementation for SMINA and GNINA config file generation.
-
-    Args:
-        cfg: Configuration dictionary
-        ligands_dir: Directory for ligands
-        receptor: Path to receptor file
-        ligands_path: Path to ligands file
-        output_sdf: Path for output SDF
-        config_path: Path for config file
-        tool_name: 'smina' or 'gnina'
-
-    Returns:
-        Path to created config file
-    """
+    """Create docking tool config file from configuration arguments."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
     Path(output_sdf).parent.mkdir(parents=True, exist_ok=True)
 
@@ -428,62 +460,14 @@ def _create_docking_config_file(
     ligands_path = _resolve_path(ligands_path, ligands_dir)
     output_sdf = _resolve_path(output_sdf, ligands_dir)
 
-    lines = [
-        f"receptor = {receptor}",
-        f"ligand = {ligands_path}",
-        f"out = {output_sdf}",
-    ]
+    autobox_path = _resolve_tool_autobox(tool_config)
+    if autobox_path:
+        tool_config["autobox_ligand"] = autobox_path
 
-    _raw_center = tool_config.get("center")
-    center = _validate_coord_list(
-        _raw_center if _raw_center is not None else cfg.get("center"), "center"
+    skip_keys = _skip_keys_for_tool(tool_name)
+    lines = _build_config_lines(
+        receptor, ligands_path, output_sdf, tool_config, cfg, skip_keys, autobox_path
     )
-    if center and isinstance(center, (list, tuple)) and len(center) >= 3:
-        lines.extend(
-            [
-                f"center_x = {center[0]}",
-                f"center_y = {center[1]}",
-                f"center_z = {center[2]}",
-            ]
-        )
-
-    _raw_size = tool_config.get("size")
-    size = _validate_coord_list(
-        _raw_size if _raw_size is not None else cfg.get("size"), "size"
-    )
-    if size and isinstance(size, (list, tuple)) and len(size) >= 3:
-        lines.extend(
-            [f"size_x = {size[0]}", f"size_y = {size[1]}", f"size_z = {size[2]}"]
-        )
-
-    autobox_ligand = tool_config.get("autobox_ligand")
-    if autobox_ligand:
-        project_root = Path(__file__).parent.parent.parent.parent.parent
-        autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
-        if autobox_path:
-            tool_config["autobox_ligand"] = str(autobox_path)
-        else:
-            logger.warning(
-                "Could not resolve autobox_ligand path: %s. "
-                "Using as-is (may fail if relative path is incorrect).",
-                autobox_ligand,
-            )
-
-    skip_keys = {"bin", "center", "size"}
-    if tool_name == "gnina":
-        skip_keys.update(
-            {"env_path", "ld_library_path", "activate", "output_dir", "no_gpu"}
-        )
-
-    for key, value in tool_config.items():
-        if value is None or key in skip_keys:
-            continue
-        if isinstance(value, (list, tuple)):
-            lines.append(f"{key} = [{', '.join(str(v) for v in value)}]")
-        elif isinstance(value, bool):
-            lines.append(f"{key} = {str(value).lower()}")
-        else:
-            lines.append(f"{key} = {value}")
 
     with open(config_path, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -500,18 +484,7 @@ def _create_per_molecule_configs(
     tool_name,
     cpu_override: int | None = None,
 ):
-    """Create per-molecule docking config files.
-
-    Args:
-        cfg: Configuration dictionary
-        ligands_dir: Base directory for docking
-        receptor: Path to receptor file
-        molecule_files: List of paths to individual molecule SDF files
-        tool_name: 'smina' or 'gnina'
-
-    Returns:
-        List of tuples (mol_id, config_path, output_path)
-    """
+    """Create per-molecule docking config files."""
     configs_dir = ligands_dir / "_workdir" / "configs"
     results_dir = ligands_dir / "_workdir" / tool_name / "results"
     configs_dir.mkdir(parents=True, exist_ok=True)
@@ -522,30 +495,9 @@ def _create_per_molecule_configs(
         tool_config["cpu"] = int(cpu_override)
     tool_config["num_modes"] = 1
 
-    # Resolve common settings once
     receptor_abs = _resolve_path(receptor, ligands_dir)
-
-    _raw_center = tool_config.get("center")
-    center = _validate_coord_list(
-        _raw_center if _raw_center is not None else cfg.get("center"), "center"
-    )
-    _raw_size = tool_config.get("size")
-    size = _validate_coord_list(
-        _raw_size if _raw_size is not None else cfg.get("size"), "size"
-    )
-
-    autobox_ligand = tool_config.get("autobox_ligand")
-    autobox_path = None
-    if autobox_ligand:
-        project_root = Path(__file__).parent.parent.parent.parent.parent
-        autobox_path = _resolve_autobox_path(autobox_ligand, project_root)
-
-    skip_keys = {"bin", "center", "size"}
-    if tool_name == "gnina":
-        skip_keys.update(
-            {"env_path", "ld_library_path", "activate", "output_dir", "no_gpu"}
-        )
-
+    autobox_path = _resolve_tool_autobox(tool_config)
+    skip_keys = _skip_keys_for_tool(tool_name)
     config_entries = []
 
     for mol_file in molecule_files:
@@ -553,42 +505,15 @@ def _create_per_molecule_configs(
         config_path = configs_dir / f"{tool_name}_{mol_id}.ini"
         output_sdf = results_dir / f"{mol_id}_out.sdf"
 
-        lines = [
-            f"receptor = {receptor_abs}",
-            f"ligand = {mol_file.resolve()}",
-            f"out = {output_sdf.resolve()}",
-        ]
-
-        if center and isinstance(center, (list, tuple)) and len(center) >= 3:
-            lines.extend(
-                [
-                    f"center_x = {center[0]}",
-                    f"center_y = {center[1]}",
-                    f"center_z = {center[2]}",
-                ]
-            )
-
-        if size and isinstance(size, (list, tuple)) and len(size) >= 3:
-            lines.extend(
-                [
-                    f"size_x = {size[0]}",
-                    f"size_y = {size[1]}",
-                    f"size_z = {size[2]}",
-                ]
-            )
-
-        if autobox_path:
-            lines.append(f"autobox_ligand = {autobox_path}")
-
-        for key, value in tool_config.items():
-            if value is None or key in skip_keys or key == "autobox_ligand":
-                continue
-            if isinstance(value, (list, tuple)):
-                lines.append(f"{key} = [{', '.join(str(v) for v in value)}]")
-            elif isinstance(value, bool):
-                lines.append(f"{key} = {str(value).lower()}")
-            else:
-                lines.append(f"{key} = {value}")
+        lines = _build_config_lines(
+            receptor_abs,
+            str(mol_file.resolve()),
+            str(output_sdf.resolve()),
+            tool_config,
+            cfg,
+            skip_keys,
+            autobox_path,
+        )
 
         with open(config_path, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -655,7 +580,7 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         ligands_dir: Directory for docking files
         tool_name: 'smina' or 'gnina' for log messages
     """
-    f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
+    f.write(f"cd {ligands_dir}\n")
 
     if isinstance(protein_prep_cmd, (list, tuple)):
         protein_prep_cmd_str = " ".join(shlex.quote(str(p)) for p in protein_prep_cmd)
@@ -780,21 +705,18 @@ def _write_receptor_check_bash(f, receptor):
 
 def _write_docking_command_bash(f, ligands_dir, docking_bin, config_file, tool_name):
     """Write docking command bash code to script file."""
-    f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
+    f.write(f"cd {ligands_dir}\n")
     try:
         config_rel = config_file.relative_to(ligands_dir)
     except ValueError:
         config_rel = config_file.name
     f.write(f'echo "Starting {tool_name.upper()} docking with config: {config_rel}"\n')
     f.write(f"{docking_bin} --config {config_rel}\n")
-    f.write("DOCKING_EXIT=$?\n")
-    f.write("if [ $DOCKING_EXIT -eq 0 ]; then\n")
+    f.write("if [ $? -eq 0 ]; then\n")
     f.write(f'  echo "{tool_name.upper()} docking completed successfully"\n')
     f.write("else\n")
-    f.write(
-        f'  echo "{tool_name.upper()} docking failed with exit code $DOCKING_EXIT"\n'
-    )
-    f.write("  exit $DOCKING_EXIT\n")
+    f.write(f'  echo "{tool_name.upper()} docking failed with exit code $?"\n')
+    f.write("  exit 1\n")
     f.write("fi\n")
 
 
@@ -804,19 +726,9 @@ def _build_gnina_command_template(cfg: dict, gnina_bin: str, ligands_dir: Path) 
     The returned command must contain the ``__GNINA_CONFIG__`` placeholder that
     is replaced at script generation time.
     """
-
-    def _enabled(value) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(value)
-
     placeholder = "__GNINA_CONFIG__"
     gnina_cfg = cfg.get("gnina_config", {}) or {}
-    no_gpu_enabled = _enabled(gnina_cfg.get("no_gpu"))
+    no_gpu_enabled = _parse_bool_config(gnina_cfg.get("no_gpu"))
     no_gpu_flag = " --no_gpu" if no_gpu_enabled else ""
     host_cmd = f"{shlex.quote(str(gnina_bin))} --config {placeholder}{no_gpu_flag}"
 
@@ -920,8 +832,8 @@ def _create_smina_per_molecule_script(
         if protein_prep_cmd:
             _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, "smina")
 
-        f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
-        f.write(f"mkdir -p {shlex.quote(str(logs_dir))}\n\n")
+        f.write(f"cd {ligands_dir}\n")
+        f.write(f'mkdir -p "{logs_dir}"\n\n')
 
         f.write("# Per-molecule docking with error handling\n")
         f.write("FAILED=()\n")
@@ -1129,34 +1041,27 @@ def _split_sdf_to_molecules(sdf_path: Path, molecules_dir: Path) -> list[Path]:
     molecule_files = []
 
     suppl = Chem.SDMolSupplier(str(sdf_path))
-    try:
-        for mol in suppl:
-            if mol is None:
-                continue
+    for mol in suppl:
+        if mol is None:
+            continue
 
-            mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
-            if not mol_name:
-                mol_name = f"mol_{len(molecule_files):05d}"
+        mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
+        if not mol_name:
+            mol_name = f"mol_{len(molecule_files):05d}"
 
-            # Sanitize molecule name for filesystem and force uniqueness with index prefix
-            base_name = "".join(
-                c if c.isalnum() or c in "-_" else "_" for c in mol_name
-            )
-            if not base_name:
-                base_name = "mol"
-            base_name = base_name[:180]
-            safe_name = f"{len(molecule_files):06d}_{base_name}"
-            mol_path = molecules_dir / f"{safe_name}.sdf"
+        # Sanitize molecule name for filesystem and force uniqueness with index prefix
+        base_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in mol_name)
+        if not base_name:
+            base_name = "mol"
+        base_name = base_name[:180]
+        safe_name = f"{len(molecule_files):06d}_{base_name}"
+        mol_path = molecules_dir / f"{safe_name}.sdf"
 
-            writer = Chem.SDWriter(str(mol_path))
-            try:
-                writer.write(mol)
-            finally:
-                writer.close()
+        writer = Chem.SDWriter(str(mol_path))
+        writer.write(mol)
+        writer.close()
 
-            molecule_files.append(mol_path)
-    finally:
-        del suppl
+        molecule_files.append(mol_path)
 
     logger.info(
         "Split SDF into %d individual molecule files in %s",
@@ -1174,6 +1079,17 @@ def _parse_positive_int(value, default: int) -> int:
             return parsed
     except Exception:
         pass
+    return default
+
+
+def _parse_bool_config(value, default: bool = False) -> bool:
+    """Parse a boolean from config values that may be bool, int, float, or str."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
     return default
 
 
@@ -1205,12 +1121,8 @@ def _resolve_gnina_parallel_jobs(cfg: dict, cpu_per_process: int) -> int:
 
 def _count_visible_nvidia_gpus() -> int:
     """Return count of visible NVIDIA GPUs available to this process."""
-    cuda_env = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if cuda_env is not None:
-        visible_devices = cuda_env.strip()
-        if not visible_devices:
-            # Explicitly empty — user intends no GPUs
-            return 0
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if visible_devices:
         tokens = [item.strip() for item in visible_devices.split(",") if item.strip()]
         if any(
             token in {"-1", "none", "void"} for token in (t.lower() for t in tokens)
@@ -1264,14 +1176,7 @@ def _materialize_prepared_ligands(
             cwd=str(ligands_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=600,
         )
-    except subprocess.TimeoutExpired:
-        logger.warning(
-            "%s ligand preparation timed out after 600s, falling back to batch mode",
-            tool_name.upper(),
-        )
-        return False
     except subprocess.CalledProcessError as exc:
         logger.warning(
             "%s ligand preparation failed before per-molecule split (exit=%s), falling back to batch mode",
@@ -1331,34 +1236,30 @@ def _aggregate_docking_results(results_dir: Path, output_sdf: Path) -> int:
     def _pick_best_pose(result_file: Path):
         best_mol = None
         best_affinity = float("inf")
-        suppl = Chem.SDMolSupplier(str(result_file))
-        try:
-            for mol in suppl:
-                if mol is None:
-                    continue
-                affinity = _extract_pose_affinity(mol)
-                affinity_sort = affinity if affinity is not None else float("inf")
-                if best_mol is None or affinity_sort < best_affinity:
-                    best_mol = mol
-                    best_affinity = affinity_sort
-        finally:
-            del suppl
+        for mol in Chem.SDMolSupplier(str(result_file)):
+            if mol is None:
+                continue
+            affinity = _extract_pose_affinity(mol)
+            affinity_sort = affinity if affinity is not None else float("inf")
+            if best_mol is None or affinity_sort < best_affinity:
+                best_mol = mol
+                best_affinity = affinity_sort
         return best_mol
 
     writer = Chem.SDWriter(str(output_sdf))
     count = 0
-    try:
-        for result_file in result_files:
-            try:
-                best_pose = _pick_best_pose(result_file)
-                if best_pose is not None:
-                    writer.write(best_pose)
-                    count += 1
-            except Exception as e:
-                logger.warning("Failed to read result file %s: %s", result_file, e)
-                continue
-    finally:
-        writer.close()
+
+    for result_file in result_files:
+        try:
+            best_pose = _pick_best_pose(result_file)
+            if best_pose is not None:
+                writer.write(best_pose)
+                count += 1
+        except Exception as e:
+            logger.warning("Failed to read result file %s: %s", result_file, e)
+            continue
+
+    writer.close()
     logger.info(
         "Aggregated %d best poses (single pose per molecule) from %d result files into %s",
         count,
@@ -1385,27 +1286,27 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
 
     writer = Chem.SDWriter(str(sdf_path))
     written_count = 0
-    try:
-        for smi, name in zip(
-            smiles_series.astype(str), name_series.astype(str), strict=False
-        ):
-            try:
-                mol = Chem.MolFromSmiles(smi)
-                if mol is None:
-                    continue
-                mol = Chem.AddHs(mol)
-                try:
-                    AllChem.EmbedMolecule(mol, AllChem.ETKDG())
-                    AllChem.UFFOptimizeMolecule(mol)
-                except Exception:
-                    pass
-                mol.SetProp("_Name", name)
-                writer.write(mol)
-                written_count += 1
-            except Exception:
+
+    for smi, name in zip(
+        smiles_series.astype(str), name_series.astype(str), strict=False
+    ):
+        try:
+            mol = Chem.MolFromSmiles(smi)
+            if mol is None:
                 continue
-    finally:
-        writer.close()
+            mol = Chem.AddHs(mol)
+            try:
+                AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+                AllChem.UFFOptimizeMolecule(mol)
+            except Exception:
+                pass
+            mol.SetProp("_Name", name)
+            writer.write(mol)
+            written_count += 1
+        except Exception:
+            continue
+
+    writer.close()
 
     if written_count == 0:
         raise RuntimeError("RDKit conversion produced 0 molecules for GNINA SDF")
@@ -1576,7 +1477,7 @@ def _create_gnina_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
+        f.write(f"cd {ligands_dir}\n")
         try:
             config_rel = config_file.relative_to(ligands_dir)
         except ValueError:
@@ -1586,12 +1487,11 @@ def _create_gnina_script(
             "__GNINA_CONFIG__", shlex.quote(str(config_rel))
         )
         f.write(f"{gnina_cmd}\n")
-        f.write("DOCKING_EXIT=$?\n")
-        f.write("if [ $DOCKING_EXIT -eq 0 ]; then\n")
+        f.write("if [ $? -eq 0 ]; then\n")
         f.write('  echo "GNINA docking completed successfully"\n')
         f.write("else\n")
-        f.write('  echo "GNINA docking failed with exit code $DOCKING_EXIT"\n')
-        f.write("  exit $DOCKING_EXIT\n")
+        f.write('  echo "GNINA docking failed with exit code $?"\n')
+        f.write("  exit 1\n")
         f.write("fi\n")
 
     os.chmod(script_path, 0o755)
@@ -1636,8 +1536,8 @@ def _create_gnina_per_molecule_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {shlex.quote(str(ligands_dir))}\n")
-        f.write(f"mkdir -p {shlex.quote(str(logs_dir))}\n\n")
+        f.write(f"cd {ligands_dir}\n")
+        f.write(f'mkdir -p "{logs_dir}"\n\n')
 
         f.write("# Per-molecule docking with bounded parallelism\n")
         f.write(f"MAX_JOBS={max(1, int(parallel_jobs))}\n")
@@ -1929,25 +1829,15 @@ def _run_docking_script(
         return {"status": "error", "log_path": str(log_path)}
 
     if background:
-        logf = open(log_path, "ab")  # noqa: SIM115
-        proc = subprocess.Popen(
-            ["./" + script_path.name],
-            stdout=logf,
-            stderr=logf,
-            cwd=str(working_dir),
-            start_new_session=True,
-        )
-        logger.info(
-            "Started %s in background (PID %d). Log: %s",
-            script_path.name,
-            proc.pid,
-            log_path,
-        )
-        return {
-            "status": "started_background",
-            "log_path": str(log_path),
-            "pid": proc.pid,
-        }
+        with open(log_path, "ab") as logf:
+            subprocess.Popen(
+                ["./" + script_path.name],
+                stdout=logf,
+                stderr=logf,
+                cwd=str(working_dir),
+            )
+        logger.info("Started %s in background. Log: %s", script_path.name, log_path)
+        return {"status": "started_background", "log_path": str(log_path)}
     else:
         with open(log_path, "wb") as logf:
             proc = subprocess.Popen(
@@ -2174,6 +2064,72 @@ def _setup_smina(
         return None
 
 
+def _setup_gnina_per_molecule(
+    cfg,
+    ligands_dir,
+    ligands_path,
+    prep_cmd,
+    receptor,
+    protein_prep_cmd,
+    gnina_command_template,
+    activate_cmd,
+    ld_library_path,
+    cpu_per_process,
+    parallel_jobs,
+    gpu_count,
+):
+    """Setup GNINA per-molecule docking. Returns script path or None on fallback."""
+    ligands_path_obj = Path(ligands_path)
+    if prep_cmd:
+        ready = _materialize_prepared_ligands(
+            prep_cmd, ligands_path_obj, ligands_dir, tool_name="gnina"
+        )
+    else:
+        ready = ligands_path_obj.exists()
+
+    if not ready:
+        logger.warning(
+            "GNINA per-molecule mode requested but prepared ligands are unavailable, falling back to batch mode"
+        )
+        return None
+
+    logger.info(
+        "GNINA per-molecule mode enabled: cpu_per_process=%d, parallel_jobs=%d, gpu_count=%d",
+        cpu_per_process,
+        parallel_jobs,
+        gpu_count,
+    )
+
+    molecules_dir = ligands_dir / "_workdir" / "molecules"
+    molecule_files = _split_sdf_to_molecules(ligands_path_obj, molecules_dir)
+    if not molecule_files:
+        logger.warning("No molecules found in SDF, falling back to batch mode")
+        return None
+
+    _create_per_molecule_configs(
+        cfg,
+        ligands_dir,
+        receptor,
+        molecule_files,
+        "gnina",
+        cpu_override=cpu_per_process,
+    )
+    script_path = _create_gnina_per_molecule_script(
+        ligands_dir,
+        gnina_command_template,
+        activate_cmd,
+        ld_library_path,
+        protein_prep_cmd,
+        receptor,
+        parallel_jobs,
+    )
+    logger.info(
+        "GNINA per-molecule configuration prepared for %d molecules",
+        len(molecule_files),
+    )
+    return script_path
+
+
 def _setup_gnina(
     cfg,
     base_folder,
@@ -2190,15 +2146,23 @@ def _setup_gnina(
             return None
 
         if "protein_prepared.pdb" in original_receptor:
-            receptor_path = Path(original_receptor)
-            if not receptor_path.exists():
-                logger.error(
-                    "GNINA: Config references prepared receptor path '%s' which "
-                    "does not exist. Please check 'receptor_pdb' in your docking "
-                    "config and provide the original receptor file.",
-                    original_receptor,
-                )
+            logger.warning(
+                "GNINA: Config has prepared path: %s, this should have been restored",
+                original_receptor,
+            )
+            project_root = Path(__file__).parent.parent.parent.parent.parent
+            possible_originals = [
+                project_root / "data/test/7EW9_apo.pdb",
+            ]
+            original_receptor = None
+            for possible in possible_originals:
+                if possible.exists():
+                    original_receptor = str(possible.resolve())
+                    break
+            if not original_receptor:
+                logger.error("GNINA: Could not find original receptor file")
                 return None
+            cfg["receptor_pdb"] = original_receptor
 
         receptor, protein_prep_cmd = _get_receptor_and_prep_cmd(
             cfg, ligands_dir, protein_preparation_tool, "gnina"
@@ -2222,88 +2186,33 @@ def _setup_gnina(
         )
         activate_cmd, ld_library_path = _get_gnina_environment(cfg, base_folder)
 
-        # Check if per-molecule mode is enabled (default: True)
-        per_molecule_mode = cfg.get("per_molecule_docking", True)
         gnina_cpu_default = gnina_config.get("cpu", 8)
         cpu_per_process = _parse_positive_int(
             cfg.get("gnina_per_process_cpu", gnina_cpu_default), 8
         )
-        no_gpu_raw = gnina_config.get("no_gpu", False)
-        if isinstance(no_gpu_raw, bool):
-            no_gpu_enabled = no_gpu_raw
-        elif isinstance(no_gpu_raw, (int, float)):
-            no_gpu_enabled = bool(no_gpu_raw)
-        elif isinstance(no_gpu_raw, str):
-            no_gpu_enabled = no_gpu_raw.strip().lower() in {"1", "true", "yes", "on"}
-        else:
-            no_gpu_enabled = bool(no_gpu_raw)
+        no_gpu_enabled = _parse_bool_config(gnina_config.get("no_gpu", False))
         gpu_count = 0 if no_gpu_enabled else _count_visible_nvidia_gpus()
         parallel_jobs = _resolve_gnina_parallel_jobs(cfg, cpu_per_process)
         if gpu_count > 0 and cfg.get("gnina_parallel_jobs") is None:
-            # GNINA's CNN backend is unstable with multi-process GPU execution
-            # on many systems (device mismatch/OOM). Keep default safe.
             parallel_jobs = 1
 
-        if per_molecule_mode:
-            ligands_path_obj = Path(ligands_path)
-            if prep_cmd:
-                ready = _materialize_prepared_ligands(
-                    prep_cmd,
-                    ligands_path_obj,
-                    ligands_dir,
-                    tool_name="gnina",
-                )
-            else:
-                ready = ligands_path_obj.exists()
-
-            if not ready:
-                logger.warning(
-                    "GNINA per-molecule mode requested but prepared ligands are unavailable, falling back to batch mode"
-                )
-            else:
-                logger.info(
-                    "GNINA per-molecule mode enabled: cpu_per_process=%d, parallel_jobs=%d, gpu_count=%d",
-                    cpu_per_process,
-                    parallel_jobs,
-                    gpu_count,
-                )
-
-                # Split SDF into per-molecule files
-                molecules_dir = ligands_dir / "_workdir" / "molecules"
-                molecule_files = _split_sdf_to_molecules(
-                    ligands_path_obj, molecules_dir
-                )
-
-                if molecule_files:
-                    # Create per-molecule configs
-                    _create_per_molecule_configs(
-                        cfg,
-                        ligands_dir,
-                        receptor,
-                        molecule_files,
-                        "gnina",
-                        cpu_override=cpu_per_process,
-                    )
-
-                    # Create per-molecule script
-                    script_path = _create_gnina_per_molecule_script(
-                        ligands_dir,
-                        gnina_command_template,
-                        activate_cmd,
-                        ld_library_path,
-                        protein_prep_cmd,
-                        receptor,
-                        parallel_jobs,
-                    )
-                    logger.info(
-                        "GNINA per-molecule configuration prepared for %d molecules",
-                        len(molecule_files),
-                    )
-                    return script_path
-                else:
-                    logger.warning(
-                        "No molecules found in SDF, falling back to batch mode"
-                    )
+        if cfg.get("per_molecule_docking", True):
+            script = _setup_gnina_per_molecule(
+                cfg,
+                ligands_dir,
+                ligands_path,
+                prep_cmd,
+                receptor,
+                protein_prep_cmd,
+                gnina_command_template,
+                activate_cmd,
+                ld_library_path,
+                cpu_per_process,
+                parallel_jobs,
+                gpu_count,
+            )
+            if script:
+                return script
 
         # Fallback to legacy batch mode
         config_file = ligands_dir / "_workdir" / "gnina_config.ini"
@@ -2330,8 +2239,238 @@ def _setup_gnina(
         return None
 
 
+def _wait_for_prepared_file(path: str, max_wait: int = 300) -> bool:
+    """Poll-wait for a prepared protein file to appear and be non-empty."""
+    prepared_path = Path(path)
+    wait_interval = 2
+    waited = 0
+    while waited < max_wait:
+        if prepared_path.exists() and prepared_path.stat().st_size > 0:
+            return True
+        time.sleep(wait_interval)
+        waited += wait_interval
+        if waited % 60 == 0:
+            logger.info("Waiting for protein preparation... (%ds)", waited)
+    return False
+
+
+def _handle_prep_failure(result, cfg, original_receptor, original_path) -> bool:
+    """Handle non-zero return code from protein preparation.
+
+    Returns True if preparation was skipped gracefully (tool unavailable),
+    False if preparation hard-failed.
+    """
+    stderr = (result.stderr or "").strip()
+    stdout = (result.stdout or "").strip()
+    if (
+        result.returncode == 127
+        or "not found" in stderr.lower()
+        or "no such file" in stderr.lower()
+    ):
+        logger.warning(
+            "Protein preparation tool is unavailable at runtime. "
+            "Skipping receptor preprocessing and using original receptor: %s",
+            original_receptor,
+        )
+        cfg["receptor_pdb"] = str(original_path)
+        return True
+    logger.error("Protein preparation command failed: %s", stderr or stdout)
+    return False
+
+
+def _execute_protein_preparation(cfg, ligands_dir, protein_preparation_tool) -> bool:
+    """Run protein preparation subprocess, wait for output, update cfg.
+
+    Returns True on success (or graceful skip), False on hard failure.
+    """
+    _prepare_receptor_if_needed(cfg, ligands_dir, protein_preparation_tool)
+    original_receptor = cfg.get("receptor_pdb")
+    if not original_receptor:
+        return True
+
+    original_receptor_path = Path(original_receptor)
+    if not original_receptor_path.exists():
+        return True
+
+    prepared_receptor_path, prep_cmd = _prepare_protein_for_docking(
+        original_receptor, ligands_dir, protein_preparation_tool
+    )
+    if prepared_receptor_path == original_receptor or not prep_cmd:
+        return True
+
+    try:
+        result = subprocess.run(
+            prep_cmd,
+            shell=False,
+            capture_output=True,
+            text=True,
+            cwd=str(ligands_dir),
+            timeout=600,
+        )
+    except FileNotFoundError:
+        logger.warning(
+            "Protein preparation tool is unavailable at runtime. "
+            "Skipping receptor preprocessing and using original receptor: %s",
+            original_receptor,
+        )
+        cfg["receptor_pdb"] = str(original_receptor_path)
+        return True
+    except Exception as e:
+        logger.error("Failed to prepare protein: %s", e)
+        import traceback
+
+        logger.debug(traceback.format_exc())
+        return False
+
+    if result.returncode != 0:
+        return _handle_prep_failure(
+            result, cfg, original_receptor, original_receptor_path
+        )
+
+    if not _wait_for_prepared_file(prepared_receptor_path):
+        prepared_path = Path(prepared_receptor_path)
+        if not prepared_path.exists():
+            logger.error(
+                "Protein preparation failed - output file not found after 300s: %s",
+                prepared_receptor_path,
+            )
+            logger.error("Command output: %s", result.stdout)
+            logger.error("Command error: %s", result.stderr)
+        else:
+            logger.error(
+                "Protein preparation failed - output file is empty: %s",
+                prepared_receptor_path,
+            )
+        return False
+
+    logger.info("Protein prepared successfully: %s", prepared_receptor_path)
+    cfg["receptor_pdb"] = prepared_receptor_path
+    return True
+
+
+def _create_progress_tracker(reporter, selected_tools, ligands_dir, gnina_output_sdf):
+    """Build progress tracking closures for docking execution.
+
+    Returns (progress_total, make_tick_fn) where make_tick_fn(tool_name)
+    returns a tick callable, or (0, None) if tracking is not needed.
+    """
+    configs_dir = ligands_dir / "_workdir" / "configs"
+    tool_totals: dict[str, int] = {}
+    for tool in selected_tools:
+        count = 0
+        if configs_dir.exists():
+            count = len(list(configs_dir.glob(f"{tool}_*.ini")))
+        tool_totals[tool] = count if count > 0 else 1
+    progress_total = sum(tool_totals.values()) or 1
+
+    def _count_done() -> int:
+        done = 0
+        if "smina" in tool_totals:
+            done += min(_count_smina_done(ligands_dir), tool_totals["smina"])
+        if "gnina" in tool_totals:
+            done += min(
+                _count_gnina_done(ligands_dir, gnina_output_sdf),
+                tool_totals["gnina"],
+            )
+        return done
+
+    def _make_tick(tool_name: str):
+        def _tick() -> None:
+            reporter.progress(
+                _count_done(), progress_total, message=f"Docking ({tool_name})"
+            )
+
+        return _tick
+
+    reporter.progress(0, progress_total, message="Docking")
+    return progress_total, _make_tick
+
+
+def _evaluate_run_results(selected_tools, run_status, reporter, progress_total) -> bool:
+    """Evaluate docking results and return True if all tools succeeded."""
+    completed_tools = [
+        t for t in selected_tools if run_status.get(t, {}).get("status") == "completed"
+    ]
+    failed_tools = [
+        t for t in selected_tools if run_status.get(t, {}).get("status") == "failed"
+    ]
+
+    if reporter is not None and progress_total:
+        reporter.progress(progress_total, progress_total, message="Docking complete")
+
+    if failed_tools:
+        logger.error("Docking tools failed: %s", ", ".join(failed_tools))
+
+    if len(completed_tools) == len(selected_tools):
+        return True
+    if completed_tools:
+        logger.warning(
+            "Only %d/%d docking tools completed successfully",
+            len(completed_tools),
+            len(selected_tools),
+        )
+    else:
+        logger.error("All docking tools failed")
+    return False
+
+
+def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, reporter):
+    """Execute docking tools and evaluate results. Returns True on success."""
+    background = bool(cfg.get("run_in_background", False))
+    run_status = {}
+    selected_tools = [t for t in tools_list if t in job_ids]
+    gnina_output_sdf = _get_gnina_output_directory(cfg, base_folder) / "gnina_out.sdf"
+
+    progress_total = 0
+    make_tick = None
+    if reporter is not None and not background and selected_tools:
+        progress_total, make_tick = _create_progress_tracker(
+            reporter, selected_tools, ligands_dir, gnina_output_sdf
+        )
+
+    if "smina" in job_ids:
+        logger.info("Running SMINA docking")
+        tick = make_tick("smina") if make_tick and not background else None
+        run_status["smina"] = _run_smina(
+            ligands_dir, background, job_ids["smina"], tick=tick
+        )
+        if not background and run_status["smina"].get("status") == "completed":
+            _emit_post_docking_warnings(
+                "smina", ligands_dir / "_workdir" / "smina_run.log"
+            )
+
+    if "gnina" in job_ids:
+        logger.info("Running GNINA docking")
+        try:
+            output_sdf = gnina_output_sdf
+            tick = make_tick("gnina") if make_tick and not background else None
+            run_status["gnina"] = _run_gnina(
+                ligands_dir, output_sdf, background, job_ids["gnina"], tick=tick
+            )
+            if not background and run_status["gnina"].get("status") == "completed":
+                _emit_post_docking_warnings(
+                    "gnina",
+                    ligands_dir / "_workdir" / "gnina_run.log",
+                    output_sdf=output_sdf,
+                )
+        except Exception as e:
+            logger.error("GNINA execution failed: %s", e)
+            run_status["gnina"] = {"status": "failed", "error": str(e)}
+
+    try:
+        _update_metadata_with_run_status(ligands_dir, run_status)
+    except Exception as e:
+        logger.warning("Failed to update metadata with run status: %s", e)
+
+    if background:
+        return True
+
+    return _evaluate_run_results(selected_tools, run_status, reporter, progress_total)
+
+
 def run_docking(config, reporter=None):
     """Main docking orchestration function."""
+    # 1. Load config and validate input
     cfg = load_config(config["config_docking"])
     if not cfg.get("run", False):
         logger.info("Docking disabled in config")
@@ -2369,110 +2508,15 @@ def run_docking(config, reporter=None):
     tools_list = _parse_tools_config(cfg)
     logger.info("Docking tools configured: %s", tools_list)
 
-    # Heuristic warnings about common configuration issues.
-    if "gnina" in tools_list:
-        _warn_if_autobox_far_from_receptor(cfg, "gnina")
-    if "smina" in tools_list:
-        _warn_if_autobox_far_from_receptor(cfg, "smina")
+    for tool in tools_list:
+        _warn_if_autobox_far_from_receptor(cfg, tool)
 
-    prepared_receptor_path = None
+    # 2. Protein preparation
     if protein_preparation_tool:
-        _prepare_receptor_if_needed(
-            cfg, ligands_dir, protein_preparation_tool, base_folder
-        )
-        original_receptor = cfg.get("receptor_pdb")
-        if original_receptor:
-            original_receptor_path = Path(original_receptor)
-            if original_receptor_path.exists():
-                prepared_receptor_path, prep_cmd = _prepare_protein_for_docking(
-                    original_receptor, ligands_dir, protein_preparation_tool
-                )
-                if prepared_receptor_path != original_receptor and prep_cmd:
-                    try:
-                        import time
+        if not _execute_protein_preparation(cfg, ligands_dir, protein_preparation_tool):
+            return False
 
-                        _PROTEIN_PREP_TIMEOUT = 600  # 10 minutes
-                        result = subprocess.run(
-                            prep_cmd,
-                            shell=False,
-                            capture_output=True,
-                            text=True,
-                            cwd=str(ligands_dir),
-                            timeout=_PROTEIN_PREP_TIMEOUT,
-                        )
-                        if result.returncode != 0:
-                            stderr = (result.stderr or "").strip()
-                            stdout = (result.stdout or "").strip()
-                            if (
-                                result.returncode == 127
-                                or "not found" in stderr.lower()
-                                or "no such file" in stderr.lower()
-                            ):
-                                logger.warning(
-                                    "Protein preparation tool is unavailable at runtime. "
-                                    "Skipping receptor preprocessing and using original receptor: %s",
-                                    original_receptor,
-                                )
-                                cfg["receptor_pdb"] = str(original_receptor_path)
-                            else:
-                                logger.error(
-                                    "Protein preparation command failed: %s",
-                                    stderr or stdout,
-                                )
-                                return False
-                        else:
-                            prepared_path = Path(prepared_receptor_path)
-                            max_wait = 300
-                            wait_interval = 2
-                            waited = 0
-                            while waited < max_wait:
-                                if (
-                                    prepared_path.exists()
-                                    and prepared_path.stat().st_size > 0
-                                ):
-                                    logger.info(
-                                        "Protein prepared successfully: %s",
-                                        prepared_receptor_path,
-                                    )
-                                    cfg["receptor_pdb"] = prepared_receptor_path
-                                    break
-                                time.sleep(wait_interval)
-                                waited += wait_interval
-                                if waited % 60 == 0:
-                                    logger.info(
-                                        "Waiting for protein preparation... (%ds)",
-                                        waited,
-                                    )
-
-                            if not prepared_path.exists():
-                                logger.error(
-                                    "Protein preparation failed - output file not found after %ds: %s",
-                                    max_wait,
-                                    prepared_receptor_path,
-                                )
-                                logger.error("Command output: %s", result.stdout)
-                                logger.error("Command error: %s", result.stderr)
-                                return False
-                            elif prepared_path.stat().st_size == 0:
-                                logger.error(
-                                    "Protein preparation failed - output file is empty: %s",
-                                    prepared_receptor_path,
-                                )
-                                return False
-                    except FileNotFoundError:
-                        logger.warning(
-                            "Protein preparation tool is unavailable at runtime. "
-                            "Skipping receptor preprocessing and using original receptor: %s",
-                            original_receptor,
-                        )
-                        cfg["receptor_pdb"] = str(original_receptor_path)
-                    except Exception as e:
-                        logger.error("Failed to prepare protein: %s", e)
-                        import traceback
-
-                        logger.debug(traceback.format_exc())
-                        return False
-
+    # 3. Tool setup
     scripts_prepared = []
     job_ids = {}
     overall_job_id = _generate_job_id("dock")
@@ -2510,13 +2554,13 @@ def run_docking(config, reporter=None):
     if not scripts_prepared:
         logger.error("No docking tools were successfully configured")
         return False
+
     try:
-        original_receptor = cfg.get("receptor_pdb")
         _save_job_metadata(
             ligands_dir,
             source,
             len(df),
-            original_receptor,
+            cfg.get("receptor_pdb"),
             list(job_ids.keys()),
             scripts_prepared,
             ligands_csv,
@@ -2529,140 +2573,26 @@ def run_docking(config, reporter=None):
     except Exception as e:
         logger.warning("Failed to save metadata: %s", e)
 
-    auto_run = cfg.get("auto_run", True)
-    if auto_run:
-        background = bool(cfg.get("run_in_background", False))
-        run_status = {}
-
-        selected_tools = [
-            t for t in tools_list if t in ["smina", "gnina"] and t in job_ids
-        ]
-        progress_total = 0
-        tool_totals: dict[str, int] = {}
-        gnina_output_sdf = (
-            _get_gnina_output_directory(cfg, base_folder) / "gnina_out.sdf"
+    # 4. Execution
+    if cfg.get("auto_run", True):
+        return _execute_auto_run(
+            cfg, tools_list, job_ids, ligands_dir, base_folder, reporter
         )
-        if reporter is not None and not background and selected_tools:
-            configs_dir = ligands_dir / "_workdir" / "configs"
-            for tool in selected_tools:
-                count = 0
-                if configs_dir.exists():
-                    count = len(list(configs_dir.glob(f"{tool}_*.ini")))
-                tool_totals[tool] = count if count > 0 else 1
-            progress_total = sum(tool_totals.values()) or 1
 
-            def _count_done() -> int:
-                done = 0
-                if "smina" in tool_totals:
-                    done += min(_count_smina_done(ligands_dir), tool_totals["smina"])
-                if "gnina" in tool_totals:
-                    done += min(
-                        _count_gnina_done(ligands_dir, gnina_output_sdf),
-                        tool_totals["gnina"],
-                    )
-                return done
-
-            def _make_tick(tool_name: str):
-                def _tick() -> None:
-                    reporter.progress(
-                        _count_done(), progress_total, message=f"Docking ({tool_name})"
-                    )
-
-                return _tick
-
-            reporter.progress(0, progress_total, message="Docking")
-
-        if "smina" in job_ids:
-            logger.info("Running SMINA docking")
-            tick = (
-                _make_tick("smina")
-                if reporter is not None and not background and progress_total
-                else None
+    # 5. Post-run warnings for manual mode
+    try:
+        if "smina" in tools_list:
+            _emit_post_docking_warnings(
+                "smina", ligands_dir / "_workdir" / "smina_run.log"
             )
-            run_status["smina"] = _run_smina(
-                ligands_dir, background, job_ids["smina"], tick=tick
+        if "gnina" in tools_list:
+            gnina_dir = _get_gnina_output_directory(cfg, base_folder)
+            _emit_post_docking_warnings(
+                "gnina",
+                ligands_dir / "_workdir" / "gnina_run.log",
+                output_sdf=gnina_dir / "gnina_out.sdf",
             )
-            if not background and run_status["smina"].get("status") == "completed":
-                log_path = ligands_dir / "_workdir" / "smina_run.log"
-                _emit_post_docking_warnings("smina", log_path)
-
-        if "gnina" in job_ids:
-            logger.info("Running GNINA docking")
-            try:
-                gnina_dir = _get_gnina_output_directory(cfg, base_folder)
-                output_sdf = gnina_dir / "gnina_out.sdf"
-                tick = (
-                    _make_tick("gnina")
-                    if reporter is not None and not background and progress_total
-                    else None
-                )
-                run_status["gnina"] = _run_gnina(
-                    ligands_dir, output_sdf, background, job_ids["gnina"], tick=tick
-                )
-                if not background and run_status["gnina"].get("status") == "completed":
-                    log_path = ligands_dir / "_workdir" / "gnina_run.log"
-                    _emit_post_docking_warnings(
-                        "gnina", log_path, output_sdf=output_sdf
-                    )
-            except Exception as e:
-                logger.error("GNINA execution failed: %s", e)
-                run_status["gnina"] = {"status": "failed", "error": str(e)}
-
-        try:
-            _update_metadata_with_run_status(ligands_dir, run_status)
-        except Exception as e:
-            logger.warning("Failed to update metadata with run status: %s", e)
-
-        if not background:
-            selected_tools = [t for t in tools_list if t in ["smina", "gnina"]]
-            completed_tools = [
-                t
-                for t in selected_tools
-                if run_status.get(t, {}).get("status") == "completed"
-            ]
-            failed_tools = [
-                t
-                for t in selected_tools
-                if run_status.get(t, {}).get("status") == "failed"
-            ]
-
-            if reporter is not None and progress_total:
-                reporter.progress(
-                    progress_total, progress_total, message="Docking complete"
-                )
-
-            if failed_tools:
-                logger.error("Docking tools failed: %s", ", ".join(failed_tools))
-
-            if len(completed_tools) == len(selected_tools):
-                return True
-            elif len(completed_tools) > 0:
-                logger.warning(
-                    "Only %d/%d docking tools completed successfully",
-                    len(completed_tools),
-                    len(selected_tools),
-                )
-                return False
-            else:
-                logger.error("All docking tools failed")
-                return False
-
-    # If docking wasn't executed automatically, still emit warnings based on any
-    # existing logs/outputs in the run folder. This makes reruns/debugging cheaper.
-    if not auto_run:
-        try:
-            if "smina" in tools_list:
-                _emit_post_docking_warnings(
-                    "smina", ligands_dir / "_workdir" / "smina_run.log"
-                )
-            if "gnina" in tools_list:
-                gnina_dir = _get_gnina_output_directory(cfg, base_folder)
-                _emit_post_docking_warnings(
-                    "gnina",
-                    ligands_dir / "_workdir" / "gnina_run.log",
-                    output_sdf=gnina_dir / "gnina_out.sdf",
-                )
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     return True

@@ -2,10 +2,8 @@
 
 import base64
 import html as html_lib
-import importlib.metadata
 import json
 import logging
-import math
 import statistics
 from datetime import datetime
 from pathlib import Path
@@ -82,12 +80,22 @@ DESCRIPTOR_ALIASES = {
 DESCRIPTOR_EXCLUDE_COLS = {"smiles", "model_name", "mol_idx", "chars", "name", "id"}
 
 
-def _get_hedgehog_version() -> str:
-    """Get the installed hedgehog package version."""
-    try:
-        return importlib.metadata.version("hedgehog")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+def _try_read_csv(*paths: Path) -> pd.DataFrame | None:
+    """Try reading CSV from multiple candidate paths, returning first success.
+
+    Args:
+        paths: One or more Path objects to try reading in order.
+
+    Returns:
+        DataFrame from the first readable file, or None if all fail.
+    """
+    for path in paths:
+        if path.exists():
+            try:
+                return pd.read_csv(path)
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+                logger.debug("Could not read %s: %s", path, e)
+    return None
 
 
 class ReportGenerator:
@@ -260,7 +268,7 @@ class ReportGenerator:
         """Get report metadata."""
         return {
             "generated_at": datetime.now().isoformat(),
-            "hedgehog_version": _get_hedgehog_version(),
+            "hedgehog_version": "1.0.0",
             "run_path": str(self.base_path),
         }
 
@@ -354,30 +362,7 @@ class ReportGenerator:
 
         return funnel
 
-    def _get_stage_output_count(self, stage_key: str) -> int | None:
-        """Get molecule count from stage output file."""
-        stage_dir = STAGE_DIRS.get(stage_key)
-        if not stage_dir:
-            return None
-
-        # Try common output file locations
-        paths_to_try = [
-            self.base_path / stage_dir / "filtered_molecules.csv",
-            self.base_path / stage_dir / "filtered" / "filtered_molecules.csv",
-            self.base_path / stage_dir / "ligands.csv",  # For docking stage
-        ]
-
-        for path in paths_to_try:
-            if path.exists():
-                try:
-                    df = pd.read_csv(path)
-                    return len(df)
-                except Exception as e:
-                    logger.debug("Could not read %s: %s", path, e)
-                    continue
-        return None
-
-    def _get_stage_output_count_by_model(
+    def _get_stage_output_count(
         self, stage_key: str, model_name: str | None = None
     ) -> int | None:
         """Get molecule count from stage output file, optionally filtered by model.
@@ -399,17 +384,12 @@ class ReportGenerator:
             self.base_path / stage_dir / "ligands.csv",
         ]
 
-        for path in paths_to_try:
-            if path.exists():
-                try:
-                    df = pd.read_csv(path)
-                    if model_name and "model_name" in df.columns:
-                        df = df[df["model_name"] == model_name]
-                    return len(df)
-                except Exception as e:
-                    logger.debug("Could not read %s: %s", path, e)
-                    continue
-        return None
+        df = _try_read_csv(*paths_to_try)
+        if df is None:
+            return None
+        if model_name and "model_name" in df.columns:
+            df = df[df["model_name"] == model_name]
+        return len(df)
 
     def _get_available_models(self) -> list[str]:
         """Get list of available model names from input or output files.
@@ -486,7 +466,7 @@ class ReportGenerator:
         ]
 
         for stage_key, display_name in stage_order:
-            count = self._get_stage_output_count_by_model(stage_key, model_name)
+            count = self._get_stage_output_count(stage_key, model_name)
             if count is not None:
                 funnel.append({"stage": display_name, "count": count})
 
@@ -579,9 +559,7 @@ class ReportGenerator:
             model_stats.append(
                 {
                     "model_name": model,
-                    "initial": initial_count
-                    if initial_count is not None
-                    else final_count,
+                    "initial": initial_count or final_count,
                     "final": final_count,
                     "losses": self._get_model_losses(model),
                 }
@@ -681,12 +659,11 @@ class ReportGenerator:
                 values = df[col].dropna().tolist()
                 if values:
                     stats["distributions"][desc] = values
-                    non_null = df[col].dropna()
                     stats["summary"][desc] = {
-                        "mean": float(non_null.mean()),
-                        "std": float(non_null.std()) if len(non_null) > 1 else 0.0,
-                        "min": float(non_null.min()),
-                        "max": float(non_null.max()),
+                        "mean": float(df[col].mean()),
+                        "std": float(df[col].std()),
+                        "min": float(df[col].min()),
+                        "max": float(df[col].max()),
                     }
 
         return stats
@@ -781,15 +758,13 @@ class ReportGenerator:
                 if values:
                     stats["distributions"][col] = values
 
-        # Get scatter plot data (only rows where both scores are non-null)
+        # Get scatter plot data
         if "sa_score" in df.columns and "syba_score" in df.columns:
-            scatter_mask = df[["sa_score", "syba_score"]].notna().all(axis=1)
-            scatter_df = df[scatter_mask]
             stats["scatter_data"] = {
-                "sa_scores": scatter_df["sa_score"].tolist(),
-                "syba_scores": scatter_df["syba_score"].tolist(),
-                "model_names": scatter_df["model_name"].tolist()
-                if "model_name" in scatter_df.columns
+                "sa_scores": df["sa_score"].dropna().tolist(),
+                "syba_scores": df["syba_score"].dropna().tolist(),
+                "model_names": df["model_name"].tolist()
+                if "model_name" in df.columns
                 else [],
             }
 
@@ -1530,16 +1505,12 @@ class ReportGenerator:
         if "sa_score" in df.columns:
             result["sa_scores"] = df["sa_score"].dropna().tolist()
             if result["sa_scores"]:
-                result["summary"]["avg_sa_score"] = float(
-                    statistics.mean(result["sa_scores"])
-                )
+                result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
 
         if "syba_score" in df.columns:
             result["syba_scores"] = df["syba_score"].dropna().tolist()
             if result["syba_scores"]:
-                result["summary"]["avg_syba_score"] = float(
-                    statistics.mean(result["syba_scores"])
-                )
+                result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
 
         if "ra_score" in df.columns:
             result["ra_scores"] = df["ra_score"].dropna().tolist()
@@ -1557,10 +1528,7 @@ class ReportGenerator:
                 solved = (
                     df[col].sum()
                     if df[col].dtype == bool
-                    else df[col]
-                    .map({"True": True, "False": False, True: True, False: False})
-                    .fillna(False)
-                    .sum()
+                    else df[col].astype(bool).sum()
                 )
                 result["solved_count"] = int(solved)
                 result["unsolved_count"] = len(df) - int(solved)
@@ -1610,10 +1578,10 @@ class ReportGenerator:
                     "summary": {},
                 }
 
-                # Calculate per-model summary (use already-filtered lists)
+                # Calculate per-model summary
                 if "sa_score" in model_df.columns and len(model_data["sa_scores"]) > 0:
                     model_data["summary"]["avg_sa_score"] = float(
-                        statistics.mean(model_data["sa_scores"])
+                        model_df["sa_score"].mean()
                     )
 
                 if (
@@ -1621,12 +1589,12 @@ class ReportGenerator:
                     and len(model_data["syba_scores"]) > 0
                 ):
                     model_data["summary"]["avg_syba_score"] = float(
-                        statistics.mean(model_data["syba_scores"])
+                        model_df["syba_score"].mean()
                     )
 
                 if "ra_score" in model_df.columns and len(model_data["ra_scores"]) > 0:
                     model_data["summary"]["avg_ra_score"] = float(
-                        statistics.mean(model_data["ra_scores"])
+                        model_df["ra_score"].dropna().mean()
                     )
 
                 # Count solved/unsolved per model
@@ -1634,10 +1602,7 @@ class ReportGenerator:
                     model_solved = (
                         model_df[solved_col].sum()
                         if model_df[solved_col].dtype == bool
-                        else model_df[solved_col]
-                        .map({"True": True, "False": False, True: True, False: False})
-                        .fillna(False)
-                        .sum()
+                        else (model_df[solved_col] == True).sum()  # noqa: E712
                     )
                     model_data["solved_count"] = int(model_solved)
                     model_data["unsolved_count"] = len(model_df) - int(model_solved)
@@ -2649,7 +2614,7 @@ class ReportGenerator:
             )
             model_rows += f"""
             <tr>
-                <td>{html_lib.escape(str(model["model_name"]))}</td>
+                <td>{model["model_name"]}</td>
                 <td>{model["initial"]}</td>
                 <td>{model["final"]}</td>
                 <td>{retention:.1f}%</td>
@@ -2813,7 +2778,7 @@ class ReportGenerator:
             <h1>HEDGEHOG Pipeline Report</h1>
             <div class="meta">
                 <p>Generated: {metadata.get("generated_at", "N/A")}</p>
-                <p>Run path: {html_lib.escape(str(metadata.get("run_path", "N/A")))}</p>
+                <p>Run path: {metadata.get("run_path", "N/A")}</p>
             </div>
         </header>
 
@@ -2984,13 +2949,7 @@ class ReportGenerator:
             return {k: self._make_json_serializable(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [self._make_json_serializable(item) for item in obj]
-        elif isinstance(obj, bool):
-            return obj
-        elif isinstance(obj, float):
-            if math.isnan(obj) or math.isinf(obj):
-                return None
-            return obj
-        elif isinstance(obj, (int, str, type(None))):
+        elif isinstance(obj, (int, float, str, bool, type(None))):
             return obj
         elif hasattr(obj, "tolist"):  # numpy arrays
             return obj.tolist()

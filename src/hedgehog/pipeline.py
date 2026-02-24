@@ -1,5 +1,4 @@
 import csv
-import inspect
 import shutil
 import time
 from datetime import datetime
@@ -638,10 +637,306 @@ class PipelineStageRunner:
 
             # Run docking filters
             result = docking_filters_main(self.config, reporter=reporter)
-            return bool(result)
+            return result is not None and len(result) > 0
         except Exception as e:
             logger.error("Error running docking filters: %s", e)
             return False
+
+
+# ---------------------------------------------------------------------------
+# MoleculeCounter -- extracted from MolecularAnalysisPipeline
+# ---------------------------------------------------------------------------
+
+
+class MoleculeCounter:
+    """Count molecules in stage input/output CSV files."""
+
+    # Stage name -> output CSV path (relative to base_path)
+    _OUTPUT_PATHS: dict[str, tuple[str, ...]] = {
+        STAGE_MOL_PREP: (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
+        STAGE_DESCRIPTORS: (
+            DIR_DESCRIPTORS_INITIAL,
+            "filtered",
+            FILE_FILTERED_MOLECULES,
+        ),
+        STAGE_STRUCT_FILTERS: (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
+        STAGE_SYNTHESIS: (DIR_SYNTHESIS, FILE_FILTERED_MOLECULES),
+        STAGE_DOCKING_FILTERS: (DIR_DOCKING_FILTERS, FILE_FILTERED_MOLECULES),
+        STAGE_FINAL_DESCRIPTORS: (
+            DIR_DESCRIPTORS_FINAL,
+            "filtered",
+            FILE_FILTERED_MOLECULES,
+        ),
+    }
+
+    def __init__(self, base_path: Path) -> None:
+        self.base_path = base_path
+
+    def count_csv_rows(self, path: Path) -> int | None:
+        """Count data rows in a CSV file (excluding header)."""
+        if not path.exists():
+            return None
+        try:
+            with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
+                reader = csv.reader(handle)
+                try:
+                    next(reader)
+                except StopIteration:
+                    return 0
+                return sum(1 for row in reader if any(cell.strip() for cell in row))
+        except OSError:
+            return None
+
+    def resolve_input_count(
+        self,
+        stage_name: str,
+        args: tuple,
+        current_data,
+        get_latest_data_fn=None,
+    ) -> int | None:
+        """Resolve molecule count entering a stage.
+
+        Parameters
+        ----------
+        stage_name:
+            Name of the pipeline stage.
+        args:
+            Positional arguments passed to the stage runner.
+        current_data:
+            The current pipeline DataFrame (may be None).
+        get_latest_data_fn:
+            Optional callable returning the latest data for final_descriptors.
+        """
+        for arg in args:
+            if isinstance(arg, pd.DataFrame):
+                return len(arg)
+
+        if stage_name == STAGE_FINAL_DESCRIPTORS and get_latest_data_fn is not None:
+            final_data = get_latest_data_fn(
+                skip_descriptors=True, fallback_on_empty=False
+            )
+            if final_data is not None:
+                return len(final_data)
+
+        source = _find_input(self.base_path)
+        if source is not None and source.suffix.lower() == ".csv":
+            counted = self.count_csv_rows(source)
+            if counted is not None:
+                return counted
+
+        if current_data is not None:
+            return len(current_data)
+        return None
+
+    def resolve_output_count(
+        self,
+        stage_name: str,
+        completed: bool,
+        input_count: int | None,
+    ) -> int | None:
+        """Resolve molecule count after a stage completes."""
+        if not completed:
+            return None
+
+        path_parts = self._OUTPUT_PATHS.get(stage_name)
+        if path_parts is None:
+            if stage_name == STAGE_DOCKING:
+                return input_count
+            return None
+
+        output_path = self.base_path.joinpath(*path_parts)
+        return self.count_csv_rows(output_path)
+
+
+# ---------------------------------------------------------------------------
+# PipelineReporter -- extracted from MolecularAnalysisPipeline
+# ---------------------------------------------------------------------------
+
+# Skip-condition map: stage -> required upstream directory
+_SKIP_CONDITIONS: dict[str, str] = {
+    STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
+    STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
+}
+
+
+class PipelineReporter:
+    """Log summaries, classify outcomes, save outputs, generate reports."""
+
+    def __init__(
+        self,
+        base_path: Path,
+        stages: list[PipelineStage],
+        config: dict,
+        counter: MoleculeCounter,
+        data_checker: DataChecker,
+        stage_timings: dict[str, float],
+        find_data_source_fn,
+        build_data_path_fn,
+    ) -> None:
+        self.base_path = base_path
+        self.stages = stages
+        self.config = config
+        self.counter = counter
+        self.data_checker = data_checker
+        self.stage_timings = stage_timings
+        self._find_data_source = find_data_source_fn
+        self._build_data_path = build_data_path_fn
+
+    # -- outcome classification -------------------------------------------
+
+    def classify_outcome(self, stage: PipelineStage) -> str:
+        """Classify a stage outcome as COMPLETED / FAILED / DISABLED / SKIPPED.
+
+        Returns a plain label (no Rich markup).
+        """
+        if not stage.enabled:
+            return "DISABLED"
+        if stage.completed:
+            return "COMPLETED"
+
+        if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
+            source = _find_input(self.base_path)
+            if source is None:
+                return "SKIPPED"
+            if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
+                return "SKIPPED"
+
+        if stage.name == STAGE_FINAL_DESCRIPTORS:
+            sources = [
+                DIR_DOCKING_FILTERS,
+                DIR_SYNTHESIS,
+                DIR_STRUCT_FILTERS_POST,
+                DIR_MOL_PREP,
+            ]
+            latest = self._find_data_source(sources)
+            if not latest:
+                return "SKIPPED"
+            try:
+                latest_df = pd.read_csv(self._build_data_path(latest))
+            except Exception:
+                return "FAILED"
+            if len(latest_df) == 0:
+                return "SKIPPED"
+
+        required_data = _SKIP_CONDITIONS.get(stage.name)
+        if required_data and not self.data_checker.stage_has_molecules(required_data):
+            return "SKIPPED"
+
+        return "FAILED"
+
+    def stage_is_failed(self, stage: PipelineStage) -> bool:
+        """Return True if an enabled stage is considered a failure."""
+        outcome = self.classify_outcome(stage)
+        return outcome == "FAILED"
+
+    # -- summary logging --------------------------------------------------
+
+    def log_summary(self) -> None:
+        """Log a summary of pipeline execution status and timings."""
+        _log_stage_header("Pipeline Execution Summary")
+
+        for stage in self.stages:
+            status = self._format_stage_status(stage)
+            timing = self.stage_timings.get(stage.name)
+            if timing is not None:
+                logger.info("%s: %s (%.1fs)", stage.name, status, timing)
+            else:
+                logger.info("%s: %s", stage.name, status)
+
+        if self.stage_timings:
+            total_time = sum(self.stage_timings.values())
+            logger.info("Total pipeline time: %.1f seconds", total_time)
+
+    def log_molecule_summary(self, initial_count: int, final_count: int) -> None:
+        """Log molecule count summary."""
+        logger.info("---------> Molecule Count Summary")
+        logger.info("Molecules before filtration: %d", initial_count)
+        logger.info("Molecules remaining after all stages: %d", final_count)
+        if initial_count > 0:
+            retention = 100 * final_count / initial_count
+            logger.info("Retention rate: %.2f%%", retention)
+
+    # -- output saving ----------------------------------------------------
+
+    def save_final_output(self, final_data, final_count: int) -> None:
+        """Save final molecules to output directory."""
+        final_output_path = self.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
+        final_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        id_cols = ["smiles", "model_name", "mol_idx"]
+        stable_empty_cols = [*id_cols, *DOCKING_SCORE_COLUMNS]
+
+        if final_data is None or len(final_data) == 0:
+            pd.DataFrame(columns=stable_empty_cols).to_csv(
+                final_output_path, index=False
+            )
+            logger.info("Saved 0 final molecules to %s", final_output_path)
+            return
+
+        output_df = final_data.copy()
+        if "mol_idx" in output_df.columns:
+            docking_scores = _collect_docking_scores(self.base_path)
+            if not docking_scores.empty:
+                output_df["_join_mol_idx"] = output_df["mol_idx"].astype(str)
+                docking_scores = docking_scores.rename(
+                    columns={"mol_idx": "_join_mol_idx"}
+                )
+                output_df = output_df.merge(
+                    docking_scores, on="_join_mol_idx", how="left"
+                )
+                output_df = output_df.drop(columns=["_join_mol_idx"])
+        else:
+            logger.warning(
+                "Final output is missing 'mol_idx'; docking score enrichment was skipped."
+            )
+
+        for col in DOCKING_SCORE_COLUMNS:
+            if col not in output_df.columns:
+                output_df[col] = pd.NA
+
+        output_df.to_csv(final_output_path, index=False)
+        logger.info("Saved %d final molecules to %s", final_count, final_output_path)
+
+    # -- HTML report ------------------------------------------------------
+
+    def generate_html_report(self, initial_count: int, final_count: int) -> None:
+        """Generate HTML report for the pipeline run."""
+        try:
+            report_generator = ReportGenerator(
+                base_path=self.base_path,
+                stages=self.stages,
+                config=self.config,
+                initial_count=initial_count,
+                final_count=final_count,
+            )
+            report_path = report_generator.generate()
+            logger.info("HTML report generated: %s", report_path)
+        except Exception as e:
+            logger.warning("Failed to generate HTML report: %s", e)
+
+    # -- internal helpers -------------------------------------------------
+
+    def _format_stage_status(self, stage: PipelineStage) -> str:
+        """Get display status string for a stage (with optional Rich markup)."""
+        outcome = self.classify_outcome(stage)
+
+        if _plain_output_enabled():
+            if outcome == "SKIPPED":
+                return "SKIPPED (no molecules)"
+            return outcome
+
+        _RICH_MAP = {
+            "DISABLED": "DISABLED",
+            "COMPLETED": "[bold]\u2713 COMPLETED[/bold]",
+            "SKIPPED": "[dim]\u27c2 SKIPPED (no molecules)[/dim]",
+            "FAILED": "[bold]\u2717 FAILED[/bold]",
+        }
+        return _RICH_MAP.get(outcome, outcome)
+
+
+# ---------------------------------------------------------------------------
+# MolecularAnalysisPipeline -- now focused on stage orchestration
+# ---------------------------------------------------------------------------
 
 
 class MolecularAnalysisPipeline:
@@ -672,23 +967,25 @@ class MolecularAnalysisPipeline:
     def __init__(self, config: dict, progress_callback=None):
         self.config = config
         self.progress_callback = progress_callback
-        self._legacy_callback = False
-        if progress_callback is not None:
-            try:
-                sig = inspect.signature(progress_callback)
-                params = list(sig.parameters)
-                # New-style callbacks accept a single dict (event); legacy ones
-                # take (stage_name, current, total) — 3+ positional params.
-                if len(params) >= 3:
-                    self._legacy_callback = True
-            except (ValueError, TypeError):
-                pass
         self.data_checker = DataChecker(config)
         self.stage_runner = PipelineStageRunner(config, self.data_checker)
         self.current_data = None
         self.stages = [PipelineStage(*defn) for defn in self._STAGE_DEFINITIONS]
         self._stage_by_name = {stage.name: stage for stage in self.stages}
         self.stage_timings: dict[str, float] = {}  # Stage name -> elapsed seconds
+
+        self.counter = MoleculeCounter(self.data_checker.base_path)
+        self.reporter = PipelineReporter(
+            base_path=self.data_checker.base_path,
+            stages=self.stages,
+            config=config,
+            counter=self.counter,
+            data_checker=self.data_checker,
+            stage_timings=self.stage_timings,
+            find_data_source_fn=self._find_data_source,
+            build_data_path_fn=self._build_data_path,
+        )
+
         self._initialize_stages()
 
     def _initialize_stages(self) -> None:
@@ -741,70 +1038,44 @@ class MolecularAnalysisPipeline:
         if not self.progress_callback:
             return
 
-        if not self._legacy_callback:
+        try:
             self.progress_callback(event)
             return
+        except TypeError:
+            # Legacy callback: (stage_name, current, total)
+            try:
+                event_type = event.get("type")
+                stage = event.get("stage")
+                if not stage:
+                    return
 
-        # Legacy callback: (stage_name, current, total)
-        try:
-            event_type = event.get("type")
-            stage = event.get("stage")
-            if not stage:
+                if event_type == "stage_progress":
+                    self.progress_callback(
+                        stage, int(event.get("current", 0)), int(event.get("total", 0))
+                    )
+                elif event_type == "stage_start":
+                    self.progress_callback(
+                        stage,
+                        int(event.get("stage_index", 0)),
+                        int(event.get("total_stages", 0)),
+                    )
+                elif event_type == "stage_complete":
+                    total = int(event.get("total_stages", 0))
+                    self.progress_callback(stage, total, total)
+            except Exception:
                 return
 
-            if event_type == "stage_progress":
-                self.progress_callback(
-                    stage, int(event.get("current", 0)), int(event.get("total", 0))
-                )
-            elif event_type == "stage_start":
-                self.progress_callback(
-                    stage,
-                    int(event.get("stage_index", 0)),
-                    int(event.get("total_stages", 0)),
-                )
-            elif event_type == "stage_complete":
-                total = int(event.get("total_stages", 0))
-                self.progress_callback(stage, total, total)
-        except Exception:
-            return
+    # -- delegated counting (backwards compat) ----------------------------
 
     def _count_csv_rows(self, path: Path) -> int | None:
         """Count data rows in a CSV file (excluding header)."""
-        if not path.exists():
-            return None
-        try:
-            with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
-                reader = csv.reader(handle)
-                try:
-                    next(reader)
-                except StopIteration:
-                    return 0
-                return sum(1 for row in reader if any(cell.strip() for cell in row))
-        except OSError:
-            return None
+        return self.counter.count_csv_rows(path)
 
     def _resolve_stage_input_count(self, stage_name: str, args: tuple) -> int | None:
         """Resolve molecule count entering a stage."""
-        for arg in args:
-            if isinstance(arg, pd.DataFrame):
-                return len(arg)
-
-        if stage_name == STAGE_FINAL_DESCRIPTORS:
-            final_data = self.get_latest_data(
-                skip_descriptors=True, fallback_on_empty=False
-            )
-            if final_data is not None:
-                return len(final_data)
-
-        source = _find_input(self.data_checker.base_path)
-        if source is not None and source.suffix.lower() == ".csv":
-            counted = self._count_csv_rows(source)
-            if counted is not None:
-                return counted
-
-        if self.current_data is not None:
-            return len(self.current_data)
-        return None
+        return self.counter.resolve_input_count(
+            stage_name, args, self.current_data, self.get_latest_data
+        )
 
     def _resolve_stage_output_count(
         self,
@@ -813,34 +1084,9 @@ class MolecularAnalysisPipeline:
         input_count: int | None,
     ) -> int | None:
         """Resolve molecule count after a stage completes."""
-        if not completed:
-            return None
+        return self.counter.resolve_output_count(stage_name, completed, input_count)
 
-        base = self.data_checker.base_path
-        output_map = {
-            STAGE_MOL_PREP: base / DIR_MOL_PREP / FILE_FILTERED_MOLECULES,
-            STAGE_DESCRIPTORS: base
-            / DIR_DESCRIPTORS_INITIAL
-            / "filtered"
-            / FILE_FILTERED_MOLECULES,
-            STAGE_STRUCT_FILTERS: base
-            / DIR_STRUCT_FILTERS_POST
-            / FILE_FILTERED_MOLECULES,
-            STAGE_SYNTHESIS: base / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES,
-            STAGE_DOCKING_FILTERS: base / DIR_DOCKING_FILTERS / FILE_FILTERED_MOLECULES,
-            STAGE_FINAL_DESCRIPTORS: base
-            / DIR_DESCRIPTORS_FINAL
-            / "filtered"
-            / FILE_FILTERED_MOLECULES,
-        }
-
-        output_path = output_map.get(stage_name)
-        if output_path is None:
-            if stage_name == STAGE_DOCKING:
-                return input_count
-            return None
-
-        return self._count_csv_rows(output_path)
+    # -- data loading -----------------------------------------------------
 
     def get_latest_data(
         self, skip_descriptors: bool = False, fallback_on_empty: bool = True
@@ -907,6 +1153,8 @@ class MolecularAnalysisPipeline:
         logger.warning("All checked data sources are empty")
         return empty_data
 
+    # -- pipeline execution -----------------------------------------------
+
     def run_pipeline(self, data) -> bool:
         """Execute the full molecular analysis pipeline."""
         self.current_data = data
@@ -969,10 +1217,9 @@ class MolecularAnalysisPipeline:
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
         start_time = time.perf_counter()
-        sig = inspect.signature(runner_func)
-        if "reporter" in sig.parameters:
+        try:
             completed = runner_func(*args, reporter=reporter)
-        else:
+        except TypeError:
             completed = runner_func(*args)
         elapsed = time.perf_counter() - start_time
         output_count = self._resolve_stage_output_count(
@@ -1133,7 +1380,7 @@ class MolecularAnalysisPipeline:
     def _run_final_descriptors(self) -> tuple[bool, bool]:
         """Run final descriptors calculation stage."""
 
-        def _run_final_desc(reporter=None):
+        def _run_final_desc():
             final_data = self.get_latest_data(
                 skip_descriptors=True, fallback_on_empty=False
             )
@@ -1146,14 +1393,16 @@ class MolecularAnalysisPipeline:
                 )
                 return False
             return self.stage_runner.run_descriptors(
-                final_data, subfolder=DIR_FINAL_DESCRIPTORS, reporter=reporter
+                final_data, subfolder=DIR_FINAL_DESCRIPTORS
             )
 
         return self._run_stage(STAGE_FINAL_DESCRIPTORS, _run_final_desc)
 
+    # -- finalization (delegates to reporter) ------------------------------
+
     def _finalize_pipeline(self, data, success_count: int, total_enabled: int) -> bool:
         """Finalize pipeline execution with summary and output."""
-        self._log_pipeline_summary()
+        self.reporter.log_summary()
 
         initial_count = len(data)
         final_data = self.get_latest_data(
@@ -1161,8 +1410,8 @@ class MolecularAnalysisPipeline:
         )
         final_count = len(final_data) if final_data is not None else 0
 
-        self._log_molecule_summary(initial_count, final_count)
-        self._save_final_output(final_data, final_count)
+        self.reporter.log_molecule_summary(initial_count, final_count)
+        self.reporter.save_final_output(final_data, final_count)
         _generate_structure_readme(
             self.data_checker.base_path,
             self.stages,
@@ -1171,231 +1420,41 @@ class MolecularAnalysisPipeline:
             stage_timings=self.stage_timings,
             config=self.config,
         )
-        self._generate_html_report(initial_count, final_count)
+        self.reporter.generate_html_report(initial_count, final_count)
 
-        return not any(self._stage_is_failed(stage) for stage in self.stages)
+        return not any(self.reporter.stage_is_failed(s) for s in self.stages)
 
-    def _stage_is_failed(self, stage: PipelineStage) -> bool:
-        """Return True if an enabled stage is considered a failure.
-
-        Stages are not treated as failures when they are skipped due to having
-        no molecules available at their required input boundary.
-        """
-        if not stage.enabled:
-            return False
-        if stage.completed:
-            return False
-
-        if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
-            source = _find_input(self.data_checker.base_path)
-            if source is None:
-                return False
-            if source.suffix.lower() == ".csv":
-                return _csv_has_data_rows(source)
-            return _file_exists_and_not_empty(source)
-
-        if stage.name == STAGE_FINAL_DESCRIPTORS:
-            # Final descriptors depends on the latest non-descriptor stage output.
-            # If that latest output is empty (0 molecules), we treat it as skipped,
-            # not as a pipeline failure.
-            sources = [
-                DIR_DOCKING_FILTERS,
-                DIR_SYNTHESIS,
-                DIR_STRUCT_FILTERS_POST,
-                DIR_MOL_PREP,
-            ]
-            latest = self._find_data_source(sources)
-            if not latest:
-                return False
-            try:
-                latest_df = pd.read_csv(self._build_data_path(latest))
-            except Exception:
-                # If the latest output exists but cannot be read, treat as failure.
-                return True
-            return len(latest_df) > 0
-
-        # Other stages are skippable when their required upstream output is absent/empty.
-        skip_conditions = {
-            STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
-            STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
-        }
-        required_data = skip_conditions.get(stage.name)
-        if required_data and not self.data_checker.stage_has_molecules(required_data):
-            return False
-
-        return True
-
-    def _generate_html_report(self, initial_count: int, final_count: int) -> None:
-        """Generate HTML report for the pipeline run."""
-        try:
-            report_generator = ReportGenerator(
-                base_path=self.data_checker.base_path,
-                stages=self.stages,
-                config=self.config,
-                initial_count=initial_count,
-                final_count=final_count,
-            )
-            report_path = report_generator.generate()
-            logger.info("HTML report generated: %s", report_path)
-        except Exception as e:
-            logger.warning("Failed to generate HTML report: %s", e)
-
-    def _log_molecule_summary(self, initial_count: int, final_count: int) -> None:
-        """Log molecule count summary."""
-        logger.info("---------> Molecule Count Summary")
-        logger.info("Molecules before filtration: %d", initial_count)
-        logger.info("Molecules remaining after all stages: %d", final_count)
-        if initial_count > 0:
-            retention = 100 * final_count / initial_count
-            logger.info("Retention rate: %.2f%%", retention)
+    # -- backwards compatibility delegates --------------------------------
+    # Tests call these methods directly on the pipeline instance.
 
     def _save_final_output(self, final_data, final_count: int) -> None:
-        """Save final molecules to output directory."""
-        final_output_path = (
-            self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
-        )
-        final_output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        id_cols = ["smiles", "model_name", "mol_idx"]
-        stable_empty_cols = [*id_cols, *DOCKING_SCORE_COLUMNS]
-
-        if final_data is None or len(final_data) == 0:
-            # Always create the file so downstream tooling can rely on its presence.
-            pd.DataFrame(columns=stable_empty_cols).to_csv(
-                final_output_path, index=False
-            )
-            logger.info("Saved 0 final molecules to %s", final_output_path)
-            return
-
-        output_df = final_data.copy()
-        if "mol_idx" in output_df.columns:
-            docking_scores = _collect_docking_scores(self.data_checker.base_path)
-            if not docking_scores.empty:
-                output_df["_join_mol_idx"] = output_df["mol_idx"].astype(str)
-                docking_scores["mol_idx"] = docking_scores["mol_idx"].astype(str)
-                docking_scores = docking_scores.rename(
-                    columns={"mol_idx": "_join_mol_idx"}
-                )
-                output_df = output_df.merge(
-                    docking_scores, on="_join_mol_idx", how="left"
-                )
-                output_df = output_df.drop(columns=["_join_mol_idx"])
-        else:
-            logger.warning(
-                "Final output is missing 'mol_idx'; docking score enrichment was skipped."
-            )
-
-        for col in DOCKING_SCORE_COLUMNS:
-            if col not in output_df.columns:
-                output_df[col] = pd.NA
-
-        output_df.to_csv(final_output_path, index=False)
-        logger.info("Saved %d final molecules to %s", final_count, final_output_path)
+        """Save final molecules to output directory (delegates to reporter)."""
+        self.reporter.save_final_output(final_data, final_count)
 
     def _log_pipeline_summary(self) -> None:
-        """Log a summary of pipeline execution status and timings."""
-        _log_stage_header("Pipeline Execution Summary")
-
-        for stage in self.stages:
-            status = self._get_stage_status(stage)
-            timing = self.stage_timings.get(stage.name)
-            if timing is not None:
-                logger.info("%s: %s (%.1fs)", stage.name, status, timing)
-            else:
-                logger.info("%s: %s", stage.name, status)
-
-        # Log total time for completed stages
-        if self.stage_timings:
-            total_time = sum(self.stage_timings.values())
-            logger.info("Total pipeline time: %.1f seconds", total_time)
+        """Log pipeline summary (delegates to reporter)."""
+        self.reporter.log_summary()
 
     def _get_stage_status(self, stage: PipelineStage) -> str:
-        """Get display status for a stage."""
-        if _plain_output_enabled():
-            if not stage.enabled:
-                return "DISABLED"
-            if stage.completed:
-                return "COMPLETED"
+        """Get display status for a stage (delegates to reporter)."""
+        return self.reporter._format_stage_status(stage)
 
-            if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
-                source = _find_input(self.data_checker.base_path)
-                if source is None:
-                    return "SKIPPED (no molecules)"
-                if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
-                    return "SKIPPED (no molecules)"
+    def _stage_is_failed(self, stage: PipelineStage) -> bool:
+        """Check if a stage is considered failed (delegates to reporter)."""
+        return self.reporter.stage_is_failed(stage)
 
-            if stage.name == STAGE_FINAL_DESCRIPTORS:
-                sources = [
-                    DIR_DOCKING_FILTERS,
-                    DIR_SYNTHESIS,
-                    DIR_STRUCT_FILTERS_POST,
-                    DIR_MOL_PREP,
-                ]
-                latest = self._find_data_source(sources)
-                if not latest:
-                    return "SKIPPED (no molecules)"
-                try:
-                    latest_df = pd.read_csv(self._build_data_path(latest))
-                except Exception:
-                    return "FAILED"
-                if len(latest_df) == 0:
-                    return "SKIPPED (no molecules)"
+    def _generate_html_report(self, initial_count: int, final_count: int) -> None:
+        """Generate HTML report (delegates to reporter)."""
+        self.reporter.generate_html_report(initial_count, final_count)
 
-            skip_conditions = {
-                STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
-                STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
-            }
-            required_data = skip_conditions.get(stage.name)
-            if required_data and not self.data_checker.stage_has_molecules(
-                required_data
-            ):
-                return "SKIPPED (no molecules)"
+    def _log_molecule_summary(self, initial_count: int, final_count: int) -> None:
+        """Log molecule count summary (delegates to reporter)."""
+        self.reporter.log_molecule_summary(initial_count, final_count)
 
-            return "FAILED"
 
-        if not stage.enabled:
-            return "DISABLED"
-        if stage.completed:
-            return "[bold]\u2713 COMPLETED[/bold]"
-
-        if stage.name in (STAGE_DOCKING, STAGE_DOCKING_FILTERS):
-            source = _find_input(self.data_checker.base_path)
-            if source is None:
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-            if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-
-        if stage.name == STAGE_FINAL_DESCRIPTORS:
-            # Final descriptors can run on the latest available non-descriptor output
-            # (docking filters, synthesis, structural filters, etc.). Mark as skipped
-            # only if that latest output has no molecules.
-            sources = [
-                DIR_DOCKING_FILTERS,
-                DIR_SYNTHESIS,
-                DIR_STRUCT_FILTERS_POST,
-                DIR_MOL_PREP,
-            ]
-            latest = self._find_data_source(sources)
-            if not latest:
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-            try:
-                latest_df = pd.read_csv(self._build_data_path(latest))
-            except Exception:
-                return "[bold]\u2717 FAILED[/bold]"
-            if len(latest_df) == 0:
-                return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-
-        # Check for skipped conditions
-        skip_conditions = {
-            STAGE_STRUCT_FILTERS: DIR_DESCRIPTORS,
-            STAGE_SYNTHESIS: DIR_STRUCT_FILTERS,
-        }
-
-        required_data = skip_conditions.get(stage.name)
-        if required_data and not self.data_checker.stage_has_molecules(required_data):
-            return "[dim]\u27c2 SKIPPED (no molecules)[/dim]"
-
-        return "[bold]\u2717 FAILED[/bold]"
+# ---------------------------------------------------------------------------
+# Config snapshot
+# ---------------------------------------------------------------------------
 
 
 def _save_config_snapshot(config: dict) -> None:
@@ -1426,6 +1485,10 @@ def _save_config_snapshot(config: dict) -> None:
     except Exception as snapshot_err:
         logger.warning("Config snapshot failed: %s", snapshot_err)
 
+
+# ---------------------------------------------------------------------------
+# RUN_INFO.md generation (Task 4: template + data-prep separated)
+# ---------------------------------------------------------------------------
 
 # Stage descriptions for README generation
 _STAGE_DESCRIPTIONS = {
@@ -1644,66 +1707,12 @@ def _build_pipeline_flow_table(
     return f"{header}\n{sep}\n{body}"
 
 
-def _generate_structure_readme(
-    base_path: Path,
-    stages: list[PipelineStage],
-    initial_count: int,
-    final_count: int,
-    stage_timings: dict[str, float] | None = None,
-    config: dict | None = None,
-) -> None:
-    """Generate RUN_INFO.md documenting the output structure for this run."""
-    try:
-        readme_path = base_path / "RUN_INFO.md"
-        enabled_stages = {s.name for s in stages if s.enabled}
-        enabled_count = len(enabled_stages)
-        completed_count = sum(1 for s in stages if s.completed)
+# -- README template and data preparation (Task 4) --
 
-        retention = (
-            f"{100 * final_count / initial_count:.2f}%" if initial_count > 0 else "N/A"
-        )
-
-        # Build stage tree sections dynamically
-        stage_sections = []
-        for stage in stages:
-            if stage.name in enabled_stages:
-                stage_sections.append(
-                    _build_stage_tree_section(
-                        stage.name, stage.directory, base_path, config
-                    )
-                )
-        stages_content = "".join(stage_sections)
-
-        # Build pipeline flow table
-        flow_table = _build_pipeline_flow_table(
-            base_path, stages, initial_count, stage_timings
-        )
-
-        # Build stage execution summary with timings
-        stage_timings = stage_timings or {}
-        stage_summary_lines = []
-        for stage in stages:
-            if stage.completed:
-                status = "COMPLETED"
-            elif stage.enabled:
-                status = "FAILED"
-            else:
-                status = "DISABLED"
-            timing = stage_timings.get(stage.name)
-            if timing is not None:
-                stage_summary_lines.append(
-                    f"- **{stage.name}**: {status} ({_format_duration(timing)})"
-                )
-            else:
-                stage_summary_lines.append(f"- **{stage.name}**: {status}")
-        stage_summary = "\n".join(stage_summary_lines)
-
-        total_time = sum(stage_timings.values()) if stage_timings else None
-
-        content = f"""\
+_STRUCTURE_README_TEMPLATE = """\
 # HEDGEHOG Run Info
 
-Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Generated: {generated_at}
 
 ## Summary
 
@@ -1712,7 +1721,7 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 - Retention rate: {retention}
 - Stages enabled: {enabled_count}
 - Stages completed: {completed_count}
-{f"- Total pipeline time: {_format_duration(total_time)}" if total_time else ""}
+{total_time_line}
 
 ## Pipeline Flow
 
@@ -1721,7 +1730,7 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 ## Directory Structure
 
 ```
-{base_path.name}/
+{dir_name}/
 +-- input/
 |   +-- sampled_molecules.csv           Input molecules
 |
@@ -1753,12 +1762,104 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 {stage_summary}
 """
 
+
+def _prepare_readme_data(
+    base_path: Path,
+    stages: list[PipelineStage],
+    initial_count: int,
+    final_count: int,
+    stage_timings: dict[str, float] | None = None,
+    config: dict | None = None,
+) -> dict:
+    """Prepare template variables for _STRUCTURE_README_TEMPLATE."""
+    stage_timings = stage_timings or {}
+    enabled_stages = {s.name for s in stages if s.enabled}
+
+    retention = (
+        f"{100 * final_count / initial_count:.2f}%" if initial_count > 0 else "N/A"
+    )
+
+    # Build stage tree sections dynamically
+    stage_sections = []
+    for stage in stages:
+        if stage.name in enabled_stages:
+            stage_sections.append(
+                _build_stage_tree_section(
+                    stage.name, stage.directory, base_path, config
+                )
+            )
+    stages_content = "".join(stage_sections)
+
+    # Build pipeline flow table
+    flow_table = _build_pipeline_flow_table(
+        base_path, stages, initial_count, stage_timings
+    )
+
+    # Build stage execution summary with timings
+    stage_summary_lines = []
+    for stage in stages:
+        if stage.completed:
+            status = "COMPLETED"
+        elif stage.enabled:
+            status = "FAILED"
+        else:
+            status = "DISABLED"
+        timing = stage_timings.get(stage.name)
+        if timing is not None:
+            stage_summary_lines.append(
+                f"- **{stage.name}**: {status} ({_format_duration(timing)})"
+            )
+        else:
+            stage_summary_lines.append(f"- **{stage.name}**: {status}")
+
+    total_time = sum(stage_timings.values()) if stage_timings else None
+
+    return {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "initial_count": initial_count,
+        "final_count": final_count,
+        "retention": retention,
+        "enabled_count": len(enabled_stages),
+        "completed_count": sum(1 for s in stages if s.completed),
+        "total_time_line": (
+            f"- Total pipeline time: {_format_duration(total_time)}"
+            if total_time
+            else ""
+        ),
+        "flow_table": flow_table,
+        "dir_name": base_path.name,
+        "stages_content": stages_content,
+        "stage_summary": "\n".join(stage_summary_lines),
+    }
+
+
+def _generate_structure_readme(
+    base_path: Path,
+    stages: list[PipelineStage],
+    initial_count: int,
+    final_count: int,
+    stage_timings: dict[str, float] | None = None,
+    config: dict | None = None,
+) -> None:
+    """Generate RUN_INFO.md documenting the output structure for this run."""
+    try:
+        readme_path = base_path / "RUN_INFO.md"
+        data = _prepare_readme_data(
+            base_path, stages, initial_count, final_count, stage_timings, config
+        )
+        content = _STRUCTURE_README_TEMPLATE.format(**data)
+
         with open(readme_path, "w") as f:
             f.write(content)
 
         logger.info("Generated run info: %s", readme_path)
     except Exception as e:
         logger.warning("Failed to generate RUN_INFO.md: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
 
 
 def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
@@ -1787,7 +1888,7 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
         pipeline = MolecularAnalysisPipeline(config, progress_callback)
         success = pipeline.run_pipeline(data)
 
-        # Pipeline finished normally — remove the marker.
+        # Pipeline finished normally -- remove the marker.
         incomplete_marker.unlink(missing_ok=True)
         return success
     except Exception as e:
