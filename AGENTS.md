@@ -1,30 +1,40 @@
-## Agent Rules (Repository-Wide)
+# Agent Dispatch
 
-These instructions apply to **all** changes in this repository.
+This file is a dispatcher for agent work. Detailed guidance lives under `docs/`.
 
-### Language
+## Working Agreements
 
-- **All content written to files must be in English.**
-- Keep console output/logging in English.
+- Write all file content and terminal output in English.
+- Do not speculate about code you did not open.
+- If a file is referenced, read it before making claims.
+- Keep changes focused; do not add unrelated refactors.
+- If behavior changes, update docs in the same PR.
 
-### No Guessing
+## Context Graph
 
-- Do not speculate about code you have not opened.
-- If a user references a specific file, read it before answering.
+### Core Nodes
 
-### Required Checks When Adding/Changing Code
+- [`docs/architecture.md`](docs/architecture.md): domain map, layers, boundaries.
+- [`docs/conventions.md`](docs/conventions.md): naming, error/logging, tests, review.
+- [`docs/quality.md`](docs/quality.md): A-F quality baseline and improvement plan.
+- [`docs/tools/index.md`](docs/tools/index.md): helper scripts and when to use them.
+- [`docs/tools/agent-mode.md`](docs/tools/agent-mode.md): agent runtime workflow.
 
-When you add or change code, you must run the relevant smoke checks and keep documentation consistent.
+### Runbooks
 
-#### CLI (Python / Typer)
+- [`docs/runbooks/ci-verification.md`](docs/runbooks/ci-verification.md): CI expectations.
+- [`docs/runbooks/server-final-verification.md`](docs/runbooks/server-final-verification.md): end-to-end validation flow.
 
-Run these commands whenever you touch:
-- `src/hedgehog/**`
-- `pyproject.toml`
-- `docs/content/cli.mdx`
-- anything affecting CLI behavior
+## Task Routing
 
-Commands:
+- Architecture or cross-cutting change: read `docs/architecture.md` first.
+- Coding style, test, or review questions: read `docs/conventions.md`.
+- Risky or fragile area changes: read `docs/quality.md` and apply mitigation steps.
+- New/changed scripts: update `docs/tools/index.md` and add tool docs.
+
+## Required Smoke Checks
+
+### CLI (when touching `src/hedgehog/**`, `pyproject.toml`, or CLI behavior)
 
 ```bash
 uv run hedgehog --help
@@ -33,14 +43,7 @@ uv run hedgehog run --help
 uv run hedgehog version
 ```
 
-#### TUI (Node / Ink) + Python Backend
-
-Run these commands whenever you touch:
-- `tui/**`
-- `src/hedgehog/tui_backend/**`
-- the `hedgehog tui` command implementation
-
-Commands:
+### TUI (when touching `tui/**`, `src/hedgehog/tui_backend/**`, or `hedgehog tui`)
 
 ```bash
 cd tui && npm ci
@@ -48,40 +51,10 @@ cd tui && npm run build
 timeout 3 node tui/dist/index.js
 ```
 
-Notes:
-- `node tui/dist/index.js` requires a TTY (Ink). Run it from an interactive terminal.
-- In non-TTY environments, treat build success as the minimum signal.
+In non-TTY environments, treat successful build as the minimum signal.
 
-### Documentation Sync (Source of Truth)
+## Maintenance Rules
 
-- The source of truth for CLI behavior is `uv run hedgehog ... --help`.
-- If you add/change CLI commands, options, defaults, or error behavior, update `docs/content/cli.mdx` accordingly.
-- If README examples become inaccurate, update `README.md` as well.
-
-### CI Verification
-
-- Always check CI status before considering a task complete.
-- For PR work, verify the latest remote CI checks for the current branch/PR.
-- If CI is failing, treat it as an active issue and fix it or clearly report the blocker.
-
-### Gauss Final Run Verification
-
-When validating a fresh end-to-end run on the Gauss server, use this exact flow:
-
-```bash
-ssh Gauss
-source ~/miniforge/etc/profile.d/conda.sh
-conda activate base
-
-cd ~/work/Projects
-git clone https://github.com/LigandPro/hedgehog.git
-cd hedgehog
-
-uv sync
-
-# --yes is not required (auto-accept by default)
-uv run hedgehog setup aizynthfinder
-
-# GNINA auto GPU is enabled by default
-uv run hedgehog run --auto-install --out results/run_gpu_verify
-```
+- Keep this file under 100 lines.
+- Keep details in `docs/*`; keep this file pointer-only.
+- Validate links and remove stale pointers after major refactors.
