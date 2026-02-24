@@ -782,7 +782,7 @@ def run(
 
     \b
     # Run stage with new molecules (auto-creates new folder)
-    uv run hedgehog run --stage descriptors --mols data/*.csv
+    uv run hedgehog run --stage descriptors --mols input/*.csv
 
     \b
     # Force reuse existing folder

@@ -1,11 +1,11 @@
 run: true
 tools: gnina  # Options: gnina, smina, both
-receptor_pdb: data/test/7EW9_apo.pdb
+receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
 smina_config:
   bin: smina
-  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
@@ -13,7 +13,7 @@ smina_config:
   num_modes: 1
 gnina_config:
   bin: gnina
-  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
