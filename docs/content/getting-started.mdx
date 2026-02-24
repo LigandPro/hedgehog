@@ -12,7 +12,7 @@ This guide covers installation, running your first pipeline, and understanding t
 - **uv** — used for dependency management and running the CLI. Install from [astral.sh/uv](https://astral.sh/uv).
 - **git** — to clone the repository.
 
-For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the external `aizynthfinder` tooling and its public data. The provided installer script uses `uv` to set this up inside `modules/` (no conda is required by the script).
+For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the external `aizynthfinder` tooling and its public data. Use the built-in CLI setup command to install it into `modules/retrosynthesis/`.
 
 ## Installation
 
@@ -30,18 +30,10 @@ Or install from source:
 git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
 
-# Install AiZynthFinder for retrosynthesis analysis
-./modules/install_aizynthfinder.sh
-
 # Install HEDGEHOG and all dependencies
 uv sync
-```
 
-The `install_aizynthfinder.sh` script clones the retrosynthesis repository and downloads the required public data.
-
-Alternatively, you can use the CLI installer:
-
-```bash
+# Install AiZynthFinder for retrosynthesis analysis
 uv run hedgehog setup aizynthfinder
 ```
 
@@ -49,6 +41,12 @@ If you prefer on-demand installation during a pipeline run, use:
 
 ```bash
 uv run hedgehog run --auto-install
+```
+
+Legacy/manual fallback:
+
+```bash
+./modules/install_aizynthfinder.sh
 ```
 
 ## First Run
