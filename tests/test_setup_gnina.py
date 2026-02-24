@@ -11,6 +11,7 @@ import pytest
 from hedgehog.setup._gnina import (
     _collect_gnina_library_paths,
     _gnina_env,
+    _gnina_variant,
     _is_working_gnina,
     _resolve_gnina_download,
     ensure_gnina,
@@ -206,6 +207,11 @@ class TestIsWorkingGnina:
 
 class TestResolveGninaDownload:
     """Tests for _resolve_gnina_download() GitHub API interaction."""
+
+    @pytest.fixture(autouse=True)
+    def _default_cpu_variant_for_download_tests(self, monkeypatch):
+        """Keep download-selection tests deterministic across environments."""
+        monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "cpu")
 
     def test_selects_non_cuda_asset(self, monkeypatch):
         """Picks the first asset without 'cuda' in the name."""
@@ -611,6 +617,18 @@ class TestResolveDockingBinaryGninaFallback:
 
         with pytest.raises(FileNotFoundError, match="smina"):
             _resolve_docking_binary("smina", "smina")
+
+
+class TestGninaVariantDefaults:
+    """Tests for default/invalid GNINA variant resolution."""
+
+    def test_default_variant_is_auto(self, monkeypatch):
+        monkeypatch.delenv("HEDGEHOG_GNINA_VARIANT", raising=False)
+        assert _gnina_variant() == "auto"
+
+    def test_invalid_variant_falls_back_to_auto(self, monkeypatch):
+        monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "nonsense")
+        assert _gnina_variant() == "auto"
 
 
 class TestGninaEnvDiscovery:
