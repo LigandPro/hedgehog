@@ -89,6 +89,9 @@ def _get_input_path(config, stage_dir, folder_to_save):
             pass
 
     is_post_descriptors = _is_post_descriptors_stage(stage_dir)
+    is_single_struct_filters = (
+        config.get("_run_single_stage_override") == "struct_filters"
+    )
 
     if is_post_descriptors:
         base = Path(folder_to_save)
@@ -106,12 +109,16 @@ def _get_input_path(config, stage_dir, folder_to_save):
         if descriptors_path:
             return descriptors_path
 
-        if descriptors_enabled:
+        if descriptors_enabled and not is_single_struct_filters:
             logger.error(
                 "Descriptors are enabled but output not found. Cannot proceed with post-descriptors filters."
             )
             raise FileNotFoundError(
                 f"Descriptors output not found at {descriptors_candidates}"
+            )
+        if descriptors_enabled and is_single_struct_filters:
+            logger.warning(
+                "Single-stage struct_filters: descriptors output not found; falling back to mol_prep/sampled input."
             )
 
         mol_prep_path = base / "stages" / "00_mol_prep" / "filtered_molecules.csv"

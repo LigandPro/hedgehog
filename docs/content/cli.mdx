@@ -62,6 +62,11 @@ The `--stage` option accepts one of the following values:
 | `docking_filters` | Filter docking poses by quality and interactions |
 | `final_descriptors` | Recompute descriptors on the final filtered set |
 
+When running `--stage struct_filters`, input resolution is:
+1. Existing descriptors output (if present in the run folder)
+2. MolPrep output
+3. Sampled molecules input
+
 ### Folder Behavior
 
 The output folder strategy depends on what you are running:
