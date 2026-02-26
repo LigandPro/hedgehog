@@ -8,6 +8,7 @@ import logging
 import random
 import statistics
 import warnings
+from collections.abc import Callable
 from typing import Any
 
 from hedgehog.utils.datamol_import import import_datamol_quietly
@@ -37,6 +38,23 @@ _METRIC_CONFIG_MAP: dict[str, str] = {
 _INTRINSIC_KEYS = list(_METRIC_CONFIG_MAP.keys())
 
 
+def _close_getmetrics_pool(gm: Any) -> None:
+    """Close a GetMetrics pool robustly across vendor variants.
+
+    Some vendored versions expose ``close_pool`` as an instance method,
+    while others shadow it with a boolean flag on the instance. This helper
+    supports both layouts and avoids leaking worker pools.
+    """
+    close_attr = getattr(gm, "close_pool", None)
+    if callable(close_attr):
+        close_attr()
+        return
+
+    close_method = getattr(type(gm), "close_pool", None)
+    if callable(close_method):
+        close_method(gm)
+
+
 def is_available() -> bool:
     """Check if the vendored moleval package is importable."""
     try:
@@ -51,6 +69,7 @@ def compute_stage_metrics(
     stage_smiles: dict[str, list[str]],
     config: dict[str, Any],
     seed: int = 42,
+    progress_cb: Callable[[int, int, str | None], None] | None = None,
 ) -> dict[str, Any]:
     """Compute intrinsic generative metrics for each pipeline stage.
 
@@ -84,56 +103,74 @@ def compute_stage_metrics(
     # on systems with conservative per-process limits.
     n_jobs = max(1, n_jobs)
 
+    stage_items = [(name, smi) for name, smi in stage_smiles.items() if smi]
+    if not stage_items:
+        return {}
+
+    total_stages = len(stage_items)
+    if progress_cb is not None:
+        progress_cb(0, total_stages, "MolEval")
+
     by_stage: dict[str, dict[str, float]] = {}
     all_metrics: set[str] = set()
+    gm_by_jobs: dict[int, Any] = {}
+    mce18_cache: dict[str, float | None] = {}
 
-    for stage_name, smiles_list in stage_smiles.items():
-        if not smiles_list:
-            continue
+    try:
+        for idx, (stage_name, smiles_list) in enumerate(stage_items, start=1):
+            # Subsample if exceeding max_molecules
+            if len(smiles_list) > max_molecules:
+                smiles_list = rng.sample(smiles_list, max_molecules)
 
-        # Subsample if exceeding max_molecules
-        if len(smiles_list) > max_molecules:
-            smiles_list = rng.sample(smiles_list, max_molecules)
+            stage_jobs = max(1, min(n_jobs, len(smiles_list)))
+            gm = gm_by_jobs.get(stage_jobs)
+            if gm is None:
+                gm = GetMetrics(n_jobs=stage_jobs, device=device, run_fcd=False)
+                gm_by_jobs[stage_jobs] = gm
 
-        stage_jobs = max(1, min(n_jobs, len(smiles_list)))
-        gm: Any | None = None
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    raw_metrics = gm.calculate(
+                        gen=smiles_list,
+                        calc_valid=True,
+                        calc_unique=True,
+                    )
+            except Exception as e:
+                logger.warning("MolEval failed for stage %s: %s", stage_name, e)
+                if progress_cb is not None:
+                    progress_cb(idx, total_stages, f"MolEval failed: {stage_name}")
+                continue
 
-        try:
-            gm = GetMetrics(n_jobs=stage_jobs, device=device, run_fcd=False)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                raw_metrics = gm.calculate(
-                    gen=smiles_list,
-                    calc_valid=True,
-                    calc_unique=True,
-                )
-        except Exception as e:
-            logger.warning("MolEval failed for stage %s: %s", stage_name, e)
-            continue
-        finally:
-            if gm is not None:
-                try:
-                    gm.close_pool()
-                except Exception as e:
-                    logger.debug("Failed to close MolEval process pool: %s", e)
+            filtered = _filter_metrics(raw_metrics, config)
 
-        filtered = _filter_metrics(raw_metrics, config)
+            # Add MCE-18 if enabled (computed separately, not from GetMetrics)
+            if config.get("mce18", True):
+                mce18_values = []
+                for smi in smiles_list:
+                    if smi not in mce18_cache:
+                        mol = dm.to_mol(smi)
+                        mce18_cache[smi] = (
+                            compute_mce18(mol) if mol is not None else None
+                        )
+                    cached_val = mce18_cache[smi]
+                    if cached_val is not None:
+                        mce18_values.append(cached_val)
+                if mce18_values:
+                    filtered["MCE18"] = round(statistics.mean(mce18_values), 4)
 
-        # Add MCE-18 if enabled (computed separately, not from GetMetrics)
-        if config.get("mce18", True):
-            mce18_values = []
-            for smi in smiles_list:
-                mol = dm.to_mol(smi)
-                if mol is not None:
-                    val = compute_mce18(mol)
-                    if val is not None:
-                        mce18_values.append(val)
-            if mce18_values:
-                filtered["MCE18"] = round(statistics.mean(mce18_values), 4)
+            if filtered:
+                by_stage[stage_name] = filtered
+                all_metrics.update(filtered.keys())
 
-        if filtered:
-            by_stage[stage_name] = filtered
-            all_metrics.update(filtered.keys())
+            if progress_cb is not None:
+                progress_cb(idx, total_stages, f"MolEval: {stage_name}")
+    finally:
+        for gm in gm_by_jobs.values():
+            try:
+                _close_getmetrics_pool(gm)
+            except Exception as e:
+                logger.debug("Failed to close MolEval process pool: %s", e)
 
     if not by_stage:
         return {}

@@ -68,6 +68,7 @@ STAGE_SYNTHESIS = "synthesis"
 STAGE_DOCKING = "docking"
 STAGE_DOCKING_FILTERS = "docking_filters"
 STAGE_FINAL_DESCRIPTORS = "final_descriptors"
+STAGE_REPORT = "report"
 
 # Config keys
 CONFIG_MOL_PREP = "config_mol_prep"
@@ -975,8 +976,18 @@ class PipelineReporter:
 
     # -- HTML report ------------------------------------------------------
 
-    def generate_html_report(self, initial_count: int, final_count: int) -> None:
-        """Generate HTML report for the pipeline run."""
+    def generate_html_report(
+        self,
+        initial_count: int,
+        final_count: int,
+        progress_reporter: StageProgressReporter | None = None,
+    ) -> tuple[bool, float]:
+        """Generate HTML report for the pipeline run.
+
+        Returns:
+            Tuple ``(ok, elapsed_seconds)``.
+        """
+        started_at = time.perf_counter()
         try:
             logger.info("Generating HTML report (this may take a while)...")
             report_generator = ReportGenerator(
@@ -985,11 +996,18 @@ class PipelineReporter:
                 config=self.config,
                 initial_count=initial_count,
                 final_count=final_count,
+                progress_callback=(
+                    progress_reporter.progress
+                    if progress_reporter is not None
+                    else None
+                ),
             )
             report_path = report_generator.generate()
             logger.info("HTML report generated: %s", report_path)
+            return True, time.perf_counter() - started_at
         except Exception as e:
             logger.warning("Failed to generate HTML report: %s", e)
+            return False, time.perf_counter() - started_at
 
     # -- internal helpers -------------------------------------------------
 
@@ -1508,7 +1526,29 @@ class MolecularAnalysisPipeline:
             stage_timings=self.stage_timings,
             config=self.config,
         )
-        self.reporter.generate_html_report(initial_count, final_count)
+
+        report_progress: StageProgressReporter | None = None
+        if self.progress_callback is not None:
+            enabled_stage_count = sum(1 for s in self.stages if s.enabled)
+            report_progress = StageProgressReporter(
+                emit_event=self._emit_progress_event,
+                stage=STAGE_REPORT,
+                stage_index=enabled_stage_count + 1,
+                total_stages=enabled_stage_count + 1,
+            )
+            report_progress.start(message="Generating HTML report")
+
+        report_ok, report_elapsed = self.reporter.generate_html_report(
+            initial_count,
+            final_count,
+            progress_reporter=report_progress,
+        )
+        if report_progress is not None:
+            report_progress.complete(
+                ok=report_ok,
+                message=f"{report_elapsed:.1f}s",
+                elapsed_seconds=report_elapsed,
+            )
 
         return not any(self.reporter.stage_is_failed(s) for s in self.stages)
 
