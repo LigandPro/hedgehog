@@ -31,13 +31,20 @@ function runtimeLabel(runtime: 'short' | 'medium' | 'long' | 'unknown'): string 
   return 'Unknown';
 }
 
+function truncateLine(value: string, maxLength: number): string {
+  if (maxLength <= 0) return '';
+  if (value.length <= maxLength) return value;
+  if (maxLength <= 3) return '.'.repeat(maxLength);
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
 export function ReviewRun(): React.ReactElement {
   const setScreen = useStore((state) => state.setScreen);
   const wizard = useStore((state) => state.wizard);
   const config = useStore((state) => state.configs.main);
   const getWizardSelectedStagesInOrder = useStore((state) => state.getWizardSelectedStagesInOrder);
 
-  const { width: terminalWidth } = useTerminalSize();
+  const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
 
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [starting, setStarting] = useState(false);
@@ -144,6 +151,15 @@ export function ReviewRun(): React.ReactElement {
       ? { label: 'Pass', color: 'green' as const }
       : { label: 'Failed', color: 'red' as const };
 
+  const separatorWidth = Math.max(1, terminalWidth - 2);
+  const maxPreflightItems = terminalHeight < 34 ? 3 : terminalHeight < 42 ? 5 : 8;
+  const showTwoColumns = terminalWidth >= 92;
+  const stageColumnWidth = showTwoColumns
+    ? Math.max(26, Math.min(36, Math.floor(terminalWidth * 0.33)))
+    : Math.max(20, terminalWidth - 2);
+  const stageLabelWidth = Math.max(12, stageColumnWidth - 8);
+  const focusedStage = stageViews[focusedIndex];
+
   useInput((input, key) => {
     if (starting) return;
 
@@ -177,17 +193,17 @@ export function ReviewRun(): React.ReactElement {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header title="Pipeline Wizard" subtitle="Detailed Review (Optional)" />
+      <Header title="Pipeline Wizard" subtitle="Detailed Review" />
 
       {config && (
         <Box flexDirection="column" marginY={1}>
           <Box>
             <Text dimColor>Input:  </Text>
-            <Text color="cyan">{config.generated_mols_path || '(not set)'}</Text>
+            <Text color="cyan" wrap="truncate-middle">{config.generated_mols_path || '(not set)'}</Text>
           </Box>
           <Box>
             <Text dimColor>Output: </Text>
-            <Text color="cyan">{config.folder_to_save || '(not set)'}</Text>
+            <Text color="cyan" wrap="truncate-middle">{config.folder_to_save || '(not set)'}</Text>
           </Box>
         </Box>
       )}
@@ -217,7 +233,7 @@ export function ReviewRun(): React.ReactElement {
       {preflightItems.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <Text color="cyan" bold>Checks</Text>
-          {preflightItems.slice(0, 8).map((check, index) => {
+          {preflightItems.slice(0, maxPreflightItems).map((check, index) => {
             const marker = check.level === 'error' ? 'E' : check.level === 'warning' ? 'W' : 'I';
             const color = check.level === 'error' ? 'red' : check.level === 'warning' ? 'yellow' : 'cyan';
             const scope = check.scope === 'global' ? 'global' : check.scope;
@@ -231,8 +247,8 @@ export function ReviewRun(): React.ReactElement {
               </Box>
             );
           })}
-          {preflightItems.length > 8 && (
-            <Text dimColor>... and {preflightItems.length - 8} more checks</Text>
+          {preflightItems.length > maxPreflightItems && (
+            <Text dimColor>... and {preflightItems.length - maxPreflightItems} more checks</Text>
           )}
         </Box>
       )}
@@ -241,40 +257,58 @@ export function ReviewRun(): React.ReactElement {
         <Text color="cyan" bold>Pipeline Stages ({viewMode})</Text>
       </Box>
 
-      <Box flexDirection="column" marginY={1}>
-        {stageViews.map((stage, index) => {
-          const isFocused = focusedIndex === index;
+      <Box flexDirection={showTwoColumns ? 'row' : 'column'} marginY={1}>
+        <Box
+          flexDirection="column"
+          width={stageColumnWidth}
+          flexShrink={0}
+          paddingRight={showTwoColumns ? 2 : 0}
+          marginBottom={showTwoColumns ? 0 : 1}
+        >
+          <Text color="cyan" bold>Stages</Text>
+          {stageViews.map((stage, index) => {
+            const isFocused = focusedIndex === index;
+            const label = truncateLine(stage.displayName, stageLabelWidth);
 
-          return (
-            <Box key={stage.name} flexDirection="column" marginBottom={1}>
+            return (
+              <Box key={stage.name}>
+                <Text color={isFocused ? 'cyan' : 'gray'}>
+                  {isFocused ? '> ' : '  '}
+                </Text>
+                <Text color={isFocused ? 'white' : 'gray'}>{`${index + 1}. ${label}`}</Text>
+              </Box>
+            );
+          })}
+        </Box>
+
+        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+          {focusedStage ? (
+            <>
               <Box>
-                <Text dimColor>{`${index + 1}. `}</Text>
-                <Text color={isFocused ? 'cyan' : 'white'}>{isFocused ? '> ' : '  '}</Text>
-                <Text color={isFocused ? 'white' : 'gray'} bold>{stage.displayName}</Text>
-                <Text dimColor> ({formatHeavyLevel(stage.heavyLevel)})</Text>
+                <Text color="white" bold>{focusedStage.displayName}</Text>
+                <Text dimColor> ({formatHeavyLevel(focusedStage.heavyLevel)})</Text>
               </Box>
-
-              <Box paddingLeft={5}>
-                <Text dimColor>{stage.summary}</Text>
-              </Box>
+              <Text dimColor wrap="wrap">{focusedStage.summary}</Text>
 
               {viewMode === 'detailed' && (
-                <Box flexDirection="column" paddingLeft={5}>
-                  <Text dimColor>Purpose: {stage.whatItDoes}</Text>
-                  <Text dimColor>Reads: {stage.reads.join(', ')}</Text>
-                  <Text dimColor>Writes: {stage.writes.join(', ')}</Text>
-                  {stage.keyParams.length > 0 && (
-                    <Text dimColor>Key params: {stage.keyParams.join(' | ')}</Text>
+                <Box flexDirection="column">
+                  <Text dimColor wrap="wrap">Purpose: {focusedStage.whatItDoes}</Text>
+                  <Text dimColor wrap="wrap">Reads: {focusedStage.reads.join(', ')}</Text>
+                  <Text dimColor wrap="wrap">Writes: {focusedStage.writes.join(', ')}</Text>
+                  {focusedStage.keyParams.length > 0 && (
+                    <Text dimColor wrap="wrap">Key params: {focusedStage.keyParams.join(' | ')}</Text>
                   )}
                 </Box>
               )}
-            </Box>
-          );
-        })}
+            </>
+          ) : (
+            <Text dimColor>No stages selected</Text>
+          )}
+        </Box>
       </Box>
 
       <Box marginY={1}>
-        <Text color="gray">{'─'.repeat(terminalWidth - 2)}</Text>
+        <Text color="gray">{'─'.repeat(separatorWidth)}</Text>
       </Box>
 
       {starting ? (

@@ -3,7 +3,6 @@ import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
 import { useStore } from '../../store/index.js';
-import { runWizardPipeline } from './runPipeline.js';
 import { STAGE_METADATA, WIZARD_STAGE_ORDER } from './stageMetadata.js';
 
 export function StageSelection(): React.ReactElement {
@@ -13,7 +12,6 @@ export function StageSelection(): React.ReactElement {
   const showToast = useStore((state) => state.showToast);
 
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const [starting, setStarting] = useState(false);
 
   const stages = useMemo(
     () => WIZARD_STAGE_ORDER.map((key) => ({
@@ -48,24 +46,7 @@ export function StageSelection(): React.ReactElement {
     setScreen('wizardReview');
   };
 
-  const startFast = async () => {
-    if (starting) return;
-    if (selectedCount === 0) {
-      showToast('warning', 'Select at least one stage');
-      return;
-    }
-
-    setStarting(true);
-    try {
-      await runWizardPipeline({ onPreflightErrorScreen: 'wizardReview' });
-    } finally {
-      setStarting(false);
-    }
-  };
-
   useInput((input, key) => {
-    if (starting) return;
-
     if (key.upArrow) {
       setFocusedIndex(Math.max(0, focusedIndex - 1));
     } else if (key.downArrow) {
@@ -81,7 +62,7 @@ export function StageSelection(): React.ReactElement {
     } else if (input === 'r' || key.rightArrow) {
       openReview();
     } else if (key.return) {
-      void startFast();
+      openReview();
     } else if (key.escape || key.leftArrow || input === 'q') {
       setScreen('wizardInputSelection');
     }
@@ -90,8 +71,8 @@ export function StageSelection(): React.ReactElement {
   const shortcuts = [
     { key: 'Space', label: 'Toggle' },
     { key: 'c', label: 'Configure' },
-    { key: 'Enter', label: 'Fast start' },
-    { key: 'r/→', label: 'Detailed review' },
+    { key: 'Enter', label: 'Review' },
+    { key: 'r/→', label: 'Review' },
     { key: '←/Esc', label: 'Back' },
   ];
 
@@ -127,12 +108,6 @@ export function StageSelection(): React.ReactElement {
         <Text color="cyan">{selectedCount}</Text>
         <Text dimColor> stage{selectedCount !== 1 ? 's' : ''} selected</Text>
       </Box>
-
-      {starting && (
-        <Box marginBottom={1}>
-          <Text color="yellow">Running preflight and starting pipeline...</Text>
-        </Box>
-      )}
 
       <Footer shortcuts={shortcuts} />
     </Box>
