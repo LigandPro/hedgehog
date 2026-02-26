@@ -353,6 +353,7 @@ class TestRunAizynthfinder:
 
         monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
         monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: str(uv_bin))
+        monkeypatch.setenv("VIRTUAL_ENV", "/tmp/foreign-env")
 
         config = (
             tmp_path
@@ -366,6 +367,16 @@ class TestRunAizynthfinder:
 
         assert ok is True
         assert captured["cmd"][0] == str(uv_bin)
+        assert "VIRTUAL_ENV" not in captured["kwargs"]["env"]
+        assert (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "aizynthfinder"
+            / "data"
+            / "logging.yml"
+        ).exists()
 
     def test_returns_false_when_uv_unavailable(self, tmp_path, monkeypatch):
         """Missing uv binary should be logged and prevent command execution."""

@@ -152,7 +152,7 @@ def run_tui_smoke(repo_root: Path, startup_timeout_sec: int = 25) -> None:
 
 def run_full_pipeline(repo_root: Path) -> None:
     """Run the production pipeline with the default config (all stages)."""
-    run_cmd(["uv", "run", "hedgehog", "run"], repo_root)
+    run_cmd(["uv", "run", "hedgehog"], repo_root)
 
 
 def parse_args() -> argparse.Namespace:

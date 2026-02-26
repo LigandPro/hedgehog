@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -424,6 +425,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
+        ctx=SimpleNamespace(invoked_subcommand=None),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,
@@ -506,6 +508,7 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
+        ctx=SimpleNamespace(invoked_subcommand=None),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,

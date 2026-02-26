@@ -106,10 +106,12 @@ def _ensure_public_data(
 
 def _copy_logging_yml(project_root: Path, aizynth_dir: Path) -> None:
     """Copy logging.yml into the aizynthfinder data directory."""
-    logging_src = (
-        project_root / "src" / "hedgehog" / "stages" / "synthesis" / "logging.yml"
-    )
-    if not logging_src.exists():
+    logging_candidates = [
+        project_root / "src" / "hedgehog" / "synthesis" / "logging.yml",
+        project_root / "src" / "hedgehog" / "stages" / "synthesis" / "logging.yml",
+    ]
+    logging_src = next((p for p in logging_candidates if p.exists()), None)
+    if logging_src is None:
         return
     data_dir = aizynth_dir / "aizynthfinder" / "data"
     data_dir.mkdir(parents=True, exist_ok=True)  # Standard perms; public data directory
@@ -148,6 +150,7 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
 
     # 1. Already installed
     if config_yml.exists():
+        _copy_logging_yml(project_root, aizynth_dir)
         logger.info("AiZynthFinder config found at %s", config_yml)
         return config_yml
 

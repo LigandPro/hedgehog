@@ -105,7 +105,7 @@ def _build_single_core_config(
 @pytest.mark.integration
 @pytest.mark.slow
 def test_cli_full_pipeline_for_single_molecule_single_core(tmp_path: Path):
-    """Run `uv run hedgehog run` end-to-end for one known passing molecule."""
+    """Run `uv run hedgehog` end-to-end for one known passing molecule."""
     repo_root = Path(__file__).resolve().parents[1]
 
     if shutil.which("uv") is None:
@@ -154,7 +154,6 @@ def test_cli_full_pipeline_for_single_molecule_single_core(tmp_path: Path):
         "uv",
         "run",
         "hedgehog",
-        "run",
         "--config",
         str(config_path),
         "--mols",

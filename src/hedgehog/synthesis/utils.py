@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -25,6 +26,31 @@ _lazy_cache: dict[str, Any] = {
 }
 STRICT_RASCORE_ENV = "HEDGEHOG_STRICT_RASCORE"
 
+_DEFAULT_AIZYNTH_LOGGING_YML = """version: 1
+formatters:
+  simple:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+  file:
+    class: logging.FileHandler
+    level: DEBUG
+    formatter: simple
+    filename: aizynthfinder.log
+loggers:
+  aizynthfinder:
+    level: DEBUG
+    handlers: [console, file]
+    propagate: no
+root:
+  level: ERROR
+  handlers: [console]
+"""
+
 
 def _get_cached(key: str, loader: callable) -> Any:
     """Generic lazy loading with caching.
@@ -39,6 +65,39 @@ def _get_cached(key: str, loader: callable) -> Any:
     if _lazy_cache[key] is None:
         _lazy_cache[key] = loader()
     return _lazy_cache[key]
+
+
+def _short_exception_message(exc: Exception) -> str:
+    """Return a compact one-line message for noisy exceptions."""
+    raw = str(exc).strip()
+    if not raw:
+        return exc.__class__.__name__
+    return raw.splitlines()[0]
+
+
+def _ensure_aizynth_logging_config(run_dir: Path) -> None:
+    """Ensure AiZynthFinder logging.yml exists for CLI startup."""
+    data_dir = run_dir / "aizynthfinder" / "data"
+    logging_path = data_dir / "logging.yml"
+    if logging_path.exists():
+        return
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    source_candidates = [
+        Path(__file__).resolve().parent / "logging.yml",
+        Path(__file__).resolve().parents[1] / "stages" / "synthesis" / "logging.yml",
+    ]
+    source = next((p for p in source_candidates if p.exists()), None)
+    if source is not None:
+        shutil.copy2(source, logging_path)
+        logger.info("Copied AiZynthFinder logging config to %s", logging_path)
+        return
+
+    logging_path.write_text(_DEFAULT_AIZYNTH_LOGGING_YML, encoding="utf-8")
+    logger.warning(
+        "AiZynthFinder logging.yml was missing; created default config at %s",
+        logging_path,
+    )
 
 
 def prepare_input_smiles(input_df, output_file):
@@ -80,6 +139,7 @@ def run_aizynthfinder(
     run_dir = (
         Path(aizynthfinder_dir) if aizynthfinder_dir else config_file.parent.parent
     )
+    _ensure_aizynth_logging_config(run_dir)
     input_abs = input_smiles_file.resolve()
     output_abs = output_json_file.resolve()
     config_abs = config_file.resolve()
@@ -111,6 +171,8 @@ def run_aizynthfinder(
     try:
         logger.info("Running retrosynthesis analysis...")
         logger.debug("Command: %s", cmd)
+        child_env = os.environ.copy()
+        child_env.pop("VIRTUAL_ENV", None)
 
         subprocess.run(
             cmd,
@@ -119,6 +181,7 @@ def run_aizynthfinder(
             text=True,
             check=True,
             cwd=str(run_dir),
+            env=child_env,
         )
 
         logger.info("Retrosynthesis analysis completed successfully")
@@ -327,7 +390,11 @@ def _load_rascore_impl():
             logger.debug("RAScore xgboost model loaded successfully")
             return {"kind": "xgboost_booster", "model": booster}
         except Exception as e:
-            logger.warning("Failed to load RAScore model from %s: %s", json_path, e)
+            logger.warning(
+                "Failed to load RAScore model from %s: %s",
+                json_path,
+                _short_exception_message(e),
+            )
 
     if not pkl_path.exists():
         try:
@@ -348,7 +415,11 @@ def _load_rascore_impl():
         logger.debug("RAScore pickle model loaded successfully")
         return {"kind": "pickle_classifier", "model": model}
     except Exception as e:
-        logger.warning("Failed to load RAScore model from %s: %s", pkl_path, e)
+        logger.warning(
+            "Failed to load RAScore model from %s: %s",
+            pkl_path,
+            _short_exception_message(e),
+        )
         return False
 
 

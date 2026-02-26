@@ -1,4 +1,5 @@
 import csv
+import multiprocessing
 import shutil
 import time
 from datetime import datetime
@@ -9,7 +10,7 @@ import yaml
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.main import main as descriptors_main
-from hedgehog.docking.utils import run_docking as docking_main
+from hedgehog.docking.stage import run as docking_main
 from hedgehog.docking_filters.main import docking_filters_main
 from hedgehog.molprep.main import main as mol_prep_main
 from hedgehog.reporting import ReportGenerator
@@ -902,6 +903,7 @@ class PipelineReporter:
     def generate_html_report(self, initial_count: int, final_count: int) -> None:
         """Generate HTML report for the pipeline run."""
         try:
+            logger.info("Generating HTML report (this may take a while)...")
             report_generator = ReportGenerator(
                 base_path=self.base_path,
                 stages=self.stages,
@@ -1310,7 +1312,9 @@ class MolecularAnalysisPipeline:
         """Run post-descriptors structural filters stage."""
 
         def _on_failure():
-            logger.info("No molecules left after descriptors; ending pipeline early.")
+            logger.info(
+                "Structural filters did not complete successfully; ending pipeline early."
+            )
             return False, True
 
         return self._run_stage(
@@ -1874,6 +1878,7 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
     """
     folder = Path(config[CONFIG_FOLDER_TO_SAVE])
     incomplete_marker = folder / FILE_RUN_INCOMPLETE
+    success = False
 
     try:
         # Drop a marker so that interrupted runs are detectable.
@@ -1890,7 +1895,39 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
 
         # Pipeline finished normally -- remove the marker.
         incomplete_marker.unlink(missing_ok=True)
-        return success
     except Exception as e:
         logger.error("Pipeline execution failed: %s", e)
-        return False
+        success = False
+    finally:
+        _cleanup_lingering_processes()
+
+    return success
+
+
+def _cleanup_lingering_processes() -> None:
+    """Best-effort cleanup of leftover workers to avoid shutdown hangs."""
+    # Some third-party libraries (e.g., joblib/loky) can leave worker processes
+    # alive past pipeline completion. Ensure we do not block shell return.
+    try:
+        children = multiprocessing.active_children()
+    except Exception:
+        children = []
+
+    for child in children:
+        try:
+            child.terminate()
+        except Exception:
+            pass
+
+    for child in children:
+        try:
+            child.join(timeout=2)
+        except Exception:
+            pass
+
+    try:
+        from joblib.externals.loky import get_reusable_executor
+
+        get_reusable_executor().shutdown(wait=False, kill_workers=True)
+    except Exception:
+        pass

@@ -143,3 +143,5 @@ uv run hedgehog --stage struct_filters
 # Short alias
 uv run hedge --stage struct_filters
 ```
+
+In single-stage mode (`--stage struct_filters`), HEDGEHOG reuses existing descriptors output when available. If descriptors output is missing, it falls back to MolPrep output (or sampled input) in the same run folder.
