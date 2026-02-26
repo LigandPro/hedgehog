@@ -16,7 +16,6 @@ from rich.progress import (
     Progress,
     SpinnerColumn,
     TextColumn,
-    TimeElapsedColumn,
 )
 from rich.table import Table
 
@@ -54,18 +53,18 @@ def _build_progress_columns(console_width: int):
             SpinnerColumn(style="dim"),
             TextColumn("[bold]{task.description}[/bold]"),
             BarColumn(bar_width=20),
-            TextColumn("mols {task.fields[done_total]}"),
-            TimeElapsedColumn(),
+            TextColumn("{task.fields[done_total]}"),
+            TextColumn("elapsed {task.fields[elapsed_s]}"),
         ]
 
     return [
         SpinnerColumn(style="dim"),
         TextColumn("[bold]{task.description}[/bold]"),
         BarColumn(bar_width=40),
-        TextColumn("mols {task.fields[done_total]}"),
+        TextColumn("{task.fields[done_total]}"),
         TextColumn("rate {task.fields[rate]}"),
         TextColumn("eta {task.fields[eta]}"),
-        TimeElapsedColumn(),
+        TextColumn("elapsed {task.fields[elapsed_s]}"),
     ]
 
 
@@ -511,6 +510,25 @@ class CliProgressTracker:
             return text[:33] + "..."
         return text
 
+    @staticmethod
+    def _strip_stage_prefix(message: str, short_name: str) -> str:
+        lowered = message.lower()
+        stage_lower = short_name.lower()
+        if lowered == stage_lower:
+            return ""
+        for separator in (":", "-", "·", " "):
+            prefix = f"{stage_lower}{separator}"
+            if lowered.startswith(prefix):
+                return message[len(short_name + separator) :].strip()
+        return message
+
+    @staticmethod
+    def _format_elapsed_seconds(value: float | None) -> str:
+        if value is None:
+            return "-"
+        seconds = int(max(0.0, round(value)))
+        return f"{seconds}s"
+
     def _progress_description(
         self,
         stage_index: int,
@@ -520,6 +538,8 @@ class CliProgressTracker:
     ) -> str:
         base = f"{stage_index}/{total_stages} - {short_name}"
         short_message = self._short_progress_message(message)
+        if short_message:
+            short_message = self._strip_stage_prefix(short_message, short_name)
         if short_message:
             return f"{base} · {short_message}"
         return base
@@ -542,6 +562,7 @@ class CliProgressTracker:
                 done_total="-/-",
                 rate="-",
                 eta="-",
+                elapsed_s="-",
             )
         return self._active_task_id
 
@@ -565,6 +586,7 @@ class CliProgressTracker:
             done_total="-/-",
             rate="-",
             eta="-",
+            elapsed_s="0s",
         )
 
     def _handle_stage_progress(
@@ -611,6 +633,7 @@ class CliProgressTracker:
             ),
             rate=(f"{rate:,.0f}/s" if rate is not None else "-"),
             eta=self._format_seconds(eta_seconds),
+            elapsed_s=self._format_elapsed_seconds(elapsed_seconds),
         )
 
     def _handle_stage_complete(
@@ -624,6 +647,11 @@ class CliProgressTracker:
         done_total = "-/-"
         stage_total = self._current_stage_total
         stage_done = self._current_stage_done
+        elapsed_seconds = (
+            time.perf_counter() - self._stage_started_at
+            if self._stage_started_at is not None
+            else None
+        )
         if stage_total is not None:
             done = stage_done
             if done is None or done < 0:
@@ -638,6 +666,7 @@ class CliProgressTracker:
             done_total=done_total,
             rate="-",
             eta="-",
+            elapsed_s=self._format_elapsed_seconds(elapsed_seconds),
         )
 
 
@@ -891,6 +920,70 @@ def run(
             auto_install=auto_install,
             show_progress=show_progress,
         )
+
+
+@app.command("run")
+def run_command(
+    config_path: str = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        "-c",
+        help="Master YAML config path (default: src/hedgehog/configs/config.yml).",
+        show_default=False,
+    ),
+    generated_mols_path: str | None = typer.Option(
+        None,
+        "--mols",
+        "-m",
+        help="SMILES file path or glob (overrides config).",
+    ),
+    out_dir: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Output directory (overrides config folder_to_save).",
+    ),
+    stage: Stage | None = typer.Option(
+        None,
+        "--stage",
+        "-s",
+        help="Run one stage only; see `hedgehog info`.",
+        case_sensitive=False,
+        metavar="STAGE",
+        show_choices=False,
+    ),
+    reuse_folder: bool = typer.Option(
+        False,
+        "--reuse",
+        help="Reuse existing results folder.",
+    ),
+    force_new_folder: bool = typer.Option(
+        False,
+        "--force-new",
+        help="Always create a new results folder.",
+    ),
+    auto_install: bool = typer.Option(
+        False,
+        "--auto-install",
+        help="Install missing optional tools automatically.",
+    ),
+    show_progress: bool = typer.Option(
+        False,
+        "--progress",
+        help="Show live progress bar.",
+    ),
+) -> None:
+    """Run the molecular analysis pipeline as an explicit subcommand."""
+    _run_pipeline_command(
+        config_path=config_path,
+        generated_mols_path=generated_mols_path,
+        out_dir=out_dir,
+        stage=stage,
+        reuse_folder=reuse_folder,
+        force_new_folder=force_new_folder,
+        auto_install=auto_install,
+        show_progress=show_progress,
+    )
 
 
 @app.command()

@@ -15,6 +15,7 @@ uv run hedge --help
 
 | Command   | Description                                           |
 |-----------|-------------------------------------------------------|
+| `run`     | Run the pipeline explicitly as a subcommand           |
 | `report`  | Regenerate the HTML report from an existing run       |
 | `info`    | Display pipeline information and available stages     |
 | `version` | Display version information                           |
@@ -27,6 +28,12 @@ The root CLI command executes the evaluation pipeline by default. It runs all en
 
 ```bash
 uv run hedgehog [OPTIONS]
+```
+
+The same pipeline command is also available as an explicit subcommand:
+
+```bash
+uv run hedgehog run [OPTIONS]
 ```
 
 ### Options
