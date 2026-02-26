@@ -460,6 +460,55 @@ class TestGetBasicStatsNewFilters:
         assert len(extended) == 2
 
 
+class TestCommonAlertsNJobsStrategy:
+    """Tests for size-aware Common Alerts worker resolution."""
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_small_input_uses_one_worker(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 192
+        config_sf = {"common_alerts_auto_n_jobs": True}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=999
+        )
+
+        assert n_jobs == 1
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_medium_input_uses_twelve_workers(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 192
+        config_sf = {"common_alerts_auto_n_jobs": True}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=1_000
+        )
+
+        assert n_jobs == 12
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_large_input_uses_all_workers(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 192
+        config_sf = {"common_alerts_auto_n_jobs": True}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=10_000
+        )
+
+        assert n_jobs == 192
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_auto_disabled_falls_back_to_resolve_n_jobs(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 7
+        config_sf = {"common_alerts_auto_n_jobs": False}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=250
+        )
+
+        assert n_jobs == 7
+        mock_resolve_n_jobs.assert_called_once_with(config_sf, {})
+
+
 # =====================================================================
 # Contract tests for MedChem filters (common_alerts, Lilly, NIBR)
 # =====================================================================
