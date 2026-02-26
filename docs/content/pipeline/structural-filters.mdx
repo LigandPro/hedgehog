@@ -50,6 +50,10 @@ The common alerts filter is the most configurable. It uses a curated CSV databas
 
 ```yaml
 calculate_common_alerts: true
+common_alerts_auto_n_jobs: true
+common_alerts_small_input_threshold: 1000
+common_alerts_small_input_n_jobs: 1
+common_alerts_large_input_n_jobs: 12
 include_rulesets:
   - Dundee
   - BMS
@@ -69,6 +73,14 @@ exclude_descriptions:
     - imidazole
     # ... fine-grained exclusions per rule set
 ```
+
+When `common_alerts_auto_n_jobs: true`, worker selection is size-aware:
+
+- `< 1000` molecules: use `1` worker
+- `1000..9999` molecules: use `12` workers
+- `>= 10000` molecules: use all available workers
+
+Set `common_alerts_auto_n_jobs: false` to use regular stage/global `n_jobs` resolution instead.
 
 The `exclude_descriptions` section lets you whitelist specific alerts within a rule set. For example, if your target requires an imidazole moiety, you can exclude the Toxicophore imidazole alert while keeping all other toxicophore rules active.
 
@@ -123,11 +135,11 @@ symmetry_threshold: 0.8
 
 ```bash
 # Run structural filters as part of the full pipeline
-uv run hedgehog run
+uv run hedgehog
 
 # Run structural filters stage only
-uv run hedgehog run --stage struct_filters
+uv run hedgehog --stage struct_filters
 
 # Short alias
-uv run hedge run --stage struct_filters
+uv run hedge --stage struct_filters
 ```
