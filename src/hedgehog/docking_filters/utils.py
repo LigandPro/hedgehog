@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import tempfile
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,10 +20,6 @@ from rdkit.Chem import AllChem
 from hedgehog.configs.logger import logger
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
-# Suppress common warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -31,6 +28,37 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 def _project_root() -> Path:
     # src/hedgehog/docking_filters/utils.py -> project root
     return Path(__file__).resolve().parent.parent.parent.parent
+
+
+@contextmanager
+def _suppress_posecheck_fast_warnings():
+    """Suppress known third-party warning from posecheck-fast/torch interop."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="The given NumPy array is not writable",
+            category=UserWarning,
+        )
+        yield
+
+
+@contextmanager
+def _suppress_interaction_filter_warnings():
+    """Suppress known noisy MDAnalysis warnings during interaction filtering."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Deprecated in version 2.8.0",
+            category=DeprecationWarning,
+            module=r"MDAnalysis\.topology\.tables",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="No `bonds` attribute in this AtomGroup. Guessing bonds based on atoms coordinates",
+            category=UserWarning,
+            module=r"MDAnalysis\.converters\.RDKit",
+        )
+        yield
 
 
 def _resolve_existing_path(base_folder: Path, path: str | Path) -> Path:
@@ -522,8 +550,9 @@ def apply_interaction_filter(
     Returns:
         DataFrame with columns: mol_idx, n_hbonds, interactions, pass
     """
-    import MDAnalysis as mda
-    import prolif as plf
+    with _suppress_interaction_filter_warnings():
+        import MDAnalysis as mda
+        import prolif as plf
 
     min_hbonds = config.get("min_hbonds", 0)
     required_residues = config.get("required_residues", [])
@@ -534,21 +563,22 @@ def apply_interaction_filter(
 
     logger.info("Running interaction filter (min_hbonds=%d)", min_hbonds)
 
-    # Load protein
-    u = mda.Universe(str(protein_pdb))
-    protein = plf.Molecule.from_mda(u)
+    with _suppress_interaction_filter_warnings():
+        # Load protein
+        u = mda.Universe(str(protein_pdb))
+        protein = plf.Molecule.from_mda(u)
 
-    # Convert RDKit mols to ProLIF molecules
-    plf_mols = []
-    for mol in mols:
-        mol_h = Chem.AddHs(mol, addCoords=True)
-        plf_mols.append(plf.Molecule.from_rdkit(mol_h))
+        # Convert RDKit mols to ProLIF molecules
+        plf_mols = []
+        for mol in mols:
+            mol_h = Chem.AddHs(mol, addCoords=True)
+            plf_mols.append(plf.Molecule.from_rdkit(mol_h))
 
-    # Calculate interactions (exclude FaceToFace due to edge case errors)
-    safe_interactions = [it for it in interaction_types if it != "FaceToFace"]
-    fp = plf.Fingerprint(interactions=safe_interactions)
-    n_jobs = resolve_n_jobs(config)
-    fp.run_from_iterable(plf_mols, protein, n_jobs=n_jobs)
+        # Calculate interactions (exclude FaceToFace due to edge case errors)
+        safe_interactions = [it for it in interaction_types if it != "FaceToFace"]
+        fp = plf.Fingerprint(interactions=safe_interactions)
+        n_jobs = resolve_n_jobs(config)
+        fp.run_from_iterable(plf_mols, protein, n_jobs=n_jobs)
 
     df_interactions = fp.to_dataframe(drop_empty=False)
 
@@ -962,16 +992,17 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
         # check_intermolecular_distance runs all checks in one call:
         # clashes, volume overlap, distance to protein, and internal geometry.
         # Returns {"results": {"no_clashes": [...], ...}} with one bool per pose.
-        raw = check_intermolecular_distance(
-            mol_orig=mol,
-            pos_pred=pos_pred,
-            pos_cond=protein_coords,
-            atom_names_pred=atom_names_pred,
-            atom_names_cond=protein_atom_names,
-            clash_cutoff=config.get("clash_cutoff", 0.75),
-            clash_cutoff_volume=config.get("volume_clash_cutoff", 0.075),
-            max_distance=config.get("max_distance", 5.0),
-        )
+        with _suppress_posecheck_fast_warnings():
+            raw = check_intermolecular_distance(
+                mol_orig=mol,
+                pos_pred=pos_pred,
+                pos_cond=protein_coords,
+                atom_names_pred=atom_names_pred,
+                atom_names_cond=protein_atom_names,
+                clash_cutoff=config.get("clash_cutoff", 0.75),
+                clash_cutoff_volume=config.get("volume_clash_cutoff", 0.075),
+                max_distance=config.get("max_distance", 5.0),
+            )
         r = raw["results"]
 
         no_clashes = r["no_clashes"][0]
