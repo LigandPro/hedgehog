@@ -1,16 +1,18 @@
-"""Tests for descriptors/utils.py."""
+"""Tests for descriptors stage modules."""
 
 import pandas as pd
 from rdkit import Chem
 
-from hedgehog.descriptors.utils import (
+from hedgehog.descriptors.compute import (
     _compute_single_molecule_descriptors,
-    _get_border_values,
     compute_metrics,
+)
+from hedgehog.descriptors.filtering import (
+    _get_border_values,
     drop_false_rows,
     filter_molecules,
-    order_identity_columns,
 )
+from hedgehog.descriptors.io import order_identity_columns
 from tests.constants import (
     COL_MODEL_NAME,
     COL_MOL_IDX,

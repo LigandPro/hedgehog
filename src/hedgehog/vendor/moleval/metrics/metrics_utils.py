@@ -66,8 +66,12 @@ def mapper(n_jobs):
         def _mapper(*args, **kwargs):
             try:
                 result = pool.map(*args, **kwargs)
-            finally:
+            except Exception:
                 pool.terminate()
+                pool.join()
+                raise
+            pool.close()
+            pool.join()
             return result
 
         return _mapper

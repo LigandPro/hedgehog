@@ -1,5 +1,6 @@
 """Tests for pipeline.py utilities."""
 
+import itertools
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +15,7 @@ from hedgehog.pipeline import (
     MolecularAnalysisPipeline,
     PipelineStage,
     PipelineStageRunner,
+    _cleanup_lingering_processes,
     _directory_has_files,
     _file_exists_and_not_empty,
 )
@@ -444,3 +446,85 @@ class TestFinalOutputWithDockingScores:
             COL_MOL_IDX,
             *DOCKING_SCORE_COLUMNS,
         ]
+
+
+class _FakeChildProcess:
+    def __init__(self) -> None:
+        self._alive = True
+        self.terminated = 0
+        self.killed = 0
+        self.join_timeouts: list[float | None] = []
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def terminate(self) -> None:
+        self.terminated += 1
+
+    def kill(self) -> None:
+        self.killed += 1
+        self._alive = False
+
+    def join(self, timeout: float | None = None) -> None:
+        self.join_timeouts.append(timeout)
+
+
+def test_cleanup_lingering_processes_uses_bounded_timeout(monkeypatch):
+    """Cleanup should not wait N * timeout when many workers are alive."""
+    children = [_FakeChildProcess() for _ in range(4)]
+
+    monkeypatch.setattr(
+        "hedgehog.pipeline.multiprocessing.active_children", lambda: children
+    )
+    ticks = itertools.count()
+    monkeypatch.setattr("hedgehog.pipeline.time.monotonic", lambda: next(ticks) * 0.05)
+
+    _cleanup_lingering_processes(timeout_seconds=0.2)
+
+    for child in children:
+        assert child.terminated == 1
+        assert child.killed == 1
+
+    all_timeouts = [
+        timeout
+        for child in children
+        for timeout in child.join_timeouts
+        if timeout is not None
+    ]
+    assert all_timeouts
+    assert all(timeout <= 0.2 for timeout in all_timeouts)
+
+
+def test_cleanup_lingering_processes_cancels_pool_finalizers(monkeypatch):
+    """Pool terminate finalizers should be cancelled to avoid atexit hangs."""
+
+    class _FakeFinalizer:
+        def __init__(self, callback):
+            self._callback = callback
+            self.cancel_calls = 0
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    def _pool_callback():
+        return None
+
+    _pool_callback.__qualname__ = "Pool._terminate_pool"
+
+    def _other_callback():
+        return None
+
+    pool_finalizer = _FakeFinalizer(_pool_callback)
+    other_finalizer = _FakeFinalizer(_other_callback)
+    registry = {1: pool_finalizer, 2: other_finalizer}
+
+    monkeypatch.setattr(
+        "hedgehog.pipeline.multiprocessing.active_children",
+        lambda: [],
+    )
+    monkeypatch.setattr("multiprocessing.util._finalizer_registry", registry)
+
+    _cleanup_lingering_processes(timeout_seconds=0.0)
+
+    assert pool_finalizer.cancel_calls == 1
+    assert other_finalizer.cancel_calls == 0

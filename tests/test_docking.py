@@ -5,16 +5,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from hedgehog.docking.utils import (
-    _aggregate_docking_results,
-    _build_gnina_command_template,
-    _create_per_molecule_configs,
-    _find_latest_input_source,
-    _prepare_ligands_dataframe,
-    _split_sdf_to_molecules,
-    _validate_optional_tool_path,
-    run_docking,
-)
+from hedgehog.docking.aggregation import _aggregate_docking_results
+from hedgehog.docking.binaries import _validate_optional_tool_path
+from hedgehog.docking.config_writer import _create_per_molecule_configs
+from hedgehog.docking.input import _find_latest_input_source, _prepare_ligands_dataframe
+from hedgehog.docking.ligand_prep import _split_sdf_to_molecules
+from hedgehog.docking.scripts import _build_gnina_command_template
+from hedgehog.docking.stage import run as run_docking
 from tests.constants import (
     COL_MODEL_NAME,
     COL_MOL_IDX,
@@ -352,19 +349,19 @@ class TestRunDockingProteinPrepFallback:
         }
 
         monkeypatch.setattr(
-            "hedgehog.docking.utils._find_latest_input_source",
+            "hedgehog.docking.stage._find_latest_input_source",
             lambda *_: input_csv,
         )
         monkeypatch.setattr(
-            "hedgehog.docking.utils._prepare_ligands_dataframe",
+            "hedgehog.docking.stage._prepare_ligands_dataframe",
             lambda *_args, **_kwargs: {"total": 1, "written": 1, "skipped": 0},
         )
         monkeypatch.setattr(
-            "hedgehog.docking.utils._validate_optional_tool_path",
+            "hedgehog.docking.stage._validate_optional_tool_path",
             lambda path, label: path if label == "Protein preparation tool" else None,
         )
         monkeypatch.setattr(
-            "hedgehog.docking.utils._prepare_receptor_if_needed",
+            "hedgehog.docking.receptor_prep._prepare_receptor_if_needed",
             lambda *_, **__: None,
         )
 
@@ -373,7 +370,7 @@ class TestRunDockingProteinPrepFallback:
         )
         prep_cmd = ["/missing/prep_tool", str(receptor), str(prepared), "-WAIT"]
         monkeypatch.setattr(
-            "hedgehog.docking.utils._prepare_protein_for_docking",
+            "hedgehog.docking.receptor_prep._prepare_protein_for_docking",
             lambda *_args, **_kwargs: (str(prepared), prep_cmd),
         )
 
@@ -382,30 +379,32 @@ class TestRunDockingProteinPrepFallback:
         script_path.write_text("#!/usr/bin/env bash\n")
 
         monkeypatch.setattr(
-            "hedgehog.docking.utils._setup_smina",
+            "hedgehog.docking.scripts._setup_smina",
             lambda *_args, **_kwargs: script_path,
         )
         monkeypatch.setattr(
-            "hedgehog.docking.utils._save_job_metadata",
+            "hedgehog.docking.stage._save_job_metadata",
             lambda *_args, **_kwargs: None,
         )
         monkeypatch.setattr(
-            "hedgehog.docking.utils._save_job_ids",
+            "hedgehog.docking.stage._save_job_ids",
             lambda *_args, **_kwargs: None,
         )
         monkeypatch.setattr(
-            "hedgehog.docking.utils._run_smina",
+            "hedgehog.docking.execution._run_smina",
             lambda *_args, **_kwargs: {"status": "completed"},
         )
         monkeypatch.setattr(
-            "hedgehog.docking.utils._update_metadata_with_run_status",
+            "hedgehog.docking.execution._update_metadata_with_run_status",
             lambda *_args, **_kwargs: None,
         )
 
         def _raise_not_found(*_args, **_kwargs):
             raise FileNotFoundError("No such file or directory")
 
-        monkeypatch.setattr("hedgehog.docking.utils.subprocess.run", _raise_not_found)
+        monkeypatch.setattr(
+            "hedgehog.docking.receptor_prep.subprocess.run", _raise_not_found
+        )
 
         assert run_docking(run_config) is True
 
