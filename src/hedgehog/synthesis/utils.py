@@ -4,6 +4,7 @@ import pickle
 import shutil
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,30 @@ def _short_exception_message(exc: Exception) -> str:
     if not raw:
         return exc.__class__.__name__
     return raw.splitlines()[0]
+
+
+def _load_xgboost_booster(json_path: Path) -> Any:
+    """Load an XGBoost booster while handling known legacy-model warnings."""
+    import xgboost as xgb
+
+    booster = xgb.Booster()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", UserWarning)
+        booster.load_model(str(json_path))
+
+    legacy_warning_fragments = ("found json model saved", "xgboost 1.6")
+    for warning in caught:
+        message = str(warning.message)
+        normalized_message = " ".join(message.lower().split())
+        if all(part in normalized_message for part in legacy_warning_fragments):
+            logger.debug(
+                "Loaded legacy RAScore JSON model format from %s",
+                json_path,
+            )
+            continue
+        warnings.warn(warning.message, warning.category, stacklevel=2)
+
+    return booster
 
 
 def _ensure_aizynth_logging_config(run_dir: Path) -> None:
@@ -388,10 +413,7 @@ def _load_rascore_impl():
 
     if json_path.exists():
         try:
-            import xgboost as xgb
-
-            booster = xgb.Booster()
-            booster.load_model(str(json_path))
+            booster = _load_xgboost_booster(json_path)
             logger.debug("RAScore xgboost model loaded successfully")
             return {"kind": "xgboost_booster", "model": booster}
         except Exception as e:
