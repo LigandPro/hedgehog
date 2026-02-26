@@ -629,6 +629,7 @@ class TestCommonAlertsContract:
             progress=None,
             initializer=None,
             initargs=(),
+            preserve_order=True,
         ):
             if initializer is not None:
                 initializer(*initargs)

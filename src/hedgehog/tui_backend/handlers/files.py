@@ -1,5 +1,6 @@
 """File handling for TUI backend."""
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -7,19 +8,53 @@ if TYPE_CHECKING:
     from ..server import JsonRpcServer
 
 
-def _validate_path(resolved_path: Path, allowed_base: Path | None = None) -> None:
-    """Validate that a resolved path is within the allowed base directory.
+_ALLOWED_PATH_ENV = "HEDGEHOG_TUI_ALLOWED_BASES"
+_DEFAULT_ALLOWED_BASES = (Path.home(), Path("/mnt"), Path("/media"), Path("/Volumes"))
 
-    Raises ValueError if the path escapes the allowed directory tree.
+
+def _iter_allowed_bases(allowed_base: Path | None = None) -> list[Path]:
+    """Build the list of allowed base paths for filesystem access validation."""
+    if allowed_base is not None:
+        return [allowed_base.expanduser().resolve()]
+
+    bases = [base.expanduser().resolve() for base in _DEFAULT_ALLOWED_BASES]
+    extra_bases = os.environ.get(_ALLOWED_PATH_ENV, "")
+    for raw_path in extra_bases.split(os.pathsep):
+        path_str = raw_path.strip()
+        if not path_str:
+            continue
+        bases.append(Path(path_str).expanduser().resolve())
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for base in bases:
+        if base in seen:
+            continue
+        seen.add(base)
+        deduped.append(base)
+    return deduped
+
+
+def _validate_path(resolved_path: Path, allowed_base: Path | None = None) -> None:
+    """Validate that a resolved path is within one of the allowed base directories.
+
+    By default, allowed bases include HOME and common mount roots.
+    Additional bases can be provided with ``HEDGEHOG_TUI_ALLOWED_BASES``.
+    Raises ValueError if the path escapes all allowed directory trees.
     """
-    if allowed_base is None:
-        allowed_base = Path.home()
-    try:
-        resolved_path.relative_to(allowed_base)
-    except ValueError as err:
-        raise ValueError(
-            f"Access denied: path '{resolved_path}' is outside '{allowed_base}'"
-        ) from err
+    normalized_path = resolved_path.expanduser().resolve()
+    allowed_bases = _iter_allowed_bases(allowed_base=allowed_base)
+    for base in allowed_bases:
+        try:
+            normalized_path.relative_to(base)
+            return
+        except ValueError:
+            continue
+
+    allowed_roots = ", ".join(f"'{base}'" for base in allowed_bases)
+    raise ValueError(
+        f"Access denied: path '{normalized_path}' is outside allowed roots: {allowed_roots}"
+    )
 
 
 def _normalize_extensions(extensions: list[str] | None) -> set[str] | None:

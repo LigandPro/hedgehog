@@ -45,12 +45,21 @@ class TestValidatePath:
         with pytest.raises(ValueError, match="Access denied"):
             _validate_path(Path("/"))
 
+    def test_path_inside_mnt_is_allowed(self):
+        _validate_path(Path("/mnt/ligandpro/shared_storage/data.csv"))
+
     def test_custom_allowed_base(self, tmp_path):
         # Path inside allowed base: OK
         _validate_path(tmp_path / "sub" / "file.txt", allowed_base=tmp_path)
         # Path outside allowed base: raises
         with pytest.raises(ValueError, match="Access denied"):
             _validate_path(Path("/tmp/other"), allowed_base=tmp_path)
+
+    def test_env_allowed_bases_support_external_path(self, tmp_path, monkeypatch):
+        external_root = tmp_path / "external_root"
+        external_file = external_root / "input.csv"
+        monkeypatch.setenv("HEDGEHOG_TUI_ALLOWED_BASES", str(external_root))
+        _validate_path(external_file)
 
     def test_validate_input_file_rejects_outside_home(self, tmp_path):
         """ValidationHandler.validate_input_file calls _validate_path."""
