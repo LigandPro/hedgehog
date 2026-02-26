@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-![HEDGEHOG Pipeline](data/imgs/pipeline_structure.png)
+![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
 
 HEDGEHOG is a benchmark pipeline for evaluating generated molecules.
 It applies a staged filtering workflow (standardization, descriptors, structural filters, synthesis checks, docking, and post-docking validation) and generates an interactive HTML report.
@@ -31,29 +31,29 @@ uv sync
 ### First run
 
 ```bash
-uv run hedgehog run
+uv run hedgehog
 
 # Optional: auto-install missing optional tools without prompts
-uv run hedgehog run --auto-install
+uv run hedgehog --auto-install
 ```
 
 ## Common Commands
 
 ```bash
 # Full pipeline
-uv run hedgehog run
+uv run hedgehog
 
 # Run with your own molecules
-uv run hedgehog run --mols data/my_molecules.csv
+uv run hedgehog --mols input/my_molecules.csv
 
 # Run a single stage
-uv run hedgehog run --stage descriptors
+uv run hedgehog --stage descriptors
 
 # Run docking with a live progress bar
-uv run hedgehog run --stage docking --progress
+uv run hedgehog --stage docking --progress
 
 # Run docking without progress bar (default)
-uv run hedgehog run --stage docking
+uv run hedgehog --stage docking
 
 # Regenerate report for an existing run
 uv run hedgehog report results/run_10

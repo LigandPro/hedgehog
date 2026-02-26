@@ -14,15 +14,15 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `generated_mols_path` | string | `data/test/moses_1000.csv` | Path to the CSV file containing generated molecules (must have a SMILES column) |
-| `target_mols_path` | string | `data/test/target_mols.csv` | Path to the CSV file containing target/reference molecules |
+| `generated_mols_path` | string | `src/hedgehog/configs/examples/moses_1000.csv` | Path to the CSV file containing generated molecules (must have a SMILES column) |
+| `target_mols_path` | string | `src/hedgehog/configs/examples/target_mols.csv` | Path to the CSV file containing target/reference molecules |
 | `folder_to_save` | string | `results/run` | Output directory where all pipeline results are saved |
 | `n_jobs` | int | `62` | Number of parallel workers for CPU-bound tasks |
 | `sample_size` | int | `1000` | Number of molecules to sample from the input file (0 or negative = use all) |
 | `batch_size` | int | `512` | Batch size for descriptor computation and other batched operations |
 | `save_sampled_mols` | bool | `true` | Whether to save the sampled molecule subset to disk |
-| `pains_file_path` | string | `data/wehi_pains.csv` | Path to the PAINS filter definitions file |
-| `mcf_file_path` | string | `data/mcf.csv` | Path to the MCF (medicinal chemistry filters) definitions file |
+| `pains_file_path` | string | `src/hedgehog/vendor/moleval/metrics/wehi_pains.csv` | Path to the PAINS filter definitions file |
+| `mcf_file_path` | string | `src/hedgehog/vendor/moleval/metrics/mcf.csv` | Path to the MCF (medicinal chemistry filters) definitions file |
 | `ligand_preparation_tool` | string | _(proprietary path)_ | Absolute path to an external ligand preparation binary |
 | `protein_preparation_tool` | string | _(proprietary path)_ | Absolute path to an external protein preparation binary |
 | `config_mol_prep` | string | `src/hedgehog/configs/config_mol_prep.yml` | Path to the Mol Prep stage config |
@@ -36,15 +36,15 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 ### Default YAML
 
 ```yaml
-generated_mols_path: data/test/moses_1000.csv
-target_mols_path: data/test/target_mols.csv
+generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
+target_mols_path: src/hedgehog/configs/examples/target_mols.csv
 folder_to_save: results/run
 n_jobs: 62
 sample_size: 1000
 batch_size: 512
 save_sampled_mols: true
-pains_file_path: data/wehi_pains.csv
-mcf_file_path: data/mcf.csv
+pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
+mcf_file_path: src/hedgehog/vendor/moleval/metrics/mcf.csv
 ligand_preparation_tool: /opt/proprietary_tools/ligand_prep/bin/ligand_prep
 protein_preparation_tool: /opt/proprietary_tools/protein_prep/bin/protein_prep
 config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
@@ -350,8 +350,12 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `alerts_data_path` | string | `data/common_alerts_collection.csv` | Path to CSV file containing structural alert SMARTS patterns |
+| `alerts_data_path` | string | `src/hedgehog/struct_filters/data/common_alerts_collection.csv` | Path to CSV file containing structural alert SMARTS patterns |
 | `calculate_common_alerts` | bool | `true` | Enable SMARTS-based structural alert screening |
+| `common_alerts_auto_n_jobs` | bool | `true` | Enable size-aware worker selection for Common Alerts |
+| `common_alerts_small_input_threshold` | int | `1000` | Molecule-count threshold for the small-input worker setting |
+| `common_alerts_small_input_n_jobs` | int | `1` | Worker count when input size is below `common_alerts_small_input_threshold` |
+| `common_alerts_large_input_n_jobs` | int | `12` | Worker count when input size is between `common_alerts_small_input_threshold` and `10000` |
 | `include_rulesets` | list[string] | _(see YAML below)_ | Alert rulesets to activate (e.g., Dundee, BMS, PAINS, Glaxo, etc.) |
 | `exclude_descriptions` | dict[string, list[string]] | _(see YAML below)_ | Per-ruleset list of alert descriptions to exclude (override false positives) |
 
@@ -389,8 +393,12 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 ```yaml
 run: true
 filter_data: true
-alerts_data_path: data/common_alerts_collection.csv
+alerts_data_path: src/hedgehog/struct_filters/data/common_alerts_collection.csv
 calculate_common_alerts: true
+common_alerts_auto_n_jobs: true
+common_alerts_small_input_threshold: 1000
+common_alerts_small_input_n_jobs: 1
+common_alerts_large_input_n_jobs: 12
 include_rulesets:
 - Dundee
 - BMS
@@ -548,7 +556,7 @@ Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, se
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the docking stage |
 | `tools` | string | `gnina` | Docking engine: `gnina`, `smina`, or `both` |
-| `receptor_pdb` | string | `data/test/7EW9_apo.pdb` | Path to the receptor PDB file |
+| `receptor_pdb` | string | `src/hedgehog/configs/examples/7EW9_apo.pdb` | Path to the receptor PDB file |
 | `auto_run` | bool | `true` | Automatically start docking after ligand preparation |
 | `run_in_background` | bool | `false` | Run docking as a background process |
 | `prep_njobs` | int \| string | `auto` _(implicit)_ | Parallel worker hint for external ligand preparation. `auto` resolves to `SLURM_CPUS_PER_TASK`, then `MOLSCORE_NJOBS`, otherwise `1`. Applied only when an external ligand tool is configured and supports parallel execution |
@@ -558,7 +566,7 @@ Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, se
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `bin` | string | `smina` | Path or name of the SMINA binary (resolved via PATH if not absolute) |
-| `autobox_ligand` | string | `data/test/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
+| `autobox_ligand` | string | `src/hedgehog/configs/examples/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
 | `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
 | `cpu` | int | `32` | Number of CPU threads for docking |
 | `seed` | int | `42` | Random seed for reproducibility |
@@ -570,7 +578,7 @@ Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, se
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `bin` | string | `gnina` | Path or name of the GNINA binary (resolved via PATH if not absolute) |
-| `autobox_ligand` | string | `data/test/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
+| `autobox_ligand` | string | `src/hedgehog/configs/examples/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
 | `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
 | `cpu` | int | `32` | Number of CPU threads for docking |
 | `seed` | int | `42` | Random seed for reproducibility |
@@ -581,12 +589,12 @@ Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, se
 ```yaml
 run: true
 tools: gnina
-receptor_pdb: data/test/7EW9_apo.pdb
+receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
 smina_config:
   bin: smina
-  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
@@ -594,7 +602,7 @@ smina_config:
   num_modes: 9
 gnina_config:
   bin: gnina
-  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42

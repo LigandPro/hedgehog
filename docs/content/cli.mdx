@@ -15,33 +15,32 @@ uv run hedge --help
 
 | Command   | Description                                           |
 |-----------|-------------------------------------------------------|
-| `run`     | Run the molecular analysis pipeline                   |
 | `report`  | Regenerate the HTML report from an existing run       |
 | `info`    | Display pipeline information and available stages     |
 | `version` | Display version information                           |
 | `setup`   | Install optional external tools                       |
 | `tui`     | Launch the interactive TUI (Terminal User Interface)   |
 
-## `hedgehog run`
+## `hedgehog` (default pipeline command)
 
-The main command that executes the evaluation pipeline. By default, it runs all enabled stages using the configuration at `src/hedgehog/configs/config.yml`.
+The root CLI command executes the evaluation pipeline by default. It runs all enabled stages using the configuration at `src/hedgehog/configs/config.yml`.
 
 ```bash
-uv run hedgehog run [OPTIONS]
+uv run hedgehog [OPTIONS]
 ```
 
 ### Options
 
 | Option | Short | Type | Default | Description |
 |--------|-------|------|---------|-------------|
-| `--config` | `-c` | `TEXT` | `src/hedgehog/configs/config.yml` | Path to master YAML config file. |
-| `--mols` | `-m` | `TEXT` | `None` | Path or glob pattern to generated SMILES files. Overrides the `generated_mols_path` value in config. |
-| `--out` | `-o` | `TEXT` | `None` | Output directory for this run. Overrides `folder_to_save` from config. |
-| `--stage` | `-s` | `STAGE` | `None` | Run only a specific pipeline stage. When used without `--mols`, molecules are read from config. Case-insensitive. |
-| `--reuse` | | `FLAG` | `False` | Force reuse of the existing results folder instead of creating a new one. |
-| `--force-new` | | `FLAG` | `False` | Force creation of a new results folder even when rerunning a single stage. |
-| `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools (e.g., AiZynthFinder) without prompting. |
-| `--progress` | | `FLAG` | `False` | Enable live Rich progress bar rendering for the pipeline run. |
+| `--config` | `-c` | `TEXT` | `src/hedgehog/configs/config.yml` | Master YAML config path. |
+| `--mols` | `-m` | `TEXT` | `None` | Input SMILES path or glob. Overrides config input. |
+| `--out` | `-o` | `TEXT` | `None` | Output directory override (`folder_to_save`). |
+| `--stage` | `-s` | `STAGE` | `None` | Run one stage only. Uses config molecules unless `--mols` is provided. See `hedgehog info` for stage descriptions. |
+| `--reuse` | | `FLAG` | `False` | Reuse existing results folder. |
+| `--force-new` | | `FLAG` | `False` | Always create a new results folder. |
+| `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools without prompts. |
+| `--progress` | | `FLAG` | `False` | Show live progress bar. |
 
 The `--reuse` and `--force-new` flags are mutually exclusive. Using both will produce an error.
 
@@ -77,34 +76,34 @@ The output folder strategy depends on what you are running:
 
 ```bash
 # Run the full pipeline with default config
-uv run hedgehog run
+uv run hedgehog
 
 # Run with a custom master config
-uv run hedgehog run --config src/hedgehog/configs/config.yml
+uv run hedgehog --config src/hedgehog/configs/config.yml
 
 # Run with a custom molecule set
-uv run hedgehog run --mols data/my_molecules.csv
+uv run hedgehog --mols input/my_molecules.csv
 
 # Run into a custom output directory
-uv run hedgehog run --out results/my_run
+uv run hedgehog --out results/my_run
 
 # Run with a glob pattern
-uv run hedgehog run --mols "data/generated/*.csv"
+uv run hedgehog --mols "input/generated/*.csv"
 
 # Run only the docking stage
-uv run hedge run --stage docking
+uv run hedge --stage docking
 
 # Run a specific stage with custom molecules
-uv run hedge run --stage descriptors --mols data/candidates.csv
+uv run hedge --stage descriptors --mols input/candidates.csv
 
 # Rerun into the same results folder
-uv run hedge run --reuse
+uv run hedge --reuse
 
 # Force a fresh results folder for a stage rerun
-uv run hedge run --stage synthesis --force-new
+uv run hedge --stage synthesis --force-new
 
 # Enable live progress bar
-uv run hedge run --progress
+uv run hedge --progress
 ```
 
 ## `hedgehog report`
@@ -234,8 +233,8 @@ npm run tui
 `hedge` is a short alias for `hedgehog`. All commands work identically with either name:
 
 ```bash
-uv run hedge run --stage docking
-uv run hedgehog run --stage docking
+uv run hedge --stage docking
+uv run hedgehog --stage docking
 ```
 
 ## Exit Codes

@@ -667,8 +667,24 @@ def _save_sampled_molecules(
 app = typer.Typer(
     name="HEDGEHOG",
     help=(
-        "🦔 Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration - "
-        "Benchmark pipeline for generative models"
+        "Run the molecular analysis pipeline.\n\n"
+        "Examples:\n"
+        "  uv run hedgehog\n"
+        "  uv run hedge\n"
+        "  uv run hedgehog --stage docking\n"
+        '  uv run hedgehog --stage descriptors --mols "input/*.csv"\n'
+        "  uv run hedgehog --reuse\n"
+        "  uv run hedgehog --stage docking --force-new\n"
+        "  uv run hedgehog --auto-install\n"
+        "  uv run hedgehog --progress\n\n"
+        "Stage keys:\n"
+        "  mol_prep           Standardize input molecules\n"
+        "  descriptors        Compute molecular descriptors\n"
+        "  struct_filters     Apply structural alert filters\n"
+        "  synthesis          Evaluate synthetic accessibility\n"
+        "  docking            Run docking engines\n"
+        "  docking_filters    Filter docking poses and interactions\n"
+        "  final_descriptors  Recompute descriptors for final set"
     ),
     add_completion=False,
     rich_markup_mode="rich",
@@ -711,95 +727,17 @@ class Stage(str, Enum):
         return descriptions[self]
 
 
-@app.command()
-def run(
-    config_path: str = typer.Option(
-        DEFAULT_CONFIG_PATH,
-        "--config",
-        "-c",
-        help="Path to master YAML config file (default: src/hedgehog/configs/config.yml)",
-    ),
-    generated_mols_path: str | None = typer.Option(
-        None,
-        "--mols",
-        "-m",
-        help="Path or glob pattern to generated SMILES files (overrides config)",
-    ),
-    out_dir: str | None = typer.Option(
-        None,
-        "--out",
-        "-o",
-        help="Output directory for this run (overrides config folder_to_save).",
-    ),
-    stage: Stage | None = typer.Option(
-        None,
-        "--stage",
-        "-s",
-        help=(
-            "Run only a specific pipeline stage. Please provide also --mols "
-            "argument to specify the molecules path. If no --mols provided, "
-            "the pipeline will use the molecules from the config file."
-        ),
-        case_sensitive=False,
-    ),
-    reuse_folder: bool = typer.Option(
-        False,
-        "--reuse",
-        help="Force reuse of existing results folder (useful for reruns)",
-    ),
-    force_new_folder: bool = typer.Option(
-        False,
-        "--force-new",
-        help="Force creation of a new results folder even when rerunning stages",
-    ),
-    auto_install: bool = typer.Option(
-        False,
-        "--auto-install",
-        help="Auto-install missing optional tools (e.g., AiZynthFinder) without prompting.",
-    ),
-    show_progress: bool = typer.Option(
-        False,
-        "--progress",
-        help="Show a live progress bar during pipeline execution.",
-    ),
+def _run_pipeline_command(
+    *,
+    config_path: str,
+    generated_mols_path: str | None,
+    out_dir: str | None,
+    stage: Stage | None,
+    reuse_folder: bool,
+    force_new_folder: bool,
+    auto_install: bool,
+    show_progress: bool,
 ) -> None:
-    """
-    Run the molecular analysis pipeline.
-
-    Examples
-    --------
-    \b
-    # Run full pipeline (auto-creates new folder if results exist)
-    uv run hedgehog run
-
-    \b
-    # Alternatively, using the short-name alias:
-    uv run hedge run
-
-    \b
-    # Rerun specific stage (auto-reuses existing folder)
-    uv run hedgehog run --stage docking
-
-    \b
-    # Run stage with new molecules (auto-creates new folder)
-    uv run hedgehog run --stage descriptors --mols data/*.csv
-
-    \b
-    # Force reuse existing folder
-    uv run hedgehog run --reuse
-
-    \b
-    # Force create new folder even for stage rerun
-    uv run hedgehog run --stage docking --force-new
-
-    \b
-    # Auto-install optional external tools when needed
-    uv run hedgehog run --auto-install
-
-    \b
-    # Enable live progress bar
-    uv run hedgehog run --progress
-    """
     _display_banner()
 
     if auto_install:
@@ -859,6 +797,100 @@ def run(
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)
     logger.info("Ligand Pro thanks you for using HEDGEHOG!")
+
+
+@app.callback(invoke_without_command=True)
+def run(
+    ctx: typer.Context,
+    config_path: str = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        "-c",
+        help="Master YAML config path (default: src/hedgehog/configs/config.yml).",
+        show_default=False,
+    ),
+    generated_mols_path: str | None = typer.Option(
+        None,
+        "--mols",
+        "-m",
+        help="SMILES file path or glob (overrides config).",
+    ),
+    out_dir: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Output directory (overrides config folder_to_save).",
+    ),
+    stage: Stage | None = typer.Option(
+        None,
+        "--stage",
+        "-s",
+        help="Run one stage only; see `hedgehog info`.",
+        case_sensitive=False,
+        metavar="STAGE",
+        show_choices=False,
+    ),
+    reuse_folder: bool = typer.Option(
+        False,
+        "--reuse",
+        help="Reuse existing results folder.",
+    ),
+    force_new_folder: bool = typer.Option(
+        False,
+        "--force-new",
+        help="Always create a new results folder.",
+    ),
+    auto_install: bool = typer.Option(
+        False,
+        "--auto-install",
+        help="Install missing optional tools automatically.",
+    ),
+    show_progress: bool = typer.Option(
+        False,
+        "--progress",
+        help="Show live progress bar.",
+    ),
+) -> None:
+    """
+    Run the molecular analysis pipeline.
+
+    Examples:
+    \b
+      uv run hedgehog
+
+    \b
+      uv run hedge
+
+    \b
+      uv run hedgehog --stage docking
+
+    \b
+      uv run hedgehog --stage descriptors --mols "input/*.csv"
+
+    \b
+      uv run hedgehog --reuse
+
+    \b
+      uv run hedgehog --stage docking --force-new
+
+    \b
+      uv run hedgehog --auto-install
+
+    \b
+      uv run hedgehog --progress
+
+    """
+    if ctx.invoked_subcommand is None:
+        _run_pipeline_command(
+            config_path=config_path,
+            generated_mols_path=generated_mols_path,
+            out_dir=out_dir,
+            stage=stage,
+            reuse_folder=reuse_folder,
+            force_new_folder=force_new_folder,
+            auto_install=auto_install,
+            show_progress=show_progress,
+        )
 
 
 @app.command()
@@ -992,8 +1024,8 @@ def info() -> None:
         table.add_row(stage.value, stage.description)
 
     console.print(table)
-    console.print("\n[dim]Example (1): uv run hedgehog run --stage descriptors[/dim]")
-    console.print("[dim]Example (2): uv run hedge run --help [/dim]")
+    console.print("\n[dim]Example (1): uv run hedgehog --stage descriptors[/dim]")
+    console.print("[dim]Example (2): uv run hedge --help [/dim]")
 
 
 @app.command()

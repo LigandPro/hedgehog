@@ -30,13 +30,13 @@ DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.
 You can override the master config path at runtime with `--config/-c`:
 
 ```bash
-uv run hedgehog run --config path/to/config.yml
+uv run hedgehog --config path/to/config.yml
 ```
 
 You can also override the output directory (`folder_to_save`) with `--out/-o`:
 
 ```bash
-uv run hedgehog run --out results/my_run
+uv run hedgehog --out results/my_run
 ```
 
 Each stage config path in `config.yml` is treated as a **relative path from the working directory** (the directory you run the command from) or as an **absolute path**. For example:
@@ -56,7 +56,7 @@ There are three common ways to customise the pipeline:
 1. **Create your own config files and pass them via `--config`.** Copy the default configs, edit them, then run:
 
    ```bash
-   uv run hedgehog run --config path/to/my_config.yml
+   uv run hedgehog --config path/to/my_config.yml
    ```
 
 2. **Override common paths via CLI flags.** Use:
@@ -70,8 +70,8 @@ For example, to run only descriptors and skip all other stages:
 
 ```yaml
 # my_config.yml
-generated_mols_path: data/my_molecules.csv
-target_mols_path: data/my_targets.csv
+generated_mols_path: input/my_molecules.csv
+target_mols_path: input/my_targets.csv
 folder_to_save: results/my_run
 n_jobs: 8
 sample_size: 500
@@ -108,15 +108,15 @@ Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. Th
 Below is the full default `config.yml`:
 
 ```yaml
-generated_mols_path: data/test/moses_1000.csv
-target_mols_path: data/test/target_mols.csv
+generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
+target_mols_path: src/hedgehog/configs/examples/target_mols.csv
 folder_to_save: results/run
 n_jobs: 62
 sample_size: 1000
 batch_size: 512
 save_sampled_mols: true
-pains_file_path: data/wehi_pains.csv
-mcf_file_path: data/mcf.csv
+pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
+mcf_file_path: src/hedgehog/vendor/moleval/metrics/mcf.csv
 ligand_preparation_tool: /opt/proprietary_tools/ligand_prep/bin/ligand_prep
 protein_preparation_tool: /opt/proprietary_tools/protein_prep/bin/protein_prep
 config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
