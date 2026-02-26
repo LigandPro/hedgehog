@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import path from 'path';
+import fs from 'node:fs';
 import { getBridge } from '../services/python-bridge.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 
@@ -12,6 +13,7 @@ interface FileBrowserProps {
   onSelect: (path: string) => void;
   onCancel: () => void;
   title?: string;
+  startInPathEdit?: boolean;
 }
 
 interface FileEntry {
@@ -40,6 +42,62 @@ function getStartingDirectory(inputPath: string): string {
   }
 
   return inputPath;
+}
+
+function expandHomePath(inputPath: string): string {
+  if (!inputPath.startsWith('~')) {
+    return inputPath;
+  }
+  const home = process.env.HOME || '';
+  if (!home) {
+    return inputPath;
+  }
+  if (inputPath === '~') {
+    return home;
+  }
+  if (inputPath.startsWith('~/')) {
+    return path.join(home, inputPath.slice(2));
+  }
+  return inputPath;
+}
+
+function resolveInputPath(inputPath: string, basePath: string): string {
+  const trimmed = inputPath.trim();
+  if (!trimmed) {
+    return basePath;
+  }
+  const expanded = expandHomePath(trimmed);
+  if (path.isAbsolute(expanded)) {
+    return path.normalize(expanded);
+  }
+  return path.resolve(basePath, expanded);
+}
+
+function isExistingDirectory(candidatePath: string): boolean {
+  try {
+    return fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function findNearestExistingDirectory(candidatePath: string): string | null {
+  let current = path.normalize(candidatePath);
+  const root = path.parse(current).root || '/';
+
+  while (true) {
+    if (isExistingDirectory(current)) {
+      return current;
+    }
+    if (current === root) {
+      return null;
+    }
+    const parent = path.dirname(current);
+    if (!parent || parent === current) {
+      return null;
+    }
+    current = parent;
+  }
 }
 
 /**
@@ -77,6 +135,7 @@ export function FileBrowser({
   onSelect,
   onCancel,
   title,
+  startInPathEdit = false,
 }: FileBrowserProps): React.ReactElement {
   const startDir = getStartingDirectory(initialPath);
   const [currentPath, setCurrentPath] = useState(startDir);
@@ -84,8 +143,9 @@ export function FileBrowser({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [manualInput, setManualInput] = useState(false);
+  const [manualInput, setManualInput] = useState(startInPathEdit);
   const [inputValue, setInputValue] = useState(initialPath || process.cwd());
+  const [inputBasePath, setInputBasePath] = useState(startDir);
 
   // Search mode
   const [searchMode, setSearchMode] = useState(false);
@@ -97,6 +157,17 @@ export function FileBrowser({
   useEffect(() => {
     loadFiles();
   }, [currentPath]);
+
+  useEffect(() => {
+    if (!manualInput) {
+      return;
+    }
+    const resolved = resolveInputPath(inputValue, inputBasePath);
+    const previewDir = findNearestExistingDirectory(getStartingDirectory(resolved));
+    if (previewDir && previewDir !== currentPath) {
+      setCurrentPath(previewDir);
+    }
+  }, [manualInput, inputValue, inputBasePath, currentPath]);
 
   // Reset search when directory changes
   useEffect(() => {
@@ -137,13 +208,30 @@ export function FileBrowser({
     }
   }, [filteredFiles.length, selectedIndex]);
 
+  const enterManualInput = (seed: string): void => {
+    setInputBasePath(currentPath);
+    setInputValue(seed);
+    setManualInput(true);
+  };
+
   useInput((input, key) => {
     // Manual path input mode
     if (manualInput) {
       if (key.escape) {
         setManualInput(false);
       } else if (key.return) {
-        onSelect(inputValue);
+        const resolved = resolveInputPath(inputValue, inputBasePath);
+        if (!selectDirectory && isExistingDirectory(resolved)) {
+          setCurrentPath(resolved);
+          setManualInput(false);
+          return;
+        }
+        if (selectDirectory) {
+          const nearestDir = findNearestExistingDirectory(resolved);
+          onSelect(nearestDir || resolved);
+          return;
+        }
+        onSelect(resolved);
       }
       return;
     }
@@ -166,6 +254,10 @@ export function FileBrowser({
 
     // Normal navigation mode
     if (key.upArrow) {
+      if (selectedIndex === 0) {
+        enterManualInput(currentPath);
+        return;
+      }
       setSelectedIndex(Math.max(0, selectedIndex - 1));
     } else if (key.downArrow) {
       setSelectedIndex(Math.min(filteredFiles.length - 1, selectedIndex + 1));
@@ -185,9 +277,8 @@ export function FileBrowser({
       // Activate search mode
       setSearchMode(true);
       setSearchQuery('');
-    } else if (input === 'p') {
-      setInputValue(currentPath);
-      setManualInput(true);
+    } else if (key.rightArrow || input === 'e' || input === 'p') {
+      enterManualInput(currentPath);
     } else if (key.escape || key.leftArrow || input === 'q') {
       // Exit on Esc, left arrow, or q
       onCancel();
@@ -221,9 +312,10 @@ export function FileBrowser({
   }
 
   if (manualInput) {
+    const manualDisplayPath = truncatePath(currentPath, terminalWidth - 25);
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">Enter path manually:</Text>
+        <Text bold color="cyan">Edit path:</Text>
         <Box marginTop={1}>
           <TextInput
             value={inputValue}
@@ -232,7 +324,23 @@ export function FileBrowser({
           />
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>[Enter] Confirm  [Esc] Cancel</Text>
+          <Text dimColor>Preview folder: </Text>
+          <Text color="white">{manualDisplayPath}</Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>[Enter] Apply  [Esc] Cancel</Text>
+        </Box>
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>Contents:</Text>
+          {filteredFiles.slice(0, 8).map((file) => (
+            <Text key={file.path} color={file.isDirectory ? 'blue' : 'gray'}>
+              {file.isDirectory ? '▶ ' : '○ '}
+              {file.name}
+            </Text>
+          ))}
+          {filteredFiles.length > 8 && (
+            <Text dimColor>... and {filteredFiles.length - 8} more</Text>
+          )}
         </Box>
       </Box>
     );
