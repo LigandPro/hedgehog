@@ -2,6 +2,7 @@
 
 import json
 import pickle  # noqa: S403 — test-only, trusted data
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -642,6 +643,88 @@ class TestCalculateRaScores:
 
 class TestRascoreAutoInstall:
     """Tests for RAScore auto-download/load behavior."""
+
+    def test_ensure_rascore_json_model_converts_when_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Missing JSON model should be generated from pickle model."""
+        json_path = tmp_path / "model.json"
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_bytes(b"pickle-bytes")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_ensure_rascore_pickle_path", lambda: pkl_path
+        )
+
+        def _fake_convert(src: Path, dst: Path) -> bool:
+            assert src == pkl_path
+            assert dst == json_path
+            dst.write_text('{"converted": true}', encoding="utf-8")
+            return True
+
+        monkeypatch.setattr(
+            synthesis_utils, "_convert_rascore_pickle_to_json", _fake_convert
+        )
+
+        ensured = synthesis_utils._ensure_rascore_json_model()
+        assert ensured == json_path
+        assert json_path.exists()
+
+    def test_ensure_rascore_json_model_returns_none_on_convert_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """JSON helper should return None when conversion fails."""
+        json_path = tmp_path / "model.json"
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_bytes(b"pickle-bytes")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_ensure_rascore_pickle_path", lambda: pkl_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_convert_rascore_pickle_to_json", lambda _src, _dst: False
+        )
+
+        ensured = synthesis_utils._ensure_rascore_json_model()
+        assert ensured is None
+
+    def test_load_rascore_uses_generated_json_before_pickle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Loader should use generated JSON model before trying pickle load."""
+        json_path = tmp_path / "model.json"
+        json_path.write_text('{"learner": {}}', encoding="utf-8")
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_text("should-not-be-used", encoding="utf-8")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_pickle_model_path", lambda: pkl_path
+        )
+
+        loaded_model_path: dict[str, str] = {}
+
+        class _DummyBooster:
+            def load_model(self, path: str) -> None:
+                loaded_model_path["path"] = path
+
+        monkeypatch.setitem(
+            sys.modules, "xgboost", SimpleNamespace(Booster=_DummyBooster)
+        )
+        synthesis_utils._lazy_cache["rascore_booster"] = None
+
+        loaded = synthesis_utils._load_rascore_impl()
+        assert loaded
+        assert loaded["kind"] == "xgboost_booster"
+        assert loaded_model_path["path"] == str(json_path)
 
     def test_load_rascore_auto_downloads_pickle_model(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
