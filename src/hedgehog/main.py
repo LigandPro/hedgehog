@@ -801,7 +801,7 @@ def _run_pipeline_command(
 
 @app.callback(invoke_without_command=True)
 def run(
-    ctx: typer.Context | None = None,
+    ctx: typer.Context = None,
     config_path: str = typer.Option(
         DEFAULT_CONFIG_PATH,
         "--config",
