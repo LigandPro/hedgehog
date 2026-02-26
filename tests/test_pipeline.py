@@ -378,6 +378,7 @@ class TestStageLoggingCanonicalFormat:
         assert (
             "Stage descriptors completed: 3 in -> 2 out (delta -1, retained 66.67%,"
         ) in caplog.text
+        assert "avg CPU " in caplog.text
 
         complete_events = [e for e in events if e.get("type") == "stage_complete"]
         assert complete_events
@@ -421,6 +422,7 @@ class TestStageLoggingCanonicalFormat:
         assert (
             "Stage synthesis failed: 3 in -> 1 out (delta -2, retained 33.33%,"
         ) in caplog.text
+        assert "avg CPU " in caplog.text
 
         complete_events = [e for e in events if e.get("type") == "stage_complete"]
         assert complete_events
@@ -450,6 +452,36 @@ class TestStageLoggingCanonicalFormat:
             "Stage docking completed: 4 in -> 4 out "
             "(estimated out, delta +0, retained 100.00%,"
         ) in caplog.text
+        assert "avg CPU " in caplog.text
+
+    def test_summary_includes_stage_avg_cpu(self, tmp_path, caplog):
+        pipeline = _build_enabled_pipeline(tmp_path, STAGE_DESCRIPTORS)
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["CCO", "CCC"],
+                COL_MODEL_NAME: ["m1", "m1"],
+                COL_MOL_IDX: [0, 1],
+            }
+        )
+        output_path = (
+            tmp_path
+            / "stages"
+            / "01_descriptors_initial"
+            / "filtered"
+            / FILE_FILTERED_MOLECULES
+        )
+
+        def _runner(data, reporter=None):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            data.to_csv(output_path, index=False)
+            return True
+
+        pipeline._run_stage(STAGE_DESCRIPTORS, _runner, input_df)
+
+        with caplog.at_level("INFO"):
+            pipeline.reporter.log_summary()
+
+        assert "avg CPU " in caplog.text
 
 
 def _write_test_docking_sdf(path: Path, records: list[dict]) -> None:
