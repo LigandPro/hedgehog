@@ -164,6 +164,7 @@ def main(config: dict, reporter=None) -> None:
         output_json,
         aizynth_config,
         aizynthfinder_dir=aizynthfinder_root,
+        synthesis_config=config_synthesis,
     ):
         logger.error("Retrosynthesis analysis failed")
         raise RuntimeError("Retrosynthesis analysis failed")
