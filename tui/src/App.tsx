@@ -158,8 +158,8 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
   wizardStageSelection: [
     { key: 'Space', label: 'Toggle' },
     { key: 'c', label: 'Configure stage' },
-    { key: 'Enter', label: 'Fast start' },
-    { key: 'r/→', label: 'Detailed review' },
+    { key: 'Enter', label: 'Review' },
+    { key: 'r/→', label: 'Review' },
     { key: '←/Esc', label: 'Back' },
   ],
   wizardStageOrder: [

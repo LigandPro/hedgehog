@@ -77,7 +77,7 @@ const SCREEN_HELP_DESCRIPTIONS: Partial<Record<Screen, Record<string, string>>> 
     '↑↓': 'Move between pipeline stages',
     'Space': 'Enable/disable selected stage',
     'c': 'Open configuration for selected stage',
-    'Enter': 'Fast start (preflight + run)',
+    'Enter': 'Open detailed review screen',
     'r/→': 'Open detailed review screen',
     '←/Esc': 'Return to input selection',
   },
