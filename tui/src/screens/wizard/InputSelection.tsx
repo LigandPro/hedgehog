@@ -118,8 +118,13 @@ export function InputSelection(): React.ReactElement {
 
     try {
       const bridge = getBridge();
-      await bridge.saveConfig('main', values);
+      const validation = await bridge.validateConfig('main', values);
+      if (!validation.valid) {
+        showToast('error', `Invalid config: ${validation.errors.join('; ')}`);
+        return;
+      }
       setConfig('main', values as any);
+      showToast('info', 'Input/output settings saved for this run only');
       setScreen('wizardStageSelection');
     } catch (err) {
       showToast('error', `Failed to save: ${err}`);

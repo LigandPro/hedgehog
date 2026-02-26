@@ -219,12 +219,24 @@ export class PythonBridge {
     return this.call('validate_config', { config_type: configType, data });
   }
 
-  async startPipeline(stages: string[]): Promise<string> {
-    return this.call<string>('start_pipeline', { stages });
+  async startPipeline(
+    stages: string[],
+    configOverrides?: Record<string, Record<string, unknown>>
+  ): Promise<string> {
+    return this.call<string>('start_pipeline', {
+      stages,
+      config_overrides: configOverrides,
+    });
   }
 
-  async preflightPipeline(stages: string[]): Promise<PipelinePreflightResult> {
-    return this.call<PipelinePreflightResult>('preflight_pipeline', { stages });
+  async preflightPipeline(
+    stages: string[],
+    configOverrides?: Record<string, Record<string, unknown>>
+  ): Promise<PipelinePreflightResult> {
+    return this.call<PipelinePreflightResult>('preflight_pipeline', {
+      stages,
+      config_overrides: configOverrides,
+    });
   }
 
   async getProgress(jobId: string): Promise<Record<string, unknown>> {

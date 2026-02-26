@@ -212,6 +212,22 @@ class TestPipelineHandlerThreadSafety:
         for jid in job_ids:
             handler.cancel_pipeline(jid)
 
+    def test_start_pipeline_accepts_config_overrides(self, monkeypatch):
+        server = _mock_server()
+        handler = PipelineHandler(server)
+        monkeypatch.setattr(PipelineJob, "start", lambda _self: None)
+
+        overrides = {
+            "main": {
+                "generated_mols_path": "/tmp/input.csv",
+                "folder_to_save": "/tmp/output",
+            }
+        }
+        job_id = handler.start_pipeline(["descriptors"], config_overrides=overrides)
+
+        assert job_id in handler.jobs
+        assert handler.jobs[job_id].config_overrides == overrides
+
 
 # =====================================================================
 # H1 — Stage name mapping bug
@@ -818,6 +834,58 @@ class TestPipelinePreflight:
         assert any(
             check["code"] == "DOCKING_RECEPTOR_INVALID" and check["level"] == "error"
             for check in stage_checks
+        )
+
+    def test_preflight_uses_stage_override_without_writing_disk(self, preflight_env):
+        project_root = preflight_env["paths"]["project_root"]
+        docking_cfg = (
+            project_root / "src" / "hedgehog" / "configs" / "config_docking.yml"
+        )
+        docking_cfg.write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "tools": "smina",
+                    "receptor_pdb": str(project_root / "missing_receptor.pdb"),
+                },
+                sort_keys=False,
+            )
+        )
+
+        handler = preflight_env["server"].pipeline_handler
+        result = handler.preflight_pipeline(
+            ["docking"],
+            config_overrides={
+                "docking": {
+                    "run": True,
+                    "tools": "smina",
+                    "receptor_pdb": str(preflight_env["paths"]["receptor_pdb"]),
+                }
+            },
+        )
+
+        assert result["valid"] is True
+        stage_checks = result["stage_reports"][0]["checks"]
+        assert not any(
+            check["code"] == "DOCKING_RECEPTOR_INVALID" for check in stage_checks
+        )
+
+    def test_preflight_uses_main_override(self, preflight_env):
+        server = preflight_env["server"]
+        handler = server.pipeline_handler
+        main_config = server.config_handler.load_config("main")
+        main_config["generated_mols_path"] = str(
+            preflight_env["paths"]["project_root"] / "missing_input.csv"
+        )
+
+        result = handler.preflight_pipeline(
+            ["descriptors"], config_overrides={"main": main_config}
+        )
+
+        assert result["valid"] is False
+        assert any(
+            check["code"] == "MAIN_INPUT_INVALID" and check["level"] == "error"
+            for check in result["checks"]
         )
 
     def test_preflight_warning_only_keeps_valid(self, preflight_env):

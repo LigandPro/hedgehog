@@ -281,9 +281,14 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
 
     try {
       const bridge = getBridge();
-      await bridge.saveConfig(stageConfig.configType, rawConfig);
+      const validation = await bridge.validateConfig(stageConfig.configType, rawConfig);
+      if (!validation.valid) {
+        showToast('error', `Invalid config: ${validation.errors.join('; ')}`);
+        return;
+      }
       setConfig(stageConfig.configType, rawConfig as any);
       setIsDirty(false);
+      showToast('info', `${stageConfig.displayName} settings saved for this run only`);
       // Return to stage selection after save
       setScreen('wizardStageSelection');
     } catch (err) {
