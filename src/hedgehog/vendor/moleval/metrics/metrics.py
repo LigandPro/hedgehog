@@ -475,27 +475,33 @@ def compute_intermediate_statistics(smiles, n_jobs=1, device='cpu',
             close_pool = True
         else:
             pool = 1
-    statistics = {}
-    mols = mapper(pool)(get_mol, smiles)
-    kwargs = {'n_jobs': pool, 'device': device, 'batch_size': batch_size}
-    kwargs_fcd = {'n_jobs': n_jobs, 'device': device, 'batch_size': batch_size}
-    if run_fcd:
-        statistics['FCD'] = FCDMetric(**kwargs_fcd).precalc(smiles)
-    statistics['SNN'] = SNNMetric(**kwargs).precalc(mols)
-    statistics['Frag'] = FragMetric(**kwargs).precalc(mols)
-    statistics['Scaf'] = ScafMetric(**kwargs).precalc(mols)
-    statistics['Analogue'] = FingerprintAnaloguesMetric(**kwargs).precalc(mols)
-    statistics['FG'] = FGMetric(**kwargs).precalc(mols)
-    statistics['RS'] = RSMetric(**kwargs).precalc(mols)
-    for name, func in [('logP', logP),
-                       ('NP', NP),
-                       ('SA', SA),
-                       ('QED', QED),
-                       ('Weight', weight)]:
-        statistics[name] = WassersteinMetric(func, **kwargs).precalc(mols)
-    if close_pool:
-        pool.terminate()
-    return statistics
+    try:
+        statistics = {}
+        mols = mapper(pool)(get_mol, smiles)
+        kwargs = {'n_jobs': pool, 'device': device, 'batch_size': batch_size}
+        kwargs_fcd = {'n_jobs': n_jobs, 'device': device, 'batch_size': batch_size}
+        if run_fcd:
+            statistics['FCD'] = FCDMetric(**kwargs_fcd).precalc(smiles)
+        statistics['SNN'] = SNNMetric(**kwargs).precalc(mols)
+        statistics['Frag'] = FragMetric(**kwargs).precalc(mols)
+        statistics['Scaf'] = ScafMetric(**kwargs).precalc(mols)
+        statistics['Analogue'] = FingerprintAnaloguesMetric(**kwargs).precalc(mols)
+        statistics['FG'] = FGMetric(**kwargs).precalc(mols)
+        statistics['RS'] = RSMetric(**kwargs).precalc(mols)
+        for name, func in [('logP', logP),
+                           ('NP', NP),
+                           ('SA', SA),
+                           ('QED', QED),
+                           ('Weight', weight)]:
+            statistics[name] = WassersteinMetric(func, **kwargs).precalc(mols)
+        return statistics
+    finally:
+        if close_pool:
+            try:
+                pool.close()
+            except Exception:
+                pool.terminate()
+            pool.join()
 
 
 def fraction_passes_filters(gen, n_jobs=1, normalize=True):
