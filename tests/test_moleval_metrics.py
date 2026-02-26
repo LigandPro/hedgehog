@@ -1,5 +1,6 @@
 """Tests for MolEval generative metrics integration."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -404,6 +405,85 @@ class TestGetMolevalMetrics:
         )
         result = gen._get_moleval_metrics()
         assert result == {}
+
+    def test_skips_moleval_when_enabled_stage_failed(self, moleval_base_path, tmp_path):
+        import yaml
+
+        config_file = tmp_path / "moleval_on.yml"
+        with open(config_file, "w") as f:
+            yaml.dump({"run": True, "n_jobs": -1}, f)
+
+        gen = ReportGenerator(
+            base_path=moleval_base_path,
+            stages=[SimpleNamespace(enabled=True, completed=False)],
+            config={"config_moleval": str(config_file)},
+            initial_count=10,
+            final_count=6,
+        )
+
+        with patch.object(
+            moleval_metrics, "compute_stage_metrics", return_value={"by_stage": {}}
+        ) as mocked_compute:
+            result = gen._get_moleval_metrics()
+
+        assert result == {}
+        mocked_compute.assert_not_called()
+
+    def test_autotunes_moleval_workers_for_small_dataset(
+        self, moleval_base_path, tmp_path
+    ):
+        import yaml
+
+        config_file = tmp_path / "moleval_on.yml"
+        with open(config_file, "w") as f:
+            yaml.dump({"run": True, "n_jobs": -1}, f)
+
+        gen = ReportGenerator(
+            base_path=moleval_base_path,
+            stages=[],
+            config={"config_moleval": str(config_file)},
+            initial_count=10,
+            final_count=6,
+        )
+
+        with patch.object(
+            moleval_metrics, "compute_stage_metrics", return_value={"by_stage": {}}
+        ) as mocked_compute:
+            gen._get_moleval_metrics()
+
+        assert mocked_compute.called
+        passed_config = mocked_compute.call_args.args[1]
+        assert passed_config["n_jobs"] == 1
+
+    def test_autotunes_moleval_workers_for_medium_dataset(self, tmp_path):
+        import yaml
+
+        config_file = tmp_path / "moleval_on.yml"
+        with open(config_file, "w") as f:
+            yaml.dump({"run": True, "n_jobs": -1}, f)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={"config_moleval": str(config_file)},
+            initial_count=1000,
+            final_count=900,
+        )
+
+        with (
+            patch.object(
+                ReportGenerator,
+                "_collect_stage_smiles",
+                return_value={"Input": ["CCO"] * 1000},
+            ),
+            patch.object(
+                moleval_metrics, "compute_stage_metrics", return_value={"by_stage": {}}
+            ) as mocked_compute,
+        ):
+            gen._get_moleval_metrics()
+
+        passed_config = mocked_compute.call_args.args[1]
+        assert passed_config["n_jobs"] == 12
 
 
 class TestCollectDataIncludesMoleval:

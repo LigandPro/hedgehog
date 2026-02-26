@@ -14,6 +14,7 @@ from jinja2 import Environment, PackageLoader
 
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
+from hedgehog.utils.parallel import resolve_n_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -2046,6 +2047,15 @@ class ReportGenerator:
         Returns:
             Dictionary with 'by_stage', 'stages', 'metrics' keys, or empty dict.
         """
+        if any(
+            getattr(stage, "enabled", False) and not getattr(stage, "completed", False)
+            for stage in self.stages
+        ):
+            logger.warning(
+                "Skipping MolEval metrics because one or more enabled stages failed."
+            )
+            return {}
+
         moleval_config = self._load_moleval_config()
         if not moleval_config or not moleval_config.get("run", True):
             return {}
@@ -2054,15 +2064,51 @@ class ReportGenerator:
         if not stage_smiles:
             return {}
 
+        effective_config = dict(moleval_config)
+        effective_config["n_jobs"] = self._resolve_moleval_n_jobs(
+            moleval_config, stage_smiles
+        )
+
         try:
             return moleval_metrics.compute_stage_metrics(
                 stage_smiles,
-                moleval_config,
-                seed=moleval_config.get("seed", 42),
+                effective_config,
+                seed=effective_config.get("seed", 42),
             )
         except Exception as e:
             logger.debug("MolEval metrics computation failed: %s", e)
             return {}
+
+    def _resolve_moleval_n_jobs(
+        self,
+        moleval_config: dict[str, Any],
+        stage_smiles: dict[str, list[str]],
+    ) -> int:
+        """Resolve MolEval workers with dataset-size based defaults.
+
+        Policy (when n_jobs is not explicitly positive):
+          - < 1k molecules: 1 worker
+          - < 10k molecules: 12 workers
+          - otherwise: all available workers (resolved from env/SLURM)
+        """
+        raw_n_jobs = moleval_config.get("n_jobs")
+        try:
+            parsed_n_jobs = int(raw_n_jobs) if raw_n_jobs is not None else None
+        except (TypeError, ValueError):
+            parsed_n_jobs = None
+
+        if parsed_n_jobs is not None and parsed_n_jobs > 0:
+            return parsed_n_jobs
+
+        max_stage_size = max(
+            (len(smiles) for smiles in stage_smiles.values()), default=0
+        )
+        max_available = resolve_n_jobs(stage_config=moleval_config, default=-1)
+        if max_stage_size < 1000:
+            return 1
+        if max_stage_size < 10000:
+            return max(1, min(12, max_available))
+        return max_available
 
     def _load_stage_config(self, config_key: str) -> dict[str, Any]:
         """Load a stage YAML config by its key in the pipeline config.
