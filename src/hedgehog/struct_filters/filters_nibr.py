@@ -5,12 +5,12 @@ import pandas as pd
 from hedgehog._constants import CFG_STRUCT_FILTERS
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.struct_filters._helpers import (
-    add_model_name_col,
-    mc,
     _ensure_dataframe_length,
     _resolve_scheduler,
     _silence_worker_stdio,
     _split_indexed_mols,
+    add_model_name_col,
+    mc,
 )
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 

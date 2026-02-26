@@ -477,9 +477,7 @@ def test_cleanup_lingering_processes_uses_bounded_timeout(monkeypatch):
         "hedgehog.pipeline.multiprocessing.active_children", lambda: children
     )
     ticks = itertools.count()
-    monkeypatch.setattr(
-        "hedgehog.pipeline.time.monotonic", lambda: next(ticks) * 0.05
-    )
+    monkeypatch.setattr("hedgehog.pipeline.time.monotonic", lambda: next(ticks) * 0.05)
 
     _cleanup_lingering_processes(timeout_seconds=0.2)
 
@@ -488,7 +486,10 @@ def test_cleanup_lingering_processes_uses_bounded_timeout(monkeypatch):
         assert child.killed == 1
 
     all_timeouts = [
-        timeout for child in children for timeout in child.join_timeouts if timeout is not None
+        timeout
+        for child in children
+        for timeout in child.join_timeouts
+        if timeout is not None
     ]
     assert all_timeouts
     assert all(timeout <= 0.2 for timeout in all_timeouts)

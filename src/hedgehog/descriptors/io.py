@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from hedgehog.configs.logger import logger
 from hedgehog.struct_filters.utils import process_path  # noqa: F401 – re-export
 
 

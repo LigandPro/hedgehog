@@ -9,9 +9,9 @@ from rdkit import Chem
 from hedgehog._constants import CFG_STRUCT_FILTERS
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.struct_filters._helpers import (
+    _silence_worker_stdio,
     add_model_name_col,
     mc,
-    _silence_worker_stdio,
 )
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 

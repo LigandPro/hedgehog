@@ -402,7 +402,9 @@ class TestRunDockingProteinPrepFallback:
         def _raise_not_found(*_args, **_kwargs):
             raise FileNotFoundError("No such file or directory")
 
-        monkeypatch.setattr("hedgehog.docking.receptor_prep.subprocess.run", _raise_not_found)
+        monkeypatch.setattr(
+            "hedgehog.docking.receptor_prep.subprocess.run", _raise_not_found
+        )
 
         assert run_docking(run_config) is True
 

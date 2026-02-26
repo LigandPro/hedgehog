@@ -92,7 +92,9 @@ def _molprep_one(
                 mol,
                 defn_data=rss_cfg.get("defn_data"),
                 defn_format=str(rss_cfg.get("defn_format", "smarts")),
-                dont_remove_everything=bool(rss_cfg.get("dont_remove_everything", True)),
+                dont_remove_everything=bool(
+                    rss_cfg.get("dont_remove_everything", True)
+                ),
                 sanitize=bool(rss_cfg.get("sanitize", True)),
             )
         except Exception:
@@ -168,7 +170,9 @@ def _molprep_one(
     if bool(_get_cfg(cfg, ["filters", "reject_isotopes"], True)) and _has_isotopes(mol):
         return None, "isotopes", "filters"
 
-    if bool(_get_cfg(cfg, ["filters", "require_neutral"], True)) and not _is_neutral(mol):
+    if bool(_get_cfg(cfg, ["filters", "require_neutral"], True)) and not _is_neutral(
+        mol
+    ):
         return None, "charged", "filters"
 
     if bool(_get_cfg(cfg, ["filters", "require_single_fragment"], True)) and (
