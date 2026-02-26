@@ -71,7 +71,9 @@ def resolve_n_jobs(
     return max(1, n_jobs)
 
 
-def _get_mp_context() -> multiprocessing.context.BaseContext:
+def _get_mp_context(
+    start_method: str | None = None,
+) -> multiprocessing.context.BaseContext:
     """Select a safe multiprocessing start method.
 
     Notes:
@@ -80,7 +82,7 @@ def _get_mp_context() -> multiprocessing.context.BaseContext:
     - ``spawn`` is the most portable fallback.
     - Override via ``HEDGEHOG_MP_START_METHOD`` if needed.
     """
-    forced = os.environ.get("HEDGEHOG_MP_START_METHOD")
+    forced = start_method or os.environ.get("HEDGEHOG_MP_START_METHOD")
     if forced:
         return multiprocessing.get_context(forced)
 
@@ -102,6 +104,7 @@ def parallel_map(
     initializer: Callable[..., None] | None = None,
     initargs: tuple = (),
     preserve_order: bool = True,
+    start_method: str | None = None,
 ) -> list:
     """Apply *func* to every element of *items*, optionally in parallel.
 
@@ -119,6 +122,8 @@ def parallel_map(
         initargs: Arguments passed to *initializer*.
         preserve_order: Keep results in input order when ``True``. Set to
             ``False`` to stream ready results immediately via ``imap_unordered``.
+        start_method: Optional multiprocessing start method override for this
+            call (for example ``"fork"`` or ``"spawn"``).
 
     Returns:
         List of results in the same order as *items*.
@@ -140,7 +145,7 @@ def parallel_map(
     if chunksize is None:
         chunksize = max(1, length // (n_jobs * 4))
 
-    ctx = _get_mp_context()
+    ctx = _get_mp_context(start_method=start_method)
     with ctx.Pool(
         processes=n_jobs,
         initializer=initializer,

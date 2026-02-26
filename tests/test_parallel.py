@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import multiprocessing
+
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # ---------------------------------------------------------------------------
@@ -134,3 +136,17 @@ class TestParallelMap:
             initargs=("mp",),
         )
         assert out == ["mp", "mp", "mp", "mp"]
+
+    def test_start_method_override_forwarded(self, monkeypatch):
+        seen = {"value": None}
+
+        def _fake_get_mp_context(start_method=None):
+            seen["value"] = start_method
+            return multiprocessing.get_context("spawn")
+
+        monkeypatch.setattr(
+            "hedgehog.utils.parallel._get_mp_context", _fake_get_mp_context
+        )
+        out = parallel_map(_square, [1, 2, 3], n_jobs=2, start_method="fork")
+        assert out == [1, 4, 9]
+        assert seen["value"] == "fork"

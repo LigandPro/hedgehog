@@ -2,6 +2,7 @@ import contextlib
 import importlib
 import io
 import os
+import sys
 import threading
 import warnings
 from pathlib import Path
@@ -958,6 +959,27 @@ def _resolve_common_alerts_n_jobs(
     return max(1, min(n_jobs, max_workers))
 
 
+def _resolve_common_alerts_start_method(config_sf: dict) -> str | None:
+    """Resolve multiprocessing start method for Common Alerts workers.
+
+    Priority:
+    1. config_structFilters.yml: ``common_alerts_start_method``
+    2. environment: ``HEDGEHOG_COMMON_ALERTS_START_METHOD``
+    3. platform default: ``fork`` on Linux to reduce worker warm-up latency
+    """
+    raw = config_sf.get("common_alerts_start_method")
+    if raw is None:
+        raw = os.environ.get("HEDGEHOG_COMMON_ALERTS_START_METHOD")
+
+    if raw is None:
+        return "fork" if sys.platform.startswith("linux") else None
+
+    method = str(raw).strip().lower()
+    if method in {"", "auto", "default", "none"}:
+        return None
+    return method
+
+
 def apply_structural_alerts(
     config, mols, smiles_model_name_mols=None, progress_cb=None
 ):
@@ -980,7 +1002,12 @@ def apply_structural_alerts(
     items = [(i, mol) for i, mol in enumerate(mols)]
     total_items = len(items)
     n_jobs = _resolve_common_alerts_n_jobs(config_sf, config, total_items)
+    start_method = _resolve_common_alerts_start_method(config_sf)
     logger.info("Common Alerts workers: %d", n_jobs)
+    logger.info(
+        "Common Alerts start method: %s",
+        start_method if start_method else "auto",
+    )
 
     progress_wrapper, heartbeat_stop, heartbeat_thread = _setup_alerts_progress(
         total_items, progress_cb
@@ -1000,6 +1027,7 @@ def apply_structural_alerts(
             initializer=worker_initializer,
             initargs=(compiled_smarts, rule_set_names),
             preserve_order=False,
+            start_method=start_method,
         )
     finally:
         heartbeat_stop.set()
