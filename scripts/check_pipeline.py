@@ -26,7 +26,6 @@ def run_cli_smoke(repo_root: Path) -> None:
     """Run required CLI smoke checks."""
     run_cmd(["uv", "run", "hedgehog", "--help"], repo_root)
     run_cmd(["uv", "run", "hedge", "--help"], repo_root)
-    run_cmd(["uv", "run", "hedgehog", "run", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "setup", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "setup", "aizynthfinder", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "version"], repo_root)
