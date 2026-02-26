@@ -11,7 +11,6 @@ from hedgehog.configs.logger import logger
 from hedgehog.descriptors.constants import _DESCRIPTOR_KEY_MAP
 from hedgehog.descriptors.io import (
     order_identity_columns,
-    order_descriptor_columns,
     process_path,
     save_failed_molecules,
 )

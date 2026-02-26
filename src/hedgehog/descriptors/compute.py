@@ -3,9 +3,9 @@
 from pathlib import Path
 
 import pandas as pd
+from medchem.rules._utils import n_fused_aromatic_rings
 from rdkit import Chem
 from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
-from medchem.rules._utils import n_fused_aromatic_rings
 
 from hedgehog.configs.logger import logger
 from hedgehog.descriptors.io import order_identity_columns, process_path

@@ -35,7 +35,9 @@ def write_outputs(
 
     passed_df[stable_cols].to_csv(filtered_path, index=False)
     if failed_df.empty:
-        failed_df = pd.DataFrame(columns=[*stable_cols, "reason", "step", "reason_detail"])
+        failed_df = pd.DataFrame(
+            columns=[*stable_cols, "reason", "step", "reason_detail"]
+        )
     failed_df.to_csv(failed_path, index=False)
 
     reasons = Counter([f.reason for f in failures])
@@ -44,7 +46,9 @@ def write_outputs(
         "passed": int(len(passed_df)),
         "failed": int(len(failures)),
         "dedup_removed": int(dedup_removed),
-        "failed_by_reason_json": json.dumps(dict(sorted(reasons.items())), ensure_ascii=False),
+        "failed_by_reason_json": json.dumps(
+            dict(sorted(reasons.items())), ensure_ascii=False
+        ),
     }
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
 

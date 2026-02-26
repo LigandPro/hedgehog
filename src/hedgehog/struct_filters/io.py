@@ -1,11 +1,8 @@
 """File I/O utilities for structural filters stage."""
 
-import os
 from pathlib import Path
 
 import pandas as pd
-
-from hedgehog.configs.logger import logger
 
 
 def process_path(folder_to_save, key_word=None):

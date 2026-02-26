@@ -5,9 +5,9 @@ import pandas as pd
 from hedgehog._constants import CFG_STRUCT_FILTERS
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.struct_filters._helpers import (
+    _resolve_scheduler,
     add_model_name_col,
     mc,
-    _resolve_scheduler,
 )
 from hedgehog.utils.parallel import resolve_n_jobs
 

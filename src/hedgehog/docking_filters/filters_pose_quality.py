@@ -16,8 +16,7 @@ from hedgehog.docking_filters.types import (
     _error_result,
     _fail_result,
 )
-from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
-
+from hedgehog.utils.parallel import parallel_map
 
 # ---------------------------------------------------------------------------
 # Pose quality filter (PoseCheck legacy)

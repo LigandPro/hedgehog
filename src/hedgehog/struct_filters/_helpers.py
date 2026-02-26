@@ -1,14 +1,13 @@
 """Internal helpers shared across struct_filters submodules."""
 
-import contextlib
 import importlib
-import io as _io
 import os
 
 import numpy as np
 import pandas as pd
 
 from hedgehog.configs.logger import logger
+from hedgehog.utils.datamol_import import import_datamol_quietly
 
 _VALID_SCHEDULERS = {"threads", "processes"}
 
@@ -19,6 +18,7 @@ _LILLY_DEFAULT_COLUMNS = ["smiles", "status", "pass_filter", "demerit_score", "r
 # ---------------------------------------------------------------------------
 # Medchem / datamol lazy imports
 # ---------------------------------------------------------------------------
+
 
 def _import_medchem_quietly():
     """Import medchem while muting native stdout/stderr noise."""
@@ -47,8 +47,6 @@ except ImportError:
     LILLY_AVAILABLE = False
     LillyDemeritsFilters = None
 
-from hedgehog.utils.datamol_import import import_datamol_quietly
-
 dm = import_datamol_quietly()
 
 
@@ -75,6 +73,7 @@ if _LILLY_BIN_PATH.exists():
 # ---------------------------------------------------------------------------
 # Worker helpers
 # ---------------------------------------------------------------------------
+
 
 def _silence_worker_stdio() -> None:
     """Redirect worker stdout/stderr to /dev/null."""
@@ -120,6 +119,7 @@ def _split_indexed_mols(indexed_mols, n_chunks):
 # String / display helpers
 # ---------------------------------------------------------------------------
 
+
 def camelcase(any_str):
     """Convert underscore-separated string to CamelCase."""
     return "".join(word.capitalize() for word in any_str.split("_"))
@@ -144,6 +144,7 @@ def clean_name(name):
 # ---------------------------------------------------------------------------
 # Molecule helpers
 # ---------------------------------------------------------------------------
+
 
 def sdf_to_mols(sdf_file, subsample):
     """Read molecules from SDF file with subsampling."""
@@ -182,6 +183,7 @@ def get_model_colors(model_names, cmap=None):
 # ---------------------------------------------------------------------------
 # DataFrame alignment / padding
 # ---------------------------------------------------------------------------
+
 
 def _create_failed_row(smiles=None, reason="unsupported_or_missing"):
     """Create a failed molecule row for Lilly filter results."""

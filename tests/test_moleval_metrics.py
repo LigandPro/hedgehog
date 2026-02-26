@@ -709,7 +709,9 @@ class TestMolevalMapperPoolCleanup:
         pool = _FakePool()
         monkeypatch.setattr(metrics_utils.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(
-            metrics_utils.multiprocessing, "get_context", lambda _method: _FakeContext(pool)
+            metrics_utils.multiprocessing,
+            "get_context",
+            lambda _method: _FakeContext(pool),
         )
 
         mapper_fn = metrics_utils.mapper(2)
@@ -724,7 +726,9 @@ class TestMolevalMapperPoolCleanup:
         pool = _FakePool(raise_on_map=True)
         monkeypatch.setattr(metrics_utils.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(
-            metrics_utils.multiprocessing, "get_context", lambda _method: _FakeContext(pool)
+            metrics_utils.multiprocessing,
+            "get_context",
+            lambda _method: _FakeContext(pool),
         )
 
         mapper_fn = metrics_utils.mapper(2)
@@ -759,12 +763,14 @@ class TestComputeIntermediateStatisticsPoolCleanup:
         monkeypatch.setattr(
             moleval_vendor_metrics,
             "mapper",
-            lambda _pool: (lambda _func, _items: []),
+            lambda _pool: lambda _func, _items: [],
         )
         monkeypatch.setattr(moleval_vendor_metrics, "SNNMetric", _FakeMetric)
         monkeypatch.setattr(moleval_vendor_metrics, "FragMetric", _FakeMetric)
         monkeypatch.setattr(moleval_vendor_metrics, "ScafMetric", _FakeMetric)
-        monkeypatch.setattr(moleval_vendor_metrics, "FingerprintAnaloguesMetric", _FakeMetric)
+        monkeypatch.setattr(
+            moleval_vendor_metrics, "FingerprintAnaloguesMetric", _FakeMetric
+        )
         monkeypatch.setattr(moleval_vendor_metrics, "FGMetric", _FakeMetric)
         monkeypatch.setattr(moleval_vendor_metrics, "RSMetric", _FakeMetric)
         monkeypatch.setattr(moleval_vendor_metrics, "WassersteinMetric", _FakeMetric)
