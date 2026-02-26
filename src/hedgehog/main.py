@@ -16,6 +16,7 @@ from rich.progress import (
     Progress,
     SpinnerColumn,
     TextColumn,
+    TimeElapsedColumn,
 )
 from rich.table import Table
 
@@ -54,7 +55,7 @@ def _build_progress_columns(console_width: int):
             TextColumn("[bold]{task.description}[/bold]"),
             BarColumn(bar_width=20),
             TextColumn("{task.fields[done_total]}"),
-            TextColumn("elapsed {task.fields[elapsed_s]}"),
+            TimeElapsedColumn(),
         ]
 
     return [
@@ -64,7 +65,7 @@ def _build_progress_columns(console_width: int):
         TextColumn("{task.fields[done_total]}"),
         TextColumn("rate {task.fields[rate]}"),
         TextColumn("eta {task.fields[eta]}"),
-        TextColumn("elapsed {task.fields[elapsed_s]}"),
+        TimeElapsedColumn(),
     ]
 
 
@@ -522,13 +523,6 @@ class CliProgressTracker:
                 return message[len(short_name + separator) :].strip()
         return message
 
-    @staticmethod
-    def _format_elapsed_seconds(value: float | None) -> str:
-        if value is None:
-            return "-"
-        seconds = int(max(0.0, round(value)))
-        return f"{seconds}s"
-
     def _progress_description(
         self,
         stage_index: int,
@@ -562,7 +556,6 @@ class CliProgressTracker:
                 done_total="-/-",
                 rate="-",
                 eta="-",
-                elapsed_s="-",
             )
         return self._active_task_id
 
@@ -586,7 +579,6 @@ class CliProgressTracker:
             done_total="-/-",
             rate="-",
             eta="-",
-            elapsed_s="0s",
         )
 
     def _handle_stage_progress(
@@ -633,7 +625,6 @@ class CliProgressTracker:
             ),
             rate=(f"{rate:,.0f}/s" if rate is not None else "-"),
             eta=self._format_seconds(eta_seconds),
-            elapsed_s=self._format_elapsed_seconds(elapsed_seconds),
         )
 
     def _handle_stage_complete(
@@ -647,11 +638,6 @@ class CliProgressTracker:
         done_total = "-/-"
         stage_total = self._current_stage_total
         stage_done = self._current_stage_done
-        elapsed_seconds = (
-            time.perf_counter() - self._stage_started_at
-            if self._stage_started_at is not None
-            else None
-        )
         if stage_total is not None:
             done = stage_done
             if done is None or done < 0:
@@ -666,7 +652,6 @@ class CliProgressTracker:
             done_total=done_total,
             rate="-",
             eta="-",
-            elapsed_s=self._format_elapsed_seconds(elapsed_seconds),
         )
 
 

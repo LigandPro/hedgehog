@@ -449,9 +449,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     assert not any(desc.startswith("0/2 - ") for desc in descriptions)
 
 
-def test_run_progress_strips_duplicate_stage_prefix_and_sets_elapsed_seconds(
-    tmp_path, monkeypatch
-):
+def test_run_progress_strips_duplicate_stage_prefix(tmp_path, monkeypatch):
     """StructFilters progress should not duplicate stage name in description."""
     import hedgehog.main as main_mod
 
@@ -544,7 +542,6 @@ def test_run_progress_strips_duplicate_stage_prefix_and_sets_elapsed_seconds(
         desc.startswith("1/1 - StructFilters · common_alerts") for desc in descriptions
     )
     assert not any("StructFilters · StructFilters:" in desc for desc in descriptions)
-    assert any(call.get("elapsed_s") for call in progress_instance.update_calls)
 
 
 def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):

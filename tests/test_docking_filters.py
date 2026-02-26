@@ -201,6 +201,58 @@ class TestSymmetryRmsdFilter:
         # A valid 3D molecule embedded by ETKDGv3 should match its own conformers
         assert df["pass_conformer_deviation"].iloc[0]
 
+    def test_symmetry_rmsd_enables_nvmolkit_by_default(self, monkeypatch):
+        """Conformer filter should try enabling nvMolKit when flag is enabled."""
+        from hedgehog.docking_filters.utils import apply_symmetry_rmsd_filter
+
+        calls: list[dict[str, Any]] = []
+
+        def _fake_enable(**kwargs):
+            calls.append(kwargs)
+            return False
+
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.utils.maybe_enable_nvmolkit",
+            _fake_enable,
+        )
+
+        mol = _mol_with_3d(SMILES_ETHANOL)
+        config: dict[str, Any] = {
+            "num_conformers": 5,
+            "max_rmsd_to_conformer": 5.0,
+            "random_seed": 42,
+            "conformer_method": "ETKDGv3",
+            "n_jobs": 1,
+            "use_nvmolkit": True,
+        }
+        apply_symmetry_rmsd_filter([mol], config)
+
+        assert len(calls) >= 1
+
+    def test_symmetry_rmsd_skips_nvmolkit_when_disabled(self, monkeypatch):
+        """Conformer filter should skip nvMolKit when disabled in config."""
+        from hedgehog.docking_filters.utils import apply_symmetry_rmsd_filter
+
+        def _fail_enable(**_kwargs):
+            raise AssertionError("maybe_enable_nvmolkit should not be called")
+
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.utils.maybe_enable_nvmolkit",
+            _fail_enable,
+        )
+
+        mol = _mol_with_3d(SMILES_ETHANOL)
+        config: dict[str, Any] = {
+            "num_conformers": 5,
+            "max_rmsd_to_conformer": 5.0,
+            "random_seed": 42,
+            "conformer_method": "ETKDGv3",
+            "n_jobs": 1,
+            "use_nvmolkit": False,
+        }
+        df = apply_symmetry_rmsd_filter([mol], config)
+        assert len(df) == 1
+
     def test_symmetry_rmsd_leq_naive_aligned(self):
         """GetBestRMS (symmetry-aware) should be ≤ AlignMol (identity permutation)."""
         from rdkit.Chem import rdMolAlign

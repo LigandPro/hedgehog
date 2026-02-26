@@ -684,6 +684,7 @@ Checks whether the docked pose is geometrically plausible by comparing against g
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable this filter |
+| `use_nvmolkit` | bool | `true` | Try nvMolKit acceleration when available (fallback to RDKit if unavailable) |
 | `num_conformers` | int | `50` | Number of reference conformers to generate |
 | `conformer_method` | string | `ETKDGv3` | Conformer generation method: `ETKDG`, `ETKDGv2`, `ETKDGv3` |
 | `max_rmsd_to_conformer` | float | `3.0` | Maximum RMSD (Angstroms) between docked pose and nearest conformer |
@@ -743,6 +744,7 @@ shepherd_score:
 
 conformer_deviation:
   enabled: true
+  use_nvmolkit: true
   num_conformers: 50
   conformer_method: "ETKDGv3"
   max_rmsd_to_conformer: 3.0
