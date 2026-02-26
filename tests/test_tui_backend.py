@@ -267,6 +267,94 @@ class TestStageNameMapping:
 
 
 # =====================================================================
+# Stage log canonicalization
+# =====================================================================
+
+
+class TestStageEventLogging:
+    """Test canonical stage logging driven by progress events."""
+
+    def test_progress_callback_logs_stage_event_messages(self):
+        server = _mock_server()
+        job = PipelineJob("test-id", ["descriptors"], server)
+        logs: list[tuple[str, str]] = []
+        job._log = lambda level, message: logs.append((level, message))
+
+        start_message = "Stage descriptors started: 10 molecules in."
+        complete_message = (
+            "Stage descriptors completed: 10 in -> 8 out "
+            "(delta -2, retained 80.00%, 1.2s)."
+        )
+
+        job._progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 1,
+                "message": start_message,
+            }
+        )
+        job._progress_callback(
+            {
+                "type": "stage_complete",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 1,
+                "message": complete_message,
+            }
+        )
+
+        assert ("info", start_message) in logs
+        assert ("info", complete_message) in logs
+        assert not any(msg.startswith("Starting stage:") for _, msg in logs)
+        assert not any(msg.startswith("Stage completed:") for _, msg in logs)
+
+    def test_no_generic_duplicate_completion_log_on_transition(self):
+        server = _mock_server()
+        job = PipelineJob("test-id", ["descriptors", "synthesis"], server)
+        log_messages: list[str] = []
+        job._log = lambda _level, message: log_messages.append(message)
+
+        job._progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 2,
+                "message": "Stage descriptors started: 10 molecules in.",
+            }
+        )
+        job._progress_callback(
+            {
+                "type": "stage_complete",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 2,
+                "message": (
+                    "Stage descriptors completed: 10 in -> 8 out "
+                    "(delta -2, retained 80.00%, 1.2s)."
+                ),
+            }
+        )
+        job._progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "synthesis",
+                "stage_index": 2,
+                "total_stages": 2,
+                "message": "Stage synthesis started: 8 molecules in.",
+            }
+        )
+
+        assert log_messages == [
+            "Stage descriptors started: 10 molecules in.",
+            "Stage descriptors completed: 10 in -> 8 out (delta -2, retained 80.00%, 1.2s).",
+            "Stage synthesis started: 8 molecules in.",
+        ]
+
+
+# =====================================================================
 # H3 — Progress dict update in callback
 # =====================================================================
 

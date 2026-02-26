@@ -202,6 +202,64 @@ def _log_stage_header(stage_label: str) -> None:
     logger.info("")
 
 
+def _format_molecule_count(value: int | None) -> str:
+    """Return a human-readable molecule count string."""
+    if value is None:
+        return "unknown"
+    return f"{value:,}"
+
+
+def _format_delta(molecules_in: int | None, molecules_out: int | None) -> str:
+    """Return the stage delta in signed format."""
+    if molecules_in is None or molecules_out is None:
+        return "unknown"
+    return f"{(molecules_out - molecules_in):+,}"
+
+
+def _format_retention(molecules_in: int | None, molecules_out: int | None) -> str:
+    """Return stage retention percentage with two decimals."""
+    if molecules_in is None or molecules_out is None or molecules_in <= 0:
+        return "unknown"
+    return f"{(100.0 * molecules_out / molecules_in):.2f}%"
+
+
+def _build_stage_start_message(stage_name: str, molecules_in: int | None) -> str:
+    """Build canonical stage-start log message."""
+    return (
+        f"Stage {stage_name} started: "
+        f"{_format_molecule_count(molecules_in)} molecules in."
+    )
+
+
+def _build_stage_complete_message(
+    stage_name: str,
+    ok: bool,
+    molecules_in: int | None,
+    molecules_out: int | None,
+    elapsed_seconds: float,
+    avg_cpu_percent: float | None = None,
+    output_estimated: bool = False,
+) -> str:
+    """Build canonical stage-complete log message."""
+    status = "completed" if ok else "failed"
+    parts = [
+        f"delta {_format_delta(molecules_in, molecules_out)}",
+        f"retained {_format_retention(molecules_in, molecules_out)}",
+    ]
+    if output_estimated and molecules_out is not None:
+        parts.insert(0, "estimated out")
+    if avg_cpu_percent is not None:
+        parts.append(f"avg CPU {avg_cpu_percent:.1f}%")
+    parts.append(f"{elapsed_seconds:.1f}s")
+
+    return (
+        f"Stage {stage_name} {status}: "
+        f"{_format_molecule_count(molecules_in)} in -> "
+        f"{_format_molecule_count(molecules_out)} out "
+        f"({', '.join(parts)})."
+    )
+
+
 def _file_exists_and_not_empty(file_path: Path) -> bool:
     """Check if a file exists and is not empty."""
     try:
@@ -740,17 +798,19 @@ class MoleculeCounter:
         input_count: int | None,
     ) -> int | None:
         """Resolve molecule count after a stage completes."""
+        path_parts = self._OUTPUT_PATHS.get(stage_name)
+        if path_parts is not None:
+            output_path = self.base_path.joinpath(*path_parts)
+            counted = self.count_csv_rows(output_path)
+            if counted is not None:
+                return counted
+
+        if stage_name == STAGE_DOCKING:
+            return input_count
+
         if not completed:
             return None
-
-        path_parts = self._OUTPUT_PATHS.get(stage_name)
-        if path_parts is None:
-            if stage_name == STAGE_DOCKING:
-                return input_count
-            return None
-
-        output_path = self.base_path.joinpath(*path_parts)
-        return self.count_csv_rows(output_path)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -775,6 +835,7 @@ class PipelineReporter:
         counter: MoleculeCounter,
         data_checker: DataChecker,
         stage_timings: dict[str, float],
+        stage_cpu_avg: dict[str, float],
         find_data_source_fn,
         build_data_path_fn,
     ) -> None:
@@ -784,6 +845,7 @@ class PipelineReporter:
         self.counter = counter
         self.data_checker = data_checker
         self.stage_timings = stage_timings
+        self.stage_cpu_avg = stage_cpu_avg
         self._find_data_source = find_data_source_fn
         self._build_data_path = build_data_path_fn
 
@@ -843,7 +905,16 @@ class PipelineReporter:
         for stage in self.stages:
             status = self._format_stage_status(stage)
             timing = self.stage_timings.get(stage.name)
-            if timing is not None:
+            avg_cpu = self.stage_cpu_avg.get(stage.name)
+            if timing is not None and avg_cpu is not None:
+                logger.info(
+                    "%s: %s (%.1fs, avg CPU %.1f%%)",
+                    stage.name,
+                    status,
+                    timing,
+                    avg_cpu,
+                )
+            elif timing is not None:
                 logger.info("%s: %s (%.1fs)", stage.name, status, timing)
             else:
                 logger.info("%s: %s", stage.name, status)
@@ -979,6 +1050,7 @@ class MolecularAnalysisPipeline:
         self.stages = [PipelineStage(*defn) for defn in self._STAGE_DEFINITIONS]
         self._stage_by_name = {stage.name: stage for stage in self.stages}
         self.stage_timings: dict[str, float] = {}  # Stage name -> elapsed seconds
+        self.stage_cpu_avg: dict[str, float] = {}  # Stage name -> avg CPU percentage
 
         self.counter = MoleculeCounter(self.data_checker.base_path)
         self.reporter = PipelineReporter(
@@ -988,6 +1060,7 @@ class MolecularAnalysisPipeline:
             counter=self.counter,
             data_checker=self.data_checker,
             stage_timings=self.stage_timings,
+            stage_cpu_avg=self.stage_cpu_avg,
             find_data_source_fn=self._find_data_source,
             build_data_path_fn=self._build_data_path,
         )
@@ -1219,30 +1292,37 @@ class MolecularAnalysisPipeline:
             total_stages=len(enabled_stages),
         )
         input_count = self._resolve_stage_input_count(stage.name, args)
-        reporter.start(molecules_in=input_count)
+        start_message = _build_stage_start_message(stage.name, input_count)
+        reporter.start(message=start_message, molecules_in=input_count)
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
+        logger.info(start_message)
         start_time = time.perf_counter()
+        cpu_start = time.process_time()
         try:
             completed = runner_func(*args, reporter=reporter)
         except TypeError:
             completed = runner_func(*args)
         elapsed = time.perf_counter() - start_time
+        cpu_elapsed = max(0.0, time.process_time() - cpu_start)
+        avg_cpu_percent = (100.0 * cpu_elapsed / elapsed) if elapsed > 0 else None
         output_count = self._resolve_stage_output_count(
             stage.name, bool(completed), input_count
         )
         self.stage_timings[stage.name] = elapsed
-        logger.info("Stage %s completed in %.1f seconds", stage.name, elapsed)
-        if input_count is not None and output_count is not None:
-            complete_message = (
-                f"Molecules: {input_count:,} -> {output_count:,}; {elapsed:.1f}s"
-            )
-        elif input_count is not None:
-            complete_message = f"Molecules in: {input_count:,}; {elapsed:.1f}s"
-        elif output_count is not None:
-            complete_message = f"Molecules out: {output_count:,}; {elapsed:.1f}s"
-        else:
-            complete_message = f"{elapsed:.1f}s"
+        if avg_cpu_percent is not None:
+            self.stage_cpu_avg[stage.name] = avg_cpu_percent
+        output_estimated = stage.name == STAGE_DOCKING and output_count is not None
+        complete_message = _build_stage_complete_message(
+            stage_name=stage.name,
+            ok=bool(completed),
+            molecules_in=input_count,
+            molecules_out=output_count,
+            elapsed_seconds=elapsed,
+            avg_cpu_percent=avg_cpu_percent,
+            output_estimated=output_estimated,
+        )
+        logger.info(complete_message)
         reporter.complete(
             ok=bool(completed),
             message=complete_message,
