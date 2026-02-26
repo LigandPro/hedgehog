@@ -9,7 +9,7 @@ parallel_scheduler: processes
 alerts_data_path: src/hedgehog/struct_filters/data/common_alerts_collection.csv
 calculate_common_alerts: true
 common_alerts_auto_n_jobs: true
-common_alerts_small_input_threshold: 2000
+common_alerts_small_input_threshold: 1000
 common_alerts_small_input_n_jobs: 1
 common_alerts_large_input_n_jobs: 12
 include_rulesets:

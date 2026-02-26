@@ -352,6 +352,10 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 |-----------|------|---------|-------------|
 | `alerts_data_path` | string | `src/hedgehog/struct_filters/data/common_alerts_collection.csv` | Path to CSV file containing structural alert SMARTS patterns |
 | `calculate_common_alerts` | bool | `true` | Enable SMARTS-based structural alert screening |
+| `common_alerts_auto_n_jobs` | bool | `true` | Enable size-aware worker selection for Common Alerts |
+| `common_alerts_small_input_threshold` | int | `1000` | Molecule-count threshold for the small-input worker setting |
+| `common_alerts_small_input_n_jobs` | int | `1` | Worker count when input size is below `common_alerts_small_input_threshold` |
+| `common_alerts_large_input_n_jobs` | int | `12` | Worker count when input size is between `common_alerts_small_input_threshold` and `10000` |
 | `include_rulesets` | list[string] | _(see YAML below)_ | Alert rulesets to activate (e.g., Dundee, BMS, PAINS, Glaxo, etc.) |
 | `exclude_descriptions` | dict[string, list[string]] | _(see YAML below)_ | Per-ruleset list of alert descriptions to exclude (override false positives) |
 
@@ -391,6 +395,10 @@ run: true
 filter_data: true
 alerts_data_path: src/hedgehog/struct_filters/data/common_alerts_collection.csv
 calculate_common_alerts: true
+common_alerts_auto_n_jobs: true
+common_alerts_small_input_threshold: 1000
+common_alerts_small_input_n_jobs: 1
+common_alerts_large_input_n_jobs: 12
 include_rulesets:
 - Dundee
 - BMS

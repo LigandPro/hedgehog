@@ -901,6 +901,63 @@ def _build_alerts_results(results_list, mols):
     return results
 
 
+def _resolve_common_alerts_n_jobs(
+    config_sf: dict, config: dict, total_items: int
+) -> int:
+    """Resolve worker count for Common Alerts using size-aware defaults.
+
+    Policy:
+    - total_items < 1_000  -> 1 worker
+    - total_items < 10_000 -> 12 workers
+    - otherwise            -> all available workers
+    """
+    auto_n_jobs = bool(config_sf.get("common_alerts_auto_n_jobs", True))
+    if not auto_n_jobs:
+        return resolve_n_jobs(config_sf, config)
+
+    max_workers = resolve_n_jobs({"n_jobs": -1}, config)
+
+    small_threshold_raw = config_sf.get("common_alerts_small_input_threshold", 1000)
+    small_n_jobs_raw = config_sf.get("common_alerts_small_input_n_jobs", 1)
+    medium_n_jobs_raw = config_sf.get("common_alerts_large_input_n_jobs", 12)
+
+    try:
+        small_threshold = int(small_threshold_raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid common_alerts_small_input_threshold=%r; using 1000.",
+            small_threshold_raw,
+        )
+        small_threshold = 1000
+
+    try:
+        small_n_jobs = int(small_n_jobs_raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid common_alerts_small_input_n_jobs=%r; using 1.",
+            small_n_jobs_raw,
+        )
+        small_n_jobs = 1
+
+    try:
+        medium_n_jobs = int(medium_n_jobs_raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid common_alerts_large_input_n_jobs=%r; using 12.",
+            medium_n_jobs_raw,
+        )
+        medium_n_jobs = 12
+
+    if total_items < small_threshold:
+        n_jobs = small_n_jobs
+    elif total_items < 10_000:
+        n_jobs = medium_n_jobs
+    else:
+        n_jobs = max_workers
+
+    return max(1, min(n_jobs, max_workers))
+
+
 def apply_structural_alerts(
     config, mols, smiles_model_name_mols=None, progress_cb=None
 ):
@@ -920,10 +977,10 @@ def apply_structural_alerts(
 
     compiled_smarts = _compile_alert_smarts(alert_data)
 
-    n_jobs = resolve_n_jobs(config_sf, config)
-    logger.info("Common Alerts workers: %d", n_jobs)
     items = [(i, mol) for i, mol in enumerate(mols)]
     total_items = len(items)
+    n_jobs = _resolve_common_alerts_n_jobs(config_sf, config, total_items)
+    logger.info("Common Alerts workers: %d", n_jobs)
 
     progress_wrapper, heartbeat_stop, heartbeat_thread = _setup_alerts_progress(
         total_items, progress_cb
