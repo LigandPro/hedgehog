@@ -18,7 +18,7 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 | `target_mols_path` | string | `src/hedgehog/configs/examples/target_mols.csv` | Path to the CSV file containing target/reference molecules |
 | `folder_to_save` | string | `results/run` | Output directory where all pipeline results are saved |
 | `n_jobs` | int | `62` | Number of parallel workers for CPU-bound tasks |
-| `sample_size` | int | `10000` | Number of molecules to sample from the input file (0 or negative = use all) |
+| `sample_size` | int | `1000` | Number of molecules to sample from the input file (0 or negative = use all) |
 | `batch_size` | int | `512` | Batch size for descriptor computation and other batched operations |
 | `save_sampled_mols` | bool | `true` | Whether to save the sampled molecule subset to disk |
 | `pains_file_path` | string | `src/hedgehog/vendor/moleval/metrics/wehi_pains.csv` | Path to the PAINS filter definitions file |
@@ -40,7 +40,7 @@ generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
 target_mols_path: src/hedgehog/configs/examples/target_mols.csv
 folder_to_save: results/run
 n_jobs: 62
-sample_size: 10000
+sample_size: 1000
 batch_size: 512
 save_sampled_mols: true
 pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
