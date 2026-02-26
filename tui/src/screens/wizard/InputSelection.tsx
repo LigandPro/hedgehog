@@ -209,9 +209,9 @@ export function InputSelection(): React.ReactElement {
     const currentValue = String(values[browsingField.key] || '') || process.cwd();
     const browserShortcuts = [
       { key: '↑↓', label: 'Navigate' },
-      { key: 'Enter', label: browsingField.isDirectory ? 'Open' : 'Select' },
+      { key: 'Enter', label: 'Open/Select' },
       { key: '→/e', label: 'Edit path' },
-      ...(browsingField.isDirectory ? [{ key: 'Space', label: 'Select folder' }] : []),
+      { key: 'Space', label: browsingField.isDirectory ? 'Select folder' : 'Search' },
       { key: '/', label: 'Search' },
       { key: '←', label: 'Back' },
     ];
