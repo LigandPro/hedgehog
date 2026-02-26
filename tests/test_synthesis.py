@@ -356,6 +356,7 @@ class TestRunAizynthfinder:
         monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
         monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: str(uv_bin))
         monkeypatch.setenv("VIRTUAL_ENV", "/tmp/foreign-env")
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "9")
 
         config = (
             tmp_path
@@ -369,6 +370,8 @@ class TestRunAizynthfinder:
 
         assert ok is True
         assert captured["cmd"][0] == str(uv_bin)
+        assert "--nproc" in captured["cmd"]
+        assert captured["cmd"][captured["cmd"].index("--nproc") + 1] == "9"
         assert "VIRTUAL_ENV" not in captured["kwargs"]["env"]
         assert (
             tmp_path
@@ -466,8 +469,8 @@ class TestRunAizynthfinder:
         assert "--nproc" in cmd
         assert cmd[cmd.index("--nproc") + 1] == "20"
 
-    def test_invalid_nproc_is_ignored(self, tmp_path, monkeypatch):
-        """Invalid AIZYNTH_NPROC should not break run and is ignored."""
+    def test_invalid_nproc_falls_back_to_synthesis_n_jobs(self, tmp_path, monkeypatch):
+        """Invalid AIZYNTH_NPROC should fall back to synthesis n_jobs."""
         captured = {}
 
         def fake_run(cmd, **kwargs):
@@ -486,10 +489,51 @@ class TestRunAizynthfinder:
             / "public"
             / "config.yml"
         )
-        ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            config,
+            synthesis_config={"n_jobs": 7},
+        )
 
         assert ok is True
-        assert "--nproc" not in captured["cmd"]
+        cmd = captured["cmd"]
+        assert "--nproc" in cmd
+        assert cmd[cmd.index("--nproc") + 1] == "7"
+
+    def test_uses_synthesis_n_jobs_when_env_unset(self, tmp_path, monkeypatch):
+        """When AIZYNTH_NPROC is unset, use synthesis.n_jobs."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return None
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.delenv("AIZYNTH_NPROC", raising=False)
+        monkeypatch.delenv("MOLSCORE_NJOBS", raising=False)
+        monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            config,
+            synthesis_config={"n_jobs": 6},
+        )
+
+        assert ok is True
+        cmd = captured["cmd"]
+        assert "--nproc" in cmd
+        assert cmd[cmd.index("--nproc") + 1] == "6"
 
 
 class TestParseRetrosynthesisResults:

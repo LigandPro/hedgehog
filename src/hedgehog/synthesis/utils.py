@@ -146,7 +146,11 @@ def prepare_input_smiles(input_df, output_file):
 
 
 def run_aizynthfinder(
-    input_smiles_file, output_json_file, config_file, aizynthfinder_dir=None
+    input_smiles_file,
+    output_json_file,
+    config_file,
+    aizynthfinder_dir=None,
+    synthesis_config: dict[str, Any] | None = None,
 ):
     """Run AiZynthFinder CLI to perform retrosynthesis analysis.
 
@@ -155,6 +159,7 @@ def run_aizynthfinder(
         output_json_file: Path to output JSON file
         config_file: Path to AiZynthFinder config file
         aizynthfinder_dir: Optional working directory for AiZynthFinder CLI
+        synthesis_config: Optional synthesis stage config (supports ``n_jobs``)
 
     Returns:
         True if successful, False otherwise
@@ -189,9 +194,10 @@ def run_aizynthfinder(
         "--output",
         str(output_abs),
     ]
-    nproc = _resolve_aizynth_nproc(os.environ.get("AIZYNTH_NPROC"))
-    if nproc is not None:
-        cmd.extend(["--nproc", str(nproc)])
+    nproc = _resolve_aizynth_nproc(
+        os.environ.get("AIZYNTH_NPROC"), synthesis_config=synthesis_config
+    )
+    cmd.extend(["--nproc", str(nproc)])
 
     try:
         logger.info("Running retrosynthesis analysis...")
@@ -222,23 +228,47 @@ def run_aizynthfinder(
         return False
 
 
-def _resolve_aizynth_nproc(raw_value: str | None) -> int | None:
-    """Resolve AIZYNTH_NPROC value to a valid positive worker count.
+def _resolve_aizynth_nproc(
+    raw_value: str | None, synthesis_config: dict[str, Any] | None = None
+) -> int:
+    """Resolve AiZynthFinder worker count to a valid positive value.
 
     Semantics:
-      - unset/empty: do not pass ``--nproc`` (AiZynthFinder default behavior)
-      - positive int: pass as-is
-      - ``0`` or negative: resolve like other stages (all available CPUs)
-      - invalid value: ignore and continue without ``--nproc``
+      - ``AIZYNTH_NPROC`` positive int: use as-is
+      - ``AIZYNTH_NPROC`` ``0`` or negative: resolve as auto (all available CPUs)
+      - invalid ``AIZYNTH_NPROC``: ignore and fall back
+      - fallback source: ``synthesis_config['n_jobs']`` when provided
+      - final fallback: auto (all available CPUs)
     """
+    config_n_jobs: int = -1
+    if synthesis_config is not None and "n_jobs" in synthesis_config:
+        try:
+            config_n_jobs = int(synthesis_config["n_jobs"])
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid synthesis.n_jobs=%r, falling back to auto",
+                synthesis_config["n_jobs"],
+            )
+            config_n_jobs = -1
+
     if not raw_value:
-        return None
+        resolved = resolve_n_jobs({"n_jobs": config_n_jobs})
+        logger.info(
+            "AIZYNTH_NPROC is not set; using %d workers from synthesis.n_jobs/default",
+            resolved,
+        )
+        return resolved
 
     try:
         parsed = int(raw_value)
     except ValueError:
         logger.warning("Invalid AIZYNTH_NPROC=%r, ignoring", raw_value)
-        return None
+        resolved = resolve_n_jobs({"n_jobs": config_n_jobs})
+        logger.info(
+            "Using %d workers from synthesis.n_jobs/default after invalid AIZYNTH_NPROC",
+            resolved,
+        )
+        return resolved
 
     if parsed > 0:
         return parsed

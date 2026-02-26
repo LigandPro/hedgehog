@@ -521,6 +521,7 @@ Controls the retrosynthesis feasibility stage, including synthesizability score 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the synthesis stage |
+| `n_jobs` | int | `-1` | Worker count for synthesis scoring and retrosynthesis (`-1`/`0` = auto/all available cores) |
 | `run_retrosynthesis` | bool | `true` | Run AiZynthFinder retrosynthetic analysis |
 | `filter_solved_only` | bool | `true` | Keep only molecules for which a retrosynthetic route was found |
 | `sa_score_min` | float | `0` | Minimum synthetic accessibility score (Ertl) |
@@ -534,6 +535,7 @@ Controls the retrosynthesis feasibility stage, including synthesizability score 
 
 ```yaml
 run: true
+n_jobs: -1
 run_retrosynthesis: true
 filter_solved_only: true
 sa_score_min: 0
