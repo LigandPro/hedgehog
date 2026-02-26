@@ -31,29 +31,29 @@ uv sync
 ### First run
 
 ```bash
-uv run hedgehog run
+uv run hedgehog
 
 # Optional: auto-install missing optional tools without prompts
-uv run hedgehog run --auto-install
+uv run hedgehog --auto-install
 ```
 
 ## Common Commands
 
 ```bash
 # Full pipeline
-uv run hedgehog run
+uv run hedgehog
 
 # Run with your own molecules
-uv run hedgehog run --mols input/my_molecules.csv
+uv run hedgehog --mols input/my_molecules.csv
 
 # Run a single stage
-uv run hedgehog run --stage descriptors
+uv run hedgehog --stage descriptors
 
 # Run docking with a live progress bar
-uv run hedgehog run --stage docking --progress
+uv run hedgehog --stage docking --progress
 
 # Run docking without progress bar (default)
-uv run hedgehog run --stage docking
+uv run hedgehog --stage docking
 
 # Regenerate report for an existing run
 uv run hedgehog report results/run_10

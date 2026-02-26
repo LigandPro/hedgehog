@@ -30,13 +30,13 @@ DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.
 You can override the master config path at runtime with `--config/-c`:
 
 ```bash
-uv run hedgehog run --config path/to/config.yml
+uv run hedgehog --config path/to/config.yml
 ```
 
 You can also override the output directory (`folder_to_save`) with `--out/-o`:
 
 ```bash
-uv run hedgehog run --out results/my_run
+uv run hedgehog --out results/my_run
 ```
 
 Each stage config path in `config.yml` is treated as a **relative path from the working directory** (the directory you run the command from) or as an **absolute path**. For example:
@@ -56,7 +56,7 @@ There are three common ways to customise the pipeline:
 1. **Create your own config files and pass them via `--config`.** Copy the default configs, edit them, then run:
 
    ```bash
-   uv run hedgehog run --config path/to/my_config.yml
+   uv run hedgehog --config path/to/my_config.yml
    ```
 
 2. **Override common paths via CLI flags.** Use:

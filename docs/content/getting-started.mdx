@@ -48,7 +48,7 @@ uv run hedgehog setup aizynthfinder
 If you prefer on-demand installation during a pipeline run, use:
 
 ```bash
-uv run hedgehog run --auto-install
+uv run hedgehog --auto-install
 ```
 
 ## First Run
@@ -56,13 +56,13 @@ uv run hedgehog run --auto-install
 Run the full pipeline on the included test data:
 
 ```bash
-uv run hedgehog run
+uv run hedgehog
 ```
 
 Or using the short alias:
 
 ```bash
-uv run hedge run
+uv run hedge
 ```
 
 This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `src/hedgehog/configs/examples/`. Each stage runs in sequence, filtering molecules that fail its criteria.
