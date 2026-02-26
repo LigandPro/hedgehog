@@ -10,7 +10,7 @@ import yaml
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.main import main as descriptors_main
-from hedgehog.docking.main import main as docking_main
+from hedgehog.docking.stage import run as docking_main
 from hedgehog.docking_filters.main import docking_filters_main
 from hedgehog.molprep.main import main as mol_prep_main
 from hedgehog.reporting import ReportGenerator
@@ -1904,99 +1904,30 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
     return success
 
 
-def _cleanup_lingering_processes(timeout_seconds: float = 2.0) -> None:
-    """Best-effort cleanup of leftover workers without long shutdown stalls."""
+def _cleanup_lingering_processes() -> None:
+    """Best-effort cleanup of leftover workers to avoid shutdown hangs."""
     # Some third-party libraries (e.g., joblib/loky) can leave worker processes
-    # alive past pipeline completion. Use a global timeout budget so cleanup time
-    # does not scale linearly with worker count.
+    # alive past pipeline completion. Ensure we do not block shell return.
     try:
         children = multiprocessing.active_children()
     except Exception:
         children = []
 
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
-
     for child in children:
         try:
-            if child.is_alive():
-                child.terminate()
+            child.terminate()
         except Exception:
             pass
 
     for child in children:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
         try:
-            child.join(timeout=min(0.2, remaining))
-        except Exception:
-            pass
-
-    # If processes are still alive after the grace period, hard-kill them.
-    for child in children:
-        try:
-            if child.is_alive():
-                child.kill()
-        except Exception:
-            pass
-
-    for child in children:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        try:
-            if child.is_alive():
-                child.join(timeout=min(0.1, remaining))
+            child.join(timeout=2)
         except Exception:
             pass
 
     try:
-        from joblib.externals.loky import reusable_executor as loky_reusable_executor
+        from joblib.externals.loky import get_reusable_executor
 
-        loky_executor = getattr(loky_reusable_executor, "_executor", None)
-        if loky_executor is not None:
-            loky_executor.shutdown(wait=True, kill_workers=True)
-    except Exception:
-        pass
-
-    # A second pass helps when child processes were created by external runtimes
-    # (e.g. loky) and were not visible during the first active_children() call.
-    try:
-        tail_children = multiprocessing.active_children()
-    except Exception:
-        tail_children = []
-
-    for child in tail_children:
-        try:
-            if child.is_alive():
-                child.terminate()
-        except Exception:
-            pass
-
-    for child in tail_children:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        try:
-            if child.is_alive():
-                child.join(timeout=min(0.1, remaining))
-        except Exception:
-            pass
-
-    # Prevent Python's atexit Pool finalizers from re-entering pool shutdown and
-    # blocking interpreter exit when workers were already force-terminated above.
-    try:
-        from multiprocessing import util as mp_util
-
-        finalizers = getattr(mp_util, "_finalizer_registry", {})
-        for finalizer in list(finalizers.values()):
-            callback = getattr(finalizer, "_callback", None)
-            cb_name = getattr(
-                callback,
-                "__qualname__",
-                getattr(callback, "__name__", ""),
-            )
-            if cb_name.endswith("Pool._terminate_pool"):
-                finalizer.cancel()
+        get_reusable_executor().shutdown(wait=False, kill_workers=True)
     except Exception:
         pass

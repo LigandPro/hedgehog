@@ -50,7 +50,6 @@ export function InputSelection(): React.ReactElement {
 
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [browsingField, setBrowsingField] = useState<ConfigField | null>(null);
-  const [startBrowserInPathEdit, setStartBrowserInPathEdit] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -156,19 +155,12 @@ export function InputSelection(): React.ReactElement {
       // Space - edit/browse current field
       const field = CONFIG_FIELDS[focusedIndex];
       if (field.type === 'path') {
-        setStartBrowserInPathEdit(false);
         setBrowsingField(field);
       } else if (field.type === 'boolean') {
         setValues({ ...values, [field.key]: !values[field.key] });
       } else if (field.type === 'number') {
         setEditValue(String(values[field.key] || ''));
         setEditMode(true);
-      }
-    } else if (key.rightArrow || input === 'e') {
-      const field = CONFIG_FIELDS[focusedIndex];
-      if (field.type === 'path') {
-        setStartBrowserInPathEdit(true);
-        setBrowsingField(field);
       }
     } else if (key.return) {
       // Enter - continue to next step
@@ -183,12 +175,10 @@ export function InputSelection(): React.ReactElement {
       setValues({ ...values, [browsingField.key]: path });
     }
     setBrowsingField(null);
-    setStartBrowserInPathEdit(false);
   };
 
   const handleBrowseCancel = () => {
     setBrowsingField(null);
-    setStartBrowserInPathEdit(false);
   };
 
   if (loading) {
@@ -205,7 +195,6 @@ export function InputSelection(): React.ReactElement {
     const browserShortcuts = [
       { key: '↑↓', label: 'Navigate' },
       { key: 'Enter', label: browsingField.isDirectory ? 'Open' : 'Select' },
-      { key: '→/e', label: 'Edit path' },
       ...(browsingField.isDirectory ? [{ key: 'Space', label: 'Select folder' }] : []),
       { key: '/', label: 'Search' },
       { key: '←', label: 'Back' },
@@ -219,7 +208,6 @@ export function InputSelection(): React.ReactElement {
           selectDirectory={browsingField.isDirectory}
           onSelect={handlePathSelect}
           onCancel={handleBrowseCancel}
-          startInPathEdit={startBrowserInPathEdit}
         />
         <Footer shortcuts={browserShortcuts} />
       </Box>
@@ -229,7 +217,6 @@ export function InputSelection(): React.ReactElement {
   const shortcuts = [
     { key: '↑↓', label: 'Navigate' },
     { key: 'Space', label: 'Edit' },
-    { key: '→/e', label: 'Edit path' },
     { key: 'Enter', label: 'Next' },
     { key: '←/Esc', label: 'Back' },
   ];

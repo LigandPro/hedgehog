@@ -381,11 +381,6 @@ def _load_rascore_impl():
     json_path = _get_rascore_model_path()
     pkl_path = _get_rascore_pickle_model_path()
 
-    if not json_path.exists():
-        ensured_json = _ensure_rascore_json_model()
-        if ensured_json is not None:
-            json_path = ensured_json
-
     if json_path.exists():
         try:
             import xgboost as xgb
@@ -560,79 +555,6 @@ def _ensure_rascore_pickle_path() -> Path | None:
             e,
         )
         return None
-
-
-def _convert_rascore_pickle_to_json(pkl_path: Path, json_path: Path) -> bool:
-    """Convert legacy RAScore pickle model to portable XGBoost JSON."""
-    try:
-        uv_binary = resolve_uv_binary()
-    except RuntimeError as e:
-        logger.warning(
-            "Unable to convert RAScore model to JSON: uv executable could not be "
-            "resolved (%s)",
-            e,
-        )
-        return False
-
-    project_root = Path(__file__).resolve().parents[3]
-    cmd = [
-        uv_binary,
-        "run",
-        "--with",
-        "xgboost==1.5.2",
-        "--with",
-        "setuptools<81",
-        "python",
-        "-m",
-        "hedgehog.workers.rascore_convert_worker",
-        "--model-pkl",
-        str(pkl_path),
-        "--output-json",
-        str(json_path),
-    ]
-    env = os.environ.copy()
-    env.setdefault("UV_NO_SYNC", "1")
-
-    try:
-        subprocess.run(
-            cmd,
-            cwd=str(project_root),
-            env=env,
-            shell=False,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except Exception as e:
-        logger.warning("Failed to convert RAScore pickle model to JSON: %s", e)
-        json_path.unlink(missing_ok=True)
-        return False
-
-    if not json_path.exists() or json_path.stat().st_size < 1_024:
-        logger.warning(
-            "Converted RAScore JSON model is missing or invalid: %s",
-            json_path,
-        )
-        json_path.unlink(missing_ok=True)
-        return False
-
-    logger.info("RAScore JSON model generated successfully: %s", json_path)
-    return True
-
-
-def _ensure_rascore_json_model() -> Path | None:
-    """Ensure JSON RAScore model exists and return its path."""
-    json_path = _get_rascore_model_path()
-    if json_path.exists():
-        return json_path
-
-    pkl_path = _ensure_rascore_pickle_path()
-    if pkl_path is None:
-        return None
-
-    if _convert_rascore_pickle_to_json(pkl_path, json_path):
-        return json_path
-    return None
 
 
 def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
