@@ -2,7 +2,7 @@ generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
 target_mols_path: src/hedgehog/configs/examples/target_mols.csv
 folder_to_save: results/run
 n_jobs: -1
-sample_size: 1000
+sample_size: 10000
 batch_size: 512
 save_sampled_mols: true
 pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
