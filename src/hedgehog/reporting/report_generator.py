@@ -2103,12 +2103,11 @@ class ReportGenerator:
         max_stage_size = max(
             (len(smiles) for smiles in stage_smiles.values()), default=0
         )
-        max_available = resolve_n_jobs(stage_config=moleval_config, default=-1)
         if max_stage_size < 1000:
             return 1
         if max_stage_size < 10000:
-            return max(1, min(12, max_available))
-        return max_available
+            return 12
+        return resolve_n_jobs(stage_config=moleval_config, default=-1)
 
     def _load_stage_config(self, config_key: str) -> dict[str, Any]:
         """Load a stage YAML config by its key in the pipeline config.
