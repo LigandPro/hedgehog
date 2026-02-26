@@ -101,6 +101,7 @@ def parallel_map(
     progress: Callable[[int, int], None] | None = None,
     initializer: Callable[..., None] | None = None,
     initargs: tuple = (),
+    preserve_order: bool = True,
 ) -> list:
     """Apply *func* to every element of *items*, optionally in parallel.
 
@@ -116,6 +117,8 @@ def parallel_map(
         initializer: Optional initializer called once per worker (and once in
             sequential mode) to set up per-process globals.
         initargs: Arguments passed to *initializer*.
+        preserve_order: Keep results in input order when ``True``. Set to
+            ``False`` to stream ready results immediately via ``imap_unordered``.
 
     Returns:
         List of results in the same order as *items*.
@@ -143,10 +146,13 @@ def parallel_map(
         initializer=initializer,
         initargs=initargs,
     ) as pool:
+        iterator = (
+            pool.imap(func, items, chunksize=chunksize)
+            if preserve_order
+            else pool.imap_unordered(func, items, chunksize=chunksize)
+        )
         out = []
-        for idx, result in enumerate(
-            pool.imap(func, items, chunksize=chunksize), start=1
-        ):
+        for idx, result in enumerate(iterator, start=1):
             out.append(result)
             if progress:
                 progress(idx, length)

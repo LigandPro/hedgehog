@@ -999,6 +999,7 @@ def apply_structural_alerts(
             progress=progress_wrapper,
             initializer=worker_initializer,
             initargs=(compiled_smarts, rule_set_names),
+            preserve_order=False,
         )
     finally:
         heartbeat_stop.set()
@@ -1019,16 +1020,22 @@ def apply_structural_alerts(
     return results
 
 
-def apply_molgraph_stats(config, mols, smiles_model_name_mols=None):
+def apply_molgraph_stats(config, mols, smiles_model_name_mols=None, progress_cb=None):
     logger.info("Calculating Molecular Graph statistics...")
     severities = list(range(1, 12))
+    total_severities = len(severities)
+    total_mols = len(mols)
     config_sf = load_config(config[CFG_STRUCT_FILTERS])
     n_jobs = resolve_n_jobs(config_sf, config)
     scheduler = _resolve_scheduler(config_sf, "molgraph_scheduler")
     logger.info("MolGraph workers: %d", n_jobs)
 
     results = {"mol": mols}
-    for s in severities:
+    if progress_cb is not None:
+        progress_cb(0, max(1, total_mols))
+
+    for idx, s in enumerate(severities, start=1):
+        logger.info("MolGraph progress: severity %d/%d", idx, total_severities)
         out = mc.functional.molecular_graph_filter(
             mols=mols,
             max_severity=s,
@@ -1038,6 +1045,9 @@ def apply_molgraph_stats(config, mols, smiles_model_name_mols=None):
             return_idx=False,
         )
         results[f"pass_{s}"] = out
+        if progress_cb is not None:
+            done = int(round((idx / total_severities) * total_mols))
+            progress_cb(max(0, min(total_mols, done)), max(1, total_mols))
     results = pd.DataFrame(results)
 
     if smiles_model_name_mols is not None:

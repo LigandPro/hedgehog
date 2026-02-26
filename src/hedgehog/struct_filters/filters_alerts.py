@@ -8,10 +8,10 @@ from rdkit import Chem
 from hedgehog._constants import CFG_STRUCT_FILTERS
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.struct_filters._helpers import (
+    _silence_worker_stdio,
     add_model_name_col,
     dm,
     filter_alerts,
-    _silence_worker_stdio,
 )
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
@@ -171,7 +171,9 @@ def _build_alerts_results(results_list, mols):
     return results
 
 
-def _resolve_common_alerts_n_jobs(config_sf: dict, config: dict, total_items: int) -> int:
+def _resolve_common_alerts_n_jobs(
+    config_sf: dict, config: dict, total_items: int
+) -> int:
     """Resolve worker count for Common Alerts using size-aware defaults.
 
     Policy:
@@ -266,6 +268,7 @@ def apply_structural_alerts(
             progress=progress_wrapper,
             initializer=worker_initializer,
             initargs=(compiled_smarts, rule_set_names),
+            preserve_order=False,
         )
     finally:
         heartbeat_stop.set()
