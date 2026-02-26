@@ -202,6 +202,61 @@ def _log_stage_header(stage_label: str) -> None:
     logger.info("")
 
 
+def _format_molecule_count(value: int | None) -> str:
+    """Return a human-readable molecule count string."""
+    if value is None:
+        return "unknown"
+    return f"{value:,}"
+
+
+def _format_delta(molecules_in: int | None, molecules_out: int | None) -> str:
+    """Return the stage delta in signed format."""
+    if molecules_in is None or molecules_out is None:
+        return "unknown"
+    return f"{(molecules_out - molecules_in):+,}"
+
+
+def _format_retention(molecules_in: int | None, molecules_out: int | None) -> str:
+    """Return stage retention percentage with two decimals."""
+    if molecules_in is None or molecules_out is None or molecules_in <= 0:
+        return "unknown"
+    return f"{(100.0 * molecules_out / molecules_in):.2f}%"
+
+
+def _build_stage_start_message(stage_name: str, molecules_in: int | None) -> str:
+    """Build canonical stage-start log message."""
+    return (
+        f"Stage {stage_name} started: "
+        f"{_format_molecule_count(molecules_in)} molecules in."
+    )
+
+
+def _build_stage_complete_message(
+    stage_name: str,
+    ok: bool,
+    molecules_in: int | None,
+    molecules_out: int | None,
+    elapsed_seconds: float,
+    output_estimated: bool = False,
+) -> str:
+    """Build canonical stage-complete log message."""
+    status = "completed" if ok else "failed"
+    parts = [
+        f"delta {_format_delta(molecules_in, molecules_out)}",
+        f"retained {_format_retention(molecules_in, molecules_out)}",
+    ]
+    if output_estimated and molecules_out is not None:
+        parts.insert(0, "estimated out")
+    parts.append(f"{elapsed_seconds:.1f}s")
+
+    return (
+        f"Stage {stage_name} {status}: "
+        f"{_format_molecule_count(molecules_in)} in -> "
+        f"{_format_molecule_count(molecules_out)} out "
+        f"({', '.join(parts)})."
+    )
+
+
 def _file_exists_and_not_empty(file_path: Path) -> bool:
     """Check if a file exists and is not empty."""
     try:
@@ -740,17 +795,19 @@ class MoleculeCounter:
         input_count: int | None,
     ) -> int | None:
         """Resolve molecule count after a stage completes."""
+        path_parts = self._OUTPUT_PATHS.get(stage_name)
+        if path_parts is not None:
+            output_path = self.base_path.joinpath(*path_parts)
+            counted = self.count_csv_rows(output_path)
+            if counted is not None:
+                return counted
+
+        if stage_name == STAGE_DOCKING:
+            return input_count
+
         if not completed:
             return None
-
-        path_parts = self._OUTPUT_PATHS.get(stage_name)
-        if path_parts is None:
-            if stage_name == STAGE_DOCKING:
-                return input_count
-            return None
-
-        output_path = self.base_path.joinpath(*path_parts)
-        return self.count_csv_rows(output_path)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1219,9 +1276,11 @@ class MolecularAnalysisPipeline:
             total_stages=len(enabled_stages),
         )
         input_count = self._resolve_stage_input_count(stage.name, args)
-        reporter.start(molecules_in=input_count)
+        start_message = _build_stage_start_message(stage.name, input_count)
+        reporter.start(message=start_message, molecules_in=input_count)
 
         _log_stage_header(self._STAGE_LABELS[stage.name])
+        logger.info(start_message)
         start_time = time.perf_counter()
         try:
             completed = runner_func(*args, reporter=reporter)
@@ -1232,17 +1291,16 @@ class MolecularAnalysisPipeline:
             stage.name, bool(completed), input_count
         )
         self.stage_timings[stage.name] = elapsed
-        logger.info("Stage %s completed in %.1f seconds", stage.name, elapsed)
-        if input_count is not None and output_count is not None:
-            complete_message = (
-                f"Molecules: {input_count:,} -> {output_count:,}; {elapsed:.1f}s"
-            )
-        elif input_count is not None:
-            complete_message = f"Molecules in: {input_count:,}; {elapsed:.1f}s"
-        elif output_count is not None:
-            complete_message = f"Molecules out: {output_count:,}; {elapsed:.1f}s"
-        else:
-            complete_message = f"{elapsed:.1f}s"
+        output_estimated = stage.name == STAGE_DOCKING and output_count is not None
+        complete_message = _build_stage_complete_message(
+            stage_name=stage.name,
+            ok=bool(completed),
+            molecules_in=input_count,
+            molecules_out=output_count,
+            elapsed_seconds=elapsed,
+            output_estimated=output_estimated,
+        )
+        logger.info(complete_message)
         reporter.complete(
             ok=bool(completed),
             message=complete_message,

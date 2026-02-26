@@ -119,11 +119,9 @@ class PipelineJob:
         """Emit stage_complete/stage_start notifications on stage change."""
         if self.previous_stage and self.previous_stage != tui_stage:
             self._notify("stage_complete", {"stage": self.previous_stage})
-            self._log("info", f"Stage completed: {self.previous_stage}")
 
         if self.current_stage != tui_stage:
             self._notify("stage_start", {"stage": tui_stage})
-            self._log("info", f"Starting stage: {tui_stage}")
 
         self.previous_stage = tui_stage
         self.current_stage = tui_stage
@@ -169,6 +167,7 @@ class PipelineJob:
                     "message": message,
                 },
             )
+            self._log("info", str(message))
             return
 
         if event_type == "stage_complete":
@@ -183,6 +182,7 @@ class PipelineJob:
                     "message": message,
                 },
             )
+            self._log("info", str(message))
             return
 
     def _run(self):
@@ -216,7 +216,6 @@ class PipelineJob:
 
             if self.current_stage and not self.cancelled:
                 self._notify("stage_complete", {"stage": self.current_stage})
-                self._log("info", f"Stage completed: {self.current_stage}")
 
             if not self.cancelled:
                 self._notify(

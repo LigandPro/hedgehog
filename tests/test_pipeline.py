@@ -11,6 +11,9 @@ from hedgehog.pipeline import (
     DIR_MOL_PREP,
     DIR_SYNTHESIS,
     DOCKING_SCORE_COLUMNS,
+    STAGE_DESCRIPTORS,
+    STAGE_DOCKING,
+    STAGE_SYNTHESIS,
     DataChecker,
     MolecularAnalysisPipeline,
     PipelineStage,
@@ -315,6 +318,138 @@ class TestPipelineStage:
         stage.enabled = True
 
         assert stage.enabled is True
+
+
+def _build_enabled_pipeline(tmp_path: Path, stage_name: str, progress_callback=None):
+    """Create a pipeline with only one enabled stage for focused unit tests."""
+    cfg_path = tmp_path / "stage_config.yml"
+    cfg_path.write_text("run: true\n", encoding="utf-8")
+    config = {
+        "folder_to_save": str(tmp_path),
+        "config_mol_prep": str(cfg_path),
+        "config_descriptors": str(cfg_path),
+        "config_structFilters": str(cfg_path),
+        "config_synthesis": str(cfg_path),
+        "config_docking": str(cfg_path),
+        "config_docking_filters": str(cfg_path),
+    }
+    pipeline = MolecularAnalysisPipeline(config, progress_callback=progress_callback)
+    for stage in pipeline.stages:
+        stage.enabled = stage.name == stage_name
+    return pipeline
+
+
+class TestStageLoggingCanonicalFormat:
+    """Tests for canonical stage-level in/out logging format."""
+
+    def test_stage_success_logs_canonical_counts(self, tmp_path, caplog):
+        events: list[dict] = []
+        pipeline = _build_enabled_pipeline(
+            tmp_path, STAGE_DESCRIPTORS, progress_callback=events.append
+        )
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["CCO", "CCC", "CCN"],
+                COL_MODEL_NAME: ["m1", "m1", "m1"],
+                COL_MOL_IDX: [0, 1, 2],
+            }
+        )
+        output_path = (
+            tmp_path
+            / "stages"
+            / "01_descriptors_initial"
+            / "filtered"
+            / FILE_FILTERED_MOLECULES
+        )
+
+        def _runner(data, reporter=None):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            data.iloc[:2].to_csv(output_path, index=False)
+            return True
+
+        with caplog.at_level("INFO"):
+            completed, early_exit = pipeline._run_stage(
+                STAGE_DESCRIPTORS, _runner, input_df
+            )
+
+        assert completed is True
+        assert early_exit is False
+        assert "Stage descriptors started: 3 molecules in." in caplog.text
+        assert (
+            "Stage descriptors completed: 3 in -> 2 out (delta -1, retained 66.67%,"
+        ) in caplog.text
+
+        complete_events = [e for e in events if e.get("type") == "stage_complete"]
+        assert complete_events
+        assert (
+            "Stage descriptors completed: 3 in -> 2 out (delta -1, retained 66.67%,"
+        ) in str(complete_events[-1].get("message", ""))
+
+    def test_stage_failure_uses_best_effort_output_count(self, tmp_path, caplog):
+        events: list[dict] = []
+        pipeline = _build_enabled_pipeline(
+            tmp_path, STAGE_SYNTHESIS, progress_callback=events.append
+        )
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["CCO", "CCC", "CCN"],
+                COL_MODEL_NAME: ["m1", "m1", "m1"],
+                COL_MOL_IDX: [0, 1, 2],
+            }
+        )
+        output_path = tmp_path / "stages" / "04_synthesis" / FILE_FILTERED_MOLECULES
+
+        def _runner(data, reporter=None):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(
+                {
+                    COL_SMILES: ["CCO"],
+                    COL_MODEL_NAME: ["m1"],
+                    COL_MOL_IDX: [0],
+                }
+            ).to_csv(output_path, index=False)
+            return False
+
+        with caplog.at_level("INFO"):
+            completed, early_exit = pipeline._run_stage(
+                STAGE_SYNTHESIS, _runner, input_df
+            )
+
+        assert completed is False
+        assert early_exit is False
+        assert "Stage synthesis started: 3 molecules in." in caplog.text
+        assert (
+            "Stage synthesis failed: 3 in -> 1 out (delta -2, retained 33.33%,"
+        ) in caplog.text
+
+        complete_events = [e for e in events if e.get("type") == "stage_complete"]
+        assert complete_events
+        assert complete_events[-1].get("ok") is False
+        assert (
+            "Stage synthesis failed: 3 in -> 1 out (delta -2, retained 33.33%,"
+        ) in str(complete_events[-1].get("message", ""))
+
+    def test_docking_stage_marks_estimated_out(self, tmp_path, caplog):
+        pipeline = _build_enabled_pipeline(tmp_path, STAGE_DOCKING)
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["CCO", "CCC", "CCN", "CCCl"],
+                COL_MODEL_NAME: ["m1", "m1", "m1", "m1"],
+                COL_MOL_IDX: [0, 1, 2, 3],
+            }
+        )
+
+        with caplog.at_level("INFO"):
+            completed, early_exit = pipeline._run_stage(
+                STAGE_DOCKING, lambda data, reporter=None: True, input_df
+            )
+
+        assert completed is True
+        assert early_exit is False
+        assert (
+            "Stage docking completed: 4 in -> 4 out "
+            "(estimated out, delta +0, retained 100.00%,"
+        ) in caplog.text
 
 
 def _write_test_docking_sdf(path: Path, records: list[dict]) -> None:
