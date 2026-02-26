@@ -3,6 +3,7 @@
 import json
 import pickle  # noqa: S403 — test-only, trusted data
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -725,6 +726,46 @@ class TestRascoreAutoInstall:
         assert loaded
         assert loaded["kind"] == "xgboost_booster"
         assert loaded_model_path["path"] == str(json_path)
+
+    def test_load_rascore_suppresses_legacy_json_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Legacy XGBoost JSON warning should not be surfaced to users."""
+        json_path = tmp_path / "model.json"
+        json_path.write_text('{"learner": {}}', encoding="utf-8")
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_text("should-not-be-used", encoding="utf-8")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_pickle_model_path", lambda: pkl_path
+        )
+
+        class _DummyBooster:
+            def load_model(self, _path: str) -> None:
+                warnings.warn(
+                    "Found JSON model saved before XGBoost 1.6",
+                    UserWarning,
+                    stacklevel=1,
+                )
+
+        monkeypatch.setitem(
+            sys.modules, "xgboost", SimpleNamespace(Booster=_DummyBooster)
+        )
+        synthesis_utils._lazy_cache["rascore_booster"] = None
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            loaded = synthesis_utils._load_rascore_impl()
+
+        assert loaded
+        assert loaded["kind"] == "xgboost_booster"
+        assert not any(
+            "Found JSON model saved before XGBoost 1.6" in str(w.message)
+            for w in caught
+        )
 
     def test_load_rascore_auto_downloads_pickle_model(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
