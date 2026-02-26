@@ -10,7 +10,11 @@ import yaml
 
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.main import main as descriptors_main
-from hedgehog.docking.stage import run as docking_main
+
+try:
+    from hedgehog.docking.stage import run as docking_main
+except ModuleNotFoundError:  # Backward compatibility for pre-modular docking layout
+    from hedgehog.docking.main import main as docking_main
 from hedgehog.docking_filters.main import docking_filters_main
 from hedgehog.molprep.main import main as mol_prep_main
 from hedgehog.reporting import ReportGenerator
