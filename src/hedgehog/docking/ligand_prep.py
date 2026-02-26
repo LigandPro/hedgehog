@@ -8,6 +8,12 @@ import pandas as pd
 
 from hedgehog.configs.logger import logger
 from hedgehog.docking.binaries import _validate_optional_tool_path
+from hedgehog.utils.nvmolkit import maybe_enable_nvmolkit
+
+
+def _project_root() -> Path:
+    # src/hedgehog/docking/ligand_prep.py -> project root
+    return Path(__file__).resolve().parents[3]
 
 
 def _prepare_ligands_for_docking(
@@ -220,6 +226,10 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     df = pd.read_csv(ligands_csv)
     smiles_series = df["smiles"]
     name_series = df["name"]
+    maybe_enable_nvmolkit(
+        project_root=_project_root(),
+        context="docking.ligand_prep",
+    )
 
     writer = Chem.SDWriter(str(sdf_path))
     written_count = 0

@@ -9,7 +9,7 @@ from hedgehog.docking.aggregation import _aggregate_docking_results
 from hedgehog.docking.binaries import _validate_optional_tool_path
 from hedgehog.docking.config_writer import _create_per_molecule_configs
 from hedgehog.docking.input import _find_latest_input_source, _prepare_ligands_dataframe
-from hedgehog.docking.ligand_prep import _split_sdf_to_molecules
+from hedgehog.docking.ligand_prep import _convert_with_rdkit, _split_sdf_to_molecules
 from hedgehog.docking.scripts import _build_gnina_command_template
 from hedgehog.docking.stage import run as run_docking
 from tests.constants import (
@@ -411,6 +411,33 @@ class TestRunDockingProteinPrepFallback:
 
 class TestPerMoleculeArchitecture:
     """Tests for per-molecule SDF splitting and aggregation."""
+
+    def test_rdkit_ligand_conversion_attempts_nvmolkit_enable(
+        self, tmp_path, monkeypatch
+    ):
+        """RDKit fallback conversion should attempt nvMolKit enablement."""
+        ligands_csv = tmp_path / "ligands.csv"
+        pd.DataFrame(
+            {
+                "smiles": [SMILES_ETHANOL],
+                "name": ["ethanol"],
+            }
+        ).to_csv(ligands_csv, index=False)
+
+        calls: list[dict[str, object]] = []
+
+        def _fake_enable(**kwargs):
+            calls.append(kwargs)
+            return False
+
+        monkeypatch.setattr(
+            "hedgehog.docking.ligand_prep.maybe_enable_nvmolkit",
+            _fake_enable,
+        )
+
+        output_path, _ = _convert_with_rdkit(ligands_csv, tmp_path)
+        assert Path(output_path).exists()
+        assert len(calls) == 1
 
     def test_split_sdf_to_molecules(self, tmp_path):
         """Should split multi-molecule SDF into individual files."""

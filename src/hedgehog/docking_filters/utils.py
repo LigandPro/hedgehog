@@ -18,6 +18,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
+from hedgehog.utils.nvmolkit import maybe_enable_nvmolkit
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
 # ---------------------------------------------------------------------------
@@ -246,7 +247,8 @@ def _check_conformer_rmsd_single(args: tuple) -> dict[str, Any]:
     Args:
         args: Tuple of
             (mol, num_conformers, max_rmsd, method_name, random_seed,
-             include_hydrogens, max_matches, early_stop_on_pass, use_symmetry).
+             include_hydrogens, max_matches, early_stop_on_pass, use_symmetry,
+             use_nvmolkit).
 
     Returns:
         Dict with keys: min_rmsd, n_conformers_generated, passed, error.
@@ -261,8 +263,15 @@ def _check_conformer_rmsd_single(args: tuple) -> dict[str, Any]:
         max_matches,
         early_stop_on_pass,
         use_symmetry,
+        use_nvmolkit,
     ) = args
     try:
+        if use_nvmolkit:
+            maybe_enable_nvmolkit(
+                project_root=_project_root(),
+                context="docking_filters.conformer_deviation",
+            )
+
         reference_mol = _prepare_reference_mol_for_conformer(mol, include_hydrogens)
         params = _select_embedding_params(method_name, random_seed)
 
@@ -1151,6 +1160,7 @@ def apply_symmetry_rmsd_filter(
     include_hydrogens = bool(config.get("include_hydrogens", False))
     max_matches = int(config.get("max_matches", 10000))
     early_stop_on_pass = bool(config.get("early_stop_on_pass", True))
+    use_nvmolkit = bool(config.get("use_nvmolkit", True))
 
     logger.info(
         "Running symmetry-RMSD conformer filter (max_rmsd=%.1f, n_confs=%d)",
@@ -1170,6 +1180,7 @@ def apply_symmetry_rmsd_filter(
             max_matches,
             early_stop_on_pass,
             True,  # use_symmetry
+            use_nvmolkit,
         )
         for mol in mols
     ]
@@ -1211,6 +1222,7 @@ def apply_conformer_deviation_filter(
     max_rmsd = config.get("max_rmsd_to_conformer", 3.0)
     random_seed = config.get("random_seed", 42)
     method = config.get("conformer_method", "ETKDGv3")
+    use_nvmolkit = bool(config.get("use_nvmolkit", True))
 
     logger.info(
         "Running conformer deviation filter (max_rmsd=%.1f, n_confs=%d)",
@@ -1231,6 +1243,7 @@ def apply_conformer_deviation_filter(
             10000,  # max_matches (unused in naive path)
             False,  # early_stop_on_pass (not supported in naive)
             False,  # use_symmetry
+            use_nvmolkit,
         )
         for mol in mols
     ]
