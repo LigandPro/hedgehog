@@ -449,6 +449,104 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     assert not any(desc.startswith("0/2 - ") for desc in descriptions)
 
 
+def test_run_progress_strips_duplicate_stage_prefix_and_sets_elapsed_seconds(
+    tmp_path, monkeypatch
+):
+    """StructFilters progress should not duplicate stage name in description."""
+    import hedgehog.main as main_mod
+
+    _FakeProgress.instances.clear()
+
+    results_dir = tmp_path / "results"
+    input_path = tmp_path / "input.csv"
+    input_path.write_text("smiles,model_name,mol_idx\nCCO,m1,0\n", encoding="utf-8")
+
+    base_config = {
+        "folder_to_save": str(results_dir),
+        "generated_mols_path": str(input_path),
+        "save_sampled_mols": False,
+    }
+    prepared_df = pd.DataFrame(
+        {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [0]}
+    )
+
+    monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
+    monkeypatch.setattr(main_mod, "_plain_output_enabled", lambda: False)
+    monkeypatch.setattr(
+        main_mod, "load_config", lambda *args, **kwargs: base_config.copy()
+    )
+    monkeypatch.setattr(main_mod, "_apply_cli_overrides", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod,
+        "_resolve_output_folder",
+        lambda *args, **kwargs: Path(base_config["folder_to_save"]),
+    )
+    monkeypatch.setattr(
+        main_mod.LoggerSingleton,
+        "configure_log_directory",
+        lambda self, folder_to_save: None,
+    )
+    monkeypatch.setattr(main_mod, "_preprocess_input", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod,
+        "prepare_input_data",
+        lambda *args, **kwargs: prepared_df.copy(),
+    )
+    monkeypatch.setattr(
+        main_mod, "_save_sampled_molecules", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(main_mod, "Progress", _FakeProgress)
+
+    def _fake_calculate_metrics(data, config, progress_callback):
+        progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "struct_filters",
+                "stage_index": 1,
+                "total_stages": 1,
+                "message": "StructFilters: common_alerts",
+            }
+        )
+        progress_callback(
+            {
+                "type": "stage_progress",
+                "stage": "struct_filters",
+                "stage_index": 1,
+                "total_stages": 1,
+                "current": 1,
+                "total": 10,
+                "message": "StructFilters: common_alerts",
+            }
+        )
+        return True
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
+
+    main_mod.run(
+        ctx=SimpleNamespace(invoked_subcommand=None),
+        config_path="unused.yml",
+        generated_mols_path=None,
+        out_dir=None,
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+        show_progress=True,
+    )
+
+    progress_instance = _FakeProgress.instances[-1]
+    descriptions = [
+        call["description"]
+        for call in progress_instance.update_calls
+        if "description" in call
+    ]
+    assert any(
+        desc.startswith("1/1 - StructFilters · common_alerts") for desc in descriptions
+    )
+    assert not any("StructFilters · StructFilters:" in desc for desc in descriptions)
+    assert any(call.get("elapsed_s") for call in progress_instance.update_calls)
+
+
 def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
     """CLI should not create Rich progress/task unless --progress is enabled."""
     import hedgehog.main as main_mod
@@ -520,3 +618,37 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
     )
 
     assert captured["progress_callback"] is None
+
+
+def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
+    """Explicit run subcommand should delegate to pipeline command helper."""
+    import hedgehog.main as main_mod
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_pipeline_command(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(main_mod, "_run_pipeline_command", _fake_run_pipeline_command)
+
+    main_mod.run_command(
+        config_path="cfg.yml",
+        generated_mols_path="input.csv",
+        out_dir="results/x",
+        stage=main_mod.Stage.docking,
+        reuse_folder=True,
+        force_new_folder=False,
+        auto_install=True,
+        show_progress=True,
+    )
+
+    assert captured == {
+        "config_path": "cfg.yml",
+        "generated_mols_path": "input.csv",
+        "out_dir": "results/x",
+        "stage": main_mod.Stage.docking,
+        "reuse_folder": True,
+        "force_new_folder": False,
+        "auto_install": True,
+        "show_progress": True,
+    }
