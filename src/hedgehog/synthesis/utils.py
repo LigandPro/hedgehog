@@ -1,10 +1,15 @@
 import json
 import os
 import pickle
+import queue
+import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +56,9 @@ root:
   level: ERROR
   handlers: [console]
 """
+
+_AIZYNTH_PAIR_PROGRESS_RE = re.compile(r"(?<!\d)(\d+)\s*/\s*(\d+)(?!\d)")
+_AIZYNTH_PERCENT_PROGRESS_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
 
 
 def _get_cached(key: str, loader: callable) -> Any:
@@ -145,12 +153,59 @@ def prepare_input_smiles(input_df, output_file):
     return len(smiles_list)
 
 
+def _count_nonempty_lines(path: Path) -> int:
+    """Count non-empty lines in a text file (best-effort)."""
+    try:
+        with path.open(encoding="utf-8", errors="ignore") as handle:
+            return sum(1 for line in handle if line.strip())
+    except Exception:
+        return 0
+
+
+def _extract_aizynth_progress(
+    line: str, fallback_total: int | None = None
+) -> tuple[int, int] | None:
+    """Extract progress tuple ``(done, total)`` from an AiZynthFinder output line."""
+    best: tuple[int, int] | None = None
+
+    for done_raw, total_raw in _AIZYNTH_PAIR_PROGRESS_RE.findall(line):
+        done = int(done_raw)
+        total = int(total_raw)
+        if total <= 0:
+            continue
+        if done < 0:
+            continue
+        done = min(done, total)
+        if best is None or done > best[0]:
+            best = (done, total)
+
+    if best is not None:
+        return best
+
+    if fallback_total is None or fallback_total <= 0:
+        return None
+
+    percent_matches = _AIZYNTH_PERCENT_PROGRESS_RE.findall(line)
+    if not percent_matches:
+        return None
+
+    pct = float(percent_matches[-1])
+    if pct < 0:
+        pct = 0.0
+    if pct > 100:
+        pct = 100.0
+    done = int(round((pct / 100.0) * fallback_total))
+    done = min(max(done, 0), fallback_total)
+    return done, fallback_total
+
+
 def run_aizynthfinder(
     input_smiles_file,
     output_json_file,
     config_file,
     aizynthfinder_dir=None,
     synthesis_config: dict[str, Any] | None = None,
+    progress_cb: Callable[[int, int, str | None], None] | None = None,
 ):
     """Run AiZynthFinder CLI to perform retrosynthesis analysis.
 
@@ -205,17 +260,105 @@ def run_aizynthfinder(
         child_env = os.environ.copy()
         child_env.pop("VIRTUAL_ENV", None)
 
-        subprocess.run(
+        if progress_cb is None:
+            subprocess.run(
+                cmd,
+                shell=False,
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=str(run_dir),
+                env=child_env,
+            )
+            logger.info("Retrosynthesis analysis completed successfully")
+            return True
+
+        total_targets = _count_nonempty_lines(input_abs)
+        if total_targets <= 0:
+            total_targets = 1
+        progress_cb(0, total_targets, "starting")
+
+        proc = subprocess.Popen(
             cmd,
             shell=False,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            check=True,
             cwd=str(run_dir),
             env=child_env,
         )
+        assert proc.stdout is not None
+
+        line_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _reader() -> None:
+            try:
+                for raw_line in proc.stdout:
+                    line_queue.put(raw_line.rstrip("\r\n"))
+            finally:
+                line_queue.put(None)
+
+        reader_thread = threading.Thread(
+            target=_reader, name="aizynth-output-reader", daemon=True
+        )
+        reader_thread.start()
+
+        best_done = 0
+        best_total = total_targets
+        last_emit = time.monotonic()
+        start_time = last_emit
+        stream_open = True
+
+        while stream_open:
+            emitted = False
+            while True:
+                try:
+                    item = line_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    stream_open = False
+                    break
+                line = item.strip()
+                if line:
+                    logger.debug("AiZynthFinder: %s", line[:300])
+                parsed = _extract_aizynth_progress(line, fallback_total=best_total)
+                if parsed is not None:
+                    done, total = parsed
+                    if total > 0:
+                        best_total = total
+                        best_done = max(best_done, min(done, best_total))
+                        progress_cb(best_done, best_total, line[:80] if line else None)
+                        emitted = True
+
+            now = time.monotonic()
+            # Heartbeat fallback for runs that do not expose parseable progress.
+            if not emitted and now - last_emit >= 1.0:
+                elapsed = now - start_time
+                if best_total > 1 and best_done < best_total - 1:
+                    synthetic = min(int(elapsed // 2), best_total - 1)
+                    if synthetic > best_done:
+                        best_done = synthetic
+                progress_cb(
+                    best_done,
+                    best_total,
+                    f"elapsed {int(elapsed)}s",
+                )
+                last_emit = now
+
+            if stream_open:
+                time.sleep(0.1)
+
+        return_code = proc.wait()
+        reader_thread.join(timeout=1.0)
+        if return_code != 0:
+            logger.error(
+                "Retrosynthesis analysis failed with exit code %d", return_code
+            )
+            return False
 
         logger.info("Retrosynthesis analysis completed successfully")
+        progress_cb(best_total, best_total, "completed")
         return True
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else e.stdout
