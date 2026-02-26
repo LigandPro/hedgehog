@@ -424,6 +424,7 @@ class CliProgressTracker:
         "docking": "Docking",
         "docking_filters": "DockFilters",
         "final_descriptors": "FinalDesc",
+        "report": "Report",
     }
 
     def __init__(self, console: Console) -> None:

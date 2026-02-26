@@ -30,6 +30,7 @@ class PipelineJob:
         "docking": "docking",
         "docking_filters": "docking_filters",
         "final_descriptors": "descriptors",
+        "report": "report",
     }
 
     # Map TUI stage names to the config keys whose "run" flag they control

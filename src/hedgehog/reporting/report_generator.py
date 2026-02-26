@@ -5,6 +5,7 @@ import html as html_lib
 import json
 import logging
 import statistics
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,7 @@ class ReportGenerator:
         config: dict[str, Any],
         initial_count: int,
         final_count: int,
+        progress_callback: Callable[[int, int, str | None], None] | None = None,
     ):
         """Initialize the report generator.
 
@@ -127,6 +129,21 @@ class ReportGenerator:
         self.final_count = final_count
         self.output_dir = self.base_path
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._progress_callback = progress_callback
+        self._last_progress_signature: tuple[int, int, str | None] | None = None
+
+    def _emit_progress(
+        self, current: int, total: int = 100, message: str | None = None
+    ) -> None:
+        """Emit report-generation progress updates, de-duplicated by value."""
+        if self._progress_callback is None:
+            return
+
+        signature = (int(current), int(total), message)
+        if signature == self._last_progress_signature:
+            return
+        self._last_progress_signature = signature
+        self._progress_callback(signature[0], signature[1], message)
 
     def generate(self) -> Path:
         """Generate the full HTML report.
@@ -135,24 +152,31 @@ class ReportGenerator:
             Path to the generated report file
         """
         logger.info("Generating pipeline report...")
+        self._emit_progress(0, 100, "Collecting report data")
 
         # Collect all data
         data = self._collect_data()
+        self._emit_progress(70, 100, "Generating plots")
 
         # Generate plots
         plot_htmls = self._generate_plots(data)
+        self._emit_progress(82, 100, "Rendering HTML")
 
         # Render HTML
         html_content = self._render_template(data, plot_htmls)
+        self._emit_progress(90, 100, "Saving report")
 
         # Save report
         report_path = self._save_report(html_content)
+        self._emit_progress(94, 100, "Saving report data")
 
         # Save JSON data
         self._save_json_data(data)
+        self._emit_progress(97, 100, "Updating run info")
 
         # Generate/update RUN_INFO.md with MolEval metrics table
         self._generate_run_info(data)
+        self._emit_progress(100, 100, "Report complete")
 
         logger.info("Report generated: %s", report_path)
         return report_path
@@ -2069,11 +2093,20 @@ class ReportGenerator:
             moleval_config, stage_smiles
         )
 
+        # Reserve part of report progress budget for MolEval internals.
+        def _moleval_progress(done: int, total: int, message: str | None) -> None:
+            bounded_total = max(int(total), 1)
+            bounded_done = max(0, min(int(done), bounded_total))
+            pct = 20 + int(round((bounded_done / bounded_total) * 40))
+            self._emit_progress(pct, 100, message)
+
+        self._emit_progress(20, 100, "Computing MolEval metrics")
         try:
             return moleval_metrics.compute_stage_metrics(
                 stage_smiles,
                 effective_config,
                 seed=effective_config.get("seed", 42),
+                progress_cb=_moleval_progress,
             )
         except Exception as e:
             logger.debug("MolEval metrics computation failed: %s", e)
