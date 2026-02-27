@@ -195,7 +195,13 @@ class GetMetrics(object):
             metrics.append(kwargs)
         add_metric('#', len(gen))
 
-        gen, mols, n_valid, fraction_valid, fraction_unique = preprocess_gen(gen, prev_gen=self.prev_gen, n_jobs=self.n_jobs)
+        # Reuse the persistent pool created in GetMetrics.__init__ to avoid
+        # spawning short-lived pools in every helper call.
+        gen, mols, n_valid, fraction_valid, fraction_unique = preprocess_gen(
+            gen,
+            prev_gen=self.prev_gen,
+            n_jobs=self.pool,
+        )
 
         # ----- Intrinsic properties -----
 
@@ -211,10 +217,10 @@ class GetMetrics(object):
 
         # Compute pre-statistics
         mol_fps = fingerprints(mols, self.pool, already_unique=True, fp_type='morgan')
-        scaffs = compute_scaffolds(mols, n_jobs=self.n_jobs)
+        scaffs = compute_scaffolds(mols, n_jobs=self.pool)
         scaff_gen = list(scaffs.keys())
-        fgs = compute_functional_groups(mols, n_jobs=self.n_jobs)
-        rss = compute_ring_systems(mols, n_jobs=self.n_jobs)
+        fgs = compute_functional_groups(mols, n_jobs=self.pool)
+        rss = compute_ring_systems(mols, n_jobs=self.pool)
         if self.cumulative:
             scaff_gen = list(set(scaff_gen) - set(self.prev_scaff))
             fgs = Counter({k: v for k, v in fgs.items() if k not in self.prev_fg})

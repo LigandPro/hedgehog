@@ -80,6 +80,8 @@ def main(data, config, subfolder=None, reporter=None):
         )
 
     if reporter is not None:
-        reporter.progress(molecule_total, molecule_total, message="Descriptors complete")
+        reporter.progress(
+            molecule_total, molecule_total, message="Descriptors complete"
+        )
 
     return metrics_df

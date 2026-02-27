@@ -84,7 +84,9 @@ def run(data, config, subfolder=None, reporter=None):
         )
 
     if reporter is not None:
-        reporter.progress(molecule_total, molecule_total, message="Descriptors complete")
+        reporter.progress(
+            molecule_total, molecule_total, message="Descriptors complete"
+        )
 
     # Run wave extensions
     context = {"metrics_df": metrics_df, "config": config, "subfolder": subfolder}
