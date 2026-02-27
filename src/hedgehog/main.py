@@ -467,7 +467,12 @@ class CliProgressTracker:
 
         if event_type == "stage_start":
             self._handle_stage_start(
-                task_id, stage_index, total_stages, short_name, message
+                task_id,
+                stage_index,
+                total_stages,
+                short_name,
+                message,
+                molecules_in=event.get("molecules_in"),
             )
         elif event_type == "stage_progress":
             self._handle_stage_progress(
@@ -475,7 +480,13 @@ class CliProgressTracker:
             )
         elif event_type == "stage_complete":
             self._handle_stage_complete(
-                task_id, stage_index, total_stages, short_name, message
+                task_id,
+                stage_index,
+                total_stages,
+                short_name,
+                message,
+                molecules_in=event.get("molecules_in"),
+                molecules_out=event.get("molecules_out"),
             )
 
     # -- private helpers --------------------------------------------------
@@ -567,17 +578,25 @@ class CliProgressTracker:
         total_stages: int,
         short_name: str,
         message: str | None,
+        molecules_in: int | None = None,
     ) -> None:
         self._stage_started_at = time.perf_counter()
-        self._current_stage_done = None
-        self._current_stage_total = None
+        input_total = int(molecules_in) if molecules_in is not None else None
+        if input_total is not None and input_total >= 0:
+            self._current_stage_done = 0
+            self._current_stage_total = input_total
+            done_total = f"0/{self._format_count(input_total)}"
+        else:
+            self._current_stage_done = None
+            self._current_stage_total = None
+            done_total = "-/-"
         self._progress.update(
             task_id,
             completed=0,
             description=self._progress_description(
                 stage_index, total_stages, short_name, message
             ),
-            done_total="-/-",
+            done_total=done_total,
             rate="-",
             eta="-",
         )
@@ -635,6 +654,8 @@ class CliProgressTracker:
         total_stages: int,
         short_name: str,
         message: str | None,
+        molecules_in: int | None = None,
+        molecules_out: int | None = None,
     ) -> None:
         done_total = "-/-"
         stage_total = self._current_stage_total
@@ -644,6 +665,19 @@ class CliProgressTracker:
             if done is None or done < 0:
                 done = stage_total
             done_total = f"{self._format_count(done)}/{self._format_count(stage_total)}"
+        else:
+            in_count = int(molecules_in) if molecules_in is not None else None
+            out_count = int(molecules_out) if molecules_out is not None else None
+            if in_count is not None and in_count >= 0:
+                if out_count is None or out_count < 0:
+                    out_count = in_count
+                done_total = (
+                    f"{self._format_count(out_count)}/{self._format_count(in_count)}"
+                )
+            elif out_count is not None and out_count >= 0:
+                done_total = (
+                    f"{self._format_count(out_count)}/{self._format_count(out_count)}"
+                )
         self._progress.update(
             task_id,
             completed=100,

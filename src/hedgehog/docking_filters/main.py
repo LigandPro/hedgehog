@@ -129,9 +129,7 @@ def _collapse_to_single_pose(
 def _run_single_filter(
     *,
     filter_name: str,
-    step_names: list[str],
     reporter,
-    stage_total: int,
     step_progress_fn,
     mols: list[Chem.Mol],
     active_pose_indices: list[int],
@@ -146,10 +144,8 @@ def _run_single_filter(
 
     Args:
         filter_name: Human label for log messages (e.g. ``"pose_quality"``).
-        step_names: Ordered list of step names for progress calculation.
         reporter: Optional progress reporter.
-        stage_total: Total progress units across all steps.
-        step_progress_fn: Callable ``(step_index, label) -> progress_cb | None``.
+        step_progress_fn: Callable ``(label, step_total) -> progress_cb | None``.
         mols: Full molecule list.
         active_pose_indices: Indices of molecules still active after short-circuit.
         results_df: Cumulative results DataFrame (modified in place).
@@ -162,17 +158,17 @@ def _run_single_filter(
     Returns:
         Updated ``results_df``.
     """
-    step_idx = step_names.index(filter_name)
+    step_total = len(active_pose_indices) if active_pose_indices else len(mols)
     if reporter is not None:
         reporter.progress(
-            step_idx * 100,
-            stage_total,
+            0,
+            step_total,
             message=f"DockingFilters: {filter_name}",
         )
     if active_pose_indices:
         try:
             mols_active = [mols[i] for i in active_pose_indices]
-            progress_cb = step_progress_fn(step_idx, filter_name)
+            progress_cb = step_progress_fn(filter_name, step_total)
             df = run_fn(mols_active, progress_cb)
             df["mol_idx"] = [active_pose_indices[i] for i in df["mol_idx"]]
             results_df = results_df.merge(df, on="mol_idx", how="left")
@@ -184,8 +180,8 @@ def _run_single_filter(
         results_df[pass_col] = False
     if reporter is not None:
         reporter.progress(
-            (step_idx + 1) * 100,
-            stage_total,
+            step_total,
+            step_total,
             message=f"DockingFilters: {filter_name}",
         )
     return results_df
@@ -361,32 +357,15 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         ref_path and Path(ref_path).exists()
     )
 
-    step_names: list[str] = ["search_box"]
-    if pq_config.get("enabled", True):
-        step_names.append("pose_quality")
-    if int_config.get("enabled", True):
-        step_names.append("interactions")
-    if shepherd_enabled:
-        step_names.append("shepherd_score")
-    if cd_config.get("enabled", True):
-        step_names.append("conformer_deviation")
-
-    stage_total = max(1, len(step_names) * 100)
-
-    def _step_progress(step_index: int, label: str):
+    def _step_progress(label: str, step_total: int):
         if reporter is None:
             return None
 
-        base = step_index * 100
-
         def _progress(done: int, total: int) -> None:
-            if total <= 0:
-                pct = 0
-            else:
-                pct = int(round((done / total) * 100))
-            pct = max(0, min(100, pct))
+            progress_total = total if total > 0 else step_total
+            progress_done = max(0, min(done, progress_total))
             reporter.progress(
-                base + pct, stage_total, message=f"DockingFilters: {label}"
+                progress_done, progress_total, message=f"DockingFilters: {label}"
             )
 
         return _progress
@@ -394,9 +373,10 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     agg_mode = filter_config.get("aggregation", {}).get("mode", "all")
 
     # Filter 0: Search-box containment (fast)
+    search_total = len(mols)
     try:
         if reporter is not None:
-            reporter.progress(0, stage_total, message="DockingFilters: search_box")
+            reporter.progress(0, search_total, message="DockingFilters: search_box")
         sb_df = apply_search_box_filter(mols, base_folder, docking_config, sb_config)
         results_df = results_df.merge(sb_df, on="mol_idx", how="left")
         filters_applied.append("search_box")
@@ -405,7 +385,9 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         results_df["pass_search_box"] = True
     finally:
         if reporter is not None:
-            reporter.progress(100, stage_total, message="DockingFilters: search_box")
+            reporter.progress(
+                search_total, search_total, message="DockingFilters: search_box"
+            )
 
     # Optional optimization: under aggregation mode "all", if a pose fails search-box
     # containment it cannot pass the overall filter, so we can skip heavier checks.
@@ -429,9 +411,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
         results_df = _run_single_filter(
             filter_name="pose_quality",
-            step_names=step_names,
             reporter=reporter,
-            stage_total=stage_total,
             step_progress_fn=_step_progress,
             mols=mols,
             active_pose_indices=active_pose_indices,
@@ -460,9 +440,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
         results_df = _run_single_filter(
             filter_name="interactions",
-            step_names=step_names,
             reporter=reporter,
-            stage_total=stage_total,
             step_progress_fn=_step_progress,
             mols=mols,
             active_pose_indices=active_pose_indices,
@@ -490,9 +468,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
                 results_df = _run_single_filter(
                     filter_name="shepherd_score",
-                    step_names=step_names,
                     reporter=reporter,
-                    stage_total=stage_total,
                     step_progress_fn=_step_progress,
                     mols=mols,
                     active_pose_indices=active_pose_indices,
@@ -523,9 +499,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
         results_df = _run_single_filter(
             filter_name="conformer_deviation",
-            step_names=step_names,
             reporter=reporter,
-            stage_total=stage_total,
             step_progress_fn=_step_progress,
             mols=mols,
             active_pose_indices=active_pose_indices,
@@ -536,7 +510,10 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         )
 
     if reporter is not None:
-        reporter.progress(stage_total, stage_total, message="DockingFilters complete")
+        total_molecules = len(mols)
+        reporter.progress(
+            total_molecules, total_molecules, message="DockingFilters complete"
+        )
 
     # Aggregate pass columns
     pass_cols = [c for c in results_df.columns if c.startswith("pass_")]

@@ -131,19 +131,30 @@ def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, report
     selected_tools = [t for t in tools_list if t in job_ids]
     gnina_output_sdf = _get_gnina_output_directory(cfg, base_folder) / "gnina_out.sdf"
 
-    progress_total = 0
+    tool_totals = {}
     make_tick = None
     if reporter is not None and not background and selected_tools:
-        progress_total, make_tick = _create_progress_tracker(
+        tool_totals, make_tick = _create_progress_tracker(
             reporter, selected_tools, ligands_dir, gnina_output_sdf
         )
 
     if TOOL_SMINA in job_ids:
         logger.info("Running SMINA docking")
+        if reporter is not None and not background:
+            reporter.progress(
+                0, tool_totals.get(TOOL_SMINA, 1), message=f"Docking ({TOOL_SMINA})"
+            )
         tick = make_tick(TOOL_SMINA) if make_tick and not background else None
         run_status[TOOL_SMINA] = _run_smina(
             ligands_dir, background, job_ids[TOOL_SMINA], tick=tick
         )
+        if (
+            reporter is not None
+            and not background
+            and run_status[TOOL_SMINA].get("status") == "completed"
+        ):
+            total = tool_totals.get(TOOL_SMINA, 1)
+            reporter.progress(total, total, message=f"Docking ({TOOL_SMINA})")
         if not background and run_status[TOOL_SMINA].get("status") == "completed":
             _emit_post_docking_warnings(
                 TOOL_SMINA, ligands_dir / "_workdir" / "smina_run.log"
@@ -153,10 +164,21 @@ def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, report
         logger.info("Running GNINA docking")
         try:
             output_sdf = gnina_output_sdf
+            if reporter is not None and not background:
+                reporter.progress(
+                    0, tool_totals.get(TOOL_GNINA, 1), message=f"Docking ({TOOL_GNINA})"
+                )
             tick = make_tick(TOOL_GNINA) if make_tick and not background else None
             run_status[TOOL_GNINA] = _run_gnina(
                 ligands_dir, output_sdf, background, job_ids[TOOL_GNINA], tick=tick
             )
+            if (
+                reporter is not None
+                and not background
+                and run_status[TOOL_GNINA].get("status") == "completed"
+            ):
+                total = tool_totals.get(TOOL_GNINA, 1)
+                reporter.progress(total, total, message=f"Docking ({TOOL_GNINA})")
             if not background and run_status[TOOL_GNINA].get("status") == "completed":
                 _emit_post_docking_warnings(
                     TOOL_GNINA,
@@ -175,4 +197,4 @@ def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, report
     if background:
         return True
 
-    return _evaluate_run_results(selected_tools, run_status, reporter, progress_total)
+    return _evaluate_run_results(selected_tools, run_status, reporter, tool_totals)

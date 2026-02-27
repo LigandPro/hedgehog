@@ -369,20 +369,15 @@ def _resolve_stage_options(config_struct_filters, config):
     }
 
 
-def _make_alerts_progress_cb(reporter, base, molecule_total, stage_total, filter_name):
-    """Build a progress callback for the common_alerts filter."""
+def _make_filter_progress_cb(reporter, molecule_total, filter_name):
+    """Build a per-filter progress callback in molecule units."""
 
-    def _alerts_progress(
-        done: int, total: int, base_value: int = base, name: str = filter_name
-    ) -> None:
-        if total <= 0:
-            stage_done = 0
-        else:
-            stage_done = int(round((done / total) * molecule_total))
-        stage_done = max(0, min(molecule_total, stage_done))
+    def _alerts_progress(done: int, total: int, name: str = filter_name) -> None:
+        progress_total = total if total > 0 else molecule_total
+        progress_done = max(0, min(done, progress_total))
         reporter.progress(
-            base_value + stage_done,
-            stage_total,
+            progress_done,
+            progress_total,
             message=f"StructFilters: {name}",
         )
 
@@ -489,7 +484,6 @@ def main(config, stage_dir, reporter=None):
     is_csv = input_path.lower().endswith(".csv")
     filter_names = list(filters_to_calculate)
     molecule_total = max(1, len(input_df))
-    stage_total = max(1, len(filter_names) * molecule_total)
     timings: dict[str, float] = {}
     stage_started = perf_counter()
 
@@ -505,18 +499,17 @@ def main(config, stage_dir, reporter=None):
 
     pass_mask_by_filter: dict[str, pd.DataFrame] = {}
 
-    for idx, filter_name in enumerate(filter_names):
-        base = idx * molecule_total
+    for filter_name in filter_names:
         if reporter is not None:
             reporter.progress(
-                base, stage_total, message=f"StructFilters: {filter_name}"
+                0, molecule_total, message=f"StructFilters: {filter_name}"
             )
 
         apply_func = filter_function_applier(filter_name)
         progress_cb = None
-        if reporter is not None and filter_name == "common_alerts":
-            progress_cb = _make_alerts_progress_cb(
-                reporter, base, molecule_total, stage_total, filter_name
+        if reporter is not None:
+            progress_cb = _make_filter_progress_cb(
+                reporter, molecule_total, filter_name
             )
 
         compute_started = perf_counter()
@@ -547,8 +540,8 @@ def main(config, stage_dir, reporter=None):
         timings[f"filter_post:{filter_name}"] = perf_counter() - post_started
         if reporter is not None:
             reporter.progress(
-                base + molecule_total,
-                stage_total,
+                molecule_total,
+                molecule_total,
                 message=f"StructFilters: {filter_name}",
             )
 
@@ -567,4 +560,6 @@ def main(config, stage_dir, reporter=None):
     _log_stage_timings(timings)
 
     if reporter is not None:
-        reporter.progress(stage_total, stage_total, message="StructFilters complete")
+        reporter.progress(
+            molecule_total, molecule_total, message="StructFilters complete"
+        )
