@@ -351,7 +351,7 @@ find src/hedgehog -maxdepth 1 -type d | sort
 3. Build docs to catch broken MDX/navigation issues:
 
 ```bash
-cd docs && pnpm install --frozen-lockfile && pnpm build
+cd docs && CI=1 pnpm install --frozen-lockfile --prefer-offline --reporter=append-only && pnpm build
 ```
 
 4. If code moved, update docs in the same PR:

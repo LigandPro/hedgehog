@@ -34,7 +34,8 @@ The repository ships a `lefthook.yml` policy with two levels:
   - `uv run --extra lint ruff check .`
   - `uv run --extra test pytest`
   - `uv run python scripts/check_pipeline.py --mode ci`
-  - docs build: `cd docs && pnpm install --frozen-lockfile && pnpm build`
+  - docs build (runs only when docs-affecting files changed in the push range):
+    `cd docs && CI=1 pnpm install --frozen-lockfile --prefer-offline --reporter=append-only && pnpm build`
 
 This setup mirrors the main CI jobs and reduces "works locally, fails in CI" cases.
 
@@ -64,7 +65,7 @@ find src/hedgehog -maxdepth 1 -type d | sort
 3. Rebuild docs:
 
 ```bash
-cd docs && pnpm install --frozen-lockfile && pnpm build
+cd docs && CI=1 pnpm install --frozen-lockfile --prefer-offline --reporter=append-only && pnpm build
 ```
 
 `pnpm build` runs a prebuild step that generates `docs/content/api/index.mdx`
