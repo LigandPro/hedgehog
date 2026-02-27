@@ -190,7 +190,9 @@ def main(config: dict, reporter=None) -> None:
         raise RuntimeError("Retrosynthesis analysis failed")
     if reporter is not None:
         reporter.progress(
-            retrosynthesis_total, retrosynthesis_total, message="Retrosynthesis complete"
+            retrosynthesis_total,
+            retrosynthesis_total,
+            message="Retrosynthesis complete",
         )
 
     retrosynth_df = parse_retrosynthesis_results(output_json)

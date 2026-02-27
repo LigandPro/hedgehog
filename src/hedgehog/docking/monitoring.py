@@ -66,6 +66,7 @@ def _create_progress_tracker(reporter, selected_tools, ligands_dir, gnina_output
             tool_totals[tool] = count
         else:
             tool_totals[tool] = molecule_total if molecule_total > 0 else 1
+
     def _count_done(tool_name: str) -> int:
         if tool_name == TOOL_SMINA:
             return min(_count_smina_done(ligands_dir), tool_totals.get(TOOL_SMINA, 1))
