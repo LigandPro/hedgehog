@@ -122,6 +122,8 @@ tools: gnina                              # gnina, smina, or both
 receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true                            # Execute scripts after generation
 run_in_background: false
+gnina_per_process_cpu: 8                  # CPU threads per GNINA process
+gnina_parallel_jobs_max: 6                # Cap auto parallel jobs
 
 smina_config:
   bin: smina                              # Binary name or path
@@ -136,7 +138,7 @@ gnina_config:
   bin: gnina
   autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
-  cpu: 32
+  cpu: 8
   seed: 42
   no_gpu: false                          # Use GPU when available
 ```
