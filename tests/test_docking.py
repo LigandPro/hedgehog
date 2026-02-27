@@ -10,7 +10,10 @@ from hedgehog.docking.binaries import _validate_optional_tool_path
 from hedgehog.docking.config_writer import _create_per_molecule_configs
 from hedgehog.docking.input import _find_latest_input_source, _prepare_ligands_dataframe
 from hedgehog.docking.ligand_prep import _convert_with_rdkit, _split_sdf_to_molecules
-from hedgehog.docking.scripts import _build_gnina_command_template
+from hedgehog.docking.scripts import (
+    _build_gnina_command_template,
+    _resolve_gnina_parallelism,
+)
 from hedgehog.docking.stage import run as run_docking
 from tests.constants import (
     COL_MODEL_NAME,
@@ -680,3 +683,53 @@ class TestGninaNoGpuFlag:
         _, config_path, _ = entries[0]
         config_text = Path(config_path).read_text()
         assert "device = 7" in config_text
+
+
+class TestGninaParallelismAuto:
+    """Tests for auto parallel jobs behavior in GNINA per-molecule mode."""
+
+    def test_gpu_auto_uses_cpu_budget_even_with_visible_gpus(self, monkeypatch):
+        cfg = {"gnina_config": {"cpu": 32}}
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "192")
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._count_visible_nvidia_gpus", lambda: 4
+        )
+
+        cpu_per_process, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
+            cfg, cfg["gnina_config"]
+        )
+
+        assert cpu_per_process == 32
+        assert gpu_count == 4
+        assert parallel_jobs == 6
+
+    def test_gpu_auto_respects_cpu_budget_when_lower_than_gpu_count(self, monkeypatch):
+        cfg = {"gnina_config": {"cpu": 64}}
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "64")
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._count_visible_nvidia_gpus", lambda: 4
+        )
+
+        _, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
+            cfg, cfg["gnina_config"]
+        )
+
+        assert gpu_count == 4
+        assert parallel_jobs == 1
+
+    def test_gpu_auto_does_not_override_explicit_parallel_jobs(self, monkeypatch):
+        cfg = {
+            "gnina_parallel_jobs": 6,
+            "gnina_config": {"cpu": 32},
+        }
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "192")
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._count_visible_nvidia_gpus", lambda: 4
+        )
+
+        _, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
+            cfg, cfg["gnina_config"]
+        )
+
+        assert gpu_count == 4
+        assert parallel_jobs == 6

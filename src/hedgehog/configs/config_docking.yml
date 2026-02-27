@@ -3,6 +3,8 @@ tools: gnina  # Options: gnina, smina, both
 receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
+gnina_per_process_cpu: 8
+gnina_parallel_jobs_max: 6
 smina_config:
   bin: smina
   autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
@@ -15,7 +17,7 @@ gnina_config:
   bin: gnina
   autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
-  cpu: 32
+  cpu: 8
   seed: 42
   no_gpu: false
   num_modes: 1

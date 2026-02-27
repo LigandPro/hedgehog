@@ -776,8 +776,6 @@ def _resolve_gnina_parallelism(cfg, gnina_config):
     no_gpu_enabled = _parse_bool_config(gnina_config.get("no_gpu", False))
     gpu_count = 0 if no_gpu_enabled else _count_visible_nvidia_gpus()
     parallel_jobs = _resolve_gnina_parallel_jobs(cfg, cpu_per_process)
-    if gpu_count > 0 and cfg.get("gnina_parallel_jobs") is None:
-        parallel_jobs = 1
     return cpu_per_process, gpu_count, parallel_jobs
 
 
