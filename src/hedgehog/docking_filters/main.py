@@ -353,9 +353,6 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     cd_config = filter_config.get("conformer_deviation", {})
 
     ref_path = ss_config.get("reference_ligand")
-    shepherd_enabled = bool(ss_config.get("enabled", False)) and bool(
-        ref_path and Path(ref_path).exists()
-    )
 
     def _step_progress(label: str, step_total: int):
         if reporter is None:
