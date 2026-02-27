@@ -630,6 +630,7 @@ class TestCommonAlertsContract:
             initializer=None,
             initargs=(),
             preserve_order=True,
+            start_method=None,
         ):
             if initializer is not None:
                 initializer(*initargs)
@@ -652,6 +653,83 @@ class TestCommonAlertsContract:
         assert "Common Alerts progress: 0/2 molecules (0.0%)" in caplog.text
         assert "Common Alerts progress: 2/2 molecules (100.0%)" in caplog.text
         assert "Common Alerts completed: 2/2 molecules (100.0%)" in caplog.text
+
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
+    def test_linux_defaults_common_alerts_to_fork(
+        self, mock_load_config, mock_filter_alerts, monkeypatch
+    ):
+        """Linux runs should force 'fork' start method for Common Alerts."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {"RulesetA": [("[#7]", "nitrogen atom")]}
+        )
+
+        seen_start_method = {"value": None}
+
+        def _fake_parallel_map(
+            func,
+            items,
+            n_jobs,
+            chunksize=None,
+            progress=None,
+            initializer=None,
+            initargs=(),
+            preserve_order=True,
+            start_method=None,
+        ):
+            seen_start_method["value"] = start_method
+            if initializer is not None:
+                initializer(*initargs)
+            return [func(item) for item in items]
+
+        monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
+        monkeypatch.setattr(structfilters_utils.sys, "platform", "linux")
+
+        mol = Chem.MolFromSmiles(SMILES_ETHANOL)
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        apply_structural_alerts(config, [mol])
+
+        assert seen_start_method["value"] == "fork"
+
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
+    def test_env_override_for_common_alerts_start_method(
+        self, mock_load_config, mock_filter_alerts, monkeypatch
+    ):
+        """Environment override should take precedence for Common Alerts workers."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {"RulesetA": [("[#7]", "nitrogen atom")]}
+        )
+
+        seen_start_method = {"value": None}
+
+        def _fake_parallel_map(
+            func,
+            items,
+            n_jobs,
+            chunksize=None,
+            progress=None,
+            initializer=None,
+            initargs=(),
+            preserve_order=True,
+            start_method=None,
+        ):
+            seen_start_method["value"] = start_method
+            if initializer is not None:
+                initializer(*initargs)
+            return [func(item) for item in items]
+
+        monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
+        monkeypatch.setenv("HEDGEHOG_COMMON_ALERTS_START_METHOD", "forkserver")
+        monkeypatch.setattr(structfilters_utils.sys, "platform", "linux")
+
+        mol = Chem.MolFromSmiles(SMILES_ETHANOL)
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        apply_structural_alerts(config, [mol])
+
+        assert seen_start_method["value"] == "forkserver"
 
 
 class TestGetBasicStatsCommonAlerts:
