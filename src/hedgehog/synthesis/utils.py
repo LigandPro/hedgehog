@@ -326,10 +326,18 @@ def run_aizynthfinder(
                 if parsed is not None:
                     done, total = parsed
                     if total > 0:
-                        best_total = total
-                        best_done = max(best_done, min(done, best_total))
-                        progress_cb(best_done, best_total, line[:80] if line else None)
-                        emitted = True
+                        if total == best_total:
+                            mapped_done = min(done, best_total)
+                        else:
+                            ratio = max(0.0, min(float(done) / float(total), 1.0))
+                            mapped_done = int(round(ratio * best_total))
+                        mapped_done = max(0, min(mapped_done, best_total))
+                        if mapped_done > best_done:
+                            best_done = mapped_done
+                            progress_cb(
+                                best_done, best_total, line[:80] if line else None
+                            )
+                            emitted = True
 
             now = time.monotonic()
             # Heartbeat fallback for runs that do not expose parseable progress.
@@ -830,14 +838,22 @@ def _ensure_rascore_json_model() -> Path | None:
     return None
 
 
-def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
+def _calculate_ra_scores_batch_legacy(
+    smiles_list: list[str],
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> list[float]:
     """Calculate RA scores via legacy worker with xgboost 1.5 compatibility."""
     nan_list = [np.nan] * len(smiles_list)
     if not smiles_list:
         return nan_list
+    total = len(smiles_list)
+    if progress_cb is not None:
+        progress_cb(0, total)
 
     model_path = _ensure_rascore_pickle_path()
     if model_path is None:
+        if progress_cb is not None:
+            progress_cb(total, total)
         return nan_list
 
     try:
@@ -847,6 +863,8 @@ def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
             "Unable to run legacy RAScore worker: uv executable could not be resolved (%s)",
             e,
         )
+        if progress_cb is not None:
+            progress_cb(total, total)
         return nan_list
 
     project_root = Path(__file__).resolve().parents[3]
@@ -890,6 +908,8 @@ def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
             raw_scores = payload.get("scores", [])
         except Exception as e:
             logger.warning("Legacy RAScore worker failed: %s", e)
+            if progress_cb is not None:
+                progress_cb(total, total)
             return nan_list
 
     if len(raw_scores) != len(smiles_list):
@@ -898,6 +918,8 @@ def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
             len(raw_scores),
             len(smiles_list),
         )
+        if progress_cb is not None:
+            progress_cb(total, total)
         return nan_list
 
     scores: list[float] = []
@@ -909,11 +931,15 @@ def _calculate_ra_scores_batch_legacy(smiles_list: list[str]) -> list[float]:
                 scores.append(float(value))
             except (TypeError, ValueError):
                 scores.append(np.nan)
+    if progress_cb is not None:
+        progress_cb(total, total)
     return scores
 
 
 def _calculate_ra_scores_batch(
-    smiles_list: list, config: dict[str, Any] | None = None
+    smiles_list: list,
+    config: dict[str, Any] | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
 ) -> list:
     """Calculate RA scores for multiple molecules in a single batch.
 
@@ -925,6 +951,11 @@ def _calculate_ra_scores_batch(
         List of RA scores (0-1, higher is better), with np.nan for failed calculations
     """
     nan_list = [np.nan] * len(smiles_list)
+    total = len(smiles_list)
+    if total <= 0:
+        return nan_list
+    if progress_cb is not None:
+        progress_cb(0, total)
 
     strict_rascore = _strict_rascore_enabled()
     rascore_model = _load_rascore()
@@ -937,17 +968,25 @@ def _calculate_ra_scores_batch(
         logger.info(
             "RAScore local model load failed; falling back to legacy worker backend"
         )
-        return _calculate_ra_scores_batch_legacy(smiles_list)
+        return _calculate_ra_scores_batch_legacy(smiles_list, progress_cb=progress_cb)
 
     fps = []
     valid_indices = []
-    for i, smi in enumerate(smiles_list):
+    progress_step = max(1, min(1_000, total // 200)) if total > 0 else 1
+    next_progress_log = progress_step
+    for i, smi in enumerate(smiles_list, start=1):
         fp = _get_ecfp6_counts(smi)
         if fp is not None:
             fps.append(fp)
-            valid_indices.append(i)
+            valid_indices.append(i - 1)
+        if progress_cb is not None and (i == total or i >= next_progress_log):
+            progress_cb(i, total)
+            while next_progress_log <= i:
+                next_progress_log += progress_step
 
     if not fps:
+        if progress_cb is not None:
+            progress_cb(total, total)
         return nan_list
 
     try:
@@ -962,6 +1001,8 @@ def _calculate_ra_scores_batch(
         scores = [np.nan] * len(smiles_list)
         for idx, prob in zip(valid_indices, probs):
             scores[idx] = float(prob)
+        if progress_cb is not None:
+            progress_cb(total, total)
         return scores
     except Exception as e:
         if strict_rascore:
@@ -970,6 +1011,8 @@ def _calculate_ra_scores_batch(
                 f"({STRICT_RASCORE_ENV}=1)."
             ) from e
         logger.debug("Failed to calculate RA scores in batch: %s", e)
+        if progress_cb is not None:
+            progress_cb(total, total)
         return nan_list
 
 
@@ -1018,7 +1061,15 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
         _calculate_syba_score_single, smiles_list, n_jobs=1, progress=syba_progress
     )
 
-    ra_scores = _calculate_ra_scores_batch(smiles_list, config)
+    ra_progress = None
+    if progress_cb is not None:
+
+        def _ra_progress(done: int, total: int) -> None:
+            progress_cb("ra_score", done, total)
+
+        ra_progress = _ra_progress
+
+    ra_scores = _calculate_ra_scores_batch(smiles_list, config, progress_cb=ra_progress)
     result_df["ra_score"] = ra_scores
 
     for score_name in ["sa_score", "syba_score", "ra_score"]:

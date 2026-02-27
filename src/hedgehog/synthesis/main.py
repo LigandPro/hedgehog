@@ -91,21 +91,17 @@ def main(config: dict, reporter=None) -> None:
         logger.info("Saved 0 molecules to %s", filtered_output)
         return
 
-    stage_total = 400
+    total_input_mols = max(len(input_df), 1)
 
     def _progress_scores(phase: str, done: int, total: int) -> None:
         if reporter is None:
             return
-        if total <= 0:
-            pct = 0
-        else:
-            pct = int(round((done / total) * 100))
-        pct = max(0, min(100, pct))
-        base = 0 if phase == "sa_score" else 100 if phase == "syba_score" else 0
-        reporter.progress(base + pct, stage_total, message=f"Computing {phase}")
+        phase_total = total if total > 0 else total_input_mols
+        phase_done = max(0, min(done, phase_total))
+        reporter.progress(phase_done, phase_total, message=f"Computing {phase}")
 
     if reporter is not None:
-        reporter.progress(0, stage_total, message="Computing synthesis scores")
+        reporter.progress(0, total_input_mols, message="Computing synthesis scores")
 
     scored_df = calculate_synthesis_scores(
         input_df,
@@ -114,16 +110,22 @@ def main(config: dict, reporter=None) -> None:
         progress_cb=_progress_scores if reporter is not None else None,
     )
     if reporter is not None:
-        reporter.progress(200, stage_total, message="Applying score filters")
+        reporter.progress(0, total_input_mols, message="Applying score filters")
     _save_ordered_csv(scored_df, output_folder / "synthesis_scores.csv")
     score_filtered_df = apply_synthesis_score_filters(scored_df, config_synthesis)
+    if reporter is not None:
+        reporter.progress(
+            total_input_mols, total_input_mols, message="Applying score filters"
+        )
 
     if len(score_filtered_df) == 0:
         logger.warning("No molecules passed synthesis score filters")
         _save_ordered_csv(score_filtered_df, filtered_output)
         logger.info("Saved 0 molecules to %s", filtered_output)
         if reporter is not None:
-            reporter.progress(stage_total, stage_total, message="Synthesis complete")
+            reporter.progress(
+                total_input_mols, total_input_mols, message="Synthesis complete"
+            )
         return
 
     # Check if retrosynthesis is enabled
@@ -137,7 +139,9 @@ def main(config: dict, reporter=None) -> None:
             filtered_output,
         )
         if reporter is not None:
-            reporter.progress(stage_total, stage_total, message="Synthesis complete")
+            reporter.progress(
+                total_input_mols, total_input_mols, message="Synthesis complete"
+            )
         return
 
     aizynthfinder_root = _get_aizynthfinder_root()
@@ -157,23 +161,22 @@ def main(config: dict, reporter=None) -> None:
     prepare_input_smiles(score_filtered_df, input_smiles_file)
     output_json = output_folder / "retrosynthesis_results.json"
 
+    retrosynthesis_total = max(len(score_filtered_df), 1)
+
     def _progress_retrosynthesis(
         done: int, total: int, detail: str | None = None
     ) -> None:
         if reporter is None:
             return
-        if total <= 0:
-            mapped = 300
-        else:
-            done = max(0, min(done, total))
-            mapped = 300 + int(round((done / total) * 99))
+        phase_total = total if total > 0 else retrosynthesis_total
+        phase_done = max(0, min(done, phase_total))
         message = "Running retrosynthesis (AiZynthFinder)"
         if detail:
             message = f"{message}: {detail}"
-        reporter.progress(mapped, stage_total, message=message)
+        reporter.progress(phase_done, phase_total, message=message)
 
     if reporter is not None:
-        _progress_retrosynthesis(0, max(len(score_filtered_df), 1), "starting")
+        _progress_retrosynthesis(0, retrosynthesis_total, "starting")
 
     if not run_aizynthfinder(
         input_smiles_file,
@@ -186,7 +189,9 @@ def main(config: dict, reporter=None) -> None:
         logger.error("Retrosynthesis analysis failed")
         raise RuntimeError("Retrosynthesis analysis failed")
     if reporter is not None:
-        reporter.progress(stage_total, stage_total, message="Retrosynthesis complete")
+        reporter.progress(
+            retrosynthesis_total, retrosynthesis_total, message="Retrosynthesis complete"
+        )
 
     retrosynth_df = parse_retrosynthesis_results(output_json)
     if len(retrosynth_df) == 0:

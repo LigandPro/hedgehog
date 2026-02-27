@@ -36,16 +36,10 @@ def main(data, config, subfolder=None, reporter=None):
     for folder in [descriptors_folder, metrics_folder, filtered_folder, plots_folder]:
         Path(folder).mkdir(parents=True, exist_ok=True)
 
-    stage_total = 1000
-    compute_base = 30
-    compute_span = 720
-    filter_start = compute_base + compute_span + 10
-    filter_done = filter_start + 80
-    plots_start = filter_done + 10
-    plots_end = 990
+    molecule_total = max(len(data), 1)
 
     if reporter is not None:
-        reporter.progress(10, stage_total, message="Loading descriptor config")
+        reporter.progress(0, molecule_total, message="Loading descriptor config")
 
     config_descriptors = load_config(config[CFG_DESCRIPTORS])
     metrics_df = compute_metrics(
@@ -54,30 +48,25 @@ def main(data, config, subfolder=None, reporter=None):
         config=config,
         config_descriptors=config_descriptors,
         reporter=reporter,
-        progress_stage_total=stage_total,
-        progress_completed_base=compute_base,
-        progress_completed_span=compute_span,
     )
 
     if config_descriptors["filter_data"]:
         if reporter is not None:
-            reporter.progress(
-                filter_start, stage_total, message="Applying descriptor filters"
-            )
+            reporter.progress(0, molecule_total, message="Applying descriptor filters")
         filter_molecules(metrics_df, config_descriptors["borders"], filtered_folder)
         if reporter is not None:
             reporter.progress(
-                filter_done, stage_total, message="Saving descriptor outputs"
+                molecule_total, molecule_total, message="Saving descriptor outputs"
             )
 
             def _plot_progress(done: int, total: int) -> None:
                 if total <= 0:
-                    mapped = plots_start
+                    mapped = 0
                 else:
                     ratio = min(1.0, max(0.0, done / total))
-                    mapped = plots_start + int(round((plots_end - plots_start) * ratio))
+                    mapped = int(round(ratio * molecule_total))
                 reporter.progress(
-                    mapped, stage_total, message="Rendering descriptor plots"
+                    mapped, molecule_total, message="Rendering descriptor plots"
                 )
 
         else:
@@ -91,6 +80,6 @@ def main(data, config, subfolder=None, reporter=None):
         )
 
     if reporter is not None:
-        reporter.progress(stage_total, stage_total, message="Descriptors complete")
+        reporter.progress(molecule_total, molecule_total, message="Descriptors complete")
 
     return metrics_df
