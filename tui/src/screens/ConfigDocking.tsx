@@ -354,6 +354,14 @@ export function ConfigDocking(): React.ReactElement {
 
   if (browsingField) {
     const currentValue = String(getValue(browsingField) || process.cwd());
+    const browserShortcuts = [
+      { key: '↑↓', label: 'Navigate' },
+      { key: 'Enter', label: 'Open/Select' },
+      { key: '→/e', label: 'Edit path' },
+      { key: 'Space', label: 'Search' },
+      { key: '/', label: 'Search' },
+      { key: '←', label: 'Back' },
+    ];
     return (
       <Box flexDirection="column" padding={1}>
         <Header title="Select File" subtitle={browsingField.label} />
@@ -363,6 +371,7 @@ export function ConfigDocking(): React.ReactElement {
           onSelect={handlePathSelect}
           onCancel={handleBrowseCancel}
         />
+        <Footer shortcuts={browserShortcuts} />
       </Box>
     );
   }

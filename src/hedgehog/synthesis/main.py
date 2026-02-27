@@ -153,18 +153,35 @@ def main(config: dict, reporter=None) -> None:
             _save_ordered_csv(score_filtered_df, filtered_output)
             return
 
-    prepare_input_smiles(score_filtered_df, output_folder / "input_smiles.smi")
+    input_smiles_file = output_folder / "input_smiles.smi"
+    prepare_input_smiles(score_filtered_df, input_smiles_file)
     output_json = output_folder / "retrosynthesis_results.json"
+
+    def _progress_retrosynthesis(
+        done: int, total: int, detail: str | None = None
+    ) -> None:
+        if reporter is None:
+            return
+        if total <= 0:
+            mapped = 300
+        else:
+            done = max(0, min(done, total))
+            mapped = 300 + int(round((done / total) * 99))
+        message = "Running retrosynthesis (AiZynthFinder)"
+        if detail:
+            message = f"{message}: {detail}"
+        reporter.progress(mapped, stage_total, message=message)
+
     if reporter is not None:
-        reporter.progress(
-            300, stage_total, message="Running retrosynthesis (AiZynthFinder)"
-        )
+        _progress_retrosynthesis(0, max(len(score_filtered_df), 1), "starting")
+
     if not run_aizynthfinder(
-        output_folder / "input_smiles.smi",
+        input_smiles_file,
         output_json,
         aizynth_config,
         aizynthfinder_dir=aizynthfinder_root,
         synthesis_config=config_synthesis,
+        progress_cb=_progress_retrosynthesis if reporter is not None else None,
     ):
         logger.error("Retrosynthesis analysis failed")
         raise RuntimeError("Retrosynthesis analysis failed")

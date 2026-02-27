@@ -22,6 +22,8 @@ interface FileEntry {
   isDirectory: boolean;
 }
 
+type InteractionMode = 'browse' | 'pathEdit' | 'search';
+
 /**
  * Get a valid starting directory from a path.
  * If path looks like a file (has extension), return parent directory.
@@ -100,6 +102,25 @@ function findNearestExistingDirectory(candidatePath: string): string | null {
   }
 }
 
+function getPathTailFilter(inputValue: string, resolvedPath: string): string {
+  const trimmed = inputValue.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (/[\\/]$/.test(trimmed)) {
+    return '';
+  }
+
+  const basename = path.basename(path.normalize(resolvedPath));
+  if (!basename || basename === '.' || basename === '..') {
+    return '';
+  }
+  if (isExistingDirectory(resolvedPath)) {
+    return '';
+  }
+  return basename;
+}
+
 /**
  * Truncate path for display, keeping the end visible.
  */
@@ -143,36 +164,52 @@ export function FileBrowser({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [manualInput, setManualInput] = useState(startInPathEdit);
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>(
+    startInPathEdit ? 'pathEdit' : 'browse'
+  );
   const [inputValue, setInputValue] = useState(initialPath || process.cwd());
   const [inputBasePath, setInputBasePath] = useState(startDir);
-
-  // Search mode
-  const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Get terminal size with resize support
   const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
+  const isPathEditMode = interactionMode === 'pathEdit';
+  const isSearchMode = interactionMode === 'search';
+
+  const resolvedInputPath = useMemo(
+    () => resolveInputPath(inputValue, inputBasePath),
+    [inputValue, inputBasePath]
+  );
+
+  const previewDir = useMemo(
+    () => findNearestExistingDirectory(getStartingDirectory(resolvedInputPath)),
+    [resolvedInputPath]
+  );
+
+  const pathTailFilter = useMemo(
+    () => (isPathEditMode ? getPathTailFilter(inputValue, resolvedInputPath) : ''),
+    [inputValue, isPathEditMode, resolvedInputPath]
+  );
+
+  const activeFilterQuery = isPathEditMode ? pathTailFilter : searchQuery;
 
   useEffect(() => {
     loadFiles();
   }, [currentPath]);
 
   useEffect(() => {
-    if (!manualInput) {
+    if (!isPathEditMode) {
       return;
     }
-    const resolved = resolveInputPath(inputValue, inputBasePath);
-    const previewDir = findNearestExistingDirectory(getStartingDirectory(resolved));
     if (previewDir && previewDir !== currentPath) {
       setCurrentPath(previewDir);
     }
-  }, [manualInput, inputValue, inputBasePath, currentPath]);
+  }, [isPathEditMode, previewDir, currentPath]);
 
   // Reset search when directory changes
   useEffect(() => {
     setSearchQuery('');
-    setSearchMode(false);
+    setInteractionMode((mode) => (mode === 'search' ? 'browse' : mode));
   }, [currentPath]);
 
   const loadFiles = async () => {
@@ -184,7 +221,7 @@ export function FileBrowser({
         path: currentPath,
         extensions,
       });
-      setFiles([{ name: '..', path: currentPath + '/..', isDirectory: true }, ...result]);
+      setFiles([{ name: '..', path: path.join(currentPath, '..'), isDirectory: true }, ...result]);
       setSelectedIndex(0);
     } catch (err) {
       setError(String(err));
@@ -193,13 +230,13 @@ export function FileBrowser({
     }
   };
 
-  // Filter files based on search query
+  // Filter files based on search query or manual path tail
   const filteredFiles = useMemo(() => {
-    if (!searchQuery) return files;
+    if (!activeFilterQuery) return files;
     return files.filter(f =>
-      f.name.toLowerCase().includes(searchQuery.toLowerCase())
+      f.name.toLowerCase().includes(activeFilterQuery.toLowerCase())
     );
-  }, [files, searchQuery]);
+  }, [files, activeFilterQuery]);
 
   // Reset selection if it exceeds filtered list
   useEffect(() => {
@@ -208,46 +245,51 @@ export function FileBrowser({
     }
   }, [filteredFiles.length, selectedIndex]);
 
-  const enterManualInput = (seed: string): void => {
+  const enterPathEditMode = (seed: string): void => {
     setInputBasePath(currentPath);
     setInputValue(seed);
-    setManualInput(true);
+    setSearchQuery('');
+    setInteractionMode('pathEdit');
+  };
+
+  const enterSearchMode = (): void => {
+    setSearchQuery('');
+    setInteractionMode('search');
   };
 
   useInput((input, key) => {
     // Manual path input mode
-    if (manualInput) {
+    if (isPathEditMode) {
       if (key.escape) {
-        setManualInput(false);
+        setInteractionMode('browse');
       } else if (key.return) {
-        const resolved = resolveInputPath(inputValue, inputBasePath);
-        if (!selectDirectory && isExistingDirectory(resolved)) {
-          setCurrentPath(resolved);
-          setManualInput(false);
+        if (!selectDirectory && isExistingDirectory(resolvedInputPath)) {
+          setCurrentPath(resolvedInputPath);
+          setInteractionMode('browse');
           return;
         }
         if (selectDirectory) {
-          const nearestDir = findNearestExistingDirectory(resolved);
-          onSelect(nearestDir || resolved);
+          const nearestDir = findNearestExistingDirectory(resolvedInputPath);
+          onSelect(nearestDir || resolvedInputPath);
           return;
         }
-        onSelect(resolved);
+        onSelect(resolvedInputPath);
       }
       return;
     }
 
     // Search mode input handling
-    if (searchMode) {
+    if (isSearchMode) {
       if (key.escape) {
-        setSearchMode(false);
+        setInteractionMode('browse');
         setSearchQuery('');
       } else if (key.return) {
-        setSearchMode(false);
+        setInteractionMode('browse');
       } else if (key.backspace || key.delete) {
-        setSearchQuery(searchQuery.slice(0, -1));
+        setSearchQuery((prev) => prev.slice(0, -1));
       } else if (input && input.length === 1 && !key.ctrl && !key.meta) {
         // Allow any character including space in search
-        setSearchQuery(searchQuery + input);
+        setSearchQuery((prev) => prev + input);
       }
       return;
     }
@@ -255,11 +297,14 @@ export function FileBrowser({
     // Normal navigation mode
     if (key.upArrow) {
       if (selectedIndex === 0) {
-        enterManualInput(currentPath);
+        enterPathEditMode(currentPath);
         return;
       }
       setSelectedIndex(Math.max(0, selectedIndex - 1));
     } else if (key.downArrow) {
+      if (filteredFiles.length === 0) {
+        return;
+      }
       setSelectedIndex(Math.min(filteredFiles.length - 1, selectedIndex + 1));
     } else if (key.return) {
       const selected = filteredFiles[selectedIndex];
@@ -270,15 +315,19 @@ export function FileBrowser({
           onSelect(selected.path);
         }
       }
-    } else if (input === ' ' && selectDirectory) {
-      // Space to select current directory
-      onSelect(currentPath);
+    } else if (input === ' ') {
+      if (selectDirectory) {
+        // Space to select current directory
+        onSelect(currentPath);
+      } else {
+        // Space opens quick search in file mode
+        enterSearchMode();
+      }
     } else if (input === '/') {
       // Activate search mode
-      setSearchMode(true);
-      setSearchQuery('');
-    } else if (key.rightArrow || input === 'e' || input === 'p') {
-      enterManualInput(currentPath);
+      enterSearchMode();
+    } else if (key.rightArrow || input === 'e') {
+      enterPathEditMode(currentPath);
     } else if (key.escape || key.leftArrow || input === 'q') {
       // Exit on Esc, left arrow, or q
       onCancel();
@@ -297,8 +346,10 @@ export function FileBrowser({
   // Calculate scrollbar position
   const showScrollbar = filteredFiles.length > listHeight;
   const scrollbarHeight = listHeight;
-  const scrollThumbSize = Math.max(1, Math.floor((listHeight / filteredFiles.length) * scrollbarHeight));
-  const scrollThumbPos = Math.floor((startIdx / Math.max(1, filteredFiles.length - listHeight)) * (scrollbarHeight - scrollThumbSize));
+  const scrollThumbSize = Math.max(1, Math.floor((listHeight / Math.max(1, filteredFiles.length)) * scrollbarHeight));
+  const scrollThumbPos = showScrollbar
+    ? Math.floor((startIdx / Math.max(1, filteredFiles.length - listHeight)) * (scrollbarHeight - scrollThumbSize))
+    : 0;
 
   const displayTitle = title || (selectDirectory ? 'Select Folder' : 'Select File');
   const displayPath = truncatePath(currentPath, terminalWidth - 20);
@@ -311,8 +362,9 @@ export function FileBrowser({
     );
   }
 
-  if (manualInput) {
-    const manualDisplayPath = truncatePath(currentPath, terminalWidth - 25);
+  if (isPathEditMode) {
+    const previewPathForDisplay = previewDir || currentPath;
+    const manualDisplayPath = truncatePath(previewPathForDisplay, terminalWidth - 25);
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold color="cyan">Edit path:</Text>
@@ -327,6 +379,12 @@ export function FileBrowser({
           <Text dimColor>Preview folder: </Text>
           <Text color="white">{manualDisplayPath}</Text>
         </Box>
+        {pathTailFilter && (
+          <Box marginTop={1}>
+            <Text dimColor>Name filter: </Text>
+            <Text color="yellow">{pathTailFilter}</Text>
+          </Box>
+        )}
         <Box marginTop={1}>
           <Text dimColor>[Enter] Apply  [Esc] Cancel</Text>
         </Box>
@@ -359,17 +417,17 @@ export function FileBrowser({
       </Box>
 
       {/* Search indicator */}
-      {searchMode && (
+      {isSearchMode && (
         <Box paddingX={1}>
           <Text color="yellow">/ </Text>
           <Text color="white">{searchQuery}</Text>
           <Text color="yellow">_</Text>
         </Box>
       )}
-      {!searchMode && searchQuery && (
+      {!isSearchMode && activeFilterQuery && (
         <Box paddingX={1}>
           <Text dimColor>Filter: </Text>
-          <Text color="yellow">{searchQuery}</Text>
+          <Text color="yellow">{activeFilterQuery}</Text>
           <Text dimColor> ({filteredFiles.length} matches)</Text>
         </Box>
       )}

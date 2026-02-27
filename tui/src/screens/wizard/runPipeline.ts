@@ -2,6 +2,47 @@ import { getBridge } from '../../services/python-bridge.js';
 import { useStore } from '../../store/index.js';
 import type { JobHistoryRecord, PipelinePreflightResult, Screen } from '../../types/index.js';
 
+type ConfigType = 'main' | 'mol_prep' | 'descriptors' | 'filters' | 'synthesis' | 'retrosynthesis' | 'docking' | 'docking_filters';
+
+const STAGE_TO_CONFIG_TYPE: Record<string, Exclude<ConfigType, 'main'>> = {
+  mol_prep: 'mol_prep',
+  descriptors: 'descriptors',
+  struct_filters: 'filters',
+  synthesis: 'synthesis',
+  docking: 'docking',
+  docking_filters: 'docking_filters',
+};
+
+function buildWizardConfigOverrides(
+  state: ReturnType<typeof useStore.getState>,
+  selectedStages: string[]
+): Partial<Record<ConfigType, Record<string, unknown>>> {
+  const overrides: Partial<Record<ConfigType, Record<string, unknown>>> = {};
+
+  const main = state.configs.main;
+  if (main) {
+    overrides.main = main as unknown as Record<string, unknown>;
+  }
+
+  for (const stage of selectedStages) {
+    const configType = STAGE_TO_CONFIG_TYPE[stage];
+    if (!configType) continue;
+    const config = state.configs[configType];
+    if (config) {
+      overrides[configType] = config as unknown as Record<string, unknown>;
+    }
+  }
+
+  if (selectedStages.includes('synthesis')) {
+    const retrosynthesis = state.configs.retrosynthesis;
+    if (retrosynthesis) {
+      overrides.retrosynthesis = retrosynthesis as unknown as Record<string, unknown>;
+    }
+  }
+
+  return overrides;
+}
+
 export interface PreflightCounters {
   errors: number;
   warnings: number;
@@ -51,7 +92,9 @@ export async function refreshWizardPreflight(
 
   try {
     const bridge = getBridge();
-    const preflight = await bridge.preflightPipeline(selectedStages);
+    const latestState = useStore.getState();
+    const configOverrides = buildWizardConfigOverrides(latestState, selectedStages);
+    const preflight = await bridge.preflightPipeline(selectedStages, configOverrides);
     useStore.getState().setWizardPreflight(preflight);
     return preflight;
   } catch (error) {
@@ -93,7 +136,8 @@ export async function runWizardPipeline(
   try {
     const bridge = getBridge();
     const latestState = useStore.getState();
-    const jobId = await bridge.startPipeline(selectedStages);
+    const configOverrides = buildWizardConfigOverrides(latestState, selectedStages);
+    const jobId = await bridge.startPipeline(selectedStages, configOverrides);
     const now = new Date();
     const mainConfig = latestState.configs.main;
 

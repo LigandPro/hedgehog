@@ -247,6 +247,14 @@ export function ConfigMain(): React.ReactElement {
 
   if (browsingField) {
     const currentValue = String(values[browsingField] || process.cwd());
+    const browserShortcuts = [
+      { key: '↑↓', label: 'Navigate' },
+      { key: 'Enter', label: 'Open/Select' },
+      { key: '→/e', label: 'Edit path' },
+      { key: 'Space', label: 'Search' },
+      { key: '/', label: 'Search' },
+      { key: '←', label: 'Back' },
+    ];
     return (
       <Box flexDirection="column" padding={1}>
         <Header title="Select Path" subtitle={browsingField} />
@@ -255,6 +263,7 @@ export function ConfigMain(): React.ReactElement {
           onSelect={handlePathSelect}
           onCancel={handleBrowseCancel}
         />
+        <Footer shortcuts={browserShortcuts} />
       </Box>
     );
   }

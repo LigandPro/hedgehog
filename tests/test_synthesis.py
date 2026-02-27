@@ -1,5 +1,6 @@
 """Tests for synthesis/utils.py."""
 
+import io
 import json
 import pickle  # noqa: S403 — test-only, trusted data
 import sys
@@ -534,6 +535,58 @@ class TestRunAizynthfinder:
         cmd = captured["cmd"]
         assert "--nproc" in cmd
         assert cmd[cmd.index("--nproc") + 1] == "6"
+
+    def test_extract_aizynth_progress_from_pairs_and_percent(self):
+        assert synthesis_utils._extract_aizynth_progress("done 3/10") == (3, 10)
+        assert synthesis_utils._extract_aizynth_progress("50%", fallback_total=8) == (
+            4,
+            8,
+        )
+
+    def test_progress_callback_receives_stream_updates(self, tmp_path, monkeypatch):
+        uv_bin = tmp_path / "bin" / "uv"
+        uv_bin.parent.mkdir(parents=True, exist_ok=True)
+        uv_bin.write_text("#!/bin/sh\n")
+        uv_bin.chmod(0o755)
+
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
+        input_smi = tmp_path / "in.smi"
+        input_smi.write_text("CC\nCCC\nCCCC\nCCN\n", encoding="utf-8")
+
+        class _FakePopen:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                self.stdout = io.StringIO("step 1/4\nstep 2/4\n")
+
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: str(uv_bin))
+        monkeypatch.setattr(synthesis_utils.subprocess, "Popen", _FakePopen)
+
+        progress_events: list[tuple[int, int, str | None]] = []
+
+        ok = run_aizynthfinder(
+            input_smi,
+            tmp_path / "out.json",
+            config,
+            progress_cb=lambda done, total, detail: progress_events.append(
+                (done, total, detail)
+            ),
+        )
+
+        assert ok is True
+        assert progress_events
+        assert progress_events[0][0] == 0
+        assert any(done >= 2 and total == 4 for done, total, _ in progress_events)
+        assert progress_events[-1][0] == progress_events[-1][1]
 
 
 class TestParseRetrosynthesisResults:

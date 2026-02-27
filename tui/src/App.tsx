@@ -151,15 +151,16 @@ export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
   // Wizard screens - shortcuts handled internally
   wizardInputSelection: [
     { key: '↑↓', label: 'Navigate' },
-    { key: 'Enter', label: 'Browse' },
-    { key: '→', label: 'Next' },
+    { key: 'Space', label: 'Edit/Browse' },
+    { key: '→/e', label: 'Edit path' },
+    { key: 'Enter', label: 'Next' },
     { key: '←/Esc', label: 'Back' },
   ],
   wizardStageSelection: [
     { key: 'Space', label: 'Toggle' },
     { key: 'c', label: 'Configure stage' },
-    { key: 'Enter', label: 'Fast start' },
-    { key: 'r/→', label: 'Detailed review' },
+    { key: 'Enter', label: 'Review' },
+    { key: 'r/→', label: 'Review' },
     { key: '←/Esc', label: 'Back' },
   ],
   wizardStageOrder: [

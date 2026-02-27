@@ -97,6 +97,8 @@ tui/
 |-----|--------|
 | `↑/↓` | Navigate lists |
 | `Enter` | Select/Confirm |
+| `→ / e` | Edit path in file browser |
+| `Space` | Toggle options or quick search/select-folder in file browser |
 | `Esc` | Go back |
 | `Tab` | Next field |
 | `/` | Search (in lists) |

@@ -268,6 +268,7 @@ def apply_structural_alerts(
             progress=progress_wrapper,
             initializer=worker_initializer,
             initargs=(compiled_smarts, rule_set_names),
+            preserve_order=False,
         )
     finally:
         heartbeat_stop.set()
