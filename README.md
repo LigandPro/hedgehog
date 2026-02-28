@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/public/hedgehog-tui-home.png" alt="HEDGEHOG Terminal UI" width="70%" />
+  <img src="docs/public/hedgehog-tui-home.png" alt="HEDGEHOG Terminal UI" width="90%" />
 </p>
 ---
 
