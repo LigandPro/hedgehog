@@ -6,7 +6,9 @@ import { Footer } from '../../components/Footer.js';
 import { FileBrowser } from '../../components/FileBrowser.js';
 import { useStore } from '../../store/index.js';
 import { getBridge } from '../../services/python-bridge.js';
+import { useInputLock } from '../../hooks/useInputLock.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
+import { useTheme } from '../../theme/context.js';
 
 /**
  * Truncate a path to fit within maxLen characters.
@@ -15,6 +17,20 @@ import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 function truncatePath(p: string, maxLen: number): string {
   if (!p || p.length <= maxLen) return p;
   return '...' + p.slice(-(maxLen - 3));
+}
+
+function getMoleculeCountErrorHint(error: unknown): string {
+  const message = String(error ?? '').toLowerCase();
+  if (message.includes('not found')) {
+    return 'check that the file exists';
+  }
+  if (message.includes('permission')) {
+    return 'check read permissions';
+  }
+  if (message.includes('not a file')) {
+    return 'select a file, not a directory';
+  }
+  return 'check path and supported extension';
 }
 
 interface ConfigField {
@@ -42,7 +58,9 @@ const CONFIG_FIELDS: ConfigField[] = [
 ];
 
 export function InputSelection(): React.ReactElement {
+  const { theme } = useTheme();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const mainConfig = useStore((state) => state.configs.main);
   const setConfig = useStore((state) => state.setConfig);
   const isBackendReady = useStore((state) => state.isBackendReady);
@@ -57,12 +75,15 @@ export function InputSelection(): React.ReactElement {
   const [loading, setLoading] = useState(!mainConfig);
   const [moleculeCount, setMoleculeCount] = useState<number | null>(null);
   const [countingMolecules, setCountingMolecules] = useState(false);
+  const [moleculeCountErrorHint, setMoleculeCountErrorHint] = useState<string | null>(null);
+  useInputLock(editMode);
 
   // Get terminal size with resize support
   const { width: terminalWidth } = useTerminalSize();
 
-  // Reserve: indicator (2) + label (20) + padding (2) + margin (2)
-  const maxPathLen = Math.max(20, terminalWidth - 26);
+  const panelWidth = Math.max(48, Math.min(96, terminalWidth - 4));
+  const labelWidth = Math.max(14, Math.min(20, panelWidth - 30));
+  const maxPathLen = Math.max(20, panelWidth - labelWidth - 8);
 
   useEffect(() => {
     if (!mainConfig && isBackendReady) {
@@ -75,20 +96,29 @@ export function InputSelection(): React.ReactElement {
 
   // Count molecules when input file changes
   useEffect(() => {
-    const inputPath = values.generated_mols_path as string;
+    const rawInputPath = values.generated_mols_path;
+    const inputPath = typeof rawInputPath === 'string' ? rawInputPath.trim() : '';
     if (!inputPath || !isBackendReady) {
       setMoleculeCount(null);
+      setMoleculeCountErrorHint(null);
       return;
     }
 
     const countMolecules = async () => {
       setCountingMolecules(true);
+      setMoleculeCountErrorHint(null);
       try {
         const bridge = getBridge();
-        const result = await bridge.call<{ count: number }>('count_molecules', { path: inputPath });
+        const result = await bridge.call<{ count: number; error?: string }>('count_molecules', { path: inputPath });
+        if (result.error) {
+          setMoleculeCount(null);
+          setMoleculeCountErrorHint(getMoleculeCountErrorHint(result.error));
+          return;
+        }
         setMoleculeCount(result.count);
-      } catch {
+      } catch (error) {
         setMoleculeCount(null);
+        setMoleculeCountErrorHint(getMoleculeCountErrorHint(error));
       } finally {
         setCountingMolecules(false);
       }
@@ -178,8 +208,8 @@ export function InputSelection(): React.ReactElement {
     } else if (key.return) {
       // Enter - continue to next step
       saveAndContinue();
-    } else if (key.escape || key.leftArrow || input === 'q') {
-      setScreen('welcome');
+    } else if (key.escape || key.leftArrow) {
+      goBack();
     }
   });
 
@@ -196,11 +226,19 @@ export function InputSelection(): React.ReactElement {
     setStartBrowserInPathEdit(false);
   };
 
+  const trimmedInputPath =
+    typeof values.generated_mols_path === 'string'
+      ? values.generated_mols_path.trim()
+      : '';
+
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Pipeline Wizard" subtitle="Loading..." />
-        <Text dimColor>Loading configuration...</Text>
+        <Box flexGrow={1} justifyContent="center">
+          <Text color={theme.palette.textMuted}>Loading configuration...</Text>
+        </Box>
+        <Footer />
       </Box>
     );
   }
@@ -212,11 +250,11 @@ export function InputSelection(): React.ReactElement {
       { key: 'Enter', label: 'Open/Select' },
       { key: '→/e', label: 'Edit path' },
       { key: 'Space', label: browsingField.isDirectory ? 'Select folder' : 'Search' },
-      { key: '/', label: 'Search' },
+      { key: 'Ctrl+F', label: 'Search' },
       { key: '←', label: 'Back' },
     ];
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Pipeline Wizard" subtitle={`Select ${browsingField.label}`} />
         <FileBrowser
           initialPath={currentValue}
@@ -231,78 +269,78 @@ export function InputSelection(): React.ReactElement {
     );
   }
 
-  const shortcuts = [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Space', label: 'Edit' },
-    { key: '→/e', label: 'Edit path' },
-    { key: 'Enter', label: 'Next' },
-    { key: '←/Esc', label: 'Back' },
-  ];
-
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Pipeline Wizard" subtitle="Step 1: Input & Output" />
 
-      <Box flexDirection="column" marginY={1}>
-        {CONFIG_FIELDS.map((field, index) => {
-          const isFocused = focusedIndex === index;
-          const value = values[field.key];
-          const isEditing = isFocused && editMode && field.type === 'number';
+      <Box flexGrow={1} justifyContent="center">
+        <Box flexDirection="column" width={panelWidth}>
+          <Text color={theme.palette.textMuted}>Select source molecules and where to store outputs for this run.</Text>
+          <Text color={theme.palette.textMuted}>Space opens browser, Right/e edits the path directly.</Text>
 
-          let displayValue = '';
-          if (field.type === 'path') {
-            displayValue = value ? truncatePath(String(value), maxPathLen) : '(not set)';
-          } else if (field.type === 'boolean') {
-            displayValue = value ? 'Yes' : 'No';
-          } else if (field.type === 'number') {
-            displayValue = String(value ?? '');
-          }
+          <Box flexDirection="column" marginTop={1}>
+            {CONFIG_FIELDS.map((field, index) => {
+              const isFocused = focusedIndex === index;
+              const value = values[field.key];
+              const isEditing = isFocused && editMode && field.type === 'number';
 
-          const valueColor = field.type === 'path'
-            ? (value ? 'cyan' : 'red')
-            : field.type === 'boolean'
-              ? (value ? 'green' : 'red')
-              : 'yellow';
+              let displayValue = '';
+              if (field.type === 'path') {
+                displayValue = value ? truncatePath(String(value), maxPathLen) : '(not set)';
+              } else if (field.type === 'boolean') {
+                displayValue = value ? 'Yes' : 'No';
+              } else if (field.type === 'number') {
+                displayValue = String(value ?? '');
+              }
 
-          return (
-            <Box key={field.key}>
-              <Text color={isFocused ? 'cyan' : 'gray'}>
-                {isFocused ? '▸ ' : '  '}
-              </Text>
-              <Text color={isFocused ? 'white' : 'gray'}>{field.label.padEnd(20)}</Text>
-              {isEditing ? (
-                <Box>
-                  <TextInput
-                    value={editValue}
-                    onChange={setEditValue}
-                    focus={true}
-                  />
+              const valueColor = field.type === 'path'
+                ? (value ? theme.palette.primary : theme.palette.error)
+                : field.type === 'boolean'
+                  ? (value ? theme.palette.success : theme.palette.error)
+                  : theme.palette.accent;
+
+              return (
+                <Box key={field.key}>
+                  <Text color={isFocused ? theme.palette.primary : theme.palette.textMuted}>
+                    {isFocused ? '▸ ' : '  '}
+                  </Text>
+                  <Text color={isFocused ? theme.palette.text : theme.palette.textMuted}>
+                    {field.label.padEnd(labelWidth)}
+                  </Text>
+                  {isEditing ? (
+                    <Box>
+                      <TextInput
+                        value={editValue}
+                        onChange={setEditValue}
+                        focus={true}
+                      />
+                    </Box>
+                  ) : (
+                    <Text color={valueColor}>{displayValue}</Text>
+                  )}
                 </Box>
+              );
+            })}
+          </Box>
+
+          {trimmedInputPath && (
+            <Box marginTop={1}>
+              <Text color={theme.palette.textMuted}>Molecules: </Text>
+              {countingMolecules ? (
+                <Text color={theme.palette.warning}>counting...</Text>
+              ) : moleculeCount !== null ? (
+                <Text color={theme.palette.success} bold>{moleculeCount.toLocaleString()}</Text>
               ) : (
-                <Text color={valueColor}>
-                  {displayValue}
+                <Text color={theme.palette.error}>
+                  unable to count ({moleculeCountErrorHint ?? 'check file path'})
                 </Text>
               )}
             </Box>
-          );
-        })}
-      </Box>
-
-      {/* Molecule count */}
-      {(values.generated_mols_path as string) && (
-        <Box marginY={1}>
-          <Text dimColor>Molecules: </Text>
-          {countingMolecules ? (
-            <Text color="yellow">counting...</Text>
-          ) : moleculeCount !== null ? (
-            <Text color="green" bold>{moleculeCount.toLocaleString()}</Text>
-          ) : (
-            <Text color="red">unable to count</Text>
           )}
         </Box>
-      )}
+      </Box>
 
-      <Footer shortcuts={shortcuts} />
+      <Footer />
     </Box>
   );
 }

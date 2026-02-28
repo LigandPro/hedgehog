@@ -8,6 +8,8 @@ import { SearchIndicator } from '../components/SearchIndicator.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import { useSearch } from '../hooks/useSearch.js';
+import { useTheme } from '../theme/context.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import type { FiltersConfig } from '../types/index.js';
 
 const ALL_RULESETS = [
@@ -44,25 +46,46 @@ type ViewMode = 'settings' | 'rulesets';
 
 type SettingType = 'boolean' | 'path' | 'select';
 
-function getSettingColor(type: SettingType, value: unknown): 'green' | 'red' | 'cyan' | 'blue' {
+function getSettingColor(
+  theme: ReturnType<typeof useTheme>['theme'],
+  type: SettingType,
+  value: unknown,
+): string {
   if (type === 'boolean') {
-    return value ? 'green' : 'red';
+    return value ? theme.palette.success : theme.palette.error;
   }
   if (type === 'select') {
-    return 'cyan';
+    return theme.palette.primary;
   }
-  return 'blue';
+  return theme.palette.info;
 }
 
-function getPartColor(isSelected: boolean, highlighted: boolean): string {
+function getPartColor(
+  theme: ReturnType<typeof useTheme>['theme'],
+  isSelected: boolean,
+  highlighted: boolean,
+): string {
   if (highlighted) {
-    return 'yellow';
+    return theme.palette.accent;
   }
-  return isSelected ? 'white' : 'gray';
+  return isSelected ? theme.palette.text : theme.palette.textMuted;
+}
+
+function truncateMiddle(value: string, width: number): string {
+  if (width <= 0) return '';
+  if (value.length <= width) return value;
+  if (width <= 1) return '…';
+  if (width <= 3) return `${value.slice(0, width - 1)}…`;
+  const left = Math.ceil((width - 1) / 2);
+  const right = Math.floor((width - 1) / 2);
+  return `${value.slice(0, left)}…${value.slice(value.length - right)}`;
 }
 
 export function ConfigFilters(): React.ReactElement {
+  const { theme } = useTheme();
+  const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const config = useStore((state) => state.configs.filters);
   const setConfig = useStore((state) => state.setConfig);
   const isBackendReady = useStore((state) => state.isBackendReady);
@@ -81,7 +104,8 @@ export function ConfigFilters(): React.ReactElement {
   const [browsingField, setBrowsingField] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
 
-  const visibleRows = 16;
+  const reservedRows = viewMode === 'rulesets' ? 11 : 10;
+  const visibleRows = Math.max(2, terminalHeight - reservedRows);
 
   // Search for rulesets
   const {
@@ -180,11 +204,11 @@ export function ConfigFilters(): React.ReactElement {
         confirmLabel: 'Discard',
         cancelLabel: 'Cancel',
         onConfirm: () => {
-          setScreen('welcome');
+          goBack();
         },
       });
     } else {
-      setScreen('welcome');
+      goBack();
     }
   };
 
@@ -277,7 +301,7 @@ export function ConfigFilters(): React.ReactElement {
       handleBulkRulesetToggle(false);
     } else if (input === 's') {
       saveConfig();
-    } else if (key.escape || key.leftArrow || input === 'q') {
+    } else if (key.escape || key.leftArrow) {
       if (viewMode === 'rulesets') {
         setViewMode('settings');
         setSelectedIndex(0);
@@ -317,7 +341,7 @@ export function ConfigFilters(): React.ReactElement {
 
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Struct Filters Config" />
         <Spinner label="Loading configuration..." />
       </Box>
@@ -331,11 +355,11 @@ export function ConfigFilters(): React.ReactElement {
       { key: 'Enter', label: 'Open/Select' },
       { key: '→/e', label: 'Edit path' },
       { key: 'Space', label: 'Search' },
-      { key: '/', label: 'Search' },
+      { key: 'Ctrl+F', label: 'Search' },
       { key: '←', label: 'Back' },
     ];
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Select File" subtitle={browsingField} />
         <FileBrowser
           initialPath={currentValue}
@@ -353,24 +377,24 @@ export function ConfigFilters(): React.ReactElement {
     const enabledCount = Object.values(rulesets).filter(Boolean).length;
 
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Struct Filters Config" subtitle={isDirty ? 'Rulesets *' : 'Rulesets'} />
 
         <SearchIndicator active={searchActive} query={searchQuery} />
 
         {error && (
           <Box marginY={1}>
-            <Text color="red">Error: {error}</Text>
+            <Text color={theme.palette.error}>Error: {error}</Text>
           </Box>
         )}
 
         <Box marginY={1}>
-          <Text color="cyan" bold>─ Rulesets ({enabledCount}/{ALL_RULESETS.length} enabled) ─</Text>
+          <Text color={theme.palette.accent} bold>─ Rulesets ({enabledCount}/{ALL_RULESETS.length} enabled) ─</Text>
         </Box>
 
         {displayRulesets.length === 0 ? (
           <Box marginY={1}>
-            <Text dimColor>No rulesets match "{searchQuery}"</Text>
+            <Text color={theme.palette.textMuted}>No rulesets match "{searchQuery}"</Text>
           </Box>
         ) : (
           <Box flexDirection="column">
@@ -382,17 +406,17 @@ export function ConfigFilters(): React.ReactElement {
 
               return (
                 <Box key={ruleset}>
-                  <Text color={isSelected ? 'cyan' : 'white'}>
+                  <Text color={isSelected ? theme.palette.primary : theme.palette.text}>
                     {isSelected ? '▶ ' : '  '}
                   </Text>
-                  <Text color={enabled ? 'green' : 'red'}>
+                  <Text color={enabled ? theme.palette.success : theme.palette.error}>
                     {enabled ? '☑' : '☐'}
                   </Text>
                   <Text> </Text>
                   {nameParts.map((part, pi) => (
                     <Text
                       key={`${part.text}-${pi}`}
-                      color={getPartColor(isSelected, part.highlighted)}
+                      color={getPartColor(theme, isSelected, part.highlighted)}
                       bold={part.highlighted}
                     >
                       {part.text}
@@ -405,7 +429,7 @@ export function ConfigFilters(): React.ReactElement {
         )}
 
         <Box marginTop={1}>
-          <Text dimColor>
+          <Text color={theme.palette.textMuted}>
             {displayRulesets.length > 0
               ? `${scrollOffset + 1}-${Math.min(scrollOffset + visibleRows, displayRulesets.length)} of ${displayRulesets.length}`
               : '0'}
@@ -420,19 +444,21 @@ export function ConfigFilters(): React.ReactElement {
 
   // Settings view
   const visibleSettings = settingsItems.slice(scrollOffset, scrollOffset + visibleRows);
+  const selectedSetting = settingsItems[selectedIndex];
+  const selectedDescription = selectedSetting?.description || '';
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Struct Filters Config" subtitle={isDirty ? 'config_structFilters.yml *' : 'config_structFilters.yml'} />
 
       {error && (
         <Box marginY={1}>
-          <Text color="red">Error: {error}</Text>
+          <Text color={theme.palette.error}>Error: {error}</Text>
         </Box>
       )}
 
       <Box marginY={1}>
-        <Text color="cyan" bold>─ Settings ─</Text>
+        <Text color={theme.palette.accent} bold>─ Settings ─</Text>
       </Box>
 
       <Box flexDirection="column">
@@ -440,32 +466,43 @@ export function ConfigFilters(): React.ReactElement {
           const actualIndex = scrollOffset + index;
           const isSelected = actualIndex === selectedIndex;
           const value = getSettingValue(item.key);
+          const rowWidth = Math.max(1, terminalWidth - 4);
+          const labelWidth = Math.min(22, Math.max(8, rowWidth - 6));
+          const valueWidth = Math.max(1, rowWidth - labelWidth - 4);
 
           return (
             <Box key={item.key} flexDirection="column">
-              <Box>
-                <Text color={isSelected ? 'cyan' : 'white'}>
+              <Box width={rowWidth}>
+                <Text color={isSelected ? theme.palette.primary : theme.palette.text}>
                   {isSelected ? '▶ ' : '  '}
                 </Text>
-                <Text dimColor>{item.label.padEnd(22)}</Text>
-                <Text color={getSettingColor(item.type, value)}>
-                  {item.type === 'boolean'
-                    ? (value ? 'Yes' : 'No')
-                    : String(value || '(not set)')}
-                </Text>
-              </Box>
-              {isSelected && item.description && (
-                <Box paddingLeft={4}>
-                  <Text dimColor italic>{item.description}</Text>
+                <Box width={labelWidth}>
+                  <Text color={theme.palette.textMuted}>{item.label}</Text>
                 </Box>
-              )}
+                <Box width={valueWidth}>
+                  <Text color={getSettingColor(theme, item.type, value)}>
+                    {truncateMiddle(
+                      item.type === 'boolean'
+                        ? (value ? 'Yes' : 'No')
+                        : String(value || '(not set)'),
+                      valueWidth,
+                    ).padEnd(valueWidth, ' ')}
+                  </Text>
+                </Box>
+              </Box>
             </Box>
           );
         })}
       </Box>
 
+      <Box height={1} paddingLeft={2}>
+        <Text color={theme.palette.textMuted} wrap="truncate-end">
+          {selectedDescription ? `Info: ${selectedDescription}` : ' '}
+        </Text>
+      </Box>
+
       <Box marginTop={1}>
-        <Text dimColor>Press 'r' to edit rulesets ({Object.values(rulesets).filter(Boolean).length} enabled)</Text>
+        <Text color={theme.palette.textMuted}>Press 'r' to edit rulesets ({Object.values(rulesets).filter(Boolean).length} enabled)</Text>
       </Box>
 
       <Footer shortcuts={settingsShortcuts} />

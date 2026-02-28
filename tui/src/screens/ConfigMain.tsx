@@ -9,6 +9,9 @@ import { SearchIndicator } from '../components/SearchIndicator.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import { useSearch } from '../hooks/useSearch.js';
+import { useInputLock } from '../hooks/useInputLock.js';
+import { useTheme } from '../theme/context.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import type { MainConfig } from '../types/index.js';
 
 interface FormField {
@@ -39,18 +42,35 @@ const fields: FormField[] = [
 
 type ConfigFieldType = 'text' | 'number' | 'boolean' | 'path';
 
-function getFieldColor(type: ConfigFieldType, value: unknown): 'green' | 'red' | 'blue' | 'yellow' {
+function getFieldColor(
+  theme: ReturnType<typeof useTheme>['theme'],
+  type: ConfigFieldType,
+  value: unknown,
+): string {
   if (type === 'boolean') {
-    return value ? 'green' : 'red';
+    return value ? theme.palette.success : theme.palette.error;
   }
   if (type === 'path') {
-    return 'blue';
+    return theme.palette.info;
   }
-  return 'yellow';
+  return theme.palette.accent;
+}
+
+function truncateMiddle(value: string, width: number): string {
+  if (width <= 0) return '';
+  if (value.length <= width) return value;
+  if (width <= 1) return '…';
+  if (width <= 3) return `${value.slice(0, width - 1)}…`;
+  const left = Math.ceil((width - 1) / 2);
+  const right = Math.floor((width - 1) / 2);
+  return `${value.slice(0, left)}…${value.slice(value.length - right)}`;
 }
 
 export function ConfigMain(): React.ReactElement {
+  const { theme } = useTheme();
+  const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const config = useStore((state) => state.configs.main);
   const setConfig = useStore((state) => state.setConfig);
   const isBackendReady = useStore((state) => state.isBackendReady);
@@ -68,8 +88,10 @@ export function ConfigMain(): React.ReactElement {
   const [browsingField, setBrowsingField] = useState<keyof MainConfig | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [isDirty, setIsDirty] = useState(false);
+  useInputLock(editMode);
 
-  const visibleRows = 14;
+  const reservedRows = 12;
+  const visibleRows = Math.max(2, terminalHeight - reservedRows);
 
   // Search functionality
   const {
@@ -77,7 +99,6 @@ export function ConfigMain(): React.ReactElement {
     searchActive,
     filteredItems: filteredFields,
     handleSearchInput,
-    highlightMatch,
   } = useSearch({
     items: fields,
     searchFields: (field) => [field.label, field.key, field.section || ''],
@@ -141,11 +162,11 @@ export function ConfigMain(): React.ReactElement {
         confirmLabel: 'Discard',
         cancelLabel: 'Cancel',
         onConfirm: () => {
-          setScreen('welcome');
+          goBack();
         },
       });
     } else {
-      setScreen('welcome');
+      goBack();
     }
   };
 
@@ -212,7 +233,7 @@ export function ConfigMain(): React.ReactElement {
       }
     } else if (input === 's') {
       saveConfig();
-    } else if (key.escape || key.leftArrow || input === 'q') {
+    } else if (key.escape || key.leftArrow) {
       handleExit();
     }
   });
@@ -229,16 +250,9 @@ export function ConfigMain(): React.ReactElement {
     setBrowsingField(null);
   };
 
-  const shortcuts = [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'e/Enter', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ];
-
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Main Config" />
         <Spinner label="Loading configuration..." />
       </Box>
@@ -252,11 +266,11 @@ export function ConfigMain(): React.ReactElement {
       { key: 'Enter', label: 'Open/Select' },
       { key: '→/e', label: 'Edit path' },
       { key: 'Space', label: 'Search' },
-      { key: '/', label: 'Search' },
+      { key: 'Ctrl+F', label: 'Search' },
       { key: '←', label: 'Back' },
     ];
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Select Path" subtitle={browsingField} />
         <FileBrowser
           initialPath={currentValue}
@@ -270,22 +284,27 @@ export function ConfigMain(): React.ReactElement {
 
   const visibleFields = displayFields.slice(scrollOffset, scrollOffset + visibleRows);
   let lastSection = scrollOffset > 0 ? displayFields[scrollOffset - 1]?.section : undefined;
+  const rowWidth = Math.max(1, terminalWidth - 4);
+  const labelWidth = Math.min(20, Math.max(8, rowWidth - 6));
+  const valueWidth = Math.max(1, rowWidth - labelWidth - 4);
+  const selectedField = displayFields[selectedIndex];
+  const selectedDescription = selectedField?.description || '';
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Main Config" subtitle={isDirty ? 'config.yml *' : 'config.yml'} />
 
       <SearchIndicator active={searchActive} query={searchQuery} />
 
       {error && (
         <Box marginY={1}>
-          <Text color="red">Error: {error}</Text>
+          <Text color={theme.palette.error}>Error: {error}</Text>
         </Box>
       )}
 
       {totalFields === 0 ? (
         <Box marginY={2}>
-          <Text dimColor>No fields match "{searchQuery}"</Text>
+          <Text color={theme.palette.textMuted}>No fields match "{searchQuery}"</Text>
         </Box>
       ) : (
         <Box flexDirection="column" marginY={1}>
@@ -297,30 +316,25 @@ export function ConfigMain(): React.ReactElement {
             const showSection = field.section && field.section !== lastSection;
             if (field.section) lastSection = field.section;
 
-            // Highlight matching text
-            const labelParts = searchQuery ? highlightMatch(field.label) : [{ text: field.label, highlighted: false }];
-
             return (
               <React.Fragment key={field.key}>
                 {showSection && (
                   <Box marginTop={index > 0 ? 1 : 0}>
-                    <Text color="cyan" bold>─ {field.section} ─</Text>
+                    <Text color={theme.palette.accent} bold>─ {field.section} ─</Text>
                   </Box>
                 )}
                 <Box flexDirection="column">
-                  <Box>
-                    <Text color={isSelected ? 'cyan' : 'white'}>
+                  <Box width={rowWidth}>
+                    <Text color={isSelected ? theme.palette.primary : theme.palette.text}>
                       {isSelected ? '▶ ' : '  '}
                     </Text>
-                    <Box width={20}>
-                      {labelParts.map((part, pi) => (
-                        <Text key={pi} dimColor={!part.highlighted} color={part.highlighted ? 'yellow' : undefined} bold={part.highlighted}>
-                          {part.text}
-                        </Text>
-                      ))}
+                    <Box width={labelWidth}>
+                      <Text color={theme.palette.textMuted} wrap="truncate-end">
+                        {field.label.padEnd(labelWidth, ' ')}
+                      </Text>
                     </Box>
                     {isEditing ? (
-                      <Box>
+                      <Box width={valueWidth}>
                         <TextInput
                           value={editValue}
                           onChange={setEditValue}
@@ -328,16 +342,16 @@ export function ConfigMain(): React.ReactElement {
                         />
                       </Box>
                     ) : (
-                      <Text color={getFieldColor(field.type, value)}>
-                        {field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value || '(not set)')}
-                      </Text>
+                      <Box width={valueWidth}>
+                        <Text color={getFieldColor(theme, field.type, value)}>
+                          {truncateMiddle(
+                            field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value || '(not set)'),
+                            valueWidth,
+                          ).padEnd(valueWidth, ' ')}
+                        </Text>
+                      </Box>
                     )}
                   </Box>
-                  {isSelected && field.description && (
-                    <Box paddingLeft={4}>
-                      <Text dimColor italic>{field.description}</Text>
-                    </Box>
-                  )}
                 </Box>
               </React.Fragment>
             );
@@ -345,14 +359,20 @@ export function ConfigMain(): React.ReactElement {
         </Box>
       )}
 
+      <Box height={1} paddingLeft={2}>
+        <Text color={theme.palette.textMuted} wrap="truncate-end">
+          {selectedDescription ? `Info: ${selectedDescription}` : ' '}
+        </Text>
+      </Box>
+
       <Box>
-        <Text dimColor>
+        <Text color={theme.palette.textMuted}>
           {totalFields > 0 ? `${scrollOffset + 1}-${Math.min(scrollOffset + visibleRows, totalFields)} of ${totalFields}` : '0'} fields
           {searchQuery && ` (filtered from ${fields.length})`}
         </Text>
       </Box>
 
-      <Footer shortcuts={shortcuts} />
+      <Footer />
     </Box>
   );
 }

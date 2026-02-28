@@ -99,11 +99,13 @@ tui/
 | `Enter` | Select/Confirm |
 | `→ / e` | Edit path in file browser |
 | `Space` | Toggle options or quick search/select-folder in file browser |
-| `Esc` | Go back |
-| `Tab` | Next field |
-| `/` | Search (in lists) |
-| `q` | Quit |
-| `?` | Help |
+| `Esc / ←` | Go back (most screens) |
+| `Esc` | Quit (Welcome screen) |
+| `q` | Quit (Welcome screen) |
+| `Ctrl+C` | Quit (global) |
+| `Ctrl+F` | Search/filter (list screens) |
+| `/` | Open command palette |
+| `?` | Toggle help overlay |
 
 ## Architecture
 

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
-import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
 import { useStore } from '../store/index.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import { useTheme } from '../theme/context.js';
 import { formatDate } from '../utils/format.js';
-import { getStatusIcon, getStatusColor } from '../utils/job-status.js';
+import { getStatusIcon } from '../utils/job-status.js';
+import { buildExitSummary } from '../utils/exit-summary.js';
 import type { Screen } from '../types/index.js';
 
 interface QuickAction {
@@ -16,13 +18,26 @@ interface QuickAction {
 const QUICK_ACTIONS: QuickAction[] = [
   { key: 'n', label: 'New Pipeline Run', action: 'wizardInputSelection' },
   { key: 'h', label: 'View Job History', action: 'history' },
+  { key: 'c', label: 'Open Configuration', action: 'configMain' },
   { key: 'q', label: 'Quit', action: 'exit' },
+];
+
+const WELCOME_LOGO = [
+  '█  █ █▀▀ █▀▀▄ █▀▀▀ █▀▀ █  █ █▀▀█ █▀▀▀',
+  '█▀▀█ █▀▀ █  █ █ ▀█ █▀▀ █▀▀█ █  █ █ ▀█',
+  '▀  ▀ ▀▀▀ ▀▀▀  ▀▀▀▀ ▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀',
 ];
 
 export function Welcome(): React.ReactElement {
   const { exit } = useApp();
+  const { width } = useTerminalSize();
+  const { theme } = useTheme();
   const setScreen = useStore((state) => state.setScreen);
+  const screen = useStore((state) => state.screen);
   const setSelectedJob = useStore((state) => state.setSelectedJob);
+  const selectedJobId = useStore((state) => state.selectedJobId);
+  const currentJobId = useStore((state) => state.currentJobId);
+  const setExitSummary = useStore((state) => state.setExitSummary);
   const isBackendReady = useStore((state) => state.isBackendReady);
   const isRunning = useStore((state) => state.isRunning);
   const jobHistory = useStore((state) => state.jobHistory);
@@ -60,6 +75,12 @@ export function Welcome(): React.ReactElement {
 
   const executeAction = (action: Screen | 'exit') => {
     if (action === 'exit') {
+      setExitSummary(buildExitSummary({
+        currentJobId,
+        selectedJobId,
+        jobHistory,
+        screen,
+      }));
       exit();
     } else {
       setScreen(action);
@@ -130,82 +151,117 @@ export function Welcome(): React.ReactElement {
   });
 
   return (
-    <Box flexDirection="column" padding={1}>
-      <Header showLogo={true} />
+    <Box flexDirection="column" flexGrow={1} paddingY={1} minHeight={12}>
+      <Box flexGrow={1} />
 
-      {!isBackendReady && (
-        <Box marginY={1}>
-          <Text color="yellow">⚠ Backend not connected. Some features may not work.</Text>
-        </Box>
-      )}
-
-      {/* Running Pipeline indicator */}
-      {isRunning && (
-        <Box flexDirection="column" marginY={1}>
-          <Box>
-            <Text color="yellow" bold>● Pipeline Running</Text>
-            <Text dimColor>  Press </Text>
-            <Text color="cyan" bold>[p]</Text>
-            <Text dimColor> to view progress</Text>
+      <Box justifyContent="center">
+        <Box flexDirection="column" width={Math.max(1, Math.min(86, width - 4))}>
+          <Box marginBottom={1} justifyContent="center">
+            <Box flexDirection="column">
+              {WELCOME_LOGO.map((line, index) => (
+                <Text key={index} color="white" bold>{line}</Text>
+              ))}
+            </Box>
           </Box>
-        </Box>
-      )}
 
-      {/* Quick Actions Section (Matcha pattern) */}
-      <Box flexDirection="column" marginY={1}>
-        <Text color="cyan" bold>Quick Actions</Text>
-        <Box flexDirection="column" marginTop={1}>
-          {QUICK_ACTIONS.map((item, index) => {
-            const isSelected = section === 'actions' && focusedIndex === index;
-            return (
-              <Box key={item.key}>
-                <Text color={isSelected ? 'cyan' : 'gray'}>{isSelected ? '▶ ' : '  '}</Text>
-                <Text color="cyan" bold>[{item.key}]</Text>
-                <Text color={isSelected ? 'white' : 'gray'}> {item.label}</Text>
+          <Box flexDirection="column" paddingX={2} paddingY={1}>
+            {!isBackendReady && (
+              <Box marginBottom={1}>
+                <Text color={theme.palette.warning}>⚠ Backend not connected. Some features may not work.</Text>
               </Box>
-            );
-          })}
-        </Box>
-      </Box>
+            )}
 
-      {/* Recent Jobs Section (Matcha pattern) */}
-      {recentJobs.length > 0 && (
-        <Box flexDirection="column" marginY={1}>
-          <Box>
-            <Text color="cyan" bold>Recent Jobs</Text>
-            {section === 'recent' && (
-              <Text dimColor>  [Enter] View  [d] Delete</Text>
+            {isRunning && (
+              <Box marginBottom={1}>
+                <Text color={theme.palette.warning} bold>● Pipeline Running</Text>
+                <Text color={theme.palette.textMuted}>  Press </Text>
+                <Text color={theme.palette.primary} bold>[p]</Text>
+                <Text color={theme.palette.textMuted}> to view progress</Text>
+              </Box>
+            )}
+
+            <Text color={theme.palette.accent} bold>Quick Actions</Text>
+            <Box flexDirection="column" marginTop={1} marginBottom={1}>
+              {QUICK_ACTIONS.map((item, index) => {
+                const isSelected = section === 'actions' && focusedIndex === index;
+                return (
+                  <Box key={item.key} paddingX={1}>
+                    <Text
+                      color={theme.palette.textMuted}
+                      backgroundColor={isSelected ? theme.palette.panelStrong : undefined}
+                    >
+                      {isSelected ? '› ' : '  '}
+                    </Text>
+                    <Text color={theme.palette.accent} bold backgroundColor={isSelected ? theme.palette.panelStrong : undefined}>
+                      [{item.key}]
+                    </Text>
+                    <Text
+                      color={isSelected ? theme.palette.text : theme.palette.textMuted}
+                      backgroundColor={isSelected ? theme.palette.panelStrong : undefined}
+                    >
+                      {' '}{item.label}
+                    </Text>
+                  </Box>
+                );
+              })}
+            </Box>
+
+            {recentJobs.length > 0 && (
+              <>
+                <Text color={theme.palette.accent} bold>Recent Jobs</Text>
+                <Box flexDirection="column" marginTop={1}>
+                  {recentJobs.map((job, index) => {
+                    const isSelected = section === 'recent' && focusedIndex === index;
+                    const statusIcon = getStatusIcon(job.status);
+                    const statusColor = job.status === 'completed'
+                      ? theme.palette.success
+                      : job.status === 'running'
+                        ? theme.palette.warning
+                        : job.status === 'error'
+                          ? theme.palette.error
+                          : theme.palette.textMuted;
+
+                    return (
+                      <Box key={job.id} paddingX={1}>
+                        <Text
+                          color={theme.palette.textMuted}
+                          backgroundColor={isSelected ? theme.palette.panelStrong : undefined}
+                        >
+                          {isSelected ? '› ' : '  '}
+                        </Text>
+                        <Text color={statusColor} backgroundColor={isSelected ? theme.palette.panelStrong : undefined}>
+                          {statusIcon}
+                        </Text>
+                        <Text
+                          color={isSelected ? theme.palette.text : theme.palette.textMuted}
+                          backgroundColor={isSelected ? theme.palette.panelStrong : undefined}
+                        >
+                          {' '}{job.name || job.id}
+                        </Text>
+                        <Text color={theme.palette.textMuted} backgroundColor={isSelected ? theme.palette.panelStrong : undefined}>
+                          {' - '}{formatDate(job.startTime)}
+                        </Text>
+                      </Box>
+                    );
+                  })}
+                </Box>
+              </>
             )}
           </Box>
-          <Box flexDirection="column" marginTop={1}>
-            {recentJobs.map((job, index) => {
-              const isSelected = section === 'recent' && focusedIndex === index;
-              const statusIcon = getStatusIcon(job.status);
-              const statusColor = getStatusColor(job.status);
 
-              return (
-                <Box key={job.id}>
-                  <Text color={isSelected ? 'cyan' : 'gray'}>{isSelected ? '> ' : '  '}</Text>
-                  <Text color={statusColor}>{statusIcon}</Text>
-                  <Text color={isSelected ? 'white' : 'gray'}>
-                    {' '}{job.name || job.id}
-                  </Text>
-                  <Text dimColor>
-                    {' - '}{formatDate(job.startTime)}
-                  </Text>
-                </Box>
-              );
-            })}
+          <Box justifyContent="center" marginTop={1}>
+            <Text color={theme.palette.text} bold>HEDGEHOG PIPELINE ENGINE</Text>
+          </Box>
+          <Box justifyContent="center">
+            <Text color={theme.palette.textMuted}>Type </Text>
+            <Text color="white">/</Text>
+            <Text color={theme.palette.textMuted}> to open command palette</Text>
           </Box>
         </Box>
-      )}
-
-      {/* Footer description (Matcha pattern) */}
-      <Box marginTop={1}>
-        <Text dimColor>Molecular design pipeline with filtering, synthesis scoring, and docking</Text>
       </Box>
 
-      <Footer />
+      <Box flexGrow={1} />
+      <Footer showBreadcrumbs={false} />
     </Box>
   );
 }

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import { useInputLock } from '../hooks/useInputLock.js';
+import { useTheme } from '../theme/context.js';
 
 export interface FormField {
   key: string;
@@ -19,6 +21,7 @@ interface ConfigFormProps {
 
 export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React.ReactElement {
   const { width: terminalWidth } = useTerminalSize();
+  const { theme } = useTheme();
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [editMode, setEditMode] = useState(false);
@@ -30,6 +33,7 @@ export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React
     return initial;
   });
   const [editValue, setEditValue] = useState('');
+  useInputLock(editMode);
 
   useInput((input, key) => {
     if (editMode) {
@@ -65,7 +69,7 @@ export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React
       }
     } else if (input === 's') {
       onSave(values);
-    } else if (key.escape || input === 'q') {
+    } else if (key.escape) {
       onCancel();
     }
   });
@@ -79,10 +83,10 @@ export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React
 
         return (
           <Box key={field.key} marginY={0}>
-            <Text color={isSelected ? 'cyan' : 'white'}>
+            <Text color={isSelected ? theme.palette.primary : theme.palette.text}>
               {isSelected ? '▶ ' : '  '}
             </Text>
-            <Text dimColor>{field.label.padEnd(25)}</Text>
+            <Text color={theme.palette.textMuted}>{field.label.padEnd(25)}</Text>
             {isEditing ? (
               <Box>
                 <TextInput
@@ -92,7 +96,7 @@ export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React
                 />
               </Box>
             ) : (
-              <Text color={field.type === 'boolean' ? (value ? 'green' : 'red') : 'yellow'}>
+              <Text color={field.type === 'boolean' ? (value ? theme.palette.success : theme.palette.error) : theme.palette.accent}>
                 {field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
               </Text>
             )}
@@ -100,12 +104,12 @@ export function ConfigForm({ fields, onSave, onCancel }: ConfigFormProps): React
         );
       })}
       <Box marginTop={1}>
-        <Text color="gray">{'─'.repeat(terminalWidth - 2)}</Text>
+        <Text color={theme.palette.border}>{'─'.repeat(terminalWidth - 2)}</Text>
       </Box>
       <Box gap={2}>
-        <Text><Text color="cyan">[s]</Text> Save</Text>
-        <Text><Text color="cyan">[e/Enter]</Text> Edit</Text>
-        <Text><Text color="cyan">[Esc]</Text> Cancel</Text>
+        <Text color={theme.palette.text}><Text color={theme.palette.primary}>[s]</Text> Save</Text>
+        <Text color={theme.palette.text}><Text color={theme.palette.primary}>[e/Enter]</Text> Edit</Text>
+        <Text color={theme.palette.text}><Text color={theme.palette.primary}>[Esc]</Text> Cancel</Text>
       </Box>
     </Box>
   );

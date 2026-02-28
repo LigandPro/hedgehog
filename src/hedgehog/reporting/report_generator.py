@@ -294,7 +294,7 @@ class ReportGenerator:
         """Get report metadata."""
         return {
             "generated_at": datetime.now().isoformat(),
-            "hedgehog_version": "1.0.0",
+            "hedgehog_version": "1.1.0",
             "run_path": str(self.base_path),
         }
 

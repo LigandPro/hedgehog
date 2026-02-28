@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
 import { useStore } from '../../store/index.js';
+import { useTheme } from '../../theme/context.js';
 
 const STAGE_NAMES: Record<string, string> = {
   mol_prep: 'Mol Prep',
@@ -14,7 +15,9 @@ const STAGE_NAMES: Record<string, string> = {
 };
 
 export function StageOrder(): React.ReactElement {
+  const { theme } = useTheme();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const wizard = useStore((state) => state.wizard);
   const getWizardSelectedStagesInOrder = useStore((state) => state.getWizardSelectedStagesInOrder);
 
@@ -23,8 +26,8 @@ export function StageOrder(): React.ReactElement {
   useInput((input, key) => {
     if (key.return || key.rightArrow) {
       goNext();
-    } else if (key.escape || key.leftArrow || input === 'q') {
-      setScreen('wizardStageSelection');
+    } else if (key.escape || key.leftArrow) {
+      goBack();
     }
   });
 
@@ -50,29 +53,24 @@ export function StageOrder(): React.ReactElement {
 
   const totalSteps = 2 + selectedStagesInOrder.length + 1; // selection + order + configs + review
 
-  const shortcuts = [
-    { key: '→/Enter', label: 'Next' },
-    { key: '←/Esc', label: 'Back' },
-  ];
-
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Pipeline Wizard" subtitle={`Stage Order (2/${totalSteps})`} />
 
       <Box flexDirection="column" marginY={1}>
-        <Text color="cyan" bold>Selected stages will run in this order:</Text>
+        <Text color={theme.palette.accent} bold>Selected stages will run in this order:</Text>
       </Box>
 
       <Box flexDirection="column" marginY={1}>
         {selectedStagesInOrder.map((stage, index) => (
           <Box key={stage}>
-            <Text dimColor>{`${index + 1}. `}</Text>
-            <Text color="white">{STAGE_NAMES[stage] || stage}</Text>
+            <Text color={theme.palette.textMuted}>{`${index + 1}. `}</Text>
+            <Text color={theme.palette.text}>{STAGE_NAMES[stage] || stage}</Text>
           </Box>
         ))}
       </Box>
 
-      <Footer shortcuts={shortcuts} />
+      <Footer />
     </Box>
   );
 }

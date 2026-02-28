@@ -15,14 +15,17 @@ export interface UseSearchReturn<T> {
   filteredIndices: number[];
   highlightMatch: (text: string) => { text: string; highlighted: boolean }[];
   clearSearch: () => void;
-  handleSearchInput: (input: string, key: { escape?: boolean; return?: boolean }) => boolean;
+  handleSearchInput: (
+    input: string,
+    key: { escape?: boolean; return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean }
+  ) => boolean;
 }
 
 /**
  * Hook for search/filter functionality in list screens
  *
  * Usage:
- * 1. Press '/' to activate search mode
+ * 1. Press Ctrl+F to activate search mode
  * 2. Type to filter items
  * 3. Press Escape to clear and exit search mode
  * 4. Press Enter to confirm and exit search mode (keeping filter)
@@ -124,12 +127,12 @@ export function useSearch<T>({
    */
   const handleSearchInput = useCallback((
     input: string,
-    key: { escape?: boolean; return?: boolean; backspace?: boolean; delete?: boolean }
+    key: { escape?: boolean; return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean }
   ): boolean => {
     if (!enabled) return false;
 
-    // Activate search mode with '/'
-    if (!searchActive && input === '/') {
+    // Activate search mode with Ctrl+F
+    if (!searchActive && key.ctrl && input.toLowerCase() === 'f') {
       setSearchActive(true);
       return true;
     }

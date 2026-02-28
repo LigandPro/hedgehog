@@ -6,6 +6,9 @@ import { Footer } from '../components/Footer.js';
 import { Spinner } from '../components/Spinner.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
+import { useInputLock } from '../hooks/useInputLock.js';
+import { useTheme } from '../theme/context.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import type { SynthesisConfig } from '../types/index.js';
 
 interface FormField {
@@ -14,6 +17,16 @@ interface FormField {
   type: 'number' | 'boolean';
   description?: string;
   section?: string;
+}
+
+function truncateMiddle(value: string, width: number): string {
+  if (width <= 0) return '';
+  if (value.length <= width) return value;
+  if (width <= 1) return '…';
+  if (width <= 3) return `${value.slice(0, width - 1)}…`;
+  const left = Math.ceil((width - 1) / 2);
+  const right = Math.floor((width - 1) / 2);
+  return `${value.slice(0, left)}…${value.slice(value.length - right)}`;
 }
 
 const fields: FormField[] = [
@@ -29,7 +42,10 @@ const fields: FormField[] = [
 ];
 
 export function ConfigSynthesis(): React.ReactElement {
+  const { theme } = useTheme();
+  const { width: terminalWidth } = useTerminalSize();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const config = useStore((state) => state.configs.synthesis);
   const setConfig = useStore((state) => state.setConfig);
   const isBackendReady = useStore((state) => state.isBackendReady);
@@ -43,6 +59,9 @@ export function ConfigSynthesis(): React.ReactElement {
   const [values, setValues] = useState<Partial<SynthesisConfig>>(config || {});
   const [error, setError] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  useInputLock(editMode);
+  const selectedField = fields[selectedIndex];
+  const selectedDescription = selectedField?.description || '';
 
   useEffect(() => {
     if (!config && isBackendReady) {
@@ -86,11 +105,11 @@ export function ConfigSynthesis(): React.ReactElement {
         confirmLabel: 'Discard',
         cancelLabel: 'Cancel',
         onConfirm: () => {
-          setScreen('welcome');
+          goBack();
         },
       });
     } else {
-      setScreen('welcome');
+      goBack();
     }
   };
 
@@ -149,22 +168,14 @@ export function ConfigSynthesis(): React.ReactElement {
       } else {
         setScreen('configRetrosynthesis');
       }
-    } else if (key.escape || key.leftArrow || input === 'q') {
+    } else if (key.escape || key.leftArrow) {
       handleExit();
     }
   });
 
-  const shortcuts = [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'e/Enter', label: 'Edit' },
-    { key: 'r', label: 'Retrosynthesis' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ];
-
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Synthesis Config" />
         <Spinner label="Loading configuration..." />
       </Box>
@@ -172,12 +183,12 @@ export function ConfigSynthesis(): React.ReactElement {
   }
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Synthesis Config" subtitle={isDirty ? 'config_synthesis.yml *' : 'config_synthesis.yml'} />
 
       {error && (
         <Box marginY={1}>
-          <Text color="red">Error: {error}</Text>
+          <Text color={theme.palette.error}>Error: {error}</Text>
         </Box>
       )}
 
@@ -187,46 +198,61 @@ export function ConfigSynthesis(): React.ReactElement {
           const isEditing = isSelected && editMode;
           const value = values[field.key];
           const showSection = field.section && (index === 0 || fields[index - 1]?.section !== field.section);
+          const rowWidth = Math.max(1, terminalWidth - 4);
+          const labelWidth = Math.min(20, Math.max(8, rowWidth - 6));
+          const valueWidth = Math.max(1, rowWidth - labelWidth - 4);
 
           return (
             <React.Fragment key={field.key}>
               {showSection && (
                 <Box marginTop={index > 0 ? 1 : 0}>
-                  <Text color="cyan" bold>─ {field.section} ─</Text>
+                  <Text color={theme.palette.accent} bold>─ {field.section} ─</Text>
                 </Box>
               )}
               <Box flexDirection="column">
-                <Box>
-                  <Text color={isSelected ? 'cyan' : 'white'}>
+                <Box width={rowWidth}>
+                  <Text color={isSelected ? theme.palette.primary : theme.palette.text}>
                     {isSelected ? '▶ ' : '  '}
                   </Text>
-                  <Text dimColor>{field.label.padEnd(20)}</Text>
+                  <Box width={labelWidth}>
+                    <Text color={theme.palette.textMuted}>{field.label}</Text>
+                  </Box>
                   {isEditing ? (
-                    <Box>
+                    <Box width={valueWidth}>
                       <TextInput
                         value={editValue}
                         onChange={setEditValue}
                         focus={true}
                       />
                     </Box>
-                  ) : (
-                    <Text color={field.type === 'boolean' ? (value ? 'green' : 'red') : 'yellow'}>
-                      {field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value ?? '')}
-                    </Text>
+                    ) : (
+                    <Box width={valueWidth}>
+                      <Text
+                        color={field.type === 'boolean'
+                          ? (value ? theme.palette.success : theme.palette.error)
+                          : theme.palette.accent}
+                      >
+                        {truncateMiddle(
+                          field.type === 'boolean' ? (value ? 'Yes' : 'No') : String(value ?? ''),
+                          valueWidth,
+                        ).padEnd(valueWidth, ' ')}
+                      </Text>
+                    </Box>
                   )}
                 </Box>
-                {isSelected && field.description && (
-                  <Box paddingLeft={4}>
-                    <Text dimColor italic>{field.description}</Text>
-                  </Box>
-                )}
               </Box>
             </React.Fragment>
           );
         })}
       </Box>
+
+      <Box height={1} paddingLeft={2}>
+        <Text color={theme.palette.textMuted} wrap="truncate-end">
+          {selectedDescription ? `Info: ${selectedDescription}` : ' '}
+        </Text>
+      </Box>
       
-      <Footer shortcuts={shortcuts} />
+      <Footer />
     </Box>
   );
 }

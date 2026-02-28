@@ -3,15 +3,17 @@ import { Box, Text, useInput } from 'ink';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
 import { useStore } from '../store/index.js';
+import { useTheme } from '../theme/context.js';
 import { formatTimestamp, formatDuration } from '../utils/format.js';
-import { getStatusColor } from '../utils/job-status.js';
 import { createReadStream, existsSync } from 'fs';
 import { access } from 'fs/promises';
 import { createInterface } from 'readline';
 import { dirname, isAbsolute, join, resolve } from 'path';
 
 export function Results(): React.ReactElement {
+  const { theme } = useTheme();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const selectedJobId = useStore((state) => state.selectedJobId);
   const jobHistory = useStore((state) => state.jobHistory);
 
@@ -39,7 +41,7 @@ export function Results(): React.ReactElement {
 
   useInput((input, key) => {
     if (key.escape || key.leftArrow) {
-      setScreen('history');
+      goBack();
     } else if (input === 'r' && job) {
       // Re-run with same config - go to pipeline runner
       setScreen('pipelineRunner');
@@ -194,69 +196,72 @@ export function Results(): React.ReactElement {
 
   if (!job) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Job Results" />
         <Box marginY={2}>
-          <Text color="red">Job not found</Text>
+          <Text color={theme.palette.error}>Job not found</Text>
         </Box>
-        <Footer
-          shortcuts={[{ key: 'Esc', label: 'Back' }]}
-          overrideShortcuts
-        />
+        <Footer />
       </Box>
     );
   }
 
-  const statusColor = getStatusColor(job.status);
+  const statusColor = job.status === 'completed'
+    ? theme.palette.success
+    : job.status === 'running'
+      ? theme.palette.warning
+      : job.status === 'error'
+        ? theme.palette.error
+        : theme.palette.textMuted;
 
   const duration = job.endTime
     ? formatDuration((new Date(job.endTime).getTime() - new Date(job.startTime).getTime()) / 1000)
     : 'running...';
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title={`Results: ${job.name || job.id}`} />
 
       <Box flexDirection="column" marginY={1}>
         {/* Status */}
         <Box>
-          <Text dimColor>Status: </Text>
+          <Text color={theme.palette.textMuted}>Status: </Text>
           <Text color={statusColor} bold>{job.status.toUpperCase()}</Text>
         </Box>
 
         {/* Timing */}
         <Box marginTop={1}>
-          <Text color="cyan" bold>Timing</Text>
+          <Text color={theme.palette.accent} bold>Timing</Text>
         </Box>
         <Box marginLeft={2} flexDirection="column">
-          <Text dimColor>Started: {formatTimestamp(new Date(job.startTime))}</Text>
-          {job.endTime && <Text dimColor>Ended: {formatTimestamp(new Date(job.endTime))}</Text>}
-          <Text dimColor>Duration: {duration}</Text>
+          <Text color={theme.palette.textMuted}>Started: {formatTimestamp(new Date(job.startTime))}</Text>
+          {job.endTime && <Text color={theme.palette.textMuted}>Ended: {formatTimestamp(new Date(job.endTime))}</Text>}
+          <Text color={theme.palette.textMuted}>Duration: {duration}</Text>
         </Box>
 
         {/* Config */}
         <Box marginTop={1}>
-          <Text color="cyan" bold>Configuration</Text>
+          <Text color={theme.palette.accent} bold>Configuration</Text>
         </Box>
         <Box marginLeft={2} flexDirection="column">
-          <Text dimColor>Input: {job.config.inputPath || '(not set)'}</Text>
-          <Text dimColor>Output: {job.config.outputPath || '(not set)'}</Text>
-          <Text dimColor>Stages: {job.config.stages.join(', ') || '(none)'}</Text>
+          <Text color={theme.palette.textMuted}>Input: {job.config.inputPath || '(not set)'}</Text>
+          <Text color={theme.palette.textMuted}>Output: {job.config.outputPath || '(not set)'}</Text>
+          <Text color={theme.palette.textMuted}>Stages: {job.config.stages.join(', ') || '(none)'}</Text>
         </Box>
 
         {/* Results */}
         {job.results && (
           <>
             <Box marginTop={1}>
-              <Text color="cyan" bold>Results</Text>
+              <Text color={theme.palette.accent} bold>Results</Text>
             </Box>
             <Box marginLeft={2} flexDirection="column">
-              <Text dimColor>Molecules processed: {job.results.moleculesProcessed}</Text>
+              <Text color={theme.palette.textMuted}>Molecules processed: {job.results.moleculesProcessed}</Text>
               {job.results.moleculesFiltered !== undefined && (
-                <Text dimColor>Molecules filtered: {job.results.moleculesFiltered}</Text>
+                <Text color={theme.palette.textMuted}>Molecules filtered: {job.results.moleculesFiltered}</Text>
               )}
               {job.results.dockingHits !== undefined && (
-                <Text dimColor>Docking hits: {job.results.dockingHits}</Text>
+                <Text color={theme.palette.textMuted}>Docking hits: {job.results.dockingHits}</Text>
               )}
             </Box>
           </>
@@ -266,11 +271,11 @@ export function Results(): React.ReactElement {
         {stageStats && stageStats.length > 0 && (
           <>
             <Box marginTop={1}>
-              <Text color="cyan" bold>Stage Pass Counts</Text>
+              <Text color={theme.palette.accent} bold>Stage Pass Counts</Text>
             </Box>
             <Box marginLeft={2} flexDirection="column">
               {stageStats.map((stat) => (
-                <Text key={stat.label} dimColor>
+                <Text key={stat.label} color={theme.palette.textMuted}>
                   {stat.label}: {stat.count !== null ? stat.count : 'n/a'}
                   {stat.percent !== null ? ` (${stat.percent}%)` : ''}
                 </Text>
@@ -281,7 +286,7 @@ export function Results(): React.ReactElement {
 
         {stageStatsError && (
           <Box marginTop={1}>
-            <Text color="yellow">Stage stats unavailable: {stageStatsError}</Text>
+            <Text color={theme.palette.warning}>Stage stats unavailable: {stageStatsError}</Text>
           </Box>
         )}
 
@@ -289,10 +294,10 @@ export function Results(): React.ReactElement {
         {job.error && (
           <>
             <Box marginTop={1}>
-              <Text color="red" bold>Error</Text>
+              <Text color={theme.palette.error} bold>Error</Text>
             </Box>
             <Box marginLeft={2}>
-              <Text color="red">{job.error}</Text>
+              <Text color={theme.palette.error}>{job.error}</Text>
             </Box>
           </>
         )}

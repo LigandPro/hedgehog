@@ -5,6 +5,10 @@ import path from 'path';
 import fs from 'node:fs';
 import { getBridge } from '../services/python-bridge.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import { useInputLock } from '../hooks/useInputLock.js';
+import { useTheme } from '../theme/context.js';
+import { LineFill } from './LineFill.js';
+import type { ThemeDefinition } from '../theme/themes.js';
 
 interface FileBrowserProps {
   initialPath: string;
@@ -34,16 +38,25 @@ function getStartingDirectory(inputPath: string): string {
     return process.cwd();
   }
 
+  const expanded = expandHomePath(inputPath.trim());
+  const normalizedExpanded = path.normalize(expanded);
+  if (
+    isExistingDirectory(normalizedExpanded)
+    || isExistingDirectory(path.resolve(process.cwd(), normalizedExpanded))
+  ) {
+    return normalizedExpanded;
+  }
+
   // Check if path looks like a file (has extension in the last segment)
-  const basename = path.basename(inputPath);
+  const basename = path.basename(normalizedExpanded);
   const hasExtension = basename.includes('.') && !basename.startsWith('.');
 
   if (hasExtension) {
     // It's likely a file, use parent directory
-    return path.dirname(inputPath);
+    return path.dirname(normalizedExpanded);
   }
 
-  return inputPath;
+  return normalizedExpanded;
 }
 
 function expandHomePath(inputPath: string): string {
@@ -72,7 +85,36 @@ function resolveInputPath(inputPath: string, basePath: string): string {
   if (path.isAbsolute(expanded)) {
     return path.normalize(expanded);
   }
-  return path.resolve(basePath, expanded);
+
+  const normalizedExpanded = path.normalize(expanded);
+  const normalizedBase = path.normalize(basePath);
+
+  const hasBasePrefix = (value: string, prefix: string): boolean => (
+    value === prefix || value.startsWith(`${prefix}${path.sep}`)
+  );
+
+  if (
+    normalizedBase &&
+    normalizedBase !== '.' &&
+    hasBasePrefix(normalizedExpanded, normalizedBase)
+  ) {
+    return normalizedExpanded;
+  }
+
+  if (path.isAbsolute(normalizedBase)) {
+    const relativeBase = path.normalize(path.relative(process.cwd(), normalizedBase));
+    if (
+      relativeBase &&
+      relativeBase !== '.' &&
+      !relativeBase.startsWith('..') &&
+      !path.isAbsolute(relativeBase) &&
+      hasBasePrefix(normalizedExpanded, relativeBase)
+    ) {
+      return normalizedExpanded;
+    }
+  }
+
+  return path.resolve(basePath, normalizedExpanded);
 }
 
 function isExistingDirectory(candidatePath: string): boolean {
@@ -132,21 +174,31 @@ function truncatePath(p: string, maxLen: number): string {
 /**
  * Get text color for file entry based on selection state and type.
  */
-function getFileTextColor(isSelected: boolean, isDirectory: boolean, matchesExtension: boolean): string {
-  if (isSelected) return 'white';
-  if (isDirectory) return 'blue';
-  if (matchesExtension) return 'green';
-  return 'gray';
+function getFileTextColor(
+  theme: ThemeDefinition,
+  isSelected: boolean,
+  isDirectory: boolean,
+  matchesExtension: boolean,
+): string {
+  if (isSelected) return theme.palette.text;
+  if (isDirectory) return theme.palette.info;
+  if (matchesExtension) return theme.palette.success;
+  return theme.palette.textMuted;
 }
 
 /**
  * Get icon color for file entry based on selection state and type.
  */
-function getFileIconColor(isSelected: boolean, isDirectory: boolean, matchesExtension: boolean): string {
-  if (isSelected) return 'cyan';
-  if (isDirectory) return 'blue';
-  if (matchesExtension) return 'green';
-  return 'gray';
+function getFileIconColor(
+  theme: ThemeDefinition,
+  isSelected: boolean,
+  isDirectory: boolean,
+  matchesExtension: boolean,
+): string {
+  if (isSelected) return theme.palette.primary;
+  if (isDirectory) return theme.palette.info;
+  if (matchesExtension) return theme.palette.success;
+  return theme.palette.textMuted;
 }
 
 export function FileBrowser({
@@ -170,11 +222,14 @@ export function FileBrowser({
   const [inputValue, setInputValue] = useState(initialPath || process.cwd());
   const [inputBasePath, setInputBasePath] = useState(startDir);
   const [searchQuery, setSearchQuery] = useState('');
+  const { theme } = useTheme();
 
   // Get terminal size with resize support
   const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
+  const contentWidth = Math.max(8, terminalWidth - 2);
   const isPathEditMode = interactionMode === 'pathEdit';
   const isSearchMode = interactionMode === 'search';
+  useInputLock(isPathEditMode || isSearchMode);
 
   const resolvedInputPath = useMemo(
     () => resolveInputPath(inputValue, inputBasePath),
@@ -269,8 +324,8 @@ export function FileBrowser({
           return;
         }
         if (selectDirectory) {
-          const nearestDir = findNearestExistingDirectory(resolvedInputPath);
-          onSelect(nearestDir || resolvedInputPath);
+          // Keep user-entered directory path as-is to allow creating new folders.
+          onSelect(resolvedInputPath);
           return;
         }
         onSelect(resolvedInputPath);
@@ -323,19 +378,24 @@ export function FileBrowser({
         // Space opens quick search in file mode
         enterSearchMode();
       }
-    } else if (input === '/') {
+    } else if (key.ctrl && input.toLowerCase() === 'f') {
       // Activate search mode
       enterSearchMode();
     } else if (key.rightArrow || input === 'e') {
       enterPathEditMode(currentPath);
-    } else if (key.escape || key.leftArrow || input === 'q') {
-      // Exit on Esc, left arrow, or q
+    } else if (key.escape || key.leftArrow) {
+      // Exit on Esc or left arrow
       onCancel();
     }
   });
 
-  // Calculate available height for file list
-  const listHeight = Math.max(5, terminalHeight - 8);
+  // Reserve rows for stable layout across header/filter/error/footer wrappers.
+  const reservedRows = 12;
+  const maxVisibleRows = Math.max(5, terminalHeight - reservedRows);
+  const listHeight = Math.max(
+    5,
+    Math.min(filteredFiles.length || 1, maxVisibleRows),
+  );
   const halfHeight = Math.floor(listHeight / 2);
 
   // Calculate visible range centered on selected item
@@ -357,7 +417,7 @@ export function FileBrowser({
   if (loading) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text dimColor>Loading...</Text>
+        <Text color={theme.palette.textMuted}>Loading...</Text>
       </Box>
     );
   }
@@ -367,7 +427,7 @@ export function FileBrowser({
     const manualDisplayPath = truncatePath(previewPathForDisplay, terminalWidth - 25);
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">Edit path:</Text>
+        <Text bold color={theme.palette.primary}>Edit path:</Text>
         <Box marginTop={1}>
           <TextInput
             value={inputValue}
@@ -376,28 +436,31 @@ export function FileBrowser({
           />
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>Preview folder: </Text>
-          <Text color="white">{manualDisplayPath}</Text>
+          <Text color={theme.palette.textMuted}>Preview folder: </Text>
+          <Text color={theme.palette.text}>{manualDisplayPath}</Text>
         </Box>
         {pathTailFilter && (
           <Box marginTop={1}>
-            <Text dimColor>Name filter: </Text>
-            <Text color="yellow">{pathTailFilter}</Text>
+            <Text color={theme.palette.textMuted}>Name filter: </Text>
+            <Text color={theme.palette.accent}>{pathTailFilter}</Text>
           </Box>
         )}
         <Box marginTop={1}>
-          <Text dimColor>[Enter] Apply  [Esc] Cancel</Text>
+          <Text color={theme.palette.textMuted}>[Enter] Apply  [Esc] Cancel</Text>
         </Box>
         <Box marginTop={1} flexDirection="column">
-          <Text dimColor>Contents:</Text>
+          <Text color={theme.palette.textMuted}>Contents:</Text>
           {filteredFiles.slice(0, 8).map((file) => (
-            <Text key={file.path} color={file.isDirectory ? 'blue' : 'gray'}>
-              {file.isDirectory ? '▶ ' : '○ '}
-              {file.name}
-            </Text>
+            <Box key={file.path} width={contentWidth}>
+              <Text color={file.isDirectory ? theme.palette.info : theme.palette.textMuted} wrap="truncate-end">
+                {file.isDirectory ? '▶ ' : '○ '}
+                {file.name}
+              </Text>
+              <LineFill width={contentWidth} />
+            </Box>
           ))}
           {filteredFiles.length > 8 && (
-            <Text dimColor>... and {filteredFiles.length - 8} more</Text>
+            <Text color={theme.palette.textMuted}>... and {filteredFiles.length - 8} more</Text>
           )}
         </Box>
       </Box>
@@ -407,35 +470,39 @@ export function FileBrowser({
   return (
     <Box flexDirection="column" flexGrow={1}>
       {/* Header: title and path */}
-      <Box paddingX={1} marginBottom={1}>
-        <Text bold color="cyan">{displayTitle}</Text>
-        <Text dimColor> - </Text>
-        <Text color="white">{displayPath}</Text>
+      <Box paddingX={1} marginBottom={1} width={terminalWidth}>
+        <Text bold color={theme.palette.primary}>{displayTitle}</Text>
+        <Text color={theme.palette.textMuted}> - </Text>
+        <Text color={theme.palette.text}>{displayPath}</Text>
         {filteredFiles.length > listHeight && (
-          <Text dimColor> ({selectedIndex + 1}/{filteredFiles.length})</Text>
+          <Text color={theme.palette.textMuted}> ({selectedIndex + 1}/{filteredFiles.length})</Text>
         )}
+        <LineFill width={terminalWidth} />
       </Box>
 
       {/* Search indicator */}
       {isSearchMode && (
-        <Box paddingX={1}>
-          <Text color="yellow">/ </Text>
-          <Text color="white">{searchQuery}</Text>
-          <Text color="yellow">_</Text>
+        <Box paddingX={1} width={terminalWidth}>
+          <Text color={theme.palette.accent}>Ctrl+F </Text>
+          <Text color={theme.palette.text}>{searchQuery}</Text>
+          <Text color={theme.palette.accent}>_</Text>
+          <LineFill width={terminalWidth} />
         </Box>
       )}
       {!isSearchMode && activeFilterQuery && (
-        <Box paddingX={1}>
-          <Text dimColor>Filter: </Text>
-          <Text color="yellow">{activeFilterQuery}</Text>
-          <Text dimColor> ({filteredFiles.length} matches)</Text>
+        <Box paddingX={1} width={terminalWidth}>
+          <Text color={theme.palette.textMuted}>Filter: </Text>
+          <Text color={theme.palette.accent}>{activeFilterQuery}</Text>
+          <Text color={theme.palette.textMuted}> ({filteredFiles.length} matches)</Text>
+          <LineFill width={terminalWidth} />
         </Box>
       )}
 
       {/* Error display */}
       {error && (
-        <Box paddingX={1}>
-          <Text color="red">Error: {error}</Text>
+        <Box paddingX={1} width={terminalWidth}>
+          <Text color={theme.palette.error}>Error: {error}</Text>
+          <LineFill width={terminalWidth} />
         </Box>
       )}
 
@@ -464,26 +531,27 @@ export function FileBrowser({
               return extensions.some(e => e.toLowerCase().replace('.', '') === ext);
             })();
 
-            const textColor = getFileTextColor(isSelected, file.isDirectory, fileMatchesExtension);
-            const iconColor = getFileIconColor(isSelected, file.isDirectory, fileMatchesExtension);
+            const textColor = getFileTextColor(theme, isSelected, file.isDirectory, fileMatchesExtension);
+            const iconColor = getFileIconColor(theme, isSelected, file.isDirectory, fileMatchesExtension);
 
             // Truncate filename if too long (reserve space for icons and scrollbar)
             const maxNameLen = terminalWidth - 8;
             const displayName = truncatePath(file.name, maxNameLen);
 
             return (
-              <Box key={file.path}>
+              <Box key={file.path} width={contentWidth}>
                 <Text color={iconColor}>
                   {icon}
                 </Text>
                 <Text color={textColor}>
                   {displayName}
                 </Text>
+                <LineFill width={contentWidth} />
               </Box>
             );
           })}
           {filteredFiles.length === 0 && (
-            <Text dimColor>No matching files</Text>
+            <Text color={theme.palette.textMuted}>No matching files</Text>
           )}
         </Box>
 
@@ -493,7 +561,7 @@ export function FileBrowser({
             {Array.from({ length: scrollbarHeight }).map((_, i) => {
               const isThumb = i >= scrollThumbPos && i < scrollThumbPos + scrollThumbSize;
               return (
-                <Text key={i} color="gray">
+                <Text key={i} color={theme.palette.border}>
                   {isThumb ? '▓' : '░'}
                 </Text>
               );

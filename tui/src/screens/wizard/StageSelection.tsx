@@ -3,10 +3,15 @@ import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
 import { useStore } from '../../store/index.js';
+import { useTheme } from '../../theme/context.js';
+import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { STAGE_METADATA, WIZARD_STAGE_ORDER } from './stageMetadata.js';
 
 export function StageSelection(): React.ReactElement {
+  const { theme } = useTheme();
+  const { width: terminalWidth } = useTerminalSize();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const wizard = useStore((state) => state.wizard);
   const toggleWizardStage = useStore((state) => state.toggleWizardStage);
   const showToast = useStore((state) => state.showToast);
@@ -24,6 +29,9 @@ export function StageSelection(): React.ReactElement {
   );
 
   const selectedCount = wizard.selectedStages.length;
+  const rowWidth = Math.max(1, terminalWidth - 4);
+  const nameWidth = Math.min(16, Math.max(8, rowWidth - 8));
+  const descriptionWidth = Math.max(1, rowWidth - nameWidth - 8);
 
   const openConfig = () => {
     const stage = stages[focusedIndex];
@@ -63,25 +71,17 @@ export function StageSelection(): React.ReactElement {
       openReview();
     } else if (key.return) {
       openReview();
-    } else if (key.escape || key.leftArrow || input === 'q') {
-      setScreen('wizardInputSelection');
+    } else if (key.escape || key.leftArrow) {
+      goBack();
     }
   });
 
-  const shortcuts = [
-    { key: 'Space', label: 'Toggle' },
-    { key: 'c', label: 'Configure' },
-    { key: 'Enter', label: 'Review' },
-    { key: 'r/→', label: 'Review' },
-    { key: '←/Esc', label: 'Back' },
-  ];
-
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Pipeline Wizard" subtitle="Step 2: Select Stages" />
 
       <Box flexDirection="column" marginY={1}>
-        <Text color="cyan" bold>Select stages to include in pipeline:</Text>
+        <Text color={theme.palette.accent} bold>Select stages to include in pipeline:</Text>
       </Box>
 
       <Box flexDirection="column" marginY={1}>
@@ -90,26 +90,48 @@ export function StageSelection(): React.ReactElement {
           const isFocused = focusedIndex === index;
 
           return (
-            <Box key={stage.key}>
-              <Text color={isFocused ? 'cyan' : 'white'}>
+            <Box key={stage.key} width={rowWidth}>
+              <Text
+                color={isFocused ? theme.palette.primary : theme.palette.text}
+                backgroundColor={isFocused ? theme.palette.panelStrong : undefined}
+              >
                 {isFocused ? '▸ ' : '  '}
               </Text>
-              <Text color={isSelected ? 'green' : 'gray'}>
+              <Text
+                color={isSelected ? theme.palette.success : theme.palette.textMuted}
+                backgroundColor={isFocused ? theme.palette.panelStrong : undefined}
+              >
                 [{isSelected ? '✓' : ' '}]
               </Text>
-              <Text color={isFocused ? 'white' : 'gray'}> {stage.name.padEnd(16)}</Text>
-              <Text dimColor>{stage.description}</Text>
+              <Text backgroundColor={isFocused ? theme.palette.panelStrong : undefined}> </Text>
+              <Box width={nameWidth}>
+                <Text
+                  color={isFocused ? theme.palette.text : theme.palette.textMuted}
+                  backgroundColor={isFocused ? theme.palette.panelStrong : undefined}
+                >
+                  {stage.name}
+                </Text>
+              </Box>
+              <Box width={descriptionWidth}>
+                <Text
+                  color={theme.palette.textMuted}
+                  backgroundColor={isFocused ? theme.palette.panelStrong : undefined}
+                  wrap="truncate-end"
+                >
+                  {stage.description}
+                </Text>
+              </Box>
             </Box>
           );
         })}
       </Box>
 
       <Box marginY={1}>
-        <Text color="cyan">{selectedCount}</Text>
-        <Text dimColor> stage{selectedCount !== 1 ? 's' : ''} selected</Text>
+        <Text color={theme.palette.primary}>{selectedCount}</Text>
+        <Text color={theme.palette.textMuted}> stage{selectedCount !== 1 ? 's' : ''} selected</Text>
       </Box>
 
-      <Footer shortcuts={shortcuts} />
+      <Footer />
     </Box>
   );
 }

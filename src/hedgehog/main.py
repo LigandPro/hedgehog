@@ -1227,7 +1227,14 @@ def setup_shepherd_worker(
 
 
 @app.command()
-def tui() -> None:
+def tui(
+    session: str | None = typer.Option(
+        None,
+        "--session",
+        "-s",
+        help="Resume TUI session by job id.",
+    ),
+) -> None:
     """
     Launch the interactive TUI (Text User Interface).
 
@@ -1238,6 +1245,7 @@ def tui() -> None:
     --------
     \b
     uv run hedgehog tui
+    uv run hedgehog tui -s job_123
     """
     import shutil
     import subprocess
@@ -1302,12 +1310,19 @@ def tui() -> None:
             console.print(f"[red]Error building TUI:[/red] {e}")
             raise typer.Exit(code=1) from e
 
+    tui_env = os.environ.copy()
+    if session:
+        tui_env["HEDGEHOG_TUI_SESSION"] = session
+    else:
+        tui_env.pop("HEDGEHOG_TUI_SESSION", None)
+
     # Launch the TUI
     try:
         subprocess.run(
             ["node", str(dist_dir / "index.js")],
             cwd=tui_dir,
             check=True,
+            env=tui_env,
         )
     except subprocess.CalledProcessError as e:
         console.print(f"[red]TUI exited with error:[/red] {e.returncode}")

@@ -3,7 +3,10 @@ import { Box, Text, useApp, useInput } from 'ink';
 import { useStore } from './store/index.js';
 import { getBridge, destroyBridge } from './services/python-bridge.js';
 import { logger } from './utils/logger.js';
-import type { Screen, ScreenShortcut, JobHistoryRecord } from './types/index.js';
+import { useTerminalSize } from './hooks/useTerminalSize.js';
+import { useTheme } from './theme/context.js';
+import { buildExitSummary } from './utils/exit-summary.js';
+import type { Screen, JobHistoryRecord } from './types/index.js';
 
 // Screens
 import { Welcome } from './screens/Welcome.js';
@@ -35,186 +38,8 @@ import {
 import { ToastContainer } from './components/Toast.js';
 import { ConfirmDialog } from './components/ConfirmDialog.js';
 import { HelpOverlay } from './components/HelpOverlay.js';
-
-// Back navigation map (Matcha pattern)
-export const BACK_MAP: Record<Screen, Screen | null> = {
-  welcome: null,
-  configMain: 'welcome',
-  configDescriptors: 'configMain',
-  configFilters: 'configMain',
-  configSynthesis: 'configMain',
-  configRetrosynthesis: 'configSynthesis',
-  configDocking: 'configMain',
-  pipelineRunner: 'welcome',
-  history: 'welcome',
-  results: 'history',
-  // Wizard screens - navigation handled internally
-  wizardInputSelection: 'welcome',
-  wizardStageSelection: 'wizardInputSelection',
-  wizardStageOrder: 'wizardStageSelection',
-  wizardConfigMolPrep: 'wizardStageSelection',
-  wizardConfigDescriptors: 'wizardStageSelection',
-  wizardConfigFilters: 'wizardStageSelection',
-  wizardConfigSynthesis: 'wizardStageSelection',
-  wizardConfigDocking: 'wizardStageSelection',
-  wizardConfigDockingFilters: 'wizardStageSelection',
-  wizardReview: 'wizardStageSelection',
-};
-
-// Screen titles map (Matcha pattern)
-export const SCREEN_TITLES: Record<Screen, string> = {
-  welcome: '',
-  configMain: 'Main Configuration',
-  configDescriptors: 'Descriptors Settings',
-  configFilters: 'Structure Filters',
-  configSynthesis: 'Synthesis Scoring',
-  configRetrosynthesis: 'Retrosynthesis Config',
-  configDocking: 'Docking Configuration',
-  pipelineRunner: 'Pipeline Runner',
-  history: 'Job History',
-  results: 'Job Results',
-  // Wizard screens
-  wizardInputSelection: 'Pipeline Wizard',
-  wizardStageSelection: 'Pipeline Wizard',
-  wizardStageOrder: 'Pipeline Wizard',
-  wizardConfigMolPrep: 'Pipeline Wizard',
-  wizardConfigDescriptors: 'Pipeline Wizard',
-  wizardConfigFilters: 'Pipeline Wizard',
-  wizardConfigSynthesis: 'Pipeline Wizard',
-  wizardConfigDocking: 'Pipeline Wizard',
-  wizardConfigDockingFilters: 'Pipeline Wizard',
-  wizardReview: 'Pipeline Wizard',
-};
-
-// Screen shortcuts map (Matcha pattern)
-export const SCREEN_SHORTCUTS: Record<Screen, ScreenShortcut[]> = {
-  welcome: [
-    { key: 'n', label: 'New Run' },
-    { key: 'h', label: 'History' },
-    { key: '→/Enter', label: 'Select' },
-    { key: 'q', label: 'Quit' },
-  ],
-  configMain: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'e', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  configDescriptors: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'e', label: 'Edit' },
-    { key: 'b', label: 'Borders' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  configFilters: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Space', label: 'Toggle' },
-    { key: 'r', label: 'Rulesets' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  configSynthesis: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'e', label: 'Edit' },
-    { key: 'r', label: 'Retrosynthesis' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  configRetrosynthesis: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'b/Enter', label: 'Browse' },
-    { key: '/', label: 'Search' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  configDocking: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'e', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  pipelineRunner: [
-    { key: 'c', label: 'Cancel' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  history: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: '→/Enter', label: 'View' },
-    { key: 'd', label: 'Delete' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  results: [
-    { key: 'r', label: 'Re-run' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  // Wizard screens - shortcuts handled internally
-  wizardInputSelection: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Space', label: 'Edit/Browse' },
-    { key: '→/e', label: 'Edit path' },
-    { key: 'Enter', label: 'Next' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  wizardStageSelection: [
-    { key: 'Space', label: 'Toggle' },
-    { key: 'c', label: 'Configure stage' },
-    { key: 'Enter', label: 'Review' },
-    { key: 'r/→', label: 'Review' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  wizardStageOrder: [
-    { key: 'J/K', label: 'Move' },
-    { key: 'Space', label: 'Toggle dep' },
-    { key: '→/Enter', label: 'Next' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-  wizardConfigMolPrep: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Space', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '←/→', label: 'Prev/Next' },
-  ],
-  wizardConfigDescriptors: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Enter', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '1-3', label: 'Presets' },
-    { key: '←/→', label: 'Prev/Next' },
-  ],
-  wizardConfigFilters: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Space', label: 'Toggle' },
-    { key: 's', label: 'Save' },
-    { key: '←/→', label: 'Prev/Next' },
-  ],
-  wizardConfigSynthesis: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Enter', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '←/→', label: 'Prev/Next' },
-  ],
-  wizardConfigDocking: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Enter', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '←/→', label: 'Prev/Next' },
-  ],
-  wizardConfigDockingFilters: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'Enter', label: 'Edit' },
-    { key: 's', label: 'Save' },
-    { key: '←/→', label: 'Prev/Next' },
-  ],
-  wizardReview: [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'e', label: 'Edit stage' },
-    { key: 'r', label: 'Refresh preflight' },
-    { key: 'Tab', label: 'Summary/Detailed' },
-    { key: 'Enter', label: 'Start' },
-    { key: '←/Esc', label: 'Back' },
-  ],
-};
+import { CommandMenu } from './components/CommandMenu.js';
+import { ThemeMenu } from './components/ThemeMenu.js';
 
 const STAGE_NAMES: Record<string, string> = {
   mol_prep: 'Mol Prep',
@@ -226,6 +51,7 @@ const STAGE_NAMES: Record<string, string> = {
 };
 
 const PROGRESS_LOG_THRESHOLDS = [10, 25, 50, 75, 90, 100] as const;
+const REQUESTED_SESSION_ID = process.env.HEDGEHOG_TUI_SESSION?.trim() || null;
 
 interface NotificationParams {
   stage?: string;
@@ -292,11 +118,13 @@ function ScreenRouter({ screen }: { screen: Screen }): React.ReactElement {
   })();
 
   // Wrap in Box with key to force clean remount on screen change
-  return <Box key={screen} flexDirection="column">{content}</Box>;
+  return <Box key={screen} flexDirection="column" flexGrow={1}>{content}</Box>;
 }
 
 export function App(): React.ReactElement {
-  useApp();
+  const { exit } = useApp();
+  const { width, height } = useTerminalSize();
+  const { theme } = useTheme();
   const progressLogThresholdRef = useRef<Record<string, number>>({});
   const screen = useStore((state) => state.screen);
   const setBackendReady = useStore((state) => state.setBackendReady);
@@ -308,7 +136,13 @@ export function App(): React.ReactElement {
   const setDebugMode = useStore((state) => state.setDebugMode);
   const showHelp = useStore((state) => state.showHelp);
   const setShowHelp = useStore((state) => state.setShowHelp);
+  const showCommandMenu = useStore((state) => state.showCommandMenu);
+  const setShowCommandMenu = useStore((state) => state.setShowCommandMenu);
+  const setCommandMenuSeed = useStore((state) => state.setCommandMenuSeed);
+  const showThemeMenu = useStore((state) => state.showThemeMenu);
+  const setShowThemeMenu = useStore((state) => state.setShowThemeMenu);
   const confirmDialog = useStore((state) => state.confirmDialog);
+  const hideConfirm = useStore((state) => state.hideConfirm);
   const setRunning = useStore((state) => state.setRunning);
   const updateStage = useStore((state) => state.updateStage);
   const updatePipelineProgress = useStore((state) => state.updatePipelineProgress);
@@ -317,6 +151,12 @@ export function App(): React.ReactElement {
   const showToast = useStore((state) => state.showToast);
   const setSelectedJob = useStore((state) => state.setSelectedJob);
   const setScreen = useStore((state) => state.setScreen);
+  const currentJobId = useStore((state) => state.currentJobId);
+  const selectedJobId = useStore((state) => state.selectedJobId);
+  const jobHistory = useStore((state) => state.jobHistory);
+  const setExitSummary = useStore((state) => state.setExitSummary);
+  const inputLocked = useStore((state) => state.inputLocked);
+  const searchActive = useStore((state) => state.searchActive);
 
   // Initialize Python backend
   useEffect(() => {
@@ -330,8 +170,20 @@ export function App(): React.ReactElement {
         // Load job history from backend
         try {
           const history = await bridge.getJobHistory();
-          setJobHistory(history as unknown as JobHistoryRecord[]);
-          logger.info(`Loaded ${history.length} jobs from history`);
+          const typedHistory = history as unknown as JobHistoryRecord[];
+          setJobHistory(typedHistory);
+          logger.info(`Loaded ${typedHistory.length} jobs from history`);
+
+          if (REQUESTED_SESSION_ID) {
+            const requestedJob = typedHistory.find((job) => job.id === REQUESTED_SESSION_ID);
+            if (requestedJob) {
+              setSelectedJob(requestedJob.id);
+              setScreen('results');
+              logger.info(`Resumed session ${requestedJob.id}`);
+            } else {
+              logger.warn(`Requested session not found: ${REQUESTED_SESSION_ID}`);
+            }
+          }
         } catch (historyError) {
           logger.warn('Failed to load job history:', historyError);
         }
@@ -526,8 +378,57 @@ export function App(): React.ReactElement {
 
   // Global keyboard shortcuts (Matcha pattern)
   useInput((input, key) => {
+    if (key.ctrl && input === 'c') {
+      if (confirmDialog) {
+        hideConfirm();
+        return;
+      }
+      if (showThemeMenu) {
+        setShowThemeMenu(false);
+        return;
+      }
+      if (showCommandMenu) {
+        setShowCommandMenu(false);
+        setCommandMenuSeed('/');
+        return;
+      }
+      if (showHelp) {
+        setShowHelp(false);
+        return;
+      }
+      setExitSummary(buildExitSummary({
+        currentJobId,
+        selectedJobId,
+        jobHistory,
+        screen,
+      }));
+      exit();
+      return;
+    }
+
+    if (key.ctrl && input === 'p') {
+      if (showCommandMenu) {
+        setShowCommandMenu(false);
+        setCommandMenuSeed('/');
+      } else if (!confirmDialog && !showThemeMenu && !showHelp && !inputLocked && !searchActive) {
+        setCommandMenuSeed('/');
+        setShowCommandMenu(true);
+      }
+      return;
+    }
+
     // Don't handle global shortcuts if confirm dialog is open
     if (confirmDialog) return;
+    if (showThemeMenu) return;
+    if (showCommandMenu) return;
+    if (showHelp) return;
+    if (inputLocked || searchActive) return;
+
+    if (input.startsWith('/')) {
+      setCommandMenuSeed(input.toLowerCase());
+      setShowCommandMenu(true);
+      return;
+    }
 
     // '?' to toggle help overlay (repurposed from debug mode)
     if (input === '?') {
@@ -546,14 +447,22 @@ export function App(): React.ReactElement {
   });
 
   return (
-    <Box flexDirection="column">
+    <Box
+      flexDirection="column"
+      width={width}
+      height={height}
+    >
       {/* Global error banner with auto-dismiss (Matcha pattern) */}
       {globalError && (
         <Box marginBottom={1} paddingX={1}>
-          <Text color="red" bold>Error: </Text>
-          <Text color="red">{globalError}</Text>
+          <Text color={theme.palette.error} bold>Error: </Text>
+          <Text color={theme.palette.error}>{globalError}</Text>
         </Box>
       )}
+
+      {/* Command menu overlay */}
+      {showCommandMenu && <CommandMenu />}
+      {showThemeMenu && <ThemeMenu />}
 
       {/* Help overlay (takes priority over screen) */}
       {showHelp && <HelpOverlay />}
@@ -562,7 +471,7 @@ export function App(): React.ReactElement {
       {confirmDialog && <ConfirmDialog />}
 
       {/* Main screen content (hidden when overlays active) */}
-      {!showHelp && !confirmDialog && <ScreenRouter screen={screen} />}
+      {!showCommandMenu && !showThemeMenu && !showHelp && !confirmDialog && <ScreenRouter screen={screen} />}
 
       {/* Toast notifications */}
       <ToastContainer />
@@ -570,8 +479,8 @@ export function App(): React.ReactElement {
       {/* Debug mode indicator (Matcha pattern) */}
       {debugMode && (
         <Box marginTop={1}>
-          <Text color="yellow" bold>[DEBUG MODE]</Text>
-          <Text dimColor> Screen: {screen}</Text>
+          <Text color={theme.palette.warning} bold>[DEBUG MODE]</Text>
+          <Text color={theme.palette.textMuted}> Screen: {screen}</Text>
         </Box>
       )}
     </Box>

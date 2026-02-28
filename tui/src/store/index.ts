@@ -45,6 +45,10 @@ interface PipelineProgress {
 interface AppState {
   // Navigation
   screen: Screen;
+  // Navigation stack for multi-step back navigation.
+  // Contains the history of screens the user navigated through.
+  screenStack: Screen[];
+  // Kept for compatibility with existing code paths (e.g. wizard-mode detection).
   previousScreen: Screen | null;
 
   // Configs
@@ -88,6 +92,11 @@ interface AppState {
 
   // Help overlay
   showHelp: boolean;
+  showCommandMenu: boolean;
+  commandMenuSeed: string;
+  showThemeMenu: boolean;
+  exitSummary: string | null;
+  inputLocked: boolean;
 
   // Global search state
   searchQuery: string;
@@ -138,6 +147,11 @@ interface AppState {
 
   // Help overlay actions
   setShowHelp: (show: boolean) => void;
+  setShowCommandMenu: (show: boolean) => void;
+  setCommandMenuSeed: (seed: string) => void;
+  setShowThemeMenu: (show: boolean) => void;
+  setExitSummary: (summary: string | null) => void;
+  setInputLocked: (locked: boolean) => void;
 
   // Search actions
   setSearchQuery: (query: string) => void;
@@ -259,6 +273,7 @@ const initialWizardState: WizardState = {
 export const useStore = create<AppState>((set, get) => ({
   // Initial state
   screen: 'welcome',
+  screenStack: [],
   previousScreen: null,
   configs: {
     main: null,
@@ -306,6 +321,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   // Help overlay
   showHelp: false,
+  showCommandMenu: false,
+  commandMenuSeed: '/',
+  showThemeMenu: false,
+  exitSummary: null,
+  inputLocked: false,
 
   // Global search state
   searchQuery: '',
@@ -315,15 +335,35 @@ export const useStore = create<AppState>((set, get) => ({
   wizard: { ...initialWizardState },
 
   // Actions
-  setScreen: (screen) => set((state) => ({
-    screen,
-    previousScreen: state.screen,
-  })),
+  setScreen: (screen) => set((state) => {
+    if (state.screen === screen) {
+      return state;
+    }
+    const nextStack = [...state.screenStack, state.screen];
+    return {
+      screen,
+      screenStack: nextStack,
+      previousScreen: nextStack[nextStack.length - 1] ?? null,
+    };
+  }),
 
-  goBack: () => set((state) => ({
-    screen: state.previousScreen || 'welcome',
-    previousScreen: null,
-  })),
+  goBack: () => set((state) => {
+    if (state.screenStack.length === 0) {
+      return {
+        screen: 'welcome',
+        screenStack: [],
+        previousScreen: null,
+      };
+    }
+
+    const nextScreen = state.screenStack[state.screenStack.length - 1];
+    const nextStack = state.screenStack.slice(0, -1);
+    return {
+      screen: nextScreen,
+      screenStack: nextStack,
+      previousScreen: nextStack[nextStack.length - 1] ?? null,
+    };
+  }),
 
   setConfig: (type, data) => set((state) => ({
     configs: { ...state.configs, [type]: data },
@@ -530,6 +570,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   // Help overlay actions
   setShowHelp: (show) => set({ showHelp: show }),
+  setShowCommandMenu: (show) => set({ showCommandMenu: show }),
+  setCommandMenuSeed: (seed) => set({ commandMenuSeed: seed }),
+  setShowThemeMenu: (show) => set({ showThemeMenu: show }),
+  setExitSummary: (summary) => set({ exitSummary: summary }),
+  setInputLocked: (locked) => set({ inputLocked: locked }),
 
   // Search actions
   setSearchQuery: (query) => set({ searchQuery: query }),

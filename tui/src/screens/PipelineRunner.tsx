@@ -7,6 +7,7 @@ import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import { formatDuration } from '../utils/format.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import { useTheme } from '../theme/context.js';
 import type { LogEntry } from '../types/index.js';
 
 const STAGE_NAMES: Record<string, string> = {
@@ -38,18 +39,24 @@ function trimText(value: string, maxWidth: number): string {
   return `${value.slice(0, maxWidth - 1)}…`;
 }
 
-function getLevelColor(level: LogEntry['level']): 'gray' | 'cyan' | 'yellow' | 'red' | 'magenta' {
-  if (level === 'warn') return 'yellow';
-  if (level === 'error') return 'red';
-  if (level === 'debug') return 'magenta';
-  return 'cyan';
+function getLevelColor(
+  theme: ReturnType<typeof useTheme>['theme'],
+  level: LogEntry['level'],
+): string {
+  if (level === 'warn') return theme.palette.warning;
+  if (level === 'error') return theme.palette.error;
+  if (level === 'debug') return theme.palette.info;
+  return theme.palette.primary;
 }
 
-function getMessageColor(level: LogEntry['level']): 'gray' | 'yellow' | 'red' | 'magenta' {
-  if (level === 'warn') return 'yellow';
-  if (level === 'error') return 'red';
-  if (level === 'debug') return 'magenta';
-  return 'gray';
+function getMessageColor(
+  theme: ReturnType<typeof useTheme>['theme'],
+  level: LogEntry['level'],
+): string {
+  if (level === 'warn') return theme.palette.warning;
+  if (level === 'error') return theme.palette.error;
+  if (level === 'debug') return theme.palette.info;
+  return theme.palette.textMuted;
 }
 
 // Overall progress display with current stage bar
@@ -58,6 +65,7 @@ const PipelineProgress = memo(function PipelineProgress({
 }: {
   selectedStages: string[];
 }): React.ReactElement {
+  const { theme } = useTheme();
   const stages = useStore((state) => state.stages);
   const pipelineProgress = useStore((state) => state.pipelineProgress);
 
@@ -81,9 +89,9 @@ const PipelineProgress = memo(function PipelineProgress({
     <Box flexDirection="column" marginY={1}>
       {/* Overall progress */}
       <Box marginBottom={1}>
-        <Text color="cyan" bold>Overall: </Text>
-        <Text color="cyan">{completedCount}/{selectedStages.length} stages</Text>
-        <Text dimColor> ({overallProgress}%)</Text>
+        <Text color={theme.palette.primary} bold>Overall: </Text>
+        <Text color={theme.palette.primary}>{completedCount}/{selectedStages.length} stages</Text>
+        <Text color={theme.palette.textMuted}> ({overallProgress}%)</Text>
       </Box>
 
       {/* Overall progress bar */}
@@ -100,17 +108,23 @@ const PipelineProgress = memo(function PipelineProgress({
           const stageInfo = stages[stage];
           const status = stageInfo?.status || 'pending';
           const icon = status === 'completed' ? '✓' : status === 'running' ? '●' : status === 'error' ? '✗' : '○';
-          const color = status === 'completed' ? 'green' : status === 'running' ? 'cyan' : status === 'error' ? 'red' : 'gray';
+          const color = status === 'completed'
+            ? theme.palette.success
+            : status === 'running'
+              ? theme.palette.primary
+              : status === 'error'
+                ? theme.palette.error
+                : theme.palette.textMuted;
 
           return (
             <Box key={stage}>
-              <Text dimColor>{`${index + 1}. `}</Text>
+              <Text color={theme.palette.textMuted}>{`${index + 1}. `}</Text>
               <Text color={color}>{icon} </Text>
-              <Text color={status === 'running' ? 'white' : 'gray'}>
+              <Text color={status === 'running' ? theme.palette.text : theme.palette.textMuted}>
                 {STAGE_NAMES[stage] || stage}
               </Text>
               {status === 'running' && stageInfo?.progress !== undefined && (
-                <Text color="cyan"> ({stageInfo.progress}%)</Text>
+                <Text color={theme.palette.primary}> ({stageInfo.progress}%)</Text>
               )}
             </Box>
           );
@@ -124,6 +138,7 @@ const PipelineProgress = memo(function PipelineProgress({
 
 // Running status display
 const RunningStatus = memo(function RunningStatus(): React.ReactElement | null {
+  const { theme } = useTheme();
   const isRunning = useStore((state) => state.isRunning);
   const elapsedSeconds = useStore((state) => state.elapsedSeconds);
 
@@ -131,8 +146,8 @@ const RunningStatus = memo(function RunningStatus(): React.ReactElement | null {
 
   return (
     <Box marginY={1}>
-      <Text color="cyan">Elapsed: </Text>
-      <Text color="cyan" bold>
+      <Text color={theme.palette.primary}>Elapsed: </Text>
+      <Text color={theme.palette.primary} bold>
         {formatDuration(elapsedSeconds)}
       </Text>
     </Box>
@@ -146,6 +161,7 @@ const LiveLogPanel = memo(function LiveLogPanel({
   panelWidth: number;
   terminalHeight: number;
 }): React.ReactElement {
+  const { theme } = useTheme();
   const logs = useStore((state) => state.logs);
 
   const visibleLineCount = useMemo(() => (
@@ -157,21 +173,21 @@ const LiveLogPanel = memo(function LiveLogPanel({
 
   return (
     <Box flexDirection="column" marginLeft={2} width={panelWidth}>
-      <Text color="cyan" bold>Live Log</Text>
-      <Text color="gray">{'─'.repeat(Math.max(10, panelWidth - 1))}</Text>
+      <Text color={theme.palette.accent} bold>Live Log</Text>
+      <Text color={theme.palette.border}>{'─'.repeat(Math.max(10, panelWidth - 1))}</Text>
       {visibleLogs.length === 0 ? (
-        <Text dimColor>No log events yet.</Text>
+        <Text color={theme.palette.textMuted}>No log events yet.</Text>
       ) : (
-        visibleLogs.map((entry, index) => {
+        visibleLogs.map((entry) => {
           const timestamp = formatLogTimestamp(entry.timestamp);
           const level = entry.level.toUpperCase();
           const message = trimText(entry.message, messageWidth);
 
           return (
-            <Text key={`${entry.timestamp.getTime()}-${index}`}>
-              <Text color="gray">[{timestamp}] </Text>
-              <Text color={getLevelColor(entry.level)}>[{level}]</Text>
-              <Text color={getMessageColor(entry.level)}> {message}</Text>
+            <Text key={`${entry.timestamp.toISOString()}-${entry.level}-${entry.message}`}>
+              <Text color={theme.palette.textMuted}>[{timestamp}] </Text>
+              <Text color={getLevelColor(theme, entry.level)}>[{level}]</Text>
+              <Text color={getMessageColor(theme, entry.level)}> {message}</Text>
             </Text>
           );
         })
@@ -181,7 +197,9 @@ const LiveLogPanel = memo(function LiveLogPanel({
 });
 
 export function PipelineRunner(): React.ReactElement {
+  const { theme } = useTheme();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const isRunning = useStore((state) => state.isRunning);
   const currentJobId = useStore((state) => state.currentJobId);
   const setRunning = useStore((state) => state.setRunning);
@@ -244,7 +262,7 @@ export function PipelineRunner(): React.ReactElement {
       togglePipelineLog();
     } else if (key.escape || key.leftArrow) {
       // Navigate back - pipeline continues in background
-      setScreen('welcome');
+      goBack();
     } else if (input === 'c' && isRunning) {
       cancelPipeline();
     }
@@ -262,14 +280,14 @@ export function PipelineRunner(): React.ReactElement {
       ];
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Pipeline Runner" />
 
       <Box flexDirection="row">
         <Box flexDirection="column" flexGrow={1}>
           {!isBackendReady && (
             <Box marginY={1}>
-              <Text color="yellow">Warning: Backend not connected</Text>
+              <Text color={theme.palette.warning}>Warning: Backend not connected</Text>
             </Box>
           )}
 
@@ -277,12 +295,16 @@ export function PipelineRunner(): React.ReactElement {
           {config && (
             <Box flexDirection="column" marginY={1}>
               <Box>
-                <Text dimColor>Input:  </Text>
-                <Text color="cyan">{config.generated_mols_path}</Text>
+                <Text color={theme.palette.textMuted}>Input:  </Text>
+                <Box flexGrow={1}>
+                  <Text color={theme.palette.primary} wrap="truncate-middle">{config.generated_mols_path}</Text>
+                </Box>
               </Box>
               <Box>
-                <Text dimColor>Output: </Text>
-                <Text color="cyan">{config.folder_to_save}</Text>
+                <Text color={theme.palette.textMuted}>Output: </Text>
+                <Box flexGrow={1}>
+                  <Text color={theme.palette.primary} wrap="truncate-middle">{config.folder_to_save}</Text>
+                </Box>
               </Box>
             </Box>
           )}
@@ -295,13 +317,13 @@ export function PipelineRunner(): React.ReactElement {
             </>
           ) : (
             <Box marginY={2}>
-              <Text dimColor>Pipeline not running. Use [n] from Welcome screen to start a new run.</Text>
+              <Text color={theme.palette.textMuted}>Pipeline not running. Use [n] from Welcome screen to start a new run.</Text>
             </Box>
           )}
 
           {showPipelineLog && !canShowRightLogPanel && (
             <Box marginTop={1}>
-              <Text color="yellow">
+              <Text color={theme.palette.warning}>
                 Live Log panel requires terminal width {'>='} {MIN_LOG_PANEL_TERMINAL_WIDTH} columns.
               </Text>
             </Box>
@@ -315,7 +337,7 @@ export function PipelineRunner(): React.ReactElement {
 
       {/* Separator */}
       <Box marginTop={1}>
-        <Text color="gray">{'─'.repeat(terminalWidth - 2)}</Text>
+        <Text color={theme.palette.border}>{'─'.repeat(Math.max(0, terminalWidth - 3))}</Text>
       </Box>
 
       <Footer shortcuts={shortcuts} />

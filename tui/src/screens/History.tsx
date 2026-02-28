@@ -6,11 +6,14 @@ import { SearchIndicator } from '../components/SearchIndicator.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import { useSearch } from '../hooks/useSearch.js';
+import { useTheme } from '../theme/context.js';
 import { formatTimestamp, formatDuration } from '../utils/format.js';
-import { getStatusIcon, getStatusColor } from '../utils/job-status.js';
+import { getStatusIcon } from '../utils/job-status.js';
 
 export function History(): React.ReactElement {
+  const { theme } = useTheme();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const jobHistory = useStore((state) => state.jobHistory);
   const setSelectedJob = useStore((state) => state.setSelectedJob);
   const removeJobFromHistory = useStore((state) => state.removeJobFromHistory);
@@ -81,12 +84,12 @@ export function History(): React.ReactElement {
       const job = filteredJobs[selectedIndex];
       handleDelete(job.id, job.name || `Job ${job.id}`);
     } else if (key.escape || key.leftArrow) {
-      setScreen('welcome');
+      goBack();
     }
   });
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Job History" />
 
       <SearchIndicator active={searchActive} query={searchQuery} />
@@ -94,9 +97,9 @@ export function History(): React.ReactElement {
       {filteredJobs.length === 0 ? (
         <Box marginY={2}>
           {jobHistory.length === 0 ? (
-            <Text dimColor>No job history yet. Run a pipeline to see it here.</Text>
+            <Text color={theme.palette.textMuted}>No job history yet. Run a pipeline to see it here.</Text>
           ) : (
-            <Text dimColor>No jobs match "{searchQuery}"</Text>
+            <Text color={theme.palette.textMuted}>No jobs match "{searchQuery}"</Text>
           )}
         </Box>
       ) : (
@@ -104,7 +107,13 @@ export function History(): React.ReactElement {
           {filteredJobs.map((job, index) => {
             const isSelected = selectedIndex === index;
             const statusIcon = getStatusIcon(job.status);
-            const statusColor = getStatusColor(job.status);
+            const statusColor = job.status === 'completed'
+              ? theme.palette.success
+              : job.status === 'running'
+                ? theme.palette.warning
+                : job.status === 'error'
+                  ? theme.palette.error
+                  : theme.palette.textMuted;
 
             const duration = job.endTime
               ? formatDuration((new Date(job.endTime).getTime() - new Date(job.startTime).getTime()) / 1000)
@@ -116,13 +125,19 @@ export function History(): React.ReactElement {
             return (
               <Box key={job.id} flexDirection="column">
                 <Box>
-                  <Text color={isSelected ? 'cyan' : 'gray'}>{isSelected ? '▶ ' : '  '}</Text>
+                  <Text color={isSelected ? theme.palette.primary : theme.palette.textMuted}>{isSelected ? '▶ ' : '  '}</Text>
                   <Text color={statusColor}>{statusIcon}</Text>
                   <Text> </Text>
                   {nameParts.map((part, pi) => (
                     <Text
                       key={pi}
-                      color={isSelected ? (part.highlighted ? 'yellow' : 'white') : (part.highlighted ? 'yellow' : 'gray')}
+                      color={
+                        part.highlighted
+                          ? theme.palette.accent
+                          : isSelected
+                            ? theme.palette.text
+                            : theme.palette.textMuted
+                      }
                       bold={part.highlighted}
                     >
                       {part.text}
@@ -131,10 +146,10 @@ export function History(): React.ReactElement {
                 </Box>
                 {isSelected && (
                   <Box marginLeft={4} flexDirection="column">
-                    <Text dimColor>Started: {formatTimestamp(new Date(job.startTime))}</Text>
-                    <Text dimColor>Duration: {duration}</Text>
+                    <Text color={theme.palette.textMuted}>Started: {formatTimestamp(new Date(job.startTime))}</Text>
+                    <Text color={theme.palette.textMuted}>Duration: {duration}</Text>
                     {job.results && (
-                      <Text dimColor>Processed: {job.results.moleculesProcessed} molecules</Text>
+                      <Text color={theme.palette.textMuted}>Processed: {job.results.moleculesProcessed} molecules</Text>
                     )}
                   </Box>
                 )}
@@ -147,7 +162,7 @@ export function History(): React.ReactElement {
       {/* Stats */}
       {filteredJobs.length > 0 && (
         <Box>
-          <Text dimColor>
+          <Text color={theme.palette.textMuted}>
             {filteredJobs.length} job{filteredJobs.length !== 1 ? 's' : ''}
             {searchQuery && ` (filtered from ${jobHistory.length})`}
           </Text>

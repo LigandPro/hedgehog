@@ -233,6 +233,22 @@ Launches the interactive Terminal User Interface for visual pipeline configurati
 uv run hedgehog tui
 ```
 
+Options:
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--session` | `-s` | `TEXT` | `None` | Resume TUI directly into results for the specified job id. |
+
+Examples:
+
+```bash
+# Start TUI normally
+uv run hedgehog tui
+
+# Resume a specific job in TUI
+uv run hedgehog tui -s job_123
+```
+
 The TUI can also be launched directly from the TUI package:
 
 ```bash

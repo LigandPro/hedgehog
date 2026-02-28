@@ -4,9 +4,12 @@ import TextInput from 'ink-text-input';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
 import { Spinner } from '../../components/Spinner.js';
+import { LineFill } from '../../components/LineFill.js';
 import { useStore } from '../../store/index.js';
 import { getBridge } from '../../services/python-bridge.js';
+import { useInputLock } from '../../hooks/useInputLock.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
+import { useTheme } from '../../theme/context.js';
 
 interface ParamDef {
   key: string;
@@ -149,18 +152,24 @@ interface RangeValue {
 
 type ParamType = 'boolean' | 'number' | 'range' | 'select' | 'text';
 
-function getParamColor(type: ParamType, value: unknown): 'green' | 'red' | 'cyan' | 'yellow' {
+function getParamColor(
+  theme: ReturnType<typeof useTheme>['theme'],
+  type: ParamType,
+  value: unknown,
+): string {
   if (type === 'boolean') {
-    return value ? 'green' : 'red';
+    return value ? theme.palette.success : theme.palette.error;
   }
   if (type === 'select') {
-    return 'cyan';
+    return theme.palette.primary;
   }
-  return 'yellow';
+  return theme.palette.accent;
 }
 
 export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement {
+  const { theme } = useTheme();
   const setScreen = useStore((state) => state.setScreen);
+  const navigateBack = useStore((state) => state.goBack);
   const showToast = useStore((state) => state.showToast);
   const setConfig = useStore((state) => state.setConfig);
   const configs = useStore((state) => state.configs);
@@ -171,9 +180,12 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
   const [loading, setLoading] = useState(true);
   const [rawConfig, setRawConfig] = useState<Record<string, unknown> | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  useInputLock(editMode !== 'none');
 
   const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
-  const listHeight = Math.max(5, terminalHeight - 12);
+  const hasStageHint = ['synthesis', 'mol_prep', 'descriptors', 'struct_filters', 'docking'].includes(stageName);
+  const reservedRows = hasStageHint ? 13 : 12;
+  const visibleRows = Math.max(3, terminalHeight - reservedRows);
   const descriptionWidth = Math.min(40, Math.max(24, Math.floor(terminalWidth * 0.35)));
   const showSideDescription = terminalWidth >= 80;
   const contentWidth = Math.max(20, terminalWidth - 2);
@@ -289,15 +301,11 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
       setConfig(stageConfig.configType, rawConfig as any);
       setIsDirty(false);
       showToast('info', `${stageConfig.displayName} settings saved for this run only`);
-      // Return to stage selection after save
-      setScreen('wizardStageSelection');
+      // Return to where the user came from (stage selection or review).
+      navigateBack();
     } catch (err) {
       showToast('error', `Failed to save: ${err}`);
     }
-  };
-
-  const goBack = () => {
-    setScreen('wizardStageSelection');
   };
 
   useInput((input, key) => {
@@ -376,14 +384,14 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
     } else if (input === 'r' && stageName === 'synthesis') {
       // 'r' - go to detailed retrosynthesis config (only for synthesis stage)
       setScreen('configRetrosynthesis');
-    } else if (key.leftArrow || key.escape || input === 'q') {
-      goBack();
+    } else if (key.leftArrow || key.escape) {
+      navigateBack();
     }
   });
 
   // Calculate visible range
-  const startIdx = Math.max(0, Math.min(focusedIndex - Math.floor(listHeight / 2), stageConfig.params.length - listHeight));
-  const endIdx = Math.min(stageConfig.params.length, startIdx + listHeight);
+  const startIdx = Math.max(0, Math.min(focusedIndex - Math.floor(visibleRows / 2), stageConfig.params.length - visibleRows));
+  const endIdx = Math.min(stageConfig.params.length, startIdx + visibleRows);
   const visibleParams = stageConfig.params.slice(startIdx, endIdx);
 
   const shortcuts = [
@@ -396,7 +404,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
 
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Pipeline Wizard" subtitle={`Configure ${stageConfig.displayName}`} />
         <Spinner label="Loading configuration..." />
       </Box>
@@ -407,7 +415,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
   const focusedDescription = focusedParam?.description || 'No description available.';
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header
         title="Pipeline Wizard"
         subtitle={`Configure ${stageConfig.displayName}${isDirty ? ' *' : ''}`}
@@ -416,29 +424,29 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
       {/* Stage-specific hints */}
       {stageName === 'synthesis' && (
         <Box marginBottom={1}>
-          <Text dimColor>Synthesis scoring (SA, SYBA, RA) and retrosynthesis route search. </Text>
-          <Text color="cyan">[r]</Text>
-          <Text dimColor> for AiZynthFinder model paths.</Text>
+          <Text color={theme.palette.textMuted}>Synthesis scoring (SA, SYBA, RA) and retrosynthesis route search. </Text>
+          <Text color={theme.palette.primary}>[r]</Text>
+          <Text color={theme.palette.textMuted}> for AiZynthFinder model paths.</Text>
         </Box>
       )}
       {stageName === 'mol_prep' && (
         <Box marginBottom={1}>
-          <Text dimColor>Datamol cleanup and strict molecule normalization before downstream stages.</Text>
+          <Text color={theme.palette.textMuted}>Datamol cleanup and strict molecule normalization before downstream stages.</Text>
         </Box>
       )}
       {stageName === 'descriptors' && (
         <Box marginBottom={1}>
-          <Text dimColor>Molecular property calculation and filtering by descriptor ranges.</Text>
+          <Text color={theme.palette.textMuted}>Molecular property calculation and filtering by descriptor ranges.</Text>
         </Box>
       )}
       {stageName === 'struct_filters' && (
         <Box marginBottom={1}>
-          <Text dimColor>Structural alerts: PAINS, NIBR, Lilly medchem filters.</Text>
+          <Text color={theme.palette.textMuted}>Structural alerts: PAINS, NIBR, Lilly medchem filters.</Text>
         </Box>
       )}
       {stageName === 'docking' && (
         <Box marginBottom={1}>
-          <Text dimColor>Molecular docking with smina (CPU) or gnina (GPU+CNN scoring).</Text>
+          <Text color={theme.palette.textMuted}>Molecular docking with smina (CPU) or gnina (GPU+CNN scoring).</Text>
         </Box>
       )}
 
@@ -453,10 +461,10 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
             return (
               <Box key={`${param.key}-${actualIndex}`} flexDirection="column">
                 <Box>
-                  <Text color={isFocused ? 'cyan' : 'gray'}>
+                  <Text color={isFocused ? theme.palette.primary : theme.palette.textMuted}>
                     {isFocused ? '▸ ' : '  '}
                   </Text>
-                  <Text color={isFocused ? 'white' : 'gray'}>{param.label.padEnd(20)}</Text>
+                  <Text color={isFocused ? theme.palette.text : theme.palette.textMuted}>{param.label.padEnd(20)}</Text>
 
                   {isEditing ? (
                     <Box>
@@ -465,11 +473,11 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
                           {editMode === 'min' ? (
                             <>
                               <TextInput value={editValue} onChange={setEditValue} focus={true} />
-                              <Text dimColor> - {String((value as RangeValue)?.max ?? '')}</Text>
+                              <Text color={theme.palette.textMuted}> - {String((value as RangeValue)?.max ?? '')}</Text>
                             </>
                           ) : (
                             <>
-                              <Text dimColor>{String((value as RangeValue)?.min ?? '')} - </Text>
+                              <Text color={theme.palette.textMuted}>{String((value as RangeValue)?.min ?? '')} - </Text>
                               <TextInput value={editValue} onChange={setEditValue} focus={true} />
                             </>
                           )}
@@ -479,14 +487,15 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
                       )}
                     </Box>
                   ) : (
-                    <Text color={getParamColor(param.type, value)}>
+                    <Text color={getParamColor(theme, param.type, value)}>
                       {formatValue(param)}
                     </Text>
                   )}
                 </Box>
                 {!showSideDescription && isFocused && param.description && (
-                  <Box paddingLeft={4}>
-                    <Text dimColor italic>{param.description}</Text>
+                  <Box paddingLeft={4} width={contentWidth}>
+                    <Text color={theme.palette.textMuted} italic wrap="truncate-end">{param.description}</Text>
+                    <LineFill width={contentWidth} />
                   </Box>
                 )}
               </Box>
@@ -496,15 +505,18 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
 
         {showSideDescription && (
           <Box flexDirection="column" width={descriptionWidth}>
-            <Text color="cyan" bold>Description</Text>
-            <Text dimColor wrap="wrap">{focusedDescription}</Text>
+            <Text color={theme.palette.accent} bold>Description</Text>
+            <Box width={descriptionWidth}>
+              <Text color={theme.palette.textMuted} wrap="truncate-end">{focusedDescription}</Text>
+              <LineFill width={descriptionWidth} />
+            </Box>
           </Box>
         )}
       </Box>
 
-      {stageConfig.params.length > listHeight && (
+      {stageConfig.params.length > visibleRows && (
         <Box>
-          <Text dimColor>({focusedIndex + 1}/{stageConfig.params.length})</Text>
+          <Text color={theme.palette.textMuted}>({focusedIndex + 1}/{stageConfig.params.length})</Text>
         </Box>
       )}
 

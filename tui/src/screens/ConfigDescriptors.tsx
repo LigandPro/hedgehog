@@ -7,7 +7,10 @@ import { Spinner } from '../components/Spinner.js';
 import { DescriptorTable, type DescriptorRow } from '../components/DescriptorTable.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
+import { useInputLock } from '../hooks/useInputLock.js';
 import { getByPath, setByPath } from '../utils/object-path.js';
+import { useTheme } from '../theme/context.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import type { DescriptorsConfig } from '../types/index.js';
 
 
@@ -69,6 +72,16 @@ interface SettingField {
   description?: string;
 }
 
+function truncateMiddle(value: string, width: number): string {
+  if (width <= 0) return '';
+  if (value.length <= width) return value;
+  if (width <= 1) return '…';
+  if (width <= 3) return `${value.slice(0, width - 1)}…`;
+  const left = Math.ceil((width - 1) / 2);
+  const right = Math.floor((width - 1) / 2);
+  return `${value.slice(0, left)}…${value.slice(value.length - right)}`;
+}
+
 const settingsFields: SettingField[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable descriptors calculation stage' },
   { key: 'batch_size', label: 'Batch Size', type: 'number', description: 'Molecules per batch for memory efficiency' },
@@ -91,7 +104,10 @@ function formatSettingValue(fieldType: string, value: unknown): string {
 type ViewMode = 'settings' | 'borders';
 
 export function ConfigDescriptors(): React.ReactElement {
+  const { theme } = useTheme();
+  const { width: terminalWidth } = useTerminalSize();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const config = useStore((state) => state.configs.descriptors);
   const setConfig = useStore((state) => state.setConfig);
   const isBackendReady = useStore((state) => state.isBackendReady);
@@ -109,6 +125,9 @@ export function ConfigDescriptors(): React.ReactElement {
   const [settingsIndex, setSettingsIndex] = useState(0);
   const [settingsEditMode, setSettingsEditMode] = useState(false);
   const [settingsEditValue, setSettingsEditValue] = useState('');
+  useInputLock(settingsEditMode);
+  const selectedSettingsField = settingsFields[settingsIndex];
+  const selectedDescription = selectedSettingsField?.description || '';
 
   useEffect(() => {
     if (!config && isBackendReady) {
@@ -228,11 +247,11 @@ export function ConfigDescriptors(): React.ReactElement {
         confirmLabel: 'Discard',
         cancelLabel: 'Cancel',
         onConfirm: () => {
-          setScreen('welcome');
+          goBack();
         },
       });
     } else {
-      setScreen('welcome');
+      goBack();
     }
   };
 
@@ -275,7 +294,7 @@ export function ConfigDescriptors(): React.ReactElement {
         setViewMode('borders');
       } else if (input === 's') {
         saveConfig();
-      } else if (key.escape || key.leftArrow || input === 'q') {
+      } else if (key.escape || key.leftArrow) {
         handleBack();
       }
       return;
@@ -311,7 +330,7 @@ export function ConfigDescriptors(): React.ReactElement {
 
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Descriptors Config" />
         <Spinner label="Loading configuration..." />
       </Box>
@@ -319,35 +338,40 @@ export function ConfigDescriptors(): React.ReactElement {
   }
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Descriptors Config" subtitle={isDirty ? 'config_descriptors.yml *' : 'config_descriptors.yml'} />
 
       {error && (
         <Box marginY={1}>
-          <Text color="red">Error: {error}</Text>
+          <Text color={theme.palette.error}>Error: {error}</Text>
         </Box>
       )}
 
       {viewMode === 'settings' ? (
         <>
           <Box marginY={1}>
-            <Text color="cyan" bold>─ Settings ─</Text>
+            <Text color={theme.palette.accent} bold>─ Settings ─</Text>
           </Box>
           <Box flexDirection="column">
             {settingsFields.map((field, index) => {
               const isSelected = index === settingsIndex;
               const isEditing = isSelected && settingsEditMode;
               const value = getSettingValue(field);
+              const rowWidth = Math.max(1, terminalWidth - 4);
+              const labelWidth = Math.min(18, Math.max(8, rowWidth - 6));
+              const valueWidth = Math.max(1, rowWidth - labelWidth - 4);
 
               return (
                 <Box key={field.key} flexDirection="column">
-                  <Box>
-                    <Text color={isSelected ? 'cyan' : 'white'}>
+                  <Box width={rowWidth}>
+                    <Text color={isSelected ? theme.palette.primary : theme.palette.text}>
                       {isSelected ? '▶ ' : '  '}
                     </Text>
-                    <Text dimColor>{field.label.padEnd(18)}</Text>
+                    <Box width={labelWidth}>
+                      <Text color={theme.palette.textMuted}>{field.label}</Text>
+                    </Box>
                     {isEditing ? (
-                      <Box>
+                      <Box width={valueWidth}>
                         <TextInput
                           value={settingsEditValue}
                           onChange={setSettingsEditValue}
@@ -355,26 +379,30 @@ export function ConfigDescriptors(): React.ReactElement {
                         />
                       </Box>
                     ) : (
-                      <Text color={
-                        field.type === 'boolean'
-                          ? (value ? 'green' : 'red')
-                          : 'yellow'
-                      }>
-                        {formatSettingValue(field.type, value)}
-                      </Text>
+                      <Box width={valueWidth}>
+                        <Text
+                          color={
+                            field.type === 'boolean'
+                              ? (value ? theme.palette.success : theme.palette.error)
+                              : theme.palette.accent
+                          }
+                        >
+                          {truncateMiddle(formatSettingValue(field.type, value), valueWidth).padEnd(valueWidth, ' ')}
+                        </Text>
+                      </Box>
                     )}
                   </Box>
-                  {isSelected && field.description && (
-                    <Box paddingLeft={4}>
-                      <Text dimColor italic>{field.description}</Text>
-                    </Box>
-                  )}
                 </Box>
               );
             })}
           </Box>
+          <Box height={1} paddingLeft={2}>
+            <Text color={theme.palette.textMuted} wrap="truncate-end">
+              {selectedDescription ? `Info: ${selectedDescription}` : ' '}
+            </Text>
+          </Box>
           <Box marginTop={1}>
-            <Text dimColor>Press 'b' to edit descriptor borders</Text>
+            <Text color={theme.palette.textMuted}>Press 'b' to edit descriptor borders</Text>
           </Box>
           <Footer shortcuts={settingsShortcuts} />
         </>

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { useTheme } from '../theme/context.js';
 
 interface DataRowProps {
   label: string;
@@ -12,16 +13,17 @@ export function DataRow({
   label, 
   value, 
   labelWidth = 20,
-  valueColor = 'white',
+  valueColor,
 }: DataRowProps): React.ReactElement {
+  const { theme } = useTheme();
   const displayValue = typeof value === 'boolean' 
     ? (value ? 'Yes' : 'No')
     : String(value);
 
   return (
     <Box>
-      <Text dimColor>{label.padEnd(labelWidth)}</Text>
-      <Text color={valueColor as any}>{displayValue}</Text>
+      <Text color={theme.palette.textMuted}>{label.padEnd(labelWidth)}</Text>
+      <Text color={valueColor || theme.palette.text}>{displayValue}</Text>
     </Box>
   );
 }

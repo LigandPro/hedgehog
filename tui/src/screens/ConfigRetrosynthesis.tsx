@@ -9,7 +9,10 @@ import { SearchIndicator } from '../components/SearchIndicator.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import { useSearch } from '../hooks/useSearch.js';
-import type { RetrosynthesisConfig, Screen } from '../types/index.js';
+import { useInputLock } from '../hooks/useInputLock.js';
+import { useTheme } from '../theme/context.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import type { RetrosynthesisConfig } from '../types/index.js';
 
 interface FormField {
   key: keyof RetrosynthesisConfig;
@@ -73,8 +76,21 @@ const fields: FormField[] = [
   },
 ];
 
+function truncateMiddle(value: string, width: number): string {
+  if (width <= 0) return '';
+  if (value.length <= width) return value;
+  if (width <= 1) return '…';
+  if (width <= 3) return `${value.slice(0, width - 1)}…`;
+  const left = Math.ceil((width - 1) / 2);
+  const right = Math.floor((width - 1) / 2);
+  return `${value.slice(0, left)}…${value.slice(value.length - right)}`;
+}
+
 export function ConfigRetrosynthesis(): React.ReactElement {
+  const { theme } = useTheme();
+  const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
   const setScreen = useStore((state) => state.setScreen);
+  const goBack = useStore((state) => state.goBack);
   const previousScreen = useStore((state) => state.previousScreen);
   const config = useStore((state) => state.configs.retrosynthesis);
   const setConfig = useStore((state) => state.setConfig);
@@ -84,9 +100,8 @@ export function ConfigRetrosynthesis(): React.ReactElement {
   const setSearchActive = useStore((state) => state.setSearchActive);
   const setSearchQuery = useStore((state) => state.setSearchQuery);
 
-  // Determine where to go back to (Wizard or ConfigSynthesis)
-  const backScreen: Screen = previousScreen === 'wizardConfigSynthesis' ? 'wizardConfigSynthesis' : 'configSynthesis';
-  const isWizardMode = backScreen === 'wizardConfigSynthesis';
+  // Wizard mode: when opened from any wizard screen, config is saved for this run only.
+  const isWizardMode = (previousScreen ?? '').startsWith('wizard');
 
   const [loading, setLoading] = useState(!config);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -97,8 +112,10 @@ export function ConfigRetrosynthesis(): React.ReactElement {
   const [browsingField, setBrowsingField] = useState<FormField | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [isDirty, setIsDirty] = useState(false);
+  useInputLock(editMode);
 
-  const visibleRows = 12;
+  const reservedRows = 13;
+  const visibleRows = Math.max(2, terminalHeight - reservedRows);
 
   // Search functionality
   const {
@@ -106,7 +123,6 @@ export function ConfigRetrosynthesis(): React.ReactElement {
     searchActive,
     filteredItems: filteredFields,
     handleSearchInput,
-    highlightMatch,
   } = useSearch({
     items: fields,
     searchFields: (field) => [field.label, field.key, field.section || ''],
@@ -169,11 +185,11 @@ export function ConfigRetrosynthesis(): React.ReactElement {
         confirmLabel: 'Discard',
         cancelLabel: 'Cancel',
         onConfirm: () => {
-          setScreen(backScreen);
+          goBack();
         },
       });
     } else {
-      setScreen(backScreen);
+      goBack();
     }
   };
 
@@ -247,7 +263,7 @@ export function ConfigRetrosynthesis(): React.ReactElement {
       setBrowsingField(field);
     } else if (input === 's') {
       saveConfig();
-    } else if (key.escape || key.leftArrow || input === 'q') {
+    } else if (key.escape || key.leftArrow) {
       handleExit();
     }
   });
@@ -264,17 +280,9 @@ export function ConfigRetrosynthesis(): React.ReactElement {
     setBrowsingField(null);
   };
 
-  const shortcuts = [
-    { key: '↑↓', label: 'Navigate' },
-    { key: 'b/Enter', label: 'Browse' },
-    { key: '/', label: 'Search' },
-    { key: 's', label: 'Save' },
-    { key: '←/Esc', label: 'Back' },
-  ];
-
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Retrosynthesis Config" />
         <Spinner label="Loading configuration..." />
       </Box>
@@ -288,11 +296,11 @@ export function ConfigRetrosynthesis(): React.ReactElement {
       { key: 'Enter', label: 'Open/Select' },
       { key: '→/e', label: 'Edit path' },
       { key: 'Space', label: 'Search' },
-      { key: '/', label: 'Search' },
+      { key: 'Ctrl+F', label: 'Search' },
       { key: '←', label: 'Back' },
     ];
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" flexGrow={1} padding={1}>
         <Header title="Select File" subtitle={browsingField.label} />
         <FileBrowser
           initialPath={currentValue}
@@ -307,26 +315,31 @@ export function ConfigRetrosynthesis(): React.ReactElement {
 
   const visibleFields = displayFields.slice(scrollOffset, scrollOffset + visibleRows);
   let lastSection = scrollOffset > 0 ? displayFields[scrollOffset - 1]?.section : undefined;
+  const rowWidth = Math.max(1, terminalWidth - 4);
+  const labelWidth = Math.min(22, Math.max(8, rowWidth - 6));
+  const valueWidth = Math.max(1, rowWidth - labelWidth - 4);
+  const selectedField = displayFields[selectedIndex];
+  const selectedDescription = selectedField?.description || '';
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" flexGrow={1} padding={1}>
       <Header title="Retrosynthesis Config" subtitle={isDirty ? 'aizynthfinder/config.yml *' : 'aizynthfinder/config.yml'} />
 
       <SearchIndicator active={searchActive} query={searchQuery} />
 
       {error && (
         <Box marginY={1}>
-          <Text color="red">Error: {error}</Text>
+          <Text color={theme.palette.error}>Error: {error}</Text>
         </Box>
       )}
 
       <Box marginBottom={1}>
-        <Text dimColor>AiZynthFinder model and data file paths for retrosynthesis route search.</Text>
+        <Text color={theme.palette.textMuted}>AiZynthFinder model and data file paths for retrosynthesis route search.</Text>
       </Box>
 
       {totalFields === 0 ? (
         <Box marginY={2}>
-          <Text dimColor>No parameters match "{searchQuery}"</Text>
+          <Text color={theme.palette.textMuted}>No parameters match "{searchQuery}"</Text>
         </Box>
       ) : (
         <Box flexDirection="column" marginY={1}>
@@ -338,9 +351,6 @@ export function ConfigRetrosynthesis(): React.ReactElement {
             const showSection = field.section && field.section !== lastSection;
             if (field.section) lastSection = field.section;
 
-            // Highlight matching text
-            const labelParts = searchQuery ? highlightMatch(field.label) : [{ text: field.label, highlighted: false }];
-
             // Truncate long paths for display
             const displayValue = value ? (String(value).length > 50 ? '...' + String(value).slice(-47) : String(value)) : '(not set)';
 
@@ -348,23 +358,21 @@ export function ConfigRetrosynthesis(): React.ReactElement {
               <React.Fragment key={field.key}>
                 {showSection && (
                   <Box marginTop={index > 0 ? 1 : 0}>
-                    <Text color="cyan" bold>─ {field.section} ─</Text>
+                    <Text color={theme.palette.accent} bold>─ {field.section} ─</Text>
                   </Box>
                 )}
                 <Box flexDirection="column">
-                  <Box>
-                    <Text color={isSelected ? 'cyan' : 'white'}>
+                  <Box width={rowWidth}>
+                    <Text color={isSelected ? theme.palette.primary : theme.palette.text}>
                       {isSelected ? '▶ ' : '  '}
                     </Text>
-                    <Box width={22}>
-                      {labelParts.map((part, pi) => (
-                        <Text key={pi} dimColor={!part.highlighted} color={part.highlighted ? 'yellow' : undefined} bold={part.highlighted}>
-                          {part.text}
-                        </Text>
-                      ))}
+                    <Box width={labelWidth}>
+                      <Text color={theme.palette.textMuted} wrap="truncate-end">
+                        {field.label.padEnd(labelWidth, ' ')}
+                      </Text>
                     </Box>
                     {isEditing ? (
-                      <Box>
+                      <Box width={valueWidth}>
                         <TextInput
                           value={editValue}
                           onChange={setEditValue}
@@ -372,16 +380,13 @@ export function ConfigRetrosynthesis(): React.ReactElement {
                         />
                       </Box>
                     ) : (
-                      <Text color={value ? 'blue' : 'gray'}>
-                        {displayValue}
-                      </Text>
+                      <Box width={valueWidth}>
+                        <Text color={value ? theme.palette.info : theme.palette.textMuted}>
+                          {truncateMiddle(displayValue, valueWidth).padEnd(valueWidth, ' ')}
+                        </Text>
+                      </Box>
                     )}
                   </Box>
-                  {isSelected && field.description && (
-                    <Box paddingLeft={4}>
-                      <Text dimColor italic>{field.description}</Text>
-                    </Box>
-                  )}
                 </Box>
               </React.Fragment>
             );
@@ -389,14 +394,20 @@ export function ConfigRetrosynthesis(): React.ReactElement {
         </Box>
       )}
 
+      <Box height={1} paddingLeft={2}>
+        <Text color={theme.palette.textMuted} wrap="truncate-end">
+          {selectedDescription ? `Info: ${selectedDescription}` : ' '}
+        </Text>
+      </Box>
+
       <Box>
-        <Text dimColor>
+        <Text color={theme.palette.textMuted}>
           {totalFields > 0 ? `${scrollOffset + 1}-${Math.min(scrollOffset + visibleRows, totalFields)} of ${totalFields}` : '0'} params
           {searchQuery && ` (filtered from ${fields.length})`}
         </Text>
       </Box>
 
-      <Footer shortcuts={shortcuts} />
+      <Footer />
     </Box>
   );
 }

@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { Box, Text } from 'ink';
 import type { StageStatus } from '../types/index.js';
-import { icons } from '../utils/colors.js';
+import { useTheme } from '../theme/context.js';
 
 // Unicode block characters for smooth progress: ▏▎▍▌▋▊▉█
 // Each represents 1/8 increments of a full block
@@ -22,6 +22,7 @@ export const ProgressBar = memo(function ProgressBar({
   label,
   showPercentage = true,
 }: ProgressBarProps): React.ReactElement {
+  const { theme } = useTheme();
   // Calculate smooth progress with fractional blocks
   const totalUnits = width * 8; // 8 increments per character
   const filledUnits = Math.round((progress / 100) * totalUnits);
@@ -35,29 +36,29 @@ export const ProgressBar = memo(function ProgressBar({
   const empty = '░'.repeat(Math.max(0, emptyBlocks));
 
   const statusIcon = {
-    pending: icons.pending,
-    running: icons.running,
-    completed: icons.success,
-    error: icons.error,
-    skipped: icons.pending,
+    pending: '○',
+    running: '●',
+    completed: '✓',
+    error: '✗',
+    skipped: '○',
   }[status];
 
   const barColor = {
-    pending: 'gray',
-    running: 'cyan',
-    completed: 'green',
-    error: 'red',
-    skipped: 'gray',
-  }[status] as 'gray' | 'cyan' | 'green' | 'red';
+    pending: theme.palette.textMuted,
+    running: theme.palette.primary,
+    completed: theme.palette.success,
+    error: theme.palette.error,
+    skipped: theme.palette.textMuted,
+  }[status];
 
   return (
     <Box>
       <Text>{statusIcon} </Text>
-      {label && <Text>{label.padEnd(16)} </Text>}
+      {label && <Text color={theme.palette.text}>{label.padEnd(16)} </Text>}
       <Text color={barColor}>{filled}{partial}</Text>
-      <Text color="gray">{empty}</Text>
+      <Text color={theme.palette.border}>{empty}</Text>
       {showPercentage && (
-        <Text dimColor> {progress.toString().padStart(3)}%</Text>
+        <Text color={theme.palette.textMuted}> {progress.toString().padStart(3)}%</Text>
       )}
     </Box>
   );
