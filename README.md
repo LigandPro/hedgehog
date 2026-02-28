@@ -13,11 +13,11 @@
   <img src="docs/public/hedgehog-tui-home.png" alt="HEDGEHOG Terminal UI" width="90%" />
 </p>
 
-
-## Quick Start
-
 HEDGEHOG is a benchmark pipeline for evaluating generated molecules.
 It applies a staged filtering workflow (standardization, descriptors, structural filters, synthesis checks, docking, and post-docking validation) and generates an interactive HTML report.
+
+
+## Quick Start
 
 ### Install from PyPI
 
