@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/public/hedgehog-title.png" alt="HEDGEHOG" width="40%" />
+  <img src="docs/public/hedgehog-title.png" alt="HEDGEHOG" width="30%" />
 </p>
 <p align="center">HEDGEHOG: Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration.</p>
 <p align="center">
