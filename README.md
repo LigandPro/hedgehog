@@ -1,10 +1,17 @@
-# 🦔 HEDGEHOG
-**Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration**
+<p align="center">
+  <img src="docs/public/hedgehog-title.png" alt="HEDGEHOG" />
+</p>
+<p align="center">Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration.</p>
+<p align="center">
+  <a href="https://pypi.org/project/hedgehog/"><img alt="PyPI" src="https://img.shields.io/pypi/v/hedgehog?style=flat-square" /></a>
+  <a href="https://github.com/LigandPro/hedgehog/actions/workflows/ci.yaml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/LigandPro/hedgehog/ci.yaml?style=flat-square&branch=main" /></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow.svg?style=flat-square" /></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue.svg?style=flat-square" /></a>
+</p>
 
-[![PyPI version](https://badge.fury.io/py/hedgehog.svg)](https://pypi.org/project/hedgehog/)
-[![CI](https://github.com/LigandPro/hedgehog/actions/workflows/ci.yaml/badge.svg)](https://github.com/LigandPro/hedgehog/actions/workflows/ci.yaml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+<p align="center">
+  <img src="docs/public/hedgehog-tui-home.png" alt="HEDGEHOG Terminal UI" />
+</p>
 
 ![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
 
