@@ -16,6 +16,7 @@
 HEDGEHOG is a benchmark pipeline for evaluating generated molecules.
 It applies a staged filtering workflow (standardization, descriptors, structural filters, synthesis checks, docking, and post-docking validation) and generates an interactive HTML report.
 
+![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
 
 ## Quick Start
 
@@ -45,7 +46,6 @@ uv run hedgehog --auto-install
 
 ## Common Commands
 
-![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
 
 ```bash
 # Full pipeline
