@@ -1,7 +1,7 @@
 <p align="center">
   <img src="docs/public/hedgehog-title.png" alt="HEDGEHOG" width="40%" />
 </p>
-<p align="center">Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration.</p>
+<p align="center">HEDGEHOG: Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration.</p>
 <p align="center">
   <a href="https://pypi.org/project/hedgehog/"><img alt="PyPI" src="https://img.shields.io/pypi/v/hedgehog?style=flat-square" /></a>
   <a href="https://github.com/LigandPro/hedgehog/actions/workflows/ci.yaml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/LigandPro/hedgehog/ci.yaml?style=flat-square&branch=main" /></a>
@@ -12,8 +12,7 @@
 <p align="center">
   <img src="docs/public/hedgehog-tui-home.png" alt="HEDGEHOG Terminal UI" />
 </p>
-
-![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
+---
 
 HEDGEHOG is a benchmark pipeline for evaluating generated molecules.
 It applies a staged filtering workflow (standardization, descriptors, structural filters, synthesis checks, docking, and post-docking validation) and generates an interactive HTML report.
@@ -45,6 +44,8 @@ uv run hedgehog --auto-install
 ```
 
 ## Common Commands
+
+![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
 
 ```bash
 # Full pipeline
