@@ -120,3 +120,6 @@ logs/
 *.temp
 *.swp
 *.swo
+
+# Local agent scratchpad
+/.thoughts/
