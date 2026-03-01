@@ -38,30 +38,55 @@ Notes:
 
 
 ### Ligand Preparation
-GNINA requires SDF format input files. The pipeline supports two modes for converting SMILES/CSV inputs to SDF:
+GNINA requires SDF format input files. The pipeline supports multiple modes for handling ligand inputs:
 
-#### With `ligand_preparation_tool`
-If `ligand_preparation_tool` is configured in `src/hedgehog/configs/config.yml`, the pipeline uses the ligand preparation tool to convert input files:
+#### Mode 1: Already SDF Format (No Conversion)
+If you explicitly provide an SDF file via the `{tool_name}_ligands` config option, the pipeline uses it directly without any conversion:
 
-- **Input format detection**: Automatically detects CSV (uses `-icsv`) or SMI files (uses `-ismi`)
-- **Output**: Converts to SDF format saved to `docking/prepared_for_gnina.sdf`
-- **Command**: `ligand_preparation_tool -icsv ligands.csv -osd docking/prepared_for_gnina.sdf`
-- **Benefits**: Provides advanced preprocessing including stereo expansion, tautomerization, 3D geometry optimization, and other chemical transformations
-
-To enable, add to `src/hedgehog/configs/config.yml`:
+**Configuration** (in `config_docking.yml`):
 ```yaml
-ligand_preparation_tool: /path/to/ligand_preparation_tool
+smina_ligands: /path/to/ligands.sdf    # For SMINA
+gnina_ligands: /path/to/ligands.sdf   # For GNINA
 ```
 
-#### Without `ligand_preparation_tool`
-If `ligand_preparation_tool` is **not** provided, the pipeline automatically falls back to built-in RDKit conversion:
+- **Supported formats**: `.sdf`, `.sdf.gz`, `.osd`, `.mol2`
+- **No preprocessing**: File is used as-is
+- **Fastest option**: No conversion overhead
+- **Note**: This mode only applies when using `{tool_name}_ligands` config. The default pipeline flow (reading from previous stages) always converts to CSV first, then processes through Modes 2-4.
 
-1. Reads SMILES from the input CSV file
+#### Mode 2: Direct RDKit Conversion (1:1 Mapping)
+When `prepare_ligands: false` is set in `config_docking.yml`, the pipeline uses built-in RDKit conversion with 1:1 molecule mapping:
+
+```yaml
+prepare_ligands: false  # Skip advanced preprocessing
+```
+**Process:**
+1. Reads SMILES from `ligands.csv` file (created from previous pipeline stages) or as input file if provided via --mols
 2. Converts SMILES to molecules using `Chem.MolFromSmiles()`
 3. Adds hydrogens with `Chem.AddHs()`
 4. Generates 3D conformations using `AllChem.EmbedMolecule()` with ETKDG method
 5. Optimizes geometries with `AllChem.UFFOptimizeMolecule()`
-6. Writes to `ligands_prepared.sdf`
+6. Writes to `_workdir/ligands_prepared.sdf`
+7. **Maintains 1:1 mapping**: One input molecule → One output conformer
+
+**Benefits**: Fast, maintains exact molecule count, no external dependencies
+
+#### Mode 3: Advanced Preprocessing with Ligand Preparation Tool
+When `prepare_ligands: true` (default) and `ligand_preparation_tool` is configured, the pipeline uses the external ligand preparation tool:
+
+```yaml
+prepare_ligands: true   # Default: true
+```
+
+**Configuration** (in `src/hedgehog/configs/config.yml`):
+```yaml
+ligand_preparation_tool: /path/to/ligand_preparation_tool
+```
+- **Note**: Tool should convert file to SDF format saved to `_workdir/prepared_for_{tool_name}.sdf`
+
+#### Mode 4: Fallback to RDKit (when `prepare_ligands: true` but no tool)
+If `prepare_ligands: true` but `ligand_preparation_tool` is **not** provided or not found, the pipeline automatically falls back to built-in RDKit conversion (same as Mode 2):
+
 
 ### Common issues and fixes
 - Gnina writes output into a duplicated folder path
