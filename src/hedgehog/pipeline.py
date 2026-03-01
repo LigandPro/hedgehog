@@ -1767,9 +1767,9 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
             f"Pipeline started: {datetime.now().isoformat()}\n"
             "This file exists while the pipeline is running or if it was interrupted/failed.\n"
             "It will be removed automatically on successful completion.\n"
-            "If the pipeline is still running please check progress in: {folder}/_workdir/\n"
+            f"If the pipeline is still running please check progress in: {folder}/_workdir/\n"
             "\n"
-            "If the pipeline failed please review the run log: {folder}/run_*.log.\n"
+            f"If the pipeline failed please review the run log: {folder}/run_*.log.\n"
         )
 
         _save_config_snapshot(config)
