@@ -1,0 +1,109 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/generate_api_docs.py"
+      - "src/hedgehog/**"
+      - ".github/workflows/docs-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and Deploy Docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install project dependencies
+        run: uv sync
+
+      - name: Install docs dependencies
+        run: cd docs && pnpm install --frozen-lockfile
+
+      - name: Build static docs
+        run: cd docs && pnpm build
+
+      - name: Validate docs artifact
+        run: test -f docs/out/index.html
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DOCS_DEPLOY_SSH_KEY }}
+
+      - name: Add deploy host to known_hosts
+        env:
+          DOCS_DEPLOY_HOST: ${{ vars.DOCS_DEPLOY_HOST }}
+          DOCS_DEPLOY_PORT: ${{ vars.DOCS_DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          test -n "${DOCS_DEPLOY_HOST:-}"
+          test -n "${DOCS_DEPLOY_PORT:-}"
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$DOCS_DEPLOY_PORT" "$DOCS_DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload and activate release
+        env:
+          DOCS_DEPLOY_HOST: ${{ vars.DOCS_DEPLOY_HOST }}
+          DOCS_DEPLOY_PORT: ${{ vars.DOCS_DEPLOY_PORT }}
+          DOCS_DEPLOY_USER: ${{ vars.DOCS_DEPLOY_USER }}
+          DOCS_DEPLOY_PATH: ${{ vars.DOCS_DEPLOY_PATH }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "${DOCS_DEPLOY_HOST:-}"
+          test -n "${DOCS_DEPLOY_PORT:-}"
+          test -n "${DOCS_DEPLOY_USER:-}"
+          test -n "${DOCS_DEPLOY_PATH:-}"
+
+          RELEASE_DIR="$DOCS_DEPLOY_PATH/releases/$RELEASE_SHA"
+          SSH_TARGET="$DOCS_DEPLOY_USER@$DOCS_DEPLOY_HOST"
+
+          ssh -p "$DOCS_DEPLOY_PORT" "$SSH_TARGET" "mkdir -p '$DOCS_DEPLOY_PATH/releases' '$RELEASE_DIR'"
+          rsync -az --delete -e "ssh -p $DOCS_DEPLOY_PORT" docs/out/ "$SSH_TARGET:$RELEASE_DIR/"
+          ssh -p "$DOCS_DEPLOY_PORT" "$SSH_TARGET" "ln -sfn '$RELEASE_DIR' '$DOCS_DEPLOY_PATH/current'"
+
+      - name: Cleanup old releases
+        env:
+          DOCS_DEPLOY_HOST: ${{ vars.DOCS_DEPLOY_HOST }}
+          DOCS_DEPLOY_PORT: ${{ vars.DOCS_DEPLOY_PORT }}
+          DOCS_DEPLOY_USER: ${{ vars.DOCS_DEPLOY_USER }}
+          DOCS_DEPLOY_PATH: ${{ vars.DOCS_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          SSH_TARGET="$DOCS_DEPLOY_USER@$DOCS_DEPLOY_HOST"
+          ssh -p "$DOCS_DEPLOY_PORT" "$SSH_TARGET" \
+            "ls -1dt '$DOCS_DEPLOY_PATH'/releases/* 2>/dev/null | tail -n +6 | xargs -r rm -rf"

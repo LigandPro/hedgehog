@@ -144,6 +144,9 @@ jobs:
         with:
           version: 10
 
+      - name: Install project
+        run: uv sync
+
       - name: Install dependencies
         run: cd docs && pnpm install --frozen-lockfile
 
