@@ -104,17 +104,26 @@ def _log_sampling_warnings(warnings: list[dict], logger: logging.Logger) -> None
 
 
 def _remove_duplicates(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
-    """Remove duplicate molecules, logging if any were removed."""
+    """Remove duplicate molecules within each model, logging if any were removed.
+    
+    Important: Deduplication is done per-model (smiles + model_name) to preserve
+    model-specific statistics. If model_name is missing, it's added as a fallback.
+    """
     initial_count = len(df)
 
-    if MODEL_NAME_COLUMN in df.columns:
+    # Ensure model_name column exists for proper per-model deduplication
+    if MODEL_NAME_COLUMN not in df.columns:
+        logger.warning(
+            "model_name column missing during deduplication. Adding default model_name='single'. "
+            "This should not happen in normal pipeline execution."
+        )
+        df[MODEL_NAME_COLUMN] = DEFAULT_MODEL_NAME
+
+    # Always deduplicate within models (smiles + model_name)
         df = df.drop_duplicates(subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]).reset_index(
             drop=True
         )
         msg = "Removed %s duplicate molecules within models"
-    else:
-        df = df.drop_duplicates(subset=SMILES_COLUMN).reset_index(drop=True)
-        msg = "Removed %s duplicate molecules"
 
     duplicates_removed = initial_count - len(df)
     if duplicates_removed > 0:
@@ -148,6 +157,17 @@ def _detect_mode_and_paths(
     if not matched:
         if path_obj.exists() and path_obj.is_file():
             matched = [generated_mols_path]
+        elif path_obj.exists() and path_obj.is_dir():
+            # Handle directory: find all supported files in the directory
+            all_extensions = SUPPORTED_EXTENSIONS + ["smi"]  # Include .smi files
+            matched = [
+                str(p)
+                for p in path_obj.iterdir()
+                if p.is_file() and p.suffix.lower().lstrip(".") in all_extensions
+            ]
+            if not matched:
+                msg = f"No supported files found in directory: {generated_mols_path}"
+                raise FileNotFoundError(msg)
         else:
             msg = f"No files matched pattern: {generated_mols_path}"
             raise FileNotFoundError(msg)

@@ -249,7 +249,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             mol, {"model_name", "sm_model_name", "s_sm_model_name"}
         )
         mol_idx = _get_first_prop_value(
-            mol, {"mol_idx", "sm_mol_idx", "s_sm_mol_idx", "name"}
+            mol, {"mol_idx", "sm_mol_idx", "s_sm_mol_idx", "name", "_Name"}
         )
         model_names.append(model_name or "")
         mol_idxs.append(mol_idx or "")
