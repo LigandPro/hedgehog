@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
 import { SearchIndicator } from '../components/SearchIndicator.js';
+import { AppShell } from '../components/AppShell.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
 import { useSearch } from '../hooks/useSearch.js';
@@ -89,9 +90,11 @@ export function History(): React.ReactElement {
   });
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Job History" />
-
+    <AppShell
+      padding={1}
+      header={<Header title="Job History" />}
+      footer={<Footer />}
+    >
       <SearchIndicator active={searchActive} query={searchQuery} />
 
       {filteredJobs.length === 0 ? (
@@ -159,7 +162,6 @@ export function History(): React.ReactElement {
         </Box>
       )}
 
-      {/* Stats */}
       {filteredJobs.length > 0 && (
         <Box>
           <Text color={theme.palette.textMuted}>
@@ -168,9 +170,7 @@ export function History(): React.ReactElement {
           </Text>
         </Box>
       )}
-
-      <Footer />
-    </Box>
+    </AppShell>
   );
 }
 

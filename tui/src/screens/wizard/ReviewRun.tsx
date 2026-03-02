@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
+import { AppShell } from '../../components/AppShell.js';
 import { useStore } from '../../store/index.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { useTheme } from '../../theme/context.js';
@@ -149,6 +150,7 @@ export function ReviewRun(): React.ReactElement {
 
   const startPipeline = async () => {
     if (starting) return;
+    if (preflight && !preflight.valid) return;
 
     setStarting(true);
     try {
@@ -163,6 +165,7 @@ export function ReviewRun(): React.ReactElement {
     : preflight.valid
       ? { label: 'Pass', color: theme.palette.success }
       : { label: 'Failed', color: theme.palette.error };
+  const isPreflightBlocked = Boolean(preflight && !preflight.valid);
 
   const separatorWidth = Math.max(1, terminalWidth - 2);
   const maxPreflightItems = terminalHeight < 34 ? 3 : terminalHeight < 42 ? 5 : 8;
@@ -192,15 +195,20 @@ export function ReviewRun(): React.ReactElement {
     } else if (input === 'r') {
       void refreshPreflight();
     } else if (key.return) {
-      void startPipeline();
+      if (!isPreflightBlocked) {
+        void startPipeline();
+      }
     } else if (key.escape || key.leftArrow) {
       goBack();
     }
   });
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Pipeline Wizard" subtitle="Detailed Review" />
+    <AppShell
+      padding={1}
+      header={<Header title="Pipeline Wizard" subtitle="Detailed Review" />}
+      footer={<Footer />}
+    >
 
       {config && (
         <Box flexDirection="column" marginY={1}>
@@ -393,21 +401,27 @@ export function ReviewRun(): React.ReactElement {
       ) : (
         <Box marginY={1} width={separatorWidth}>
           {(() => {
-            const line = 'Press Enter to start the pipeline';
+            const line = isPreflightBlocked
+              ? 'Preflight failed. Fix errors and press r to refresh.'
+              : 'Press Enter to start the pipeline';
             const shown = truncateLine(line, separatorWidth);
             const pad = Math.max(0, separatorWidth - shown.length);
             return (
               <>
-                <Text color={theme.palette.success} bold wrap="truncate-end">{shown}</Text>
+                <Text
+                  color={isPreflightBlocked ? theme.palette.error : theme.palette.success}
+                  bold
+                  wrap="truncate-end"
+                >
+                  {shown}
+                </Text>
                 {pad > 0 && <Text>{' '.repeat(pad)}</Text>}
               </>
             );
           })()}
         </Box>
       )}
-
-      <Footer />
-    </Box>
+    </AppShell>
   );
 }
 

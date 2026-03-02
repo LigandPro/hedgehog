@@ -1,13 +1,65 @@
 """Job history handler for TUI backend."""
 
 import json
+import os
 import threading
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
+
+HISTORY_SEED_ENV = "HEDGEHOG_TUI_HISTORY_SEED"
+SEEDED_HISTORY = [
+    {
+        "id": "audit-run-001",
+        "name": "Audit Run: Full Pipeline",
+        "startTime": "2025-01-15T10:00:00",
+        "endTime": "2025-01-15T10:11:32",
+        "status": "completed",
+        "config": {
+            "inputPath": "src/hedgehog/configs/examples/moses_1000.csv",
+            "outputPath": "results/audit_run_001",
+            "stages": ["descriptors", "struct_filters", "synthesis"],
+        },
+        "results": {
+            "inputMolecules": 1000,
+            "outputMolecules": 742,
+            "durationSeconds": 692,
+        },
+        "error": None,
+    },
+    {
+        "id": "audit-run-002",
+        "name": "Audit Run: Docking",
+        "startTime": "2025-01-14T14:25:00",
+        "endTime": "2025-01-14T14:31:08",
+        "status": "error",
+        "config": {
+            "inputPath": "src/hedgehog/configs/examples/moses_1000.csv",
+            "outputPath": "results/audit_run_002",
+            "stages": ["docking"],
+        },
+        "results": None,
+        "error": "Docking failed: receptor file validation error",
+    },
+    {
+        "id": "audit-run-003",
+        "name": "Audit Run: Retrosynthesis",
+        "startTime": "2025-01-13T09:40:00",
+        "endTime": None,
+        "status": "running",
+        "config": {
+            "inputPath": "src/hedgehog/configs/examples/target_mols.csv",
+            "outputPath": "results/audit_run_003",
+            "stages": ["retrosynthesis"],
+        },
+        "results": None,
+        "error": None,
+    },
+]
 
 
 class HistoryHandler:
@@ -40,6 +92,8 @@ class HistoryHandler:
         """Get job history."""
         with self._lock:
             history = self._load_history()
+            if not history and self._history_seed_enabled():
+                history = deepcopy(SEEDED_HISTORY)
             return history[:limit]
 
     def add_job(
@@ -115,3 +169,8 @@ class HistoryHandler:
                 return True
 
             return False
+
+    def _history_seed_enabled(self) -> bool:
+        """Return whether deterministic seeded history mode is enabled."""
+        value = os.getenv(HISTORY_SEED_ENV, "")
+        return value.strip().lower() in {"1", "true", "yes", "on"}

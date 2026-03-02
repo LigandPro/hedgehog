@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
+import { AppShell } from '../../components/AppShell.js';
 import { FileBrowser } from '../../components/FileBrowser.js';
 import { useStore } from '../../store/index.js';
 import { getBridge } from '../../services/python-bridge.js';
@@ -230,16 +231,19 @@ export function InputSelection(): React.ReactElement {
     typeof values.generated_mols_path === 'string'
       ? values.generated_mols_path.trim()
       : '';
+  const compactInputPath = truncatePath(trimmedInputPath, Math.max(24, panelWidth - 26));
 
   if (loading) {
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Pipeline Wizard" subtitle="Loading..." />
+      <AppShell
+        padding={1}
+        header={<Header title="Pipeline Wizard" subtitle="Loading..." />}
+        footer={<Footer />}
+      >
         <Box flexGrow={1} justifyContent="center">
           <Text color={theme.palette.textMuted}>Loading configuration...</Text>
         </Box>
-        <Footer />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -254,8 +258,11 @@ export function InputSelection(): React.ReactElement {
       { key: '←', label: 'Back' },
     ];
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Pipeline Wizard" subtitle={`Select ${browsingField.label}`} />
+      <AppShell
+        padding={1}
+        header={<Header title="Pipeline Wizard" subtitle={`Select ${browsingField.label}`} />}
+        footer={<Footer shortcuts={browserShortcuts} />}
+      >
         <FileBrowser
           initialPath={currentValue}
           extensions={browsingField.extensions}
@@ -264,16 +271,18 @@ export function InputSelection(): React.ReactElement {
           onCancel={handleBrowseCancel}
           startInPathEdit={startBrowserInPathEdit}
         />
-        <Footer shortcuts={browserShortcuts} />
-      </Box>
+      </AppShell>
     );
   }
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Pipeline Wizard" subtitle="Step 1: Input & Output" />
-
-      <Box flexGrow={1} justifyContent="center">
+    <AppShell
+      padding={1}
+      header={<Header title="Pipeline Wizard" subtitle="Step 1: Input & Output" />}
+      footer={<Footer />}
+      contentJustify="center"
+    >
+      <Box>
         <Box flexDirection="column" width={panelWidth}>
           <Text color={theme.palette.textMuted}>Select source molecules and where to store outputs for this run.</Text>
           <Text color={theme.palette.textMuted}>Space opens browser, Right/e edits the path directly.</Text>
@@ -324,24 +333,31 @@ export function InputSelection(): React.ReactElement {
           </Box>
 
           {trimmedInputPath && (
-            <Box marginTop={1}>
-              <Text color={theme.palette.textMuted}>Molecules: </Text>
-              {countingMolecules ? (
-                <Text color={theme.palette.warning}>counting...</Text>
-              ) : moleculeCount !== null ? (
-                <Text color={theme.palette.success} bold>{moleculeCount.toLocaleString()}</Text>
-              ) : (
-                <Text color={theme.palette.error}>
-                  unable to count ({moleculeCountErrorHint ?? 'check file path'})
-                </Text>
+            <Box marginTop={1} flexDirection="column">
+              <Box>
+                <Text color={theme.palette.textMuted}>Molecules: </Text>
+                {countingMolecules ? (
+                  <Text color={theme.palette.warning}>counting...</Text>
+                ) : moleculeCount !== null ? (
+                  <Text color={theme.palette.success} bold>{moleculeCount.toLocaleString()}</Text>
+                ) : (
+                  <Text color={theme.palette.error}>unable to count</Text>
+                )}
+              </Box>
+
+              {!countingMolecules && moleculeCount === null && (
+                <Box flexDirection="column">
+                  <Text color={theme.palette.textMuted}>
+                    Hint: {moleculeCountErrorHint ?? 'check file path and supported extension'}; use Space to browse or →/e to edit.
+                  </Text>
+                  <Text color={theme.palette.textMuted}>Path: {compactInputPath}</Text>
+                </Box>
               )}
             </Box>
           )}
         </Box>
       </Box>
-
-      <Footer />
-    </Box>
+    </AppShell>
   );
 }
 

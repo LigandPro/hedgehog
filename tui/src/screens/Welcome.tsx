@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { Footer } from '../components/Footer.js';
+import { AppShell } from '../components/AppShell.js';
 import { useStore } from '../store/index.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { useTheme } from '../theme/context.js';
@@ -151,9 +152,11 @@ export function Welcome(): React.ReactElement {
   });
 
   return (
-    <Box flexDirection="column" flexGrow={1} paddingY={1} minHeight={12}>
-      <Box flexGrow={1} />
-
+    <AppShell
+      paddingY={1}
+      contentJustify="center"
+      footer={<Footer showBreadcrumbs={false} />}
+    >
       <Box justifyContent="center">
         <Box flexDirection="column" width={Math.max(1, Math.min(86, width - 4))}>
           <Box marginBottom={1} justifyContent="center">
@@ -259,10 +262,7 @@ export function Welcome(): React.ReactElement {
           </Box>
         </Box>
       </Box>
-
-      <Box flexGrow={1} />
-      <Footer showBreadcrumbs={false} />
-    </Box>
+    </AppShell>
   );
 }
 

@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
+import { AppShell } from '../components/AppShell.js';
 import { Spinner } from '../components/Spinner.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
@@ -175,17 +176,22 @@ export function ConfigSynthesis(): React.ReactElement {
 
   if (loading) {
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Synthesis Config" />
+      <AppShell
+        padding={1}
+        header={<Header title="Synthesis Config" />}
+        footer={<Footer />}
+      >
         <Spinner label="Loading configuration..." />
-      </Box>
+      </AppShell>
     );
   }
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Synthesis Config" subtitle={isDirty ? 'config_synthesis.yml *' : 'config_synthesis.yml'} />
-
+    <AppShell
+      padding={1}
+      header={<Header title="Synthesis Config" subtitle={isDirty ? 'config_synthesis.yml *' : 'config_synthesis.yml'} />}
+      footer={<Footer />}
+    >
       {error && (
         <Box marginY={1}>
           <Text color={theme.palette.error}>Error: {error}</Text>
@@ -251,9 +257,8 @@ export function ConfigSynthesis(): React.ReactElement {
           {selectedDescription ? `Info: ${selectedDescription}` : ' '}
         </Text>
       </Box>
-      
-      <Footer />
-    </Box>
+
+    </AppShell>
   );
 }
 

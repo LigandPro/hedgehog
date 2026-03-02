@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
+import { AppShell } from '../../components/AppShell.js';
 import { Spinner } from '../../components/Spinner.js';
 import { LineFill } from '../../components/LineFill.js';
 import { useStore } from '../../store/index.js';
@@ -404,10 +405,12 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
 
   if (loading) {
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Pipeline Wizard" subtitle={`Configure ${stageConfig.displayName}`} />
+      <AppShell
+        padding={1}
+        header={<Header title="Pipeline Wizard" subtitle={`Configure ${stageConfig.displayName}`} />}
+      >
         <Spinner label="Loading configuration..." />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -415,11 +418,16 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
   const focusedDescription = focusedParam?.description || 'No description available.';
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header
-        title="Pipeline Wizard"
-        subtitle={`Configure ${stageConfig.displayName}${isDirty ? ' *' : ''}`}
-      />
+    <AppShell
+      padding={1}
+      header={(
+        <Header
+          title="Pipeline Wizard"
+          subtitle={`Configure ${stageConfig.displayName}${isDirty ? ' *' : ''}`}
+        />
+      )}
+      footer={<Footer shortcuts={shortcuts} />}
+    >
 
       {/* Stage-specific hints */}
       {stageName === 'synthesis' && (
@@ -519,9 +527,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
           <Text color={theme.palette.textMuted}>({focusedIndex + 1}/{stageConfig.params.length})</Text>
         </Box>
       )}
-
-      <Footer shortcuts={shortcuts} />
-    </Box>
+    </AppShell>
   );
 }
 

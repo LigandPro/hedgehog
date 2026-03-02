@@ -446,6 +446,16 @@ export function App(): React.ReactElement {
     // Pipeline can now run in background while user navigates
   });
 
+  const activeOverlay = confirmDialog
+    ? 'confirm'
+    : showThemeMenu
+      ? 'theme'
+      : showCommandMenu
+        ? 'command'
+        : showHelp
+          ? 'help'
+          : null;
+
   return (
     <Box
       flexDirection="column"
@@ -460,18 +470,14 @@ export function App(): React.ReactElement {
         </Box>
       )}
 
-      {/* Command menu overlay */}
-      {showCommandMenu && <CommandMenu />}
-      {showThemeMenu && <ThemeMenu />}
+      {/* Global overlays with deterministic precedence */}
+      {activeOverlay === 'command' && <CommandMenu />}
+      {activeOverlay === 'theme' && <ThemeMenu />}
+      {activeOverlay === 'help' && <HelpOverlay />}
+      {activeOverlay === 'confirm' && <ConfirmDialog />}
 
-      {/* Help overlay (takes priority over screen) */}
-      {showHelp && <HelpOverlay />}
-
-      {/* Confirmation dialog overlay */}
-      {confirmDialog && <ConfirmDialog />}
-
-      {/* Main screen content (hidden when overlays active) */}
-      {!showCommandMenu && !showThemeMenu && !showHelp && !confirmDialog && <ScreenRouter screen={screen} />}
+      {/* Main screen content (hidden when overlay is active) */}
+      {activeOverlay === null && <ScreenRouter screen={screen} />}
 
       {/* Toast notifications */}
       <ToastContainer />

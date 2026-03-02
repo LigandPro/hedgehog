@@ -161,7 +161,7 @@ export function Footer({
               {visibleShortcutTokens.map((token, index) => (
                 <React.Fragment key={`${token.key}-${token.label}-${index}`}>
                   {index > 0 && <Text color={theme.palette.textMuted}>  </Text>}
-                  <Text color="white">{token.key}</Text>
+                  <Text color={theme.palette.text}>{token.key}</Text>
                   <Text color={theme.palette.textMuted}> {token.label}</Text>
                 </React.Fragment>
               ))}

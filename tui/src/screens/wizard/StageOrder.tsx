@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
+import { AppShell } from '../../components/AppShell.js';
 import { useStore } from '../../store/index.js';
 import { useTheme } from '../../theme/context.js';
 
@@ -54,8 +55,11 @@ export function StageOrder(): React.ReactElement {
   const totalSteps = 2 + selectedStagesInOrder.length + 1; // selection + order + configs + review
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Pipeline Wizard" subtitle={`Stage Order (2/${totalSteps})`} />
+    <AppShell
+      padding={1}
+      header={<Header title="Pipeline Wizard" subtitle={`Stage Order (2/${totalSteps})`} />}
+      footer={<Footer />}
+    >
 
       <Box flexDirection="column" marginY={1}>
         <Text color={theme.palette.accent} bold>Selected stages will run in this order:</Text>
@@ -69,9 +73,7 @@ export function StageOrder(): React.ReactElement {
           </Box>
         ))}
       </Box>
-
-      <Footer />
-    </Box>
+    </AppShell>
   );
 }
 

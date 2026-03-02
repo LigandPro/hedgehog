@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
+import { AppShell } from '../components/AppShell.js';
 import { useStore } from '../store/index.js';
 import { useTheme } from '../theme/context.js';
 import { formatTimestamp, formatDuration } from '../utils/format.js';
@@ -196,13 +197,15 @@ export function Results(): React.ReactElement {
 
   if (!job) {
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Job Results" />
+      <AppShell
+        padding={1}
+        header={<Header title="Job Results" />}
+        footer={<Footer />}
+      >
         <Box marginY={2}>
           <Text color={theme.palette.error}>Job not found</Text>
         </Box>
-        <Footer />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -219,9 +222,11 @@ export function Results(): React.ReactElement {
     : 'running...';
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title={`Results: ${job.name || job.id}`} />
-
+    <AppShell
+      padding={1}
+      header={<Header title={`Results: ${job.name || job.id}`} />}
+      footer={<Footer />}
+    >
       <Box flexDirection="column" marginY={1}>
         {/* Status */}
         <Box>
@@ -302,9 +307,7 @@ export function Results(): React.ReactElement {
           </>
         )}
       </Box>
-
-      <Footer />
-    </Box>
+    </AppShell>
   );
 }
 

@@ -173,18 +173,27 @@ export function CommandMenu(): React.ReactElement | null {
     ],
   );
 
+  const uniqueCommands = useMemo(() => {
+    const seen = new Set<string>();
+    return commands.filter((item) => {
+      if (seen.has(item.command)) return false;
+      seen.add(item.command);
+      return true;
+    });
+  }, [commands]);
+
   const filteredCommands = useMemo(() => {
     const normalized = (query.startsWith('/') ? query.slice(1) : query).trim().toLowerCase();
-    if (!normalized) return commands;
+    if (!normalized) return uniqueCommands;
 
-    return commands.filter((item) => {
+    return uniqueCommands.filter((item) => {
       const commandName = item.command.slice(1).toLowerCase();
       if (commandName.includes(normalized)) return true;
       if (item.title.toLowerCase().includes(normalized)) return true;
       if (item.subtitle.toLowerCase().includes(normalized)) return true;
       return item.keywords.some((word) => word.toLowerCase().includes(normalized));
     });
-  }, [commands, query]);
+  }, [query, uniqueCommands]);
 
   useEffect(() => {
     if (!showCommandMenu) return;
@@ -347,7 +356,7 @@ export function CommandMenu(): React.ReactElement | null {
       <Box flexGrow={1} />
 
       <Box width={width} justifyContent="center">
-        <Text color="white">ctrl+p</Text>
+        <Text color={theme.palette.text}>ctrl+p</Text>
         <Text color={theme.palette.textMuted}> commands</Text>
       </Box>
       <Box width={width} justifyContent="flex-end" paddingRight={2}>

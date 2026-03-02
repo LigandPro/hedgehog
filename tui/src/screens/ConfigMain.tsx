@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
+import { AppShell } from '../components/AppShell.js';
 import { Spinner } from '../components/Spinner.js';
 import { FileBrowser } from '../components/FileBrowser.js';
 import { SearchIndicator } from '../components/SearchIndicator.js';
@@ -252,10 +253,13 @@ export function ConfigMain(): React.ReactElement {
 
   if (loading) {
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Main Config" />
+      <AppShell
+        padding={1}
+        header={<Header title="Main Config" />}
+        footer={<Footer />}
+      >
         <Spinner label="Loading configuration..." />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -270,15 +274,17 @@ export function ConfigMain(): React.ReactElement {
       { key: '←', label: 'Back' },
     ];
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Select Path" subtitle={browsingField} />
+      <AppShell
+        padding={1}
+        header={<Header title="Select Path" subtitle={browsingField} />}
+        footer={<Footer shortcuts={browserShortcuts} />}
+      >
         <FileBrowser
           initialPath={currentValue}
           onSelect={handlePathSelect}
           onCancel={handleBrowseCancel}
         />
-        <Footer shortcuts={browserShortcuts} />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -291,9 +297,11 @@ export function ConfigMain(): React.ReactElement {
   const selectedDescription = selectedField?.description || '';
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Main Config" subtitle={isDirty ? 'config.yml *' : 'config.yml'} />
-
+    <AppShell
+      padding={1}
+      header={<Header title="Main Config" subtitle={isDirty ? 'config.yml *' : 'config.yml'} />}
+      footer={<Footer />}
+    >
       <SearchIndicator active={searchActive} query={searchQuery} />
 
       {error && (
@@ -371,9 +379,7 @@ export function ConfigMain(): React.ReactElement {
           {searchQuery && ` (filtered from ${fields.length})`}
         </Text>
       </Box>
-
-      <Footer />
-    </Box>
+    </AppShell>
   );
 }
 

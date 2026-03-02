@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
+import { AppShell } from '../components/AppShell.js';
 import { Spinner } from '../components/Spinner.js';
 import { FileBrowser } from '../components/FileBrowser.js';
 import { SearchIndicator } from '../components/SearchIndicator.js';
@@ -341,10 +342,13 @@ export function ConfigFilters(): React.ReactElement {
 
   if (loading) {
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Struct Filters Config" />
+      <AppShell
+        padding={1}
+        header={<Header title="Struct Filters Config" />}
+        footer={<Footer />}
+      >
         <Spinner label="Loading configuration..." />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -359,15 +363,17 @@ export function ConfigFilters(): React.ReactElement {
       { key: '←', label: 'Back' },
     ];
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Select File" subtitle={browsingField} />
+      <AppShell
+        padding={1}
+        header={<Header title="Select File" subtitle={browsingField} />}
+        footer={<Footer shortcuts={browserShortcuts} />}
+      >
         <FileBrowser
           initialPath={currentValue}
           onSelect={handlePathSelect}
           onCancel={handleBrowseCancel}
         />
-        <Footer shortcuts={browserShortcuts} />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -377,9 +383,11 @@ export function ConfigFilters(): React.ReactElement {
     const enabledCount = Object.values(rulesets).filter(Boolean).length;
 
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Struct Filters Config" subtitle={isDirty ? 'Rulesets *' : 'Rulesets'} />
-
+      <AppShell
+        padding={1}
+        header={<Header title="Struct Filters Config" subtitle={isDirty ? 'Rulesets *' : 'Rulesets'} />}
+        footer={<Footer shortcuts={rulesetsShortcuts} />}
+      >
         <SearchIndicator active={searchActive} query={searchQuery} />
 
         {error && (
@@ -436,9 +444,7 @@ export function ConfigFilters(): React.ReactElement {
             {searchQuery && ` (filtered from ${ALL_RULESETS.length})`}
           </Text>
         </Box>
-
-        <Footer shortcuts={rulesetsShortcuts} />
-      </Box>
+      </AppShell>
     );
   }
 
@@ -448,9 +454,11 @@ export function ConfigFilters(): React.ReactElement {
   const selectedDescription = selectedSetting?.description || '';
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Struct Filters Config" subtitle={isDirty ? 'config_structFilters.yml *' : 'config_structFilters.yml'} />
-
+    <AppShell
+      padding={1}
+      header={<Header title="Struct Filters Config" subtitle={isDirty ? 'config_structFilters.yml *' : 'config_structFilters.yml'} />}
+      footer={<Footer shortcuts={settingsShortcuts} />}
+    >
       {error && (
         <Box marginY={1}>
           <Text color={theme.palette.error}>Error: {error}</Text>
@@ -504,9 +512,7 @@ export function ConfigFilters(): React.ReactElement {
       <Box marginTop={1}>
         <Text color={theme.palette.textMuted}>Press 'r' to edit rulesets ({Object.values(rulesets).filter(Boolean).length} enabled)</Text>
       </Box>
-
-      <Footer shortcuts={settingsShortcuts} />
-    </Box>
+    </AppShell>
   );
 }
 

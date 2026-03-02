@@ -2,6 +2,7 @@ import React, { memo, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
+import { AppShell } from '../components/AppShell.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { useStore } from '../store/index.js';
 import { getBridge } from '../services/python-bridge.js';
@@ -280,9 +281,11 @@ export function PipelineRunner(): React.ReactElement {
       ];
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Pipeline Runner" />
-
+    <AppShell
+      padding={1}
+      header={<Header title="Pipeline Runner" />}
+      footer={<Footer shortcuts={shortcuts} />}
+    >
       <Box flexDirection="row">
         <Box flexDirection="column" flexGrow={1}>
           {!isBackendReady && (
@@ -339,9 +342,7 @@ export function PipelineRunner(): React.ReactElement {
       <Box marginTop={1}>
         <Text color={theme.palette.border}>{'─'.repeat(Math.max(0, terminalWidth - 3))}</Text>
       </Box>
-
-      <Footer shortcuts={shortcuts} />
-    </Box>
+    </AppShell>
   );
 }
 

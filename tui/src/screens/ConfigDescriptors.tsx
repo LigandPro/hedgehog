@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
+import { AppShell } from '../components/AppShell.js';
 import { Spinner } from '../components/Spinner.js';
 import { DescriptorTable, type DescriptorRow } from '../components/DescriptorTable.js';
 import { useStore } from '../store/index.js';
@@ -330,17 +331,22 @@ export function ConfigDescriptors(): React.ReactElement {
 
   if (loading) {
     return (
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        <Header title="Descriptors Config" />
+      <AppShell
+        padding={1}
+        header={<Header title="Descriptors Config" />}
+        footer={<Footer />}
+      >
         <Spinner label="Loading configuration..." />
-      </Box>
+      </AppShell>
     );
   }
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Descriptors Config" subtitle={isDirty ? 'config_descriptors.yml *' : 'config_descriptors.yml'} />
-
+    <AppShell
+      padding={1}
+      header={<Header title="Descriptors Config" subtitle={isDirty ? 'config_descriptors.yml *' : 'config_descriptors.yml'} />}
+      footer={<Footer shortcuts={viewMode === 'settings' ? settingsShortcuts : bordersShortcuts} />}
+    >
       {error && (
         <Box marginY={1}>
           <Text color={theme.palette.error}>Error: {error}</Text>
@@ -404,7 +410,6 @@ export function ConfigDescriptors(): React.ReactElement {
           <Box marginTop={1}>
             <Text color={theme.palette.textMuted}>Press 'b' to edit descriptor borders</Text>
           </Box>
-          <Footer shortcuts={settingsShortcuts} />
         </>
       ) : (
         <>
@@ -413,10 +418,9 @@ export function ConfigDescriptors(): React.ReactElement {
             onChange={handleDescriptorChange}
             onBack={handleBack}
           />
-          <Footer shortcuts={bordersShortcuts} />
         </>
       )}
-    </Box>
+    </AppShell>
   );
 }
 

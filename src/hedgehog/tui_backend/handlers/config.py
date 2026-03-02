@@ -36,6 +36,29 @@ CONFIG_WORKSPACE_FILES = {
     "docking_filters": "config_docking_filters.yml",
 }
 
+# Legacy sample paths from older layouts that should be auto-healed to
+# currently shipped example files when the referenced file is missing.
+LEGACY_EXAMPLE_PATH_MAP = {
+    "data/test/moses_1000.csv": "src/hedgehog/configs/examples/moses_1000.csv",
+    "./data/test/moses_1000.csv": "src/hedgehog/configs/examples/moses_1000.csv",
+    "src/hedgehog/data/test/moses_1000.csv": "src/hedgehog/configs/examples/moses_1000.csv",
+    "data/test/target_mols.csv": "src/hedgehog/configs/examples/target_mols.csv",
+    "./data/test/target_mols.csv": "src/hedgehog/configs/examples/target_mols.csv",
+    "src/hedgehog/data/test/target_mols.csv": "src/hedgehog/configs/examples/target_mols.csv",
+    "data/test/7EW9_apo.pdb": "src/hedgehog/configs/examples/7EW9_apo.pdb",
+    "./data/test/7EW9_apo.pdb": "src/hedgehog/configs/examples/7EW9_apo.pdb",
+    "src/hedgehog/data/test/7EW9_apo.pdb": "src/hedgehog/configs/examples/7EW9_apo.pdb",
+    "data/test/05C_from_7EW9.sdf": "src/hedgehog/configs/examples/05C_from_7EW9.sdf",
+    "./data/test/05C_from_7EW9.sdf": "src/hedgehog/configs/examples/05C_from_7EW9.sdf",
+    "src/hedgehog/data/test/05C_from_7EW9.sdf": "src/hedgehog/configs/examples/05C_from_7EW9.sdf",
+}
+LEGACY_EXAMPLE_BASENAME_MAP = {
+    "moses_1000.csv": "src/hedgehog/configs/examples/moses_1000.csv",
+    "target_mols.csv": "src/hedgehog/configs/examples/target_mols.csv",
+    "7EW9_apo.pdb": "src/hedgehog/configs/examples/7EW9_apo.pdb",
+    "05C_from_7EW9.sdf": "src/hedgehog/configs/examples/05C_from_7EW9.sdf",
+}
+
 # Mapping from master config keys to config types used by TUI
 RUNTIME_CONFIG_KEY_MAP = {
     "config_mol_prep": "mol_prep",
@@ -121,6 +144,8 @@ class ConfigHandler:
 
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
+
+        data = self._heal_legacy_example_paths(config_type, data)
 
         # Special handling for retrosynthesis config - flatten nested structure
         if config_type == "retrosynthesis":
@@ -212,3 +237,59 @@ class ConfigHandler:
     def validate_config(self, config_type: str, data: dict[str, Any]) -> dict[str, Any]:
         """Validate config data using centralized ConfigValidator."""
         return ConfigValidator.validate(config_type, data)
+
+    def _path_exists(self, path_value: str) -> bool:
+        """Check whether a path exists (absolute or relative to project root)."""
+        path = Path(path_value).expanduser()
+        if path.is_absolute():
+            return path.exists()
+        return path.exists() or (self._project_root / path).exists()
+
+    def _map_legacy_example_path(self, path_value: Any) -> str | None:
+        """Map known legacy example paths to current repository examples."""
+        if not isinstance(path_value, str):
+            return None
+        candidate = path_value.strip()
+        if not candidate:
+            return None
+        if self._path_exists(candidate):
+            return None
+
+        normalized = candidate.replace("\\", "/")
+        mapped = LEGACY_EXAMPLE_PATH_MAP.get(normalized)
+        if not mapped and "data/test/" in normalized:
+            mapped = LEGACY_EXAMPLE_BASENAME_MAP.get(Path(normalized).name)
+        if not mapped:
+            return None
+        if not self._path_exists(mapped):
+            return None
+        return mapped
+
+    def _heal_legacy_example_paths(
+        self, config_type: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Auto-heal known old example paths in loaded main/docking configs."""
+        if not isinstance(data, dict):
+            return data
+
+        if config_type == "main":
+            for key in ("generated_mols_path", "target_mols_path"):
+                mapped = self._map_legacy_example_path(data.get(key))
+                if mapped:
+                    data[key] = mapped
+            return data
+
+        if config_type == "docking":
+            mapped = self._map_legacy_example_path(data.get("receptor_pdb"))
+            if mapped:
+                data["receptor_pdb"] = mapped
+
+            for tool_key in ("smina_config", "gnina_config"):
+                tool_cfg = data.get(tool_key)
+                if not isinstance(tool_cfg, dict):
+                    continue
+                mapped = self._map_legacy_example_path(tool_cfg.get("autobox_ligand"))
+                if mapped:
+                    tool_cfg["autobox_ligand"] = mapped
+
+        return data

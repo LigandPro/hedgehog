@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from '../../components/Header.js';
 import { Footer } from '../../components/Footer.js';
+import { AppShell } from '../../components/AppShell.js';
 import { useStore } from '../../store/index.js';
 import { useTheme } from '../../theme/context.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
@@ -77,9 +78,11 @@ export function StageSelection(): React.ReactElement {
   });
 
   return (
-    <Box flexDirection="column" flexGrow={1} padding={1}>
-      <Header title="Pipeline Wizard" subtitle="Step 2: Select Stages" />
-
+    <AppShell
+      padding={1}
+      header={<Header title="Pipeline Wizard" subtitle="Step 2: Select Stages" />}
+      footer={<Footer />}
+    >
       <Box flexDirection="column" marginY={1}>
         <Text color={theme.palette.accent} bold>Select stages to include in pipeline:</Text>
       </Box>
@@ -130,9 +133,7 @@ export function StageSelection(): React.ReactElement {
         <Text color={theme.palette.primary}>{selectedCount}</Text>
         <Text color={theme.palette.textMuted}> stage{selectedCount !== 1 ? 's' : ''} selected</Text>
       </Box>
-
-      <Footer />
-    </Box>
+    </AppShell>
   );
 }
 

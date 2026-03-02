@@ -210,7 +210,7 @@ export function ThemeMenu(): React.ReactElement | null {
             </Box>
           )}
           <Box flexDirection="column" width={previewColumnWidth} marginTop={useSidePreview ? 0 : 1}>
-            <Text color="white" bold>
+            <Text color={theme.palette.text} bold>
               {fitLine(previewTitle, previewColumnWidth)}
             </Text>
             <Box marginTop={1}>
