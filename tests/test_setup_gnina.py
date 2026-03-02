@@ -11,6 +11,7 @@ import pytest
 from hedgehog.setup._gnina import (
     _collect_gnina_library_paths,
     _gnina_env,
+    _gnina_variant,
     _is_working_gnina,
     _resolve_gnina_download,
     ensure_gnina,
@@ -207,6 +208,11 @@ class TestIsWorkingGnina:
 class TestResolveGninaDownload:
     """Tests for _resolve_gnina_download() GitHub API interaction."""
 
+    @pytest.fixture(autouse=True)
+    def _default_cpu_variant_for_download_tests(self, monkeypatch):
+        """Keep download-selection tests deterministic across environments."""
+        monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "cpu")
+
     def test_selects_non_cuda_asset(self, monkeypatch):
         """Picks the first asset without 'cuda' in the name."""
         fake_response = {
@@ -232,7 +238,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -270,7 +276,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -308,7 +314,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -338,7 +344,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setattr(
             "hedgehog.setup._gnina.urllib.request.urlopen",
@@ -396,7 +402,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         def fake_urlopen(req, *a, **kw):
             url = getattr(req, "full_url", str(req))
@@ -435,7 +441,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setenv("HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES", "3000000000")
         monkeypatch.setattr(
@@ -479,7 +485,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         def fake_urlopen(req, *a, **kw):
             url = getattr(req, "full_url", str(req))
@@ -524,7 +530,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "gpu")
         monkeypatch.setattr(
@@ -561,7 +567,7 @@ class TestResolveGninaDownload:
                 return self
 
             def __exit__(self, *a):
-                pass
+                """No-op context manager exit."""
 
         monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "auto")
         monkeypatch.setattr("hedgehog.setup._gnina._has_nvidia_gpu", lambda: True)
@@ -584,7 +590,7 @@ class TestResolveDockingBinaryGninaFallback:
             lambda: "/home/user/.hedgehog/bin/gnina",
         )
 
-        from hedgehog.stages.docking.utils import _resolve_docking_binary
+        from hedgehog.docking.binaries import _resolve_docking_binary
 
         result = _resolve_docking_binary("gnina", "gnina")
         assert result == "/home/user/.hedgehog/bin/gnina"
@@ -598,7 +604,7 @@ class TestResolveDockingBinaryGninaFallback:
 
         monkeypatch.setattr("hedgehog.setup._gnina.ensure_gnina", raise_runtime)
 
-        from hedgehog.stages.docking.utils import _resolve_docking_binary
+        from hedgehog.docking.binaries import _resolve_docking_binary
 
         with pytest.raises(FileNotFoundError, match="declined"):
             _resolve_docking_binary("gnina", "gnina")
@@ -607,10 +613,22 @@ class TestResolveDockingBinaryGninaFallback:
         """smina has no auto-install fallback, so FileNotFoundError directly."""
         monkeypatch.setattr("shutil.which", lambda _: None)
 
-        from hedgehog.stages.docking.utils import _resolve_docking_binary
+        from hedgehog.docking.binaries import _resolve_docking_binary
 
         with pytest.raises(FileNotFoundError, match="smina"):
             _resolve_docking_binary("smina", "smina")
+
+
+class TestGninaVariantDefaults:
+    """Tests for default/invalid GNINA variant resolution."""
+
+    def test_default_variant_is_auto(self, monkeypatch):
+        monkeypatch.delenv("HEDGEHOG_GNINA_VARIANT", raising=False)
+        assert _gnina_variant() == "auto"
+
+    def test_invalid_variant_falls_back_to_auto(self, monkeypatch):
+        monkeypatch.setenv("HEDGEHOG_GNINA_VARIANT", "nonsense")
+        assert _gnina_variant() == "auto"
 
 
 class TestGninaEnvDiscovery:

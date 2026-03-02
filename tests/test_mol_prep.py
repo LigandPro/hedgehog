@@ -5,7 +5,7 @@ from pathlib import Path
 import datamol as dm
 import pandas as pd
 
-from hedgehog.stages.molPrep.utils import run_mol_prep
+from hedgehog.molprep.orchestrator import run_mol_prep
 
 
 def _cfg():

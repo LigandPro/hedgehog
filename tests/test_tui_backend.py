@@ -45,12 +45,21 @@ class TestValidatePath:
         with pytest.raises(ValueError, match="Access denied"):
             _validate_path(Path("/"))
 
+    def test_path_inside_mnt_is_allowed(self):
+        _validate_path(Path("/mnt/ligandpro/shared_storage/data.csv"))
+
     def test_custom_allowed_base(self, tmp_path):
         # Path inside allowed base: OK
         _validate_path(tmp_path / "sub" / "file.txt", allowed_base=tmp_path)
         # Path outside allowed base: raises
         with pytest.raises(ValueError, match="Access denied"):
             _validate_path(Path("/tmp/other"), allowed_base=tmp_path)
+
+    def test_env_allowed_bases_support_external_path(self, tmp_path, monkeypatch):
+        external_root = tmp_path / "external_root"
+        external_file = external_root / "input.csv"
+        monkeypatch.setenv("HEDGEHOG_TUI_ALLOWED_BASES", str(external_root))
+        _validate_path(external_file)
 
     def test_validate_input_file_rejects_outside_home(self, tmp_path):
         """ValidationHandler.validate_input_file calls _validate_path."""
@@ -212,6 +221,22 @@ class TestPipelineHandlerThreadSafety:
         for jid in job_ids:
             handler.cancel_pipeline(jid)
 
+    def test_start_pipeline_accepts_config_overrides(self, monkeypatch):
+        server = _mock_server()
+        handler = PipelineHandler(server)
+        monkeypatch.setattr(PipelineJob, "start", lambda _self: None)
+
+        overrides = {
+            "main": {
+                "generated_mols_path": "/tmp/input.csv",
+                "folder_to_save": "/tmp/output",
+            }
+        }
+        job_id = handler.start_pipeline(["descriptors"], config_overrides=overrides)
+
+        assert job_id in handler.jobs
+        assert handler.jobs[job_id].config_overrides == overrides
+
 
 # =====================================================================
 # H1 — Stage name mapping bug
@@ -264,6 +289,94 @@ class TestStageNameMapping:
 
         # previous_stage == tui_stage, so no stage_complete should fire
         assert job.previous_stage == tui_stage
+
+
+# =====================================================================
+# Stage log canonicalization
+# =====================================================================
+
+
+class TestStageEventLogging:
+    """Test canonical stage logging driven by progress events."""
+
+    def test_progress_callback_logs_stage_event_messages(self):
+        server = _mock_server()
+        job = PipelineJob("test-id", ["descriptors"], server)
+        logs: list[tuple[str, str]] = []
+        job._log = lambda level, message: logs.append((level, message))
+
+        start_message = "Stage descriptors started: 10 molecules in."
+        complete_message = (
+            "Stage descriptors completed: 10 in -> 8 out "
+            "(delta -2, retained 80.00%, 1.2s)."
+        )
+
+        job._progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 1,
+                "message": start_message,
+            }
+        )
+        job._progress_callback(
+            {
+                "type": "stage_complete",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 1,
+                "message": complete_message,
+            }
+        )
+
+        assert ("info", start_message) in logs
+        assert ("info", complete_message) in logs
+        assert not any(msg.startswith("Starting stage:") for _, msg in logs)
+        assert not any(msg.startswith("Stage completed:") for _, msg in logs)
+
+    def test_no_generic_duplicate_completion_log_on_transition(self):
+        server = _mock_server()
+        job = PipelineJob("test-id", ["descriptors", "synthesis"], server)
+        log_messages: list[str] = []
+        job._log = lambda _level, message: log_messages.append(message)
+
+        job._progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 2,
+                "message": "Stage descriptors started: 10 molecules in.",
+            }
+        )
+        job._progress_callback(
+            {
+                "type": "stage_complete",
+                "stage": "descriptors",
+                "stage_index": 1,
+                "total_stages": 2,
+                "message": (
+                    "Stage descriptors completed: 10 in -> 8 out "
+                    "(delta -2, retained 80.00%, 1.2s)."
+                ),
+            }
+        )
+        job._progress_callback(
+            {
+                "type": "stage_start",
+                "stage": "synthesis",
+                "stage_index": 2,
+                "total_stages": 2,
+                "message": "Stage synthesis started: 8 molecules in.",
+            }
+        )
+
+        assert log_messages == [
+            "Stage descriptors started: 10 molecules in.",
+            "Stage descriptors completed: 10 in -> 8 out (delta -2, retained 80.00%, 1.2s).",
+            "Stage synthesis started: 8 molecules in.",
+        ]
 
 
 # =====================================================================
@@ -818,6 +931,58 @@ class TestPipelinePreflight:
         assert any(
             check["code"] == "DOCKING_RECEPTOR_INVALID" and check["level"] == "error"
             for check in stage_checks
+        )
+
+    def test_preflight_uses_stage_override_without_writing_disk(self, preflight_env):
+        project_root = preflight_env["paths"]["project_root"]
+        docking_cfg = (
+            project_root / "src" / "hedgehog" / "configs" / "config_docking.yml"
+        )
+        docking_cfg.write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "tools": "smina",
+                    "receptor_pdb": str(project_root / "missing_receptor.pdb"),
+                },
+                sort_keys=False,
+            )
+        )
+
+        handler = preflight_env["server"].pipeline_handler
+        result = handler.preflight_pipeline(
+            ["docking"],
+            config_overrides={
+                "docking": {
+                    "run": True,
+                    "tools": "smina",
+                    "receptor_pdb": str(preflight_env["paths"]["receptor_pdb"]),
+                }
+            },
+        )
+
+        assert result["valid"] is True
+        stage_checks = result["stage_reports"][0]["checks"]
+        assert not any(
+            check["code"] == "DOCKING_RECEPTOR_INVALID" for check in stage_checks
+        )
+
+    def test_preflight_uses_main_override(self, preflight_env):
+        server = preflight_env["server"]
+        handler = server.pipeline_handler
+        main_config = server.config_handler.load_config("main")
+        main_config["generated_mols_path"] = str(
+            preflight_env["paths"]["project_root"] / "missing_input.csv"
+        )
+
+        result = handler.preflight_pipeline(
+            ["descriptors"], config_overrides={"main": main_config}
+        )
+
+        assert result["valid"] is False
+        assert any(
+            check["code"] == "MAIN_INPUT_INVALID" and check["level"] == "error"
+            for check in result["checks"]
         )
 
     def test_preflight_warning_only_keeps_valid(self, preflight_env):

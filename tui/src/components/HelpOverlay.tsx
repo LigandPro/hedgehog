@@ -69,7 +69,8 @@ const SCREEN_HELP_DESCRIPTIONS: Partial<Record<Screen, Record<string, string>>> 
   },
   wizardInputSelection: {
     '↑↓': 'Move between input/output fields',
-    'Space': 'Browse/edit selected field',
+    'Space': 'Browse selected field (in file picker: search for files or select folder)',
+    '→/e': 'Open selected path field directly in path edit mode',
     'Enter': 'Save and continue to stage selection',
     '←/Esc': 'Return to welcome screen',
   },
@@ -77,7 +78,7 @@ const SCREEN_HELP_DESCRIPTIONS: Partial<Record<Screen, Record<string, string>>> 
     '↑↓': 'Move between pipeline stages',
     'Space': 'Enable/disable selected stage',
     'c': 'Open configuration for selected stage',
-    'Enter': 'Fast start (preflight + run)',
+    'Enter': 'Open detailed review screen',
     'r/→': 'Open detailed review screen',
     '←/Esc': 'Return to input selection',
   },

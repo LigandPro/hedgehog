@@ -39,6 +39,9 @@ class TestEnsureAizynthfinder:
     def test_already_installed(self, tmp_path: Path, monkeypatch):
         """If config.yml already exists, return immediately."""
         cfg = _make_config(tmp_path)
+        logging_src = tmp_path / "src" / "hedgehog" / "synthesis" / "logging.yml"
+        logging_src.parent.mkdir(parents=True, exist_ok=True)
+        logging_src.write_text("version: 1\n", encoding="utf-8")
         calls: list = []
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.subprocess.run",
@@ -47,6 +50,15 @@ class TestEnsureAizynthfinder:
         result = ensure_aizynthfinder(tmp_path)
         assert result == cfg
         assert calls == [], "No subprocess calls expected"
+        assert (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "aizynthfinder"
+            / "data"
+            / "logging.yml"
+        ).exists()
 
     def test_git_not_found(self, tmp_path: Path, monkeypatch):
         """RuntimeError when git is not on PATH."""
@@ -140,11 +152,9 @@ class TestEnsureAizynthfinder:
         )
 
         # Create logging.yml source so the copy step works
-        logging_src = (
-            tmp_path / "src" / "hedgehog" / "stages" / "synthesis" / "logging.yml"
-        )
+        logging_src = tmp_path / "src" / "hedgehog" / "synthesis" / "logging.yml"
         logging_src.parent.mkdir(parents=True, exist_ok=True)
-        logging_src.write_text("version: 1\n")
+        logging_src.write_text("version: 1\n", encoding="utf-8")
 
         subprocess_calls: list = []
 

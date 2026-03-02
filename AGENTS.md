@@ -1,9 +1,3 @@
-## Agent Rules (Repository-Wide)
-
-These instructions apply to **all** changes in this repository.
-
-### Language
-
 - **All content written to files must be in English.**
 - Keep console output/logging in English.
 
@@ -14,7 +8,7 @@ These instructions apply to **all** changes in this repository.
 
 ### Required Checks When Adding/Changing Code
 
-When you add or change code, you must run the relevant smoke checks and keep documentation consistent.
+When you add or change code, you must run the relevant test checks and keep documentation consistent.
 
 #### CLI (Python / Typer)
 
@@ -64,12 +58,9 @@ Notes:
 - For PR work, verify the latest remote CI checks for the current branch/PR.
 - If CI is failing, treat it as an active issue and fix it or clearly report the blocker.
 
-### Gauss Final Run Verification
-
-When validating a fresh end-to-end run on the Gauss server, use this exact flow:
-
+### Final Run Verification
 ```bash
-ssh Gauss
+ssh server
 source ~/miniforge/etc/profile.d/conda.sh
 conda activate base
 
@@ -83,5 +74,5 @@ uv sync
 uv run hedgehog setup aizynthfinder
 
 # GNINA auto GPU is enabled by default
-uv run hedgehog run --auto-install --out results/run_gpu_verify
+uv run hedgehog run --auto-install --out results/run_n
 ```

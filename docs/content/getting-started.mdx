@@ -12,7 +12,7 @@ This guide covers installation, running your first pipeline, and understanding t
 - **uv** — used for dependency management and running the CLI. Install from [astral.sh/uv](https://astral.sh/uv).
 - **git** — to clone the repository.
 
-For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the external `aizynthfinder` tooling and its public data. The provided installer script uses `uv` to set this up inside `modules/` (no conda is required by the script).
+For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the external `aizynthfinder` tooling and its public data. Use the built-in CLI setup command to install it into `modules/retrosynthesis/`.
 
 ## Installation
 
@@ -30,25 +30,23 @@ Or install from source:
 git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
 
-# Install AiZynthFinder for retrosynthesis analysis
-./modules/install_aizynthfinder.sh
-
 # Install HEDGEHOG and all dependencies
 uv sync
-```
 
-The `install_aizynthfinder.sh` script clones the retrosynthesis repository and downloads the required public data.
-
-Alternatively, you can use the CLI installer:
-
-```bash
+# Install AiZynthFinder for retrosynthesis analysis
 uv run hedgehog setup aizynthfinder
 ```
 
 If you prefer on-demand installation during a pipeline run, use:
 
 ```bash
-uv run hedgehog run --auto-install
+uv run hedgehog --auto-install
+```
+
+Legacy/manual fallback:
+
+```bash
+./modules/install_aizynthfinder.sh
 ```
 
 ## First Run
@@ -56,16 +54,16 @@ uv run hedgehog run --auto-install
 Run the full pipeline on the included test data:
 
 ```bash
-uv run hedgehog run
+uv run hedgehog
 ```
 
 Or using the short alias:
 
 ```bash
-uv run hedge run
+uv run hedge
 ```
 
-This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `data/test/`. Each stage runs in sequence, filtering molecules that fail its criteria.
+This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `src/hedgehog/configs/examples/`. Each stage runs in sequence, filtering molecules that fail its criteria.
 
 Note: the default `config.yml` contains absolute paths for optional external preparation tools. If you do not have these tools, set `ligand_preparation_tool` / `protein_preparation_tool` to empty values (or disable the affected stages) before your first run.
 

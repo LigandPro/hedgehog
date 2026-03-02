@@ -5,6 +5,7 @@ import html as html_lib
 import json
 import logging
 import statistics
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,9 @@ from typing import Any
 import pandas as pd
 from jinja2 import Environment, PackageLoader
 
+from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
+from hedgehog.utils.parallel import resolve_n_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,24 @@ DESCRIPTOR_ALIASES = {
 DESCRIPTOR_EXCLUDE_COLS = {"smiles", "model_name", "mol_idx", "chars", "name", "id"}
 
 
+def _try_read_csv(*paths: Path) -> pd.DataFrame | None:
+    """Try reading CSV from multiple candidate paths, returning first success.
+
+    Args:
+        paths: One or more Path objects to try reading in order.
+
+    Returns:
+        DataFrame from the first readable file, or None if all fail.
+    """
+    for path in paths:
+        if path.exists():
+            try:
+                return pd.read_csv(path)
+            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+                logger.debug("Could not read %s: %s", path, e)
+    return None
+
+
 class ReportGenerator:
     """Generates comprehensive HTML reports for HEDGEHOG pipeline runs."""
 
@@ -90,6 +111,7 @@ class ReportGenerator:
         config: dict[str, Any],
         initial_count: int,
         final_count: int,
+        progress_callback: Callable[[int, int, str | None], None] | None = None,
     ):
         """Initialize the report generator.
 
@@ -107,6 +129,21 @@ class ReportGenerator:
         self.final_count = final_count
         self.output_dir = self.base_path
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._progress_callback = progress_callback
+        self._last_progress_signature: tuple[int, int, str | None] | None = None
+
+    def _emit_progress(
+        self, current: int, total: int = 100, message: str | None = None
+    ) -> None:
+        """Emit report-generation progress updates, de-duplicated by value."""
+        if self._progress_callback is None:
+            return
+
+        signature = (int(current), int(total), message)
+        if signature == self._last_progress_signature:
+            return
+        self._last_progress_signature = signature
+        self._progress_callback(signature[0], signature[1], message)
 
     def generate(self) -> Path:
         """Generate the full HTML report.
@@ -115,24 +152,31 @@ class ReportGenerator:
             Path to the generated report file
         """
         logger.info("Generating pipeline report...")
+        self._emit_progress(0, 100, "Collecting report data")
 
         # Collect all data
         data = self._collect_data()
+        self._emit_progress(70, 100, "Generating plots")
 
         # Generate plots
         plot_htmls = self._generate_plots(data)
+        self._emit_progress(82, 100, "Rendering HTML")
 
         # Render HTML
         html_content = self._render_template(data, plot_htmls)
+        self._emit_progress(90, 100, "Saving report")
 
         # Save report
         report_path = self._save_report(html_content)
+        self._emit_progress(94, 100, "Saving report data")
 
         # Save JSON data
         self._save_json_data(data)
+        self._emit_progress(97, 100, "Updating run info")
 
         # Generate/update RUN_INFO.md with MolEval metrics table
         self._generate_run_info(data)
+        self._emit_progress(100, 100, "Report complete")
 
         logger.info("Report generated: %s", report_path)
         return report_path
@@ -344,30 +388,7 @@ class ReportGenerator:
 
         return funnel
 
-    def _get_stage_output_count(self, stage_key: str) -> int | None:
-        """Get molecule count from stage output file."""
-        stage_dir = STAGE_DIRS.get(stage_key)
-        if not stage_dir:
-            return None
-
-        # Try common output file locations
-        paths_to_try = [
-            self.base_path / stage_dir / "filtered_molecules.csv",
-            self.base_path / stage_dir / "filtered" / "filtered_molecules.csv",
-            self.base_path / stage_dir / "ligands.csv",  # For docking stage
-        ]
-
-        for path in paths_to_try:
-            if path.exists():
-                try:
-                    df = pd.read_csv(path)
-                    return len(df)
-                except Exception as e:
-                    logger.debug("Could not read %s: %s", path, e)
-                    continue
-        return None
-
-    def _get_stage_output_count_by_model(
+    def _get_stage_output_count(
         self, stage_key: str, model_name: str | None = None
     ) -> int | None:
         """Get molecule count from stage output file, optionally filtered by model.
@@ -389,17 +410,12 @@ class ReportGenerator:
             self.base_path / stage_dir / "ligands.csv",
         ]
 
-        for path in paths_to_try:
-            if path.exists():
-                try:
-                    df = pd.read_csv(path)
-                    if model_name and "model_name" in df.columns:
-                        df = df[df["model_name"] == model_name]
-                    return len(df)
-                except Exception as e:
-                    logger.debug("Could not read %s: %s", path, e)
-                    continue
-        return None
+        df = _try_read_csv(*paths_to_try)
+        if df is None:
+            return None
+        if model_name and "model_name" in df.columns:
+            df = df[df["model_name"] == model_name]
+        return len(df)
 
     def _get_available_models(self) -> list[str]:
         """Get list of available model names from input or output files.
@@ -476,7 +492,7 @@ class ReportGenerator:
         ]
 
         for stage_key, display_name in stage_order:
-            count = self._get_stage_output_count_by_model(stage_key, model_name)
+            count = self._get_stage_output_count(stage_key, model_name)
             if count is not None:
                 funnel.append({"stage": display_name, "count": count})
 
@@ -2055,6 +2071,15 @@ class ReportGenerator:
         Returns:
             Dictionary with 'by_stage', 'stages', 'metrics' keys, or empty dict.
         """
+        if any(
+            getattr(stage, "enabled", False) and not getattr(stage, "completed", False)
+            for stage in self.stages
+        ):
+            logger.warning(
+                "Skipping MolEval metrics because one or more enabled stages failed."
+            )
+            return {}
+
         moleval_config = self._load_moleval_config()
         if not moleval_config or not moleval_config.get("run", True):
             return {}
@@ -2063,15 +2088,59 @@ class ReportGenerator:
         if not stage_smiles:
             return {}
 
+        effective_config = dict(moleval_config)
+        effective_config["n_jobs"] = self._resolve_moleval_n_jobs(
+            moleval_config, stage_smiles
+        )
+
+        # Reserve part of report progress budget for MolEval internals.
+        def _moleval_progress(done: int, total: int, message: str | None) -> None:
+            bounded_total = max(int(total), 1)
+            bounded_done = max(0, min(int(done), bounded_total))
+            pct = 20 + int(round((bounded_done / bounded_total) * 40))
+            self._emit_progress(pct, 100, message)
+
+        self._emit_progress(20, 100, "Computing MolEval metrics")
         try:
             return moleval_metrics.compute_stage_metrics(
                 stage_smiles,
-                moleval_config,
-                seed=moleval_config.get("seed", 42),
+                effective_config,
+                seed=effective_config.get("seed", 42),
+                progress_cb=_moleval_progress,
             )
         except Exception as e:
             logger.debug("MolEval metrics computation failed: %s", e)
             return {}
+
+    def _resolve_moleval_n_jobs(
+        self,
+        moleval_config: dict[str, Any],
+        stage_smiles: dict[str, list[str]],
+    ) -> int:
+        """Resolve MolEval workers with dataset-size based defaults.
+
+        Policy (when n_jobs is not explicitly positive):
+          - < 1k molecules: 1 worker
+          - < 10k molecules: 12 workers
+          - otherwise: all available workers (resolved from env/SLURM)
+        """
+        raw_n_jobs = moleval_config.get("n_jobs")
+        try:
+            parsed_n_jobs = int(raw_n_jobs) if raw_n_jobs is not None else None
+        except (TypeError, ValueError):
+            parsed_n_jobs = None
+
+        if parsed_n_jobs is not None and parsed_n_jobs > 0:
+            return parsed_n_jobs
+
+        max_stage_size = max(
+            (len(smiles) for smiles in stage_smiles.values()), default=0
+        )
+        if max_stage_size < 1000:
+            return 1
+        if max_stage_size < 10000:
+            return 12
+        return resolve_n_jobs(stage_config=moleval_config, default=-1)
 
     def _load_stage_config(self, config_key: str) -> dict[str, Any]:
         """Load a stage YAML config by its key in the pipeline config.
@@ -2176,7 +2245,7 @@ class ReportGenerator:
     def _get_config_summary(self) -> dict[str, Any]:
         """Get configuration summary."""
         # Get folder from config or use base_path
-        folder = self.config.get("folder_to_save", "")
+        folder = self.config.get(KEY_FOLDER_TO_SAVE, "")
         if not folder:
             folder = str(self.base_path)
 

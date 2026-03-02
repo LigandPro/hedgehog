@@ -48,6 +48,7 @@ Full configuration in `config_synthesis.yml`:
 
 ```yaml
 run: true
+n_jobs: -1                # Workers for scoring + AiZynthFinder (--nproc)
 run_retrosynthesis: true     # Run AiZynthFinder route search
 filter_solved_only: true     # Keep only molecules with found routes
 
@@ -83,13 +84,13 @@ A molecule passes the synthesis stage if **all** of the following hold:
 
 ```bash
 # Run synthesis as part of the full pipeline
-uv run hedgehog run
+uv run hedgehog
 
 # Run synthesis stage only
-uv run hedgehog run --stage synthesis
+uv run hedgehog --stage synthesis
 
 # Short alias
-uv run hedge run --stage synthesis
+uv run hedge --stage synthesis
 ```
 
 To run a fast scores-only pass (no retrosynthesis), set `run_retrosynthesis: false` in the config. This is useful for quick screening when AiZynthFinder is not installed or when you want rapid turnaround.

@@ -54,6 +54,13 @@ function getSettingColor(type: SettingType, value: unknown): 'green' | 'red' | '
   return 'blue';
 }
 
+function getPartColor(isSelected: boolean, highlighted: boolean): string {
+  if (highlighted) {
+    return 'yellow';
+  }
+  return isSelected ? 'white' : 'gray';
+}
+
 export function ConfigFilters(): React.ReactElement {
   const setScreen = useStore((state) => state.setScreen);
   const config = useStore((state) => state.configs.filters);
@@ -197,10 +204,46 @@ export function ConfigFilters(): React.ReactElement {
     setIsDirty(true);
   };
 
+  const handleSettingsAction = () => {
+    const item = settingsItems[selectedIndex];
+    if (item.type === 'boolean') {
+      setSettingValue(item.key, !getSettingValue(item.key));
+    } else if (item.type === 'select' && item.options) {
+      const current = getSettingValue(item.key) as string;
+      const idx = item.options.indexOf(current);
+      const nextIdx = (idx + 1) % item.options.length;
+      setSettingValue(item.key, item.options[nextIdx]);
+    } else if (item.type === 'path') {
+      setBrowsingField(item.key);
+    }
+  };
+
+  const handleRulesetsAction = () => {
+    const ruleset = filteredRulesets[selectedIndex];
+    if (ruleset) {
+      toggleRuleset(ruleset);
+    }
+  };
+
+  const handleBulkRulesetToggle = (enable: boolean) => {
+    const targets = searchQuery ? filteredRulesets : ALL_RULESETS;
+    const updated = { ...rulesets };
+    for (const rs of targets) {
+      updated[rs] = enable;
+    }
+    setRulesets(updated);
+    setIsDirty(true);
+  };
+
+  const switchViewMode = () => {
+    setViewMode(viewMode === 'settings' ? 'rulesets' : 'settings');
+    setSelectedIndex(0);
+    setScrollOffset(0);
+  };
+
   useInput((input, key) => {
     if (loading || browsingField) return;
 
-    // Handle search input in rulesets mode
     if (viewMode === 'rulesets' && handleSearchInput(input, key)) {
       return;
     }
@@ -222,46 +265,16 @@ export function ConfigFilters(): React.ReactElement {
       }
     } else if (key.return || input === ' ' || input === 'e') {
       if (viewMode === 'settings') {
-        const item = settingsItems[selectedIndex];
-        if (item.type === 'boolean') {
-          setSettingValue(item.key, !getSettingValue(item.key));
-        } else if (item.type === 'select' && item.options) {
-          const current = getSettingValue(item.key) as string;
-          const idx = item.options.indexOf(current);
-          const nextIdx = (idx + 1) % item.options.length;
-          setSettingValue(item.key, item.options[nextIdx]);
-        } else if (item.type === 'path') {
-          setBrowsingField(item.key);
-        }
+        handleSettingsAction();
       } else {
-        // Rulesets view - use filtered list
-        const ruleset = filteredRulesets[selectedIndex];
-        if (ruleset) {
-          toggleRuleset(ruleset);
-        }
+        handleRulesetsAction();
       }
     } else if (input === 'r') {
-      setViewMode(viewMode === 'settings' ? 'rulesets' : 'settings');
-      setSelectedIndex(0);
-      setScrollOffset(0);
+      switchViewMode();
     } else if (input === 'a' && viewMode === 'rulesets' && !searchActive) {
-      // Select all rulesets (only visible/filtered ones when searching)
-      const toEnable = searchQuery ? filteredRulesets : ALL_RULESETS;
-      const updated = { ...rulesets };
-      for (const rs of toEnable) {
-        updated[rs] = true;
-      }
-      setRulesets(updated);
-      setIsDirty(true);
+      handleBulkRulesetToggle(true);
     } else if (input === 'n' && viewMode === 'rulesets' && !searchActive) {
-      // Deselect all rulesets
-      const toDisable = searchQuery ? filteredRulesets : ALL_RULESETS;
-      const updated = { ...rulesets };
-      for (const rs of toDisable) {
-        updated[rs] = false;
-      }
-      setRulesets(updated);
-      setIsDirty(true);
+      handleBulkRulesetToggle(false);
     } else if (input === 's') {
       saveConfig();
     } else if (key.escape || key.leftArrow || input === 'q') {
@@ -313,6 +326,14 @@ export function ConfigFilters(): React.ReactElement {
 
   if (browsingField) {
     const currentValue = String(getSettingValue(browsingField) || process.cwd());
+    const browserShortcuts = [
+      { key: '↑↓', label: 'Navigate' },
+      { key: 'Enter', label: 'Open/Select' },
+      { key: '→/e', label: 'Edit path' },
+      { key: 'Space', label: 'Search' },
+      { key: '/', label: 'Search' },
+      { key: '←', label: 'Back' },
+    ];
     return (
       <Box flexDirection="column" padding={1}>
         <Header title="Select File" subtitle={browsingField} />
@@ -321,6 +342,7 @@ export function ConfigFilters(): React.ReactElement {
           onSelect={handlePathSelect}
           onCancel={handleBrowseCancel}
         />
+        <Footer shortcuts={browserShortcuts} />
       </Box>
     );
   }
@@ -369,8 +391,8 @@ export function ConfigFilters(): React.ReactElement {
                   <Text> </Text>
                   {nameParts.map((part, pi) => (
                     <Text
-                      key={pi}
-                      color={isSelected ? (part.highlighted ? 'yellow' : 'white') : (part.highlighted ? 'yellow' : 'gray')}
+                      key={`${part.text}-${pi}`}
+                      color={getPartColor(isSelected, part.highlighted)}
                       bold={part.highlighted}
                     >
                       {part.text}

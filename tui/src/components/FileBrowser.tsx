@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import path from 'path';
+import fs from 'node:fs';
 import { getBridge } from '../services/python-bridge.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 
@@ -12,6 +13,7 @@ interface FileBrowserProps {
   onSelect: (path: string) => void;
   onCancel: () => void;
   title?: string;
+  startInPathEdit?: boolean;
 }
 
 interface FileEntry {
@@ -19,6 +21,8 @@ interface FileEntry {
   path: string;
   isDirectory: boolean;
 }
+
+type InteractionMode = 'browse' | 'pathEdit' | 'search';
 
 /**
  * Get a valid starting directory from a path.
@@ -40,6 +44,81 @@ function getStartingDirectory(inputPath: string): string {
   }
 
   return inputPath;
+}
+
+function expandHomePath(inputPath: string): string {
+  if (!inputPath.startsWith('~')) {
+    return inputPath;
+  }
+  const home = process.env.HOME || '';
+  if (!home) {
+    return inputPath;
+  }
+  if (inputPath === '~') {
+    return home;
+  }
+  if (inputPath.startsWith('~/')) {
+    return path.join(home, inputPath.slice(2));
+  }
+  return inputPath;
+}
+
+function resolveInputPath(inputPath: string, basePath: string): string {
+  const trimmed = inputPath.trim();
+  if (!trimmed) {
+    return basePath;
+  }
+  const expanded = expandHomePath(trimmed);
+  if (path.isAbsolute(expanded)) {
+    return path.normalize(expanded);
+  }
+  return path.resolve(basePath, expanded);
+}
+
+function isExistingDirectory(candidatePath: string): boolean {
+  try {
+    return fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function findNearestExistingDirectory(candidatePath: string): string | null {
+  let current = path.normalize(candidatePath);
+  const root = path.parse(current).root || '/';
+
+  while (true) {
+    if (isExistingDirectory(current)) {
+      return current;
+    }
+    if (current === root) {
+      return null;
+    }
+    const parent = path.dirname(current);
+    if (!parent || parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+function getPathTailFilter(inputValue: string, resolvedPath: string): string {
+  const trimmed = inputValue.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (/[\\/]$/.test(trimmed)) {
+    return '';
+  }
+
+  const basename = path.basename(path.normalize(resolvedPath));
+  if (!basename || basename === '.' || basename === '..') {
+    return '';
+  }
+  if (isExistingDirectory(resolvedPath)) {
+    return '';
+  }
+  return basename;
 }
 
 /**
@@ -77,6 +156,7 @@ export function FileBrowser({
   onSelect,
   onCancel,
   title,
+  startInPathEdit = false,
 }: FileBrowserProps): React.ReactElement {
   const startDir = getStartingDirectory(initialPath);
   const [currentPath, setCurrentPath] = useState(startDir);
@@ -84,24 +164,52 @@ export function FileBrowser({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [manualInput, setManualInput] = useState(false);
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>(
+    startInPathEdit ? 'pathEdit' : 'browse'
+  );
   const [inputValue, setInputValue] = useState(initialPath || process.cwd());
-
-  // Search mode
-  const [searchMode, setSearchMode] = useState(false);
+  const [inputBasePath, setInputBasePath] = useState(startDir);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Get terminal size with resize support
   const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
+  const isPathEditMode = interactionMode === 'pathEdit';
+  const isSearchMode = interactionMode === 'search';
+
+  const resolvedInputPath = useMemo(
+    () => resolveInputPath(inputValue, inputBasePath),
+    [inputValue, inputBasePath]
+  );
+
+  const previewDir = useMemo(
+    () => findNearestExistingDirectory(getStartingDirectory(resolvedInputPath)),
+    [resolvedInputPath]
+  );
+
+  const pathTailFilter = useMemo(
+    () => (isPathEditMode ? getPathTailFilter(inputValue, resolvedInputPath) : ''),
+    [inputValue, isPathEditMode, resolvedInputPath]
+  );
+
+  const activeFilterQuery = isPathEditMode ? pathTailFilter : searchQuery;
 
   useEffect(() => {
     loadFiles();
   }, [currentPath]);
 
+  useEffect(() => {
+    if (!isPathEditMode) {
+      return;
+    }
+    if (previewDir && previewDir !== currentPath) {
+      setCurrentPath(previewDir);
+    }
+  }, [isPathEditMode, previewDir, currentPath]);
+
   // Reset search when directory changes
   useEffect(() => {
     setSearchQuery('');
-    setSearchMode(false);
+    setInteractionMode((mode) => (mode === 'search' ? 'browse' : mode));
   }, [currentPath]);
 
   const loadFiles = async () => {
@@ -113,7 +221,7 @@ export function FileBrowser({
         path: currentPath,
         extensions,
       });
-      setFiles([{ name: '..', path: currentPath + '/..', isDirectory: true }, ...result]);
+      setFiles([{ name: '..', path: path.join(currentPath, '..'), isDirectory: true }, ...result]);
       setSelectedIndex(0);
     } catch (err) {
       setError(String(err));
@@ -122,13 +230,13 @@ export function FileBrowser({
     }
   };
 
-  // Filter files based on search query
+  // Filter files based on search query or manual path tail
   const filteredFiles = useMemo(() => {
-    if (!searchQuery) return files;
+    if (!activeFilterQuery) return files;
     return files.filter(f =>
-      f.name.toLowerCase().includes(searchQuery.toLowerCase())
+      f.name.toLowerCase().includes(activeFilterQuery.toLowerCase())
     );
-  }, [files, searchQuery]);
+  }, [files, activeFilterQuery]);
 
   // Reset selection if it exceeds filtered list
   useEffect(() => {
@@ -137,37 +245,66 @@ export function FileBrowser({
     }
   }, [filteredFiles.length, selectedIndex]);
 
+  const enterPathEditMode = (seed: string): void => {
+    setInputBasePath(currentPath);
+    setInputValue(seed);
+    setSearchQuery('');
+    setInteractionMode('pathEdit');
+  };
+
+  const enterSearchMode = (): void => {
+    setSearchQuery('');
+    setInteractionMode('search');
+  };
+
   useInput((input, key) => {
     // Manual path input mode
-    if (manualInput) {
+    if (isPathEditMode) {
       if (key.escape) {
-        setManualInput(false);
+        setInteractionMode('browse');
       } else if (key.return) {
-        onSelect(inputValue);
+        if (!selectDirectory && isExistingDirectory(resolvedInputPath)) {
+          setCurrentPath(resolvedInputPath);
+          setInteractionMode('browse');
+          return;
+        }
+        if (selectDirectory) {
+          const nearestDir = findNearestExistingDirectory(resolvedInputPath);
+          onSelect(nearestDir || resolvedInputPath);
+          return;
+        }
+        onSelect(resolvedInputPath);
       }
       return;
     }
 
     // Search mode input handling
-    if (searchMode) {
+    if (isSearchMode) {
       if (key.escape) {
-        setSearchMode(false);
+        setInteractionMode('browse');
         setSearchQuery('');
       } else if (key.return) {
-        setSearchMode(false);
+        setInteractionMode('browse');
       } else if (key.backspace || key.delete) {
-        setSearchQuery(searchQuery.slice(0, -1));
+        setSearchQuery((prev) => prev.slice(0, -1));
       } else if (input && input.length === 1 && !key.ctrl && !key.meta) {
         // Allow any character including space in search
-        setSearchQuery(searchQuery + input);
+        setSearchQuery((prev) => prev + input);
       }
       return;
     }
 
     // Normal navigation mode
     if (key.upArrow) {
+      if (selectedIndex === 0) {
+        enterPathEditMode(currentPath);
+        return;
+      }
       setSelectedIndex(Math.max(0, selectedIndex - 1));
     } else if (key.downArrow) {
+      if (filteredFiles.length === 0) {
+        return;
+      }
       setSelectedIndex(Math.min(filteredFiles.length - 1, selectedIndex + 1));
     } else if (key.return) {
       const selected = filteredFiles[selectedIndex];
@@ -178,16 +315,19 @@ export function FileBrowser({
           onSelect(selected.path);
         }
       }
-    } else if (input === ' ' && selectDirectory) {
-      // Space to select current directory
-      onSelect(currentPath);
+    } else if (input === ' ') {
+      if (selectDirectory) {
+        // Space to select current directory
+        onSelect(currentPath);
+      } else {
+        // Space opens quick search in file mode
+        enterSearchMode();
+      }
     } else if (input === '/') {
       // Activate search mode
-      setSearchMode(true);
-      setSearchQuery('');
-    } else if (input === 'p') {
-      setInputValue(currentPath);
-      setManualInput(true);
+      enterSearchMode();
+    } else if (key.rightArrow || input === 'e') {
+      enterPathEditMode(currentPath);
     } else if (key.escape || key.leftArrow || input === 'q') {
       // Exit on Esc, left arrow, or q
       onCancel();
@@ -206,8 +346,10 @@ export function FileBrowser({
   // Calculate scrollbar position
   const showScrollbar = filteredFiles.length > listHeight;
   const scrollbarHeight = listHeight;
-  const scrollThumbSize = Math.max(1, Math.floor((listHeight / filteredFiles.length) * scrollbarHeight));
-  const scrollThumbPos = Math.floor((startIdx / Math.max(1, filteredFiles.length - listHeight)) * (scrollbarHeight - scrollThumbSize));
+  const scrollThumbSize = Math.max(1, Math.floor((listHeight / Math.max(1, filteredFiles.length)) * scrollbarHeight));
+  const scrollThumbPos = showScrollbar
+    ? Math.floor((startIdx / Math.max(1, filteredFiles.length - listHeight)) * (scrollbarHeight - scrollThumbSize))
+    : 0;
 
   const displayTitle = title || (selectDirectory ? 'Select Folder' : 'Select File');
   const displayPath = truncatePath(currentPath, terminalWidth - 20);
@@ -220,10 +362,12 @@ export function FileBrowser({
     );
   }
 
-  if (manualInput) {
+  if (isPathEditMode) {
+    const previewPathForDisplay = previewDir || currentPath;
+    const manualDisplayPath = truncatePath(previewPathForDisplay, terminalWidth - 25);
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">Enter path manually:</Text>
+        <Text bold color="cyan">Edit path:</Text>
         <Box marginTop={1}>
           <TextInput
             value={inputValue}
@@ -232,7 +376,29 @@ export function FileBrowser({
           />
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>[Enter] Confirm  [Esc] Cancel</Text>
+          <Text dimColor>Preview folder: </Text>
+          <Text color="white">{manualDisplayPath}</Text>
+        </Box>
+        {pathTailFilter && (
+          <Box marginTop={1}>
+            <Text dimColor>Name filter: </Text>
+            <Text color="yellow">{pathTailFilter}</Text>
+          </Box>
+        )}
+        <Box marginTop={1}>
+          <Text dimColor>[Enter] Apply  [Esc] Cancel</Text>
+        </Box>
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>Contents:</Text>
+          {filteredFiles.slice(0, 8).map((file) => (
+            <Text key={file.path} color={file.isDirectory ? 'blue' : 'gray'}>
+              {file.isDirectory ? '▶ ' : '○ '}
+              {file.name}
+            </Text>
+          ))}
+          {filteredFiles.length > 8 && (
+            <Text dimColor>... and {filteredFiles.length - 8} more</Text>
+          )}
         </Box>
       </Box>
     );
@@ -251,17 +417,17 @@ export function FileBrowser({
       </Box>
 
       {/* Search indicator */}
-      {searchMode && (
+      {isSearchMode && (
         <Box paddingX={1}>
           <Text color="yellow">/ </Text>
           <Text color="white">{searchQuery}</Text>
           <Text color="yellow">_</Text>
         </Box>
       )}
-      {!searchMode && searchQuery && (
+      {!isSearchMode && activeFilterQuery && (
         <Box paddingX={1}>
           <Text dimColor>Filter: </Text>
-          <Text color="yellow">{searchQuery}</Text>
+          <Text color="yellow">{activeFilterQuery}</Text>
           <Text dimColor> ({filteredFiles.length} matches)</Text>
         </Box>
       )}

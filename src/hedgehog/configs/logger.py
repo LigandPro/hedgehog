@@ -202,8 +202,8 @@ def load_config(config_path: str | Path = CONFIG_PATH) -> dict[str, Any]:
     config_path = Path(config_path)
     root_logger = logging.getLogger(__name__)
     try:
-        with config_path.open(encoding="utf-8") as file:
-            return yaml.safe_load(file)
+        with config_path.open(encoding="utf-8-sig") as file:
+            return yaml.safe_load(file) or {}
     except FileNotFoundError:
         root_logger.exception("Configuration file not found: %s", config_path)
         raise

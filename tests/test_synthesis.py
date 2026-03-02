@@ -1,7 +1,10 @@
 """Tests for synthesis/utils.py."""
 
+import io
 import json
-import pickle
+import pickle  # noqa: S403 — test-only, trusted data
+import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,12 +12,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import hedgehog.stages.synthesis.utils as synthesis_utils
-from hedgehog.stages.synthesis.utils import (
+import hedgehog.synthesis.utils as synthesis_utils
+from hedgehog.synthesis.utils import (
     _build_score_filter_mask,
     _calculate_ra_scores_batch,
-    _calculate_sa_score,
-    _calculate_syba_score,
     _get_rascore_model_path,
     apply_synthesis_score_filters,
     get_input_path,
@@ -22,6 +23,19 @@ from hedgehog.stages.synthesis.utils import (
     parse_retrosynthesis_results,
     prepare_input_smiles,
     run_aizynthfinder,
+)
+from hedgehog.synthesis.utils import (
+    _calculate_sa_score_single as _calculate_sa_score,
+)
+from hedgehog.synthesis.utils import (
+    _calculate_syba_score_single as _calculate_syba_score,
+)
+from tests.constants import (
+    COL_MODEL_NAME,
+    COL_SMILES,
+    FILE_FILTERED_MOLECULES,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
 )
 
 
@@ -41,13 +55,13 @@ class TestCalculateSaScore:
 
     def test_valid_smiles_benzene(self):
         """SA score for benzene - should be a valid score."""
-        score = _calculate_sa_score("c1ccccc1")
+        score = _calculate_sa_score(SMILES_BENZENE)
         if not np.isnan(score):
             assert 1 <= score <= 10
 
     def test_valid_smiles_ethanol(self):
         """SA score for ethanol - should be easy to synthesize."""
-        score = _calculate_sa_score("CCO")
+        score = _calculate_sa_score(SMILES_ETHANOL)
         if not np.isnan(score):
             assert 1 <= score <= 10
             # Simple molecules should have low SA score
@@ -70,7 +84,7 @@ class TestCalculateSybaScore:
 
     def test_valid_smiles(self):
         """SYBA score for valid SMILES."""
-        score = _calculate_syba_score("c1ccccc1")
+        score = _calculate_syba_score(SMILES_BENZENE)
         # Score can be NaN if SYBA model not available
         if not np.isnan(score):
             assert isinstance(score, (int, float))
@@ -175,8 +189,8 @@ class TestMergeRetrosynthesisResults:
         """Basic merge of retrosynthesis results."""
         input_df = pd.DataFrame(
             {
-                "smiles": ["a", "b", "c"],
-                "model_name": ["m1", "m1", "m1"],
+                COL_SMILES: ["a", "b", "c"],
+                COL_MODEL_NAME: ["m1", "m1", "m1"],
             }
         )
         retro_df = pd.DataFrame(
@@ -198,8 +212,8 @@ class TestMergeRetrosynthesisResults:
         """Merge when retro results have fewer rows than input."""
         input_df = pd.DataFrame(
             {
-                "smiles": ["a", "b", "c", "d"],
-                "model_name": ["m1", "m1", "m1", "m1"],
+                COL_SMILES: ["a", "b", "c", "d"],
+                COL_MODEL_NAME: ["m1", "m1", "m1", "m1"],
             }
         )
         retro_df = pd.DataFrame(
@@ -223,8 +237,8 @@ class TestMergeRetrosynthesisResults:
         """Original columns from input should be preserved."""
         input_df = pd.DataFrame(
             {
-                "smiles": ["a", "b"],
-                "model_name": ["m1", "m2"],
+                COL_SMILES: ["a", "b"],
+                COL_MODEL_NAME: ["m1", "m2"],
                 "mol_idx": ["idx-0", "idx-1"],
             }
         )
@@ -237,8 +251,8 @@ class TestMergeRetrosynthesisResults:
         )
         result = merge_retrosynthesis_results(input_df, retro_df)
 
-        assert "smiles" in result.columns
-        assert "model_name" in result.columns
+        assert COL_SMILES in result.columns
+        assert COL_MODEL_NAME in result.columns
         assert "mol_idx" in result.columns
 
 
@@ -293,7 +307,7 @@ class TestPrepareInputSmiles:
 
     def test_basic_output(self, tmp_path):
         """Should write SMILES to output file."""
-        df = pd.DataFrame({"smiles": ["CCO", "c1ccccc1", "CC"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC"]})
         output_file = tmp_path / "output.smi"
 
         count = prepare_input_smiles(df, output_file)
@@ -301,12 +315,12 @@ class TestPrepareInputSmiles:
         assert count == 3
         assert output_file.exists()
         content = output_file.read_text()
-        assert "CCO" in content
-        assert "c1ccccc1" in content
+        assert SMILES_ETHANOL in content
+        assert SMILES_BENZENE in content
 
     def test_creates_parent_dirs(self, tmp_path):
         """Should create parent directories if needed."""
-        df = pd.DataFrame({"smiles": ["CCO"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL]})
         output_file = tmp_path / "nested" / "deep" / "output.smi"
 
         prepare_input_smiles(df, output_file)
@@ -315,7 +329,7 @@ class TestPrepareInputSmiles:
 
     def test_skips_nan(self, tmp_path):
         """Should skip NaN SMILES."""
-        df = pd.DataFrame({"smiles": ["CCO", np.nan, "CC"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL, np.nan, "CC"]})
         output_file = tmp_path / "output.smi"
 
         count = prepare_input_smiles(df, output_file)
@@ -342,6 +356,8 @@ class TestRunAizynthfinder:
 
         monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
         monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: str(uv_bin))
+        monkeypatch.setenv("VIRTUAL_ENV", "/tmp/foreign-env")
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "9")
 
         config = (
             tmp_path
@@ -355,6 +371,18 @@ class TestRunAizynthfinder:
 
         assert ok is True
         assert captured["cmd"][0] == str(uv_bin)
+        assert "--nproc" in captured["cmd"]
+        assert captured["cmd"][captured["cmd"].index("--nproc") + 1] == "9"
+        assert "VIRTUAL_ENV" not in captured["kwargs"]["env"]
+        assert (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "aizynthfinder"
+            / "data"
+            / "logging.yml"
+        ).exists()
 
     def test_returns_false_when_uv_unavailable(self, tmp_path, monkeypatch):
         """Missing uv binary should be logged and prevent command execution."""
@@ -442,8 +470,8 @@ class TestRunAizynthfinder:
         assert "--nproc" in cmd
         assert cmd[cmd.index("--nproc") + 1] == "20"
 
-    def test_invalid_nproc_is_ignored(self, tmp_path, monkeypatch):
-        """Invalid AIZYNTH_NPROC should not break run and is ignored."""
+    def test_invalid_nproc_falls_back_to_synthesis_n_jobs(self, tmp_path, monkeypatch):
+        """Invalid AIZYNTH_NPROC should fall back to synthesis n_jobs."""
         captured = {}
 
         def fake_run(cmd, **kwargs):
@@ -462,10 +490,103 @@ class TestRunAizynthfinder:
             / "public"
             / "config.yml"
         )
-        ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            config,
+            synthesis_config={"n_jobs": 7},
+        )
 
         assert ok is True
-        assert "--nproc" not in captured["cmd"]
+        cmd = captured["cmd"]
+        assert "--nproc" in cmd
+        assert cmd[cmd.index("--nproc") + 1] == "7"
+
+    def test_uses_synthesis_n_jobs_when_env_unset(self, tmp_path, monkeypatch):
+        """When AIZYNTH_NPROC is unset, use synthesis.n_jobs."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return None
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.delenv("AIZYNTH_NPROC", raising=False)
+        monkeypatch.delenv("MOLSCORE_NJOBS", raising=False)
+        monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            config,
+            synthesis_config={"n_jobs": 6},
+        )
+
+        assert ok is True
+        cmd = captured["cmd"]
+        assert "--nproc" in cmd
+        assert cmd[cmd.index("--nproc") + 1] == "6"
+
+    def test_extract_aizynth_progress_from_pairs_and_percent(self):
+        assert synthesis_utils._extract_aizynth_progress("done 3/10") == (3, 10)
+        assert synthesis_utils._extract_aizynth_progress("50%", fallback_total=8) == (
+            4,
+            8,
+        )
+
+    def test_progress_callback_receives_stream_updates(self, tmp_path, monkeypatch):
+        uv_bin = tmp_path / "bin" / "uv"
+        uv_bin.parent.mkdir(parents=True, exist_ok=True)
+        uv_bin.write_text("#!/bin/sh\n")
+        uv_bin.chmod(0o755)
+
+        config = (
+            tmp_path
+            / "modules"
+            / "retrosynthesis"
+            / "aizynthfinder"
+            / "public"
+            / "config.yml"
+        )
+        input_smi = tmp_path / "in.smi"
+        input_smi.write_text("CC\nCCC\nCCCC\nCCN\n", encoding="utf-8")
+
+        class _FakePopen:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                self.stdout = io.StringIO("step 1/4\nstep 2/4\n")
+
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: str(uv_bin))
+        monkeypatch.setattr(synthesis_utils.subprocess, "Popen", _FakePopen)
+
+        progress_events: list[tuple[int, int, str | None]] = []
+
+        ok = run_aizynthfinder(
+            input_smi,
+            tmp_path / "out.json",
+            config,
+            progress_cb=lambda done, total, detail: progress_events.append(
+                (done, total, detail)
+            ),
+        )
+
+        assert ok is True
+        assert progress_events
+        assert progress_events[0][0] == 0
+        assert any(done >= 2 and total == 4 for done, total, _ in progress_events)
+        assert progress_events[-1][0] == progress_events[-1][1]
 
 
 class TestParseRetrosynthesisResults:
@@ -523,7 +644,7 @@ class TestGetInputPath:
         """Should find structural filters output first."""
         sf_dir = tmp_path / "stages" / "03_structural_filters_post"
         sf_dir.mkdir(parents=True)
-        (sf_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (sf_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
         config = {"generated_mols_path": "/fallback/path.csv"}
         result = get_input_path(config, str(tmp_path))
@@ -534,7 +655,9 @@ class TestGetInputPath:
         """Should find descriptors output if no struct filters."""
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         config = {"generated_mols_path": "/fallback/path.csv"}
         result = get_input_path(config, str(tmp_path))
@@ -582,7 +705,7 @@ class TestCalculateRaScores:
 
     def test_valid_smiles(self):
         """RA scores for known synthesizable molecules should be high."""
-        scores = _calculate_ra_scores_batch(["c1ccccc1", "CCO"])
+        scores = _calculate_ra_scores_batch([SMILES_BENZENE, SMILES_ETHANOL])
         assert len(scores) == 2
         for s in scores:
             assert not np.isnan(s)
@@ -596,7 +719,9 @@ class TestCalculateRaScores:
 
     def test_mixed_valid_invalid(self):
         """Batch with valid and invalid SMILES."""
-        scores = _calculate_ra_scores_batch(["c1ccccc1", "not_a_molecule", "CCO"])
+        scores = _calculate_ra_scores_batch(
+            [SMILES_BENZENE, "not_a_molecule", SMILES_ETHANOL]
+        )
         assert len(scores) == 3
         assert not np.isnan(scores[0])
         assert np.isnan(scores[1])
@@ -616,6 +741,134 @@ class TestCalculateRaScores:
 
 class TestRascoreAutoInstall:
     """Tests for RAScore auto-download/load behavior."""
+
+    def test_ensure_rascore_json_model_converts_when_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Missing JSON model should be generated from pickle model."""
+        json_path = tmp_path / "model.json"
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_bytes(b"pickle-bytes")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_ensure_rascore_pickle_path", lambda: pkl_path
+        )
+
+        def _fake_convert(src: Path, dst: Path) -> bool:
+            assert src == pkl_path
+            assert dst == json_path
+            dst.write_text('{"converted": true}', encoding="utf-8")
+            return True
+
+        monkeypatch.setattr(
+            synthesis_utils, "_convert_rascore_pickle_to_json", _fake_convert
+        )
+
+        ensured = synthesis_utils._ensure_rascore_json_model()
+        assert ensured == json_path
+        assert json_path.exists()
+
+    def test_ensure_rascore_json_model_returns_none_on_convert_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """JSON helper should return None when conversion fails."""
+        json_path = tmp_path / "model.json"
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_bytes(b"pickle-bytes")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_ensure_rascore_pickle_path", lambda: pkl_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_convert_rascore_pickle_to_json", lambda _src, _dst: False
+        )
+
+        ensured = synthesis_utils._ensure_rascore_json_model()
+        assert ensured is None
+
+    def test_load_rascore_uses_generated_json_before_pickle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Loader should use generated JSON model before trying pickle load."""
+        json_path = tmp_path / "model.json"
+        json_path.write_text('{"learner": {}}', encoding="utf-8")
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_text("should-not-be-used", encoding="utf-8")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_pickle_model_path", lambda: pkl_path
+        )
+
+        loaded_model_path: dict[str, str] = {}
+
+        class _DummyBooster:
+            def load_model(self, path: str) -> None:
+                loaded_model_path["path"] = path
+
+        monkeypatch.setitem(
+            sys.modules, "xgboost", SimpleNamespace(Booster=_DummyBooster)
+        )
+        synthesis_utils._lazy_cache["rascore_booster"] = None
+
+        loaded = synthesis_utils._load_rascore_impl()
+        assert loaded
+        assert loaded["kind"] == "xgboost_booster"
+        assert loaded_model_path["path"] == str(json_path)
+
+    def test_load_rascore_suppresses_legacy_json_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Legacy XGBoost JSON warning should not be surfaced to users."""
+        json_path = tmp_path / "model.json"
+        json_path.write_text('{"learner": {}}', encoding="utf-8")
+        pkl_path = tmp_path / "model.pkl"
+        pkl_path.write_text("should-not-be-used", encoding="utf-8")
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_pickle_model_path", lambda: pkl_path
+        )
+
+        class _DummyBooster:
+            def load_model(self, _path: str) -> None:
+                warnings.warn(
+                    "[23:15:45] WARNING: /__w/xgboost/xgboost/src/learner.cc:885: "
+                    "Found JSON model saved \n"
+                    "before XGBoost 1.6, please save the model using current version again.",
+                    UserWarning,
+                    stacklevel=1,
+                )
+
+        monkeypatch.setitem(
+            sys.modules, "xgboost", SimpleNamespace(Booster=_DummyBooster)
+        )
+        synthesis_utils._lazy_cache["rascore_booster"] = None
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            loaded = synthesis_utils._load_rascore_impl()
+
+        assert loaded
+        assert loaded["kind"] == "xgboost_booster"
+        legacy_fragments = ("found json model saved", "xgboost 1.6")
+        assert not any(
+            all(
+                fragment in " ".join(str(w.message).lower().split())
+                for fragment in legacy_fragments
+            )
+            for w in caught
+        )
 
     def test_load_rascore_auto_downloads_pickle_model(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -652,7 +905,7 @@ class TestRascoreAutoInstall:
             "_load_rascore",
             lambda: {"kind": "pickle_classifier", "model": _DummyRascoreClassifier()},
         )
-        scores = _calculate_ra_scores_batch(["CCO", "invalid_smiles"])
+        scores = _calculate_ra_scores_batch([SMILES_ETHANOL, "invalid_smiles"])
 
         assert len(scores) == 2
         assert scores[0] == pytest.approx(0.8)
@@ -662,6 +915,7 @@ class TestRascoreAutoInstall:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         """When local model load fails, batch scorer should use legacy worker."""
+        monkeypatch.delenv(synthesis_utils.STRICT_RASCORE_ENV, raising=False)
         called = {"run": False}
 
         def _fake_run(cmd, **kwargs):
@@ -679,9 +933,55 @@ class TestRascoreAutoInstall:
         monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
         monkeypatch.setattr(synthesis_utils.subprocess, "run", _fake_run)
 
-        scores = _calculate_ra_scores_batch(["CCO", "invalid_smiles"])
+        scores = _calculate_ra_scores_batch([SMILES_ETHANOL, "invalid_smiles"])
 
         assert called["run"] is True
         assert len(scores) == 2
         assert scores[0] == pytest.approx(0.42)
         assert np.isnan(scores[1])
+
+    def test_load_rascore_uses_pickle_when_json_is_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Invalid JSON model should fall back to local pickle model."""
+        json_path = tmp_path / "model.json"
+        json_path.write_text("corrupted-model", encoding="utf-8")
+
+        pkl_path = tmp_path / "model.pkl"
+        with open(pkl_path, "wb") as f:
+            pickle.dump(_DummyRascoreClassifier(), f)
+
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_model_path", lambda: json_path
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_get_rascore_pickle_model_path", lambda: pkl_path
+        )
+        synthesis_utils._lazy_cache["rascore_booster"] = None
+
+        loaded = synthesis_utils._load_rascore_impl()
+
+        assert loaded
+        assert loaded["kind"] == "pickle_classifier"
+
+    def test_strict_rascore_mode_raises_when_local_model_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Strict mode should fail fast instead of using legacy fallback."""
+        monkeypatch.setenv(synthesis_utils.STRICT_RASCORE_ENV, "1")
+        monkeypatch.setattr(synthesis_utils, "_load_rascore", lambda: False)
+
+        called_legacy = {"called": False}
+
+        def _fake_legacy(_smiles):
+            called_legacy["called"] = True
+            return [0.1]
+
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_ra_scores_batch_legacy", _fake_legacy
+        )
+
+        with pytest.raises(RuntimeError, match="strict mode"):
+            _calculate_ra_scores_batch([SMILES_ETHANOL])
+
+        assert called_legacy["called"] is False

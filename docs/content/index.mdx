@@ -26,12 +26,12 @@ HEDGEHOG is a comprehensive benchmark pipeline for evaluating generative models 
 git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
 
-# Install AiZynthFinder (required for synthesis stage)
-./modules/install_aizynthfinder.sh
-
 # Install the package
 uv sync
 
+# Install AiZynthFinder (required for synthesis stage)
+uv run hedgehog setup aizynthfinder
+
 # Run the full pipeline on test data
-uv run hedgehog run
+uv run hedgehog
 ```

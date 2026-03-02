@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 from rdkit import Chem
 
-from hedgehog.stages.structFilters import utils as structfilters_utils
-from hedgehog.stages.structFilters.utils import (
+from hedgehog.struct_filters import utils as structfilters_utils
+from hedgehog.struct_filters.utils import (
     apply_halogenicity,
     apply_lilly_filter,
     apply_molcomplexity_filters,
@@ -26,6 +26,13 @@ from hedgehog.stages.structFilters.utils import (
     format_number,
     get_basic_stats,
     process_path,
+)
+from tests.constants import (
+    CFG_STRUCT_FILTERS,
+    COL_MODEL_NAME,
+    COL_SMILES,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
 )
 
 
@@ -137,8 +144,8 @@ class TestGetBasicStats:
         # Full integration testing would require more setup
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC", "CCCC"],
-                "model_name": ["m1", "m1", "m2", "m2"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC", "CCCC"],
+                COL_MODEL_NAME: ["m1", "m1", "m2", "m2"],
                 "mol": [None, None, None, None],
                 "pass": [True, False, True, True],
                 "pass_any": [True, True, True, True],
@@ -146,25 +153,25 @@ class TestGetBasicStats:
         )
 
         # Verify DataFrame structure
-        assert df["model_name"].nunique() == 2
+        assert df[COL_MODEL_NAME].nunique() == 2
         assert "pass" in df.columns
 
     def test_multimodel_with_model_name_list_does_not_overwrite_column(self):
         """Should not crash when model_name arg is a list for multi-model inputs."""
-        from hedgehog.stages.structFilters.utils import get_basic_stats
+        from hedgehog.struct_filters.utils import get_basic_stats
 
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC", "CCC", "CCCC"],
-                "model_name": ["m1", "m1", "m2", "m2"],
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC", "CCCC"],
+                COL_MODEL_NAME: ["m1", "m1", "m2", "m2"],
                 "mol": [1, 1, 1, 1],
                 "pass": [True, False, True, True],
             }
         )
 
         res_df, extended = get_basic_stats({}, df, ["m1", "m2"], "bredt")
-        assert set(res_df["model_name"].tolist()) == {"m1", "m2"}
-        assert extended["model_name"].nunique(dropna=True) == 2
+        assert set(res_df[COL_MODEL_NAME].tolist()) == {"m1", "m2"}
+        assert extended[COL_MODEL_NAME].nunique(dropna=True) == 2
         assert len(extended) == 4
 
 
@@ -173,7 +180,7 @@ class TestPadDataframeToLength:
 
     def test_no_padding_needed(self):
         """Should return unchanged if already at target length."""
-        from hedgehog.stages.structFilters.utils import _pad_dataframe_to_length
+        from hedgehog.struct_filters.utils import _pad_dataframe_to_length
 
         df = pd.DataFrame({"a": [1, 2, 3]})
         result = _pad_dataframe_to_length(df, 3)
@@ -181,7 +188,7 @@ class TestPadDataframeToLength:
 
     def test_padding_adds_rows(self):
         """Should add rows to reach target length."""
-        from hedgehog.stages.structFilters.utils import _pad_dataframe_to_length
+        from hedgehog.struct_filters.utils import _pad_dataframe_to_length
 
         df = pd.DataFrame({"a": [1, 2]})
         result = _pad_dataframe_to_length(df, 5)
@@ -189,7 +196,7 @@ class TestPadDataframeToLength:
 
     def test_longer_than_target(self):
         """Should return unchanged if longer than target."""
-        from hedgehog.stages.structFilters.utils import _pad_dataframe_to_length
+        from hedgehog.struct_filters.utils import _pad_dataframe_to_length
 
         df = pd.DataFrame({"a": [1, 2, 3, 4, 5]})
         result = _pad_dataframe_to_length(df, 3)
@@ -202,7 +209,7 @@ class TestEnsureDataframeLength:
 
     def test_exact_length(self):
         """Should return unchanged if exactly at expected length."""
-        from hedgehog.stages.structFilters.utils import _ensure_dataframe_length
+        from hedgehog.struct_filters.utils import _ensure_dataframe_length
 
         df = pd.DataFrame({"a": [1, 2, 3]})
         result = _ensure_dataframe_length(df, 3)
@@ -210,7 +217,7 @@ class TestEnsureDataframeLength:
 
     def test_pads_short_dataframe(self):
         """Should pad if shorter than expected."""
-        from hedgehog.stages.structFilters.utils import _ensure_dataframe_length
+        from hedgehog.struct_filters.utils import _ensure_dataframe_length
 
         df = pd.DataFrame({"a": [1, 2]})
         result = _ensure_dataframe_length(df, 4)
@@ -218,7 +225,7 @@ class TestEnsureDataframeLength:
 
     def test_trims_long_dataframe(self):
         """Should trim if longer than expected."""
-        from hedgehog.stages.structFilters.utils import _ensure_dataframe_length
+        from hedgehog.struct_filters.utils import _ensure_dataframe_length
 
         df = pd.DataFrame({"a": [1, 2, 3, 4, 5]})
         result = _ensure_dataframe_length(df, 3)
@@ -254,7 +261,7 @@ def _make_config(tmp_path):
             }
         )
     )
-    return {"config_structFilters": str(config_path)}
+    return {CFG_STRUCT_FILTERS: str(config_path)}
 
 
 class TestFilterFunctionApplierNewFilters:
@@ -283,7 +290,7 @@ class TestApplyProtectingGroups:
     """Tests for apply_protecting_groups filter."""
 
     def test_clean_molecules_pass(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO", "CC(=O)O"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL, "CC(=O)O"])
         config = _make_config(tmp_path)
         result = apply_protecting_groups(config, mols)
         assert len(result) == 3
@@ -301,17 +308,17 @@ class TestApplyProtectingGroups:
         assert result["pass"].iloc[0] is np.bool_(False)
 
     def test_returns_dataframe(self, tmp_path):
-        mols = _make_mols(["CCO"])
+        mols = _make_mols([SMILES_ETHANOL])
         config = _make_config(tmp_path)
         result = apply_protecting_groups(config, mols)
         assert isinstance(result, pd.DataFrame)
 
     def test_with_model_names(self, tmp_path):
-        smiles = [("CCO", "model1", dm.to_mol("CCO"), 0)]
-        mols = [dm.to_mol("CCO")]
+        smiles = [(SMILES_ETHANOL, "model1", dm.to_mol(SMILES_ETHANOL), 0)]
+        mols = [dm.to_mol(SMILES_ETHANOL)]
         config = _make_config(tmp_path)
         result = apply_protecting_groups(config, mols, smiles)
-        assert "model_name" in result.columns
+        assert COL_MODEL_NAME in result.columns
 
 
 class TestApplyRingInfraction:
@@ -319,13 +326,13 @@ class TestApplyRingInfraction:
 
     def test_normal_rings_pass(self, tmp_path):
         # Benzene, cyclohexane - normal rings
-        mols = _make_mols(["c1ccccc1", "C1CCCCC1"])
+        mols = _make_mols([SMILES_BENZENE, "C1CCCCC1"])
         config = _make_config(tmp_path)
         result = apply_ring_infraction(config, mols)
         assert result["pass"].all()
 
     def test_returns_correct_structure(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO", "C1CN1"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL, "C1CN1"])
         config = _make_config(tmp_path)
         result = apply_ring_infraction(config, mols)
         assert isinstance(result, pd.DataFrame)
@@ -338,8 +345,8 @@ class TestApplyRingInfraction:
 
         config_path = tmp_path / "config_sf.yml"
         config_path.write_text(yaml.dump({"ring_infraction_hetcycle_min_size": 5}))
-        config = {"config_structFilters": str(config_path)}
-        mols = _make_mols(["c1ccccc1"])
+        config = {CFG_STRUCT_FILTERS: str(config_path)}
+        mols = _make_mols([SMILES_BENZENE])
         result = apply_ring_infraction(config, mols)
         assert len(result) == 1
 
@@ -348,7 +355,7 @@ class TestApplyStereoCenter:
     """Tests for apply_stereo_center filter."""
 
     def test_no_stereocenters_passes(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL])
         config = _make_config(tmp_path)
         result = apply_stereo_center(config, mols)
         assert result["pass"].all()
@@ -376,7 +383,7 @@ class TestApplyHalogenicity:
     """Tests for apply_halogenicity filter."""
 
     def test_no_halogens_passes(self, tmp_path):
-        mols = _make_mols(["c1ccccc1", "CCO"])
+        mols = _make_mols([SMILES_BENZENE, SMILES_ETHANOL])
         config = _make_config(tmp_path)
         result = apply_halogenicity(config, mols)
         assert result["pass"].all()
@@ -417,7 +424,7 @@ class TestApplySymmetry:
         assert result["pass"].iloc[0] is np.bool_(True)
 
     def test_returns_dataframe(self, tmp_path):
-        mols = _make_mols(["CCO", "c1ccccc1"])
+        mols = _make_mols([SMILES_ETHANOL, SMILES_BENZENE])
         config = _make_config(tmp_path)
         result = apply_symmetry(config, mols)
         assert isinstance(result, pd.DataFrame)
@@ -440,10 +447,10 @@ class TestGetBasicStatsNewFilters:
     def test_basic_stats_computes(self, filter_name):
         df = pd.DataFrame(
             {
-                "mol": [dm.to_mol("CCO"), dm.to_mol("c1ccccc1")],
+                "mol": [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE)],
                 "pass": [True, False],
-                "model_name": ["m1", "m1"],
-                "smiles": ["CCO", "c1ccccc1"],
+                COL_MODEL_NAME: ["m1", "m1"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE],
             }
         )
         config = {}
@@ -451,6 +458,55 @@ class TestGetBasicStatsNewFilters:
         assert "banned_ratio" in res_df.columns
         assert res_df["banned_ratio"].iloc[0] == 0.5
         assert len(extended) == 2
+
+
+class TestCommonAlertsNJobsStrategy:
+    """Tests for size-aware Common Alerts worker resolution."""
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_small_input_uses_one_worker(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 192
+        config_sf = {"common_alerts_auto_n_jobs": True}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=999
+        )
+
+        assert n_jobs == 1
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_medium_input_uses_twelve_workers(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 192
+        config_sf = {"common_alerts_auto_n_jobs": True}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=1_000
+        )
+
+        assert n_jobs == 12
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_large_input_uses_all_workers(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 192
+        config_sf = {"common_alerts_auto_n_jobs": True}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=10_000
+        )
+
+        assert n_jobs == 192
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    def test_auto_disabled_falls_back_to_resolve_n_jobs(self, mock_resolve_n_jobs):
+        mock_resolve_n_jobs.return_value = 7
+        config_sf = {"common_alerts_auto_n_jobs": False}
+
+        n_jobs = structfilters_utils._resolve_common_alerts_n_jobs(
+            config_sf, {}, total_items=250
+        )
+
+        assert n_jobs == 7
+        mock_resolve_n_jobs.assert_called_once_with(config_sf, {})
 
 
 # =====================================================================
@@ -475,8 +531,8 @@ def _build_alert_data(rulesets_smarts):
 class TestCommonAlertsContract:
     """Tests for the pass/pass_any semantics of apply_structural_alerts."""
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_pass_is_AND_of_all_rulesets(self, mock_load_config, mock_filter_alerts):
         """A molecule failing 1 of 2 rulesets should have pass=False, pass_any=True."""
         mock_load_config.return_value = {}
@@ -490,8 +546,8 @@ class TestCommonAlertsContract:
         )
         mock_filter_alerts.return_value = alert_data
 
-        mol = Chem.MolFromSmiles("c1ccccc1")  # benzene: has aromatic C, no N
-        config = {"config_structFilters": "dummy.yml"}
+        mol = Chem.MolFromSmiles(SMILES_BENZENE)  # benzene: has aromatic C, no N
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_structural_alerts(config, [mol])
 
         assert len(result) == 1
@@ -504,8 +560,8 @@ class TestCommonAlertsContract:
         # pass_any = OR of all rulesets → True (since RulesetB passes)
         assert row["pass_any"] == True  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_pass_any_is_OR_of_all_rulesets(self, mock_load_config, mock_filter_alerts):
         """A molecule failing ALL rulesets should have pass=False, pass_any=False."""
         mock_load_config.return_value = {}
@@ -519,8 +575,8 @@ class TestCommonAlertsContract:
         )
         mock_filter_alerts.return_value = alert_data
 
-        mol = Chem.MolFromSmiles("c1ccccc1")  # benzene: matches both
-        config = {"config_structFilters": "dummy.yml"}
+        mol = Chem.MolFromSmiles(SMILES_BENZENE)  # benzene: matches both
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_structural_alerts(config, [mol])
 
         row = result.iloc[0]
@@ -529,8 +585,8 @@ class TestCommonAlertsContract:
         assert row["pass"] == False  # noqa: E712
         assert row["pass_any"] == False  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_all_pass_both_true(self, mock_load_config, mock_filter_alerts):
         """A molecule passing all rulesets should have pass=True, pass_any=True."""
         mock_load_config.return_value = {}
@@ -544,8 +600,8 @@ class TestCommonAlertsContract:
         )
         mock_filter_alerts.return_value = alert_data
 
-        mol = Chem.MolFromSmiles("CCO")
-        config = {"config_structFilters": "dummy.yml"}
+        mol = Chem.MolFromSmiles(SMILES_ETHANOL)
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_structural_alerts(config, [mol])
 
         row = result.iloc[0]
@@ -554,8 +610,8 @@ class TestCommonAlertsContract:
         assert row["pass"] == True  # noqa: E712
         assert row["pass_any"] == True  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.filter_alerts")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_progress_logs_are_emitted(
         self, mock_load_config, mock_filter_alerts, monkeypatch, caplog
     ):
@@ -573,6 +629,8 @@ class TestCommonAlertsContract:
             progress=None,
             initializer=None,
             initargs=(),
+            preserve_order=True,
+            start_method=None,
         ):
             if initializer is not None:
                 initializer(*initargs)
@@ -586,8 +644,8 @@ class TestCommonAlertsContract:
 
         monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
 
-        mols = [Chem.MolFromSmiles("CCO"), Chem.MolFromSmiles("c1ccccc1")]
-        config = {"config_structFilters": "dummy.yml"}
+        mols = [Chem.MolFromSmiles(SMILES_ETHANOL), Chem.MolFromSmiles(SMILES_BENZENE)]
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
 
         with caplog.at_level("INFO"):
             apply_structural_alerts(config, mols)
@@ -595,6 +653,83 @@ class TestCommonAlertsContract:
         assert "Common Alerts progress: 0/2 molecules (0.0%)" in caplog.text
         assert "Common Alerts progress: 2/2 molecules (100.0%)" in caplog.text
         assert "Common Alerts completed: 2/2 molecules (100.0%)" in caplog.text
+
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
+    def test_linux_defaults_common_alerts_to_fork(
+        self, mock_load_config, mock_filter_alerts, monkeypatch
+    ):
+        """Linux runs should force 'fork' start method for Common Alerts."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {"RulesetA": [("[#7]", "nitrogen atom")]}
+        )
+
+        seen_start_method = {"value": None}
+
+        def _fake_parallel_map(
+            func,
+            items,
+            n_jobs,
+            chunksize=None,
+            progress=None,
+            initializer=None,
+            initargs=(),
+            preserve_order=True,
+            start_method=None,
+        ):
+            seen_start_method["value"] = start_method
+            if initializer is not None:
+                initializer(*initargs)
+            return [func(item) for item in items]
+
+        monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
+        monkeypatch.setattr(structfilters_utils.sys, "platform", "linux")
+
+        mol = Chem.MolFromSmiles(SMILES_ETHANOL)
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        apply_structural_alerts(config, [mol])
+
+        assert seen_start_method["value"] == "fork"
+
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
+    def test_env_override_for_common_alerts_start_method(
+        self, mock_load_config, mock_filter_alerts, monkeypatch
+    ):
+        """Environment override should take precedence for Common Alerts workers."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {"RulesetA": [("[#7]", "nitrogen atom")]}
+        )
+
+        seen_start_method = {"value": None}
+
+        def _fake_parallel_map(
+            func,
+            items,
+            n_jobs,
+            chunksize=None,
+            progress=None,
+            initializer=None,
+            initargs=(),
+            preserve_order=True,
+            start_method=None,
+        ):
+            seen_start_method["value"] = start_method
+            if initializer is not None:
+                initializer(*initargs)
+            return [func(item) for item in items]
+
+        monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
+        monkeypatch.setenv("HEDGEHOG_COMMON_ALERTS_START_METHOD", "forkserver")
+        monkeypatch.setattr(structfilters_utils.sys, "platform", "linux")
+
+        mol = Chem.MolFromSmiles(SMILES_ETHANOL)
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        apply_structural_alerts(config, [mol])
+
+        assert seen_start_method["value"] == "forkserver"
 
 
 class TestGetBasicStatsCommonAlerts:
@@ -607,13 +742,13 @@ class TestGetBasicStatsCommonAlerts:
         n = len(pass_vals)
         return pd.DataFrame(
             {
-                "mol": [dm.to_mol("CCO")] * n,
-                "smiles": ["CCO"] * n,
+                "mol": [dm.to_mol(SMILES_ETHANOL)] * n,
+                COL_SMILES: [SMILES_ETHANOL] * n,
                 "pass": pass_vals,
                 "pass_any": pass_any_vals,
                 "pass_RulesetA": pass_A_vals,
                 "pass_RulesetB": pass_B_vals,
-                "model_name": ["m1"] * n,
+                COL_MODEL_NAME: ["m1"] * n,
             }
         )
 
@@ -662,19 +797,19 @@ class TestGetBasicStatsCommonAlerts:
 class TestLillyFilter:
     """Tests for apply_lilly_filter with fully mocked LillyDemeritsFilters."""
 
-    @patch("hedgehog.stages.structFilters.utils.LillyDemeritsFilters")
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", True)
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.LillyDemeritsFilters")
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", True)
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_length_preserved_on_normal_run(self, mock_load_config, MockLillyClass):
         """Invariant: len(result) == len(input)."""
         mock_load_config.return_value = {"lilly_scheduler": "threads"}
         mock_dfilter = MagicMock()
         MockLillyClass.return_value = mock_dfilter
 
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1"), dm.to_mol("CC")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE), dm.to_mol("CC")]
         mock_dfilter.return_value = pd.DataFrame(
             {
-                "smiles": ["CCO", "c1ccccc1", "CC"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC"],
                 "status": ["ok", "ok", "ok"],
                 "pass_filter": [True, True, True],
                 "demerit_score": [0.0, 10.0, 5.0],
@@ -682,20 +817,20 @@ class TestLillyFilter:
             }
         )
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_lilly_filter(config, mols)
         assert len(result) == 3
 
-    @patch("hedgehog.stages.structFilters.utils.LillyDemeritsFilters")
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", True)
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.LillyDemeritsFilters")
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", True)
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_batch_fallback_on_value_error(self, mock_load_config, MockLillyClass):
         """When dfilter raises ValueError with 'Length of values', fallback triggers."""
         mock_load_config.return_value = {"lilly_scheduler": "threads"}
         mock_dfilter = MagicMock()
         MockLillyClass.return_value = mock_dfilter
 
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE)]
 
         # First call (batch) raises ValueError, second calls (one-by-one) succeed
         call_count = [0]
@@ -717,29 +852,29 @@ class TestLillyFilter:
 
         mock_dfilter.side_effect = side_effect
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_lilly_filter(config, mols)
         assert len(result) == 2
         # Fallback was triggered (more than 1 call)
         assert call_count[0] > 1
 
-    @patch("hedgehog.stages.structFilters.utils.LillyDemeritsFilters")
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", True)
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.LillyDemeritsFilters")
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", True)
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_invalid_molecules_alignment(self, mock_load_config, MockLillyClass):
         """[valid, None, valid] -> None at index 1 marked as failed."""
         mock_load_config.return_value = {"lilly_scheduler": "threads"}
         mock_dfilter = MagicMock()
         MockLillyClass.return_value = mock_dfilter
 
-        valid_mol_1 = dm.to_mol("CCO")
+        valid_mol_1 = dm.to_mol(SMILES_ETHANOL)
         valid_mol_2 = dm.to_mol("CC")
         mols = [valid_mol_1, None, valid_mol_2]
 
         # dfilter is only called on valid mols (2 of them)
         mock_dfilter.return_value = pd.DataFrame(
             {
-                "smiles": ["CCO", "CC"],
+                COL_SMILES: [SMILES_ETHANOL, "CC"],
                 "status": ["ok", "ok"],
                 "pass_filter": [True, True],
                 "demerit_score": [0.0, 5.0],
@@ -747,17 +882,17 @@ class TestLillyFilter:
             }
         )
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_lilly_filter(config, mols)
         assert len(result) == 3
         # Index 1 (None molecule) should be marked as failed
         assert result["pass_filter"].iloc[1] == False  # noqa: E712
 
-    @patch("hedgehog.stages.structFilters.utils.LILLY_AVAILABLE", False)
+    @patch("hedgehog.struct_filters.utils.LILLY_AVAILABLE", False)
     def test_raises_when_not_available(self):
         """LILLY_AVAILABLE=False -> ImportError."""
-        mols = [dm.to_mol("CCO")]
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        mols = [dm.to_mol(SMILES_ETHANOL)]
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         with pytest.raises(ImportError, match="not available"):
             apply_lilly_filter(config, mols)
 
@@ -765,8 +900,8 @@ class TestLillyFilter:
 class TestNIBRFilter:
     """Tests for apply_nibr_filter with mocked NIBRFilters."""
 
-    @patch("hedgehog.stages.structFilters.utils.mc")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.mc")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_severity_based_pass(self, mock_load_config, mock_mc):
         """severity 0 -> pass=True, severity >0 -> pass=False (in get_basic_stats)."""
         mock_load_config.return_value = {"nibr_scheduler": "threads"}
@@ -775,7 +910,7 @@ class TestNIBRFilter:
         mock_mc.structural.NIBRFilters.return_value = mock_nibr
 
         # NIBRFilters returns a DataFrame with severity, n_covalent_motif, special_mol, mol
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE)]
         nibr_result = pd.DataFrame(
             {
                 "mol": mols,
@@ -787,7 +922,7 @@ class TestNIBRFilter:
         )
         mock_nibr.return_value = nibr_result
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_nibr_filter(config, mols)
 
         # Result should have the data from NIBRFilters
@@ -795,8 +930,8 @@ class TestNIBRFilter:
         assert result["severity"].iloc[0] == 0
         assert result["severity"].iloc[1] == 10
 
-    @patch("hedgehog.stages.structFilters.utils.mc")
-    @patch("hedgehog.stages.structFilters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.mc")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_nibr_bonus_metrics_in_stats(self, mock_load_config, mock_mc):
         """Verify mean_severity, max_severity, banned_ratio in stats."""
         mock_load_config.return_value = {"nibr_scheduler": "threads"}
@@ -804,7 +939,7 @@ class TestNIBRFilter:
         mock_nibr = MagicMock()
         mock_mc.structural.NIBRFilters.return_value = mock_nibr
 
-        mols = [dm.to_mol("CCO"), dm.to_mol("c1ccccc1"), dm.to_mol("CC")]
+        mols = [dm.to_mol(SMILES_ETHANOL), dm.to_mol(SMILES_BENZENE), dm.to_mol("CC")]
         nibr_result = pd.DataFrame(
             {
                 "mol": mols,
@@ -815,7 +950,7 @@ class TestNIBRFilter:
         )
         mock_nibr.return_value = nibr_result
 
-        config = {"n_jobs": 1, "config_structFilters": "dummy.yml"}
+        config = {"n_jobs": 1, CFG_STRUCT_FILTERS: "dummy.yml"}
         result = apply_nibr_filter(config, mols)
         result["model_name"] = "m1"
 
@@ -838,15 +973,15 @@ class TestGetBasicStatsLilly:
         df = pd.DataFrame(
             {
                 "mol": [
-                    dm.to_mol("CCO"),
-                    dm.to_mol("c1ccccc1"),
+                    dm.to_mol(SMILES_ETHANOL),
+                    dm.to_mol(SMILES_BENZENE),
                     dm.to_mol("CC"),
                     dm.to_mol("CCC"),
                 ],
                 "pass_filter": [True, False, True, False],
                 "demerit_score": [0.0, 100.0, 0.0, 50.0],
-                "smiles": ["CCO", "c1ccccc1", "CC", "CCC"],
-                "model_name": ["m1", "m1", "m1", "m1"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC", "CCC"],
+                COL_MODEL_NAME: ["m1", "m1", "m1", "m1"],
                 "status": ["ok", "exclude", "ok", "exclude"],
                 "reasons": ["", "alert", "", "alert"],
             }
@@ -860,11 +995,15 @@ class TestGetBasicStatsLilly:
         """mean_noNA_demerit_score = mean of demerit_score excluding NaN."""
         df = pd.DataFrame(
             {
-                "mol": [dm.to_mol("CCO"), dm.to_mol("c1ccccc1"), dm.to_mol("CC")],
+                "mol": [
+                    dm.to_mol(SMILES_ETHANOL),
+                    dm.to_mol(SMILES_BENZENE),
+                    dm.to_mol("CC"),
+                ],
                 "pass_filter": [True, False, True],
                 "demerit_score": [10.0, 30.0, np.nan],
-                "smiles": ["CCO", "c1ccccc1", "CC"],
-                "model_name": ["m1", "m1", "m1"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_BENZENE, "CC"],
+                COL_MODEL_NAME: ["m1", "m1", "m1"],
                 "status": ["ok", "exclude", "ok"],
                 "reasons": ["", "alert", ""],
             }

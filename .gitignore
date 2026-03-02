@@ -71,6 +71,7 @@ venv.bak/
 
 # Project-specific data and results
 results/
+docs/content/api/index.mdx
 
 # External modules (git submodules or cloned repositories)
 modules/mce18.py

@@ -7,14 +7,25 @@ import pandas as pd
 import pytest
 import yaml
 
+from tests.constants import (
+    CFG_STRUCT_FILTERS,
+    COL_MODEL_NAME,
+    COL_MOL_IDX,
+    COL_SMILES,
+    MODEL_TEST,
+    SMILES_ASPIRIN,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
+)
+
 
 @pytest.fixture
 def sample_smiles():
     """10 simple valid SMILES strings."""
     return [
-        "c1ccccc1",  # benzene
+        SMILES_BENZENE,  # benzene
         "CC(C)C",  # isobutane
-        "CCO",  # ethanol
+        SMILES_ETHANOL,  # ethanol
         "CC=O",  # acetaldehyde
         "c1ccc(O)cc1",  # phenol
         "CC(=O)O",  # acetic acid
@@ -30,19 +41,17 @@ def sample_df(sample_smiles):
     """DataFrame with test molecules."""
     return pd.DataFrame(
         {
-            "smiles": sample_smiles,
-            "model_name": ["test"] * len(sample_smiles),
-            "mol_idx": [f"test-{i}" for i in range(len(sample_smiles))],
+            COL_SMILES: sample_smiles,
+            COL_MODEL_NAME: [MODEL_TEST] * len(sample_smiles),
+            COL_MOL_IDX: [f"test-{i}" for i in range(len(sample_smiles))],
         }
     )
 
 
 @pytest.fixture
 def multimodel_df():
-    """DataFrame from data/test/generated_mols.csv."""
-    test_data_path = (
-        Path(__file__).parent.parent / "data" / "test" / "generated_mols.csv"
-    )
+    """DataFrame from tests/fixtures/generated_mols.csv."""
+    test_data_path = Path(__file__).parent / "fixtures" / "generated_mols.csv"
     if test_data_path.exists():
         return pd.read_csv(test_data_path)
     # Fallback test data
@@ -68,7 +77,7 @@ def sample_config(tmp_path):
         "save_sampled_mols": False,
         "sample_size": None,
         "config_descriptors": str(tmp_path / "config_descriptors.yml"),
-        "config_structFilters": str(tmp_path / "config_structFilters.yml"),
+        CFG_STRUCT_FILTERS: str(tmp_path / "config_structFilters.yml"),
         "config_synthesis": str(tmp_path / "config_synthesis.yml"),
         "config_docking": str(tmp_path / "config_docking.yml"),
     }
@@ -77,7 +86,7 @@ def sample_config(tmp_path):
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""
-    logger = logging.getLogger("test")
+    logger = logging.getLogger(MODEL_TEST)
     logger.setLevel(logging.DEBUG)
     return logger
 
@@ -87,10 +96,10 @@ def drug_like_smiles():
     """SMILES representing drug-like molecules for descriptor tests."""
     return [
         "CC(=O)Nc1ccc(O)cc1",  # paracetamol
-        "CC(=O)Oc1ccccc1C(=O)O",  # aspirin
+        SMILES_ASPIRIN,  # aspirin
         "CN1C=NC2=C1C(=O)N(C)C(=O)N2C",  # caffeine
-        "c1ccccc1",  # benzene
-        "CCO",  # ethanol
+        SMILES_BENZENE,  # benzene
+        SMILES_ETHANOL,  # ethanol
     ]
 
 
@@ -111,7 +120,7 @@ def minimal_pipeline_config(tmp_path):
     """Minimal config for pipeline integration tests."""
     config_names = [
         "config_descriptors",
-        "config_structFilters",
+        CFG_STRUCT_FILTERS,
         "config_synthesis",
         "config_docking",
     ]
@@ -158,8 +167,8 @@ def test_csv_content():
 
     def _make_csv(smiles_list, model_names=None):
         if model_names is None:
-            model_names = ["test"] * len(smiles_list)
-        lines = ["smiles,model_name"]
+            model_names = [MODEL_TEST] * len(smiles_list)
+        lines = [f"{COL_SMILES},{COL_MODEL_NAME}"]
         for smi, model in zip(smiles_list, model_names):
             lines.append(f"{smi},{model}")
         return "\n".join(lines)

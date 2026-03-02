@@ -1,5 +1,6 @@
 """Tests for MolEval generative metrics integration."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -7,6 +8,8 @@ import pytest
 
 from hedgehog.reporting import moleval_metrics, plots
 from hedgehog.reporting.report_generator import ReportGenerator
+from hedgehog.vendor.moleval.metrics import metrics as moleval_vendor_metrics
+from hedgehog.vendor.moleval.metrics import metrics_utils
 
 # =====================================================================
 # moleval_metrics module tests
@@ -217,6 +220,37 @@ class TestComputeStageMetrics:
         assert len(captured_inputs) == 2
         assert captured_inputs[0] == captured_inputs[1]
 
+    def test_compute_stage_metrics_closes_pool_on_success(self):
+        with patch("hedgehog.vendor.moleval.metrics.metrics.GetMetrics") as MockGM:
+            instance = MockGM.return_value
+            instance.calculate.return_value = {"IntDiv1": 0.85, "Validity": 1.0}
+
+            result = moleval_metrics.compute_stage_metrics(
+                {"Input": ["CCO"], "Descriptors": ["CCO", "CCN"]},
+                {"run": True, "n_jobs": -1, "device": "cpu", "max_molecules": 2000},
+            )
+
+            # One stage has 1 molecule, so parallelism should stay at 1 core.
+            assert MockGM.call_args_list[0].kwargs["n_jobs"] == 1
+            # second stage has 2 molecules; with n_jobs=-1 resolved via tests config is >2.
+            assert MockGM.call_args_list[1].kwargs["n_jobs"] == 2
+            assert result["by_stage"]["Input"]["IntDiv1"] == 0.85
+            assert result["by_stage"]["Descriptors"]["IntDiv1"] == 0.85
+            assert instance.close_pool.call_count == 2
+
+    def test_compute_stage_metrics_closes_pool_on_error(self):
+        with patch("hedgehog.vendor.moleval.metrics.metrics.GetMetrics") as MockGM:
+            instance = MockGM.return_value
+            instance.calculate.side_effect = OSError(24, "Too many open files")
+
+            result = moleval_metrics.compute_stage_metrics(
+                {"Input": ["CCO", "CCN"]},
+                {"run": True, "n_jobs": 1, "device": "cpu"},
+            )
+
+            assert result == {}
+            assert instance.close_pool.call_count == 1
+
 
 # =====================================================================
 # ReportGenerator integration tests
@@ -373,6 +407,85 @@ class TestGetMolevalMetrics:
         )
         result = gen._get_moleval_metrics()
         assert result == {}
+
+    def test_skips_moleval_when_enabled_stage_failed(self, moleval_base_path, tmp_path):
+        import yaml
+
+        config_file = tmp_path / "moleval_on.yml"
+        with open(config_file, "w") as f:
+            yaml.dump({"run": True, "n_jobs": -1}, f)
+
+        gen = ReportGenerator(
+            base_path=moleval_base_path,
+            stages=[SimpleNamespace(enabled=True, completed=False)],
+            config={"config_moleval": str(config_file)},
+            initial_count=10,
+            final_count=6,
+        )
+
+        with patch.object(
+            moleval_metrics, "compute_stage_metrics", return_value={"by_stage": {}}
+        ) as mocked_compute:
+            result = gen._get_moleval_metrics()
+
+        assert result == {}
+        mocked_compute.assert_not_called()
+
+    def test_autotunes_moleval_workers_for_small_dataset(
+        self, moleval_base_path, tmp_path
+    ):
+        import yaml
+
+        config_file = tmp_path / "moleval_on.yml"
+        with open(config_file, "w") as f:
+            yaml.dump({"run": True, "n_jobs": -1}, f)
+
+        gen = ReportGenerator(
+            base_path=moleval_base_path,
+            stages=[],
+            config={"config_moleval": str(config_file)},
+            initial_count=10,
+            final_count=6,
+        )
+
+        with patch.object(
+            moleval_metrics, "compute_stage_metrics", return_value={"by_stage": {}}
+        ) as mocked_compute:
+            gen._get_moleval_metrics()
+
+        assert mocked_compute.called
+        passed_config = mocked_compute.call_args.args[1]
+        assert passed_config["n_jobs"] == 1
+
+    def test_autotunes_moleval_workers_for_medium_dataset(self, tmp_path):
+        import yaml
+
+        config_file = tmp_path / "moleval_on.yml"
+        with open(config_file, "w") as f:
+            yaml.dump({"run": True, "n_jobs": -1}, f)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={"config_moleval": str(config_file)},
+            initial_count=1000,
+            final_count=900,
+        )
+
+        with (
+            patch.object(
+                ReportGenerator,
+                "_collect_stage_smiles",
+                return_value={"Input": ["CCO"] * 1000},
+            ),
+            patch.object(
+                moleval_metrics, "compute_stage_metrics", return_value={"by_stage": {}}
+            ) as mocked_compute,
+        ):
+            gen._get_moleval_metrics()
+
+        passed_config = mocked_compute.call_args.args[1]
+        assert passed_config["n_jobs"] == 12
 
 
 class TestCollectDataIncludesMoleval:
@@ -559,3 +672,115 @@ class TestGenerateRunInfo:
         assert content.count("## MolEval Metrics") == 1
         assert "Old" not in content
         assert "IntDiv1" in content
+
+
+class _FakePool:
+    def __init__(self, raise_on_map: bool = False) -> None:
+        self.raise_on_map = raise_on_map
+        self.close_calls = 0
+        self.terminate_calls = 0
+        self.join_calls = 0
+
+    def map(self, func, items):
+        if self.raise_on_map:
+            raise RuntimeError("boom")
+        return [func(item) for item in items]
+
+    def close(self):
+        self.close_calls += 1
+
+    def terminate(self):
+        self.terminate_calls += 1
+
+    def join(self):
+        self.join_calls += 1
+
+
+class _FakeContext:
+    def __init__(self, pool: _FakePool) -> None:
+        self._pool = pool
+
+    def Pool(self, _n_jobs: int):
+        return self._pool
+
+
+class TestMolevalMapperPoolCleanup:
+    def test_mapper_closes_and_joins_pool_on_success(self, monkeypatch):
+        pool = _FakePool()
+        monkeypatch.setattr(metrics_utils.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            metrics_utils.multiprocessing,
+            "get_context",
+            lambda _method: _FakeContext(pool),
+        )
+
+        mapper_fn = metrics_utils.mapper(2)
+        result = mapper_fn(lambda x: x + 1, [1, 2, 3])
+
+        assert result == [2, 3, 4]
+        assert pool.close_calls == 1
+        assert pool.join_calls == 1
+        assert pool.terminate_calls == 0
+
+    def test_mapper_terminates_and_joins_pool_on_failure(self, monkeypatch):
+        pool = _FakePool(raise_on_map=True)
+        monkeypatch.setattr(metrics_utils.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            metrics_utils.multiprocessing,
+            "get_context",
+            lambda _method: _FakeContext(pool),
+        )
+
+        mapper_fn = metrics_utils.mapper(2)
+        with pytest.raises(RuntimeError, match="boom"):
+            mapper_fn(lambda x: x, [1, 2, 3])
+
+        assert pool.close_calls == 0
+        assert pool.terminate_calls == 1
+        assert pool.join_calls == 1
+
+
+class TestComputeIntermediateStatisticsPoolCleanup:
+    def test_closes_and_joins_internal_pool(self, monkeypatch):
+        pool = _FakePool()
+
+        class _FakeMpContext:
+            def Pool(self, _n_jobs: int):
+                return pool
+
+        class _FakeMetric:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def precalc(self, _values):
+                return {"values": []}
+
+        monkeypatch.setattr(
+            moleval_vendor_metrics.multiprocessing,
+            "get_context",
+            lambda _method: _FakeMpContext(),
+        )
+        monkeypatch.setattr(
+            moleval_vendor_metrics,
+            "mapper",
+            lambda _pool: lambda _func, _items: [],
+        )
+        monkeypatch.setattr(moleval_vendor_metrics, "SNNMetric", _FakeMetric)
+        monkeypatch.setattr(moleval_vendor_metrics, "FragMetric", _FakeMetric)
+        monkeypatch.setattr(moleval_vendor_metrics, "ScafMetric", _FakeMetric)
+        monkeypatch.setattr(
+            moleval_vendor_metrics, "FingerprintAnaloguesMetric", _FakeMetric
+        )
+        monkeypatch.setattr(moleval_vendor_metrics, "FGMetric", _FakeMetric)
+        monkeypatch.setattr(moleval_vendor_metrics, "RSMetric", _FakeMetric)
+        monkeypatch.setattr(moleval_vendor_metrics, "WassersteinMetric", _FakeMetric)
+
+        moleval_vendor_metrics.compute_intermediate_statistics(
+            smiles=["CCO"],
+            n_jobs=2,
+            run_fcd=False,
+        )
+
+        assert pool.close_calls == 1
+        assert pool.join_calls == 1
+        assert pool.terminate_calls == 0

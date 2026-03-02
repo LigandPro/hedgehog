@@ -20,6 +20,12 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from hedgehog._constants import (
+    CFG_DESCRIPTORS,
+    CFG_DOCKING,
+    CFG_STRUCT_FILTERS,
+    KEY_FOLDER_TO_SAVE,
+)
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
 from hedgehog.pipeline import calculate_metrics
 from hedgehog.utils.data_prep import prepare_input_data
@@ -48,7 +54,7 @@ def _build_progress_columns(console_width: int):
             SpinnerColumn(style="dim"),
             TextColumn("[bold]{task.description}[/bold]"),
             BarColumn(bar_width=20),
-            TextColumn("mols {task.fields[done_total]}"),
+            TextColumn("{task.fields[done_total]}"),
             TimeElapsedColumn(),
         ]
 
@@ -56,7 +62,7 @@ def _build_progress_columns(console_width: int):
         SpinnerColumn(style="dim"),
         TextColumn("[bold]{task.description}[/bold]"),
         BarColumn(bar_width=40),
-        TextColumn("mols {task.fields[done_total]}"),
+        TextColumn("{task.fields[done_total]}"),
         TextColumn("rate {task.fields[rate]}"),
         TextColumn("eta {task.fields[eta]}"),
         TimeElapsedColumn(),
@@ -328,7 +334,7 @@ def _resolve_output_folder(
     generated_mols_path: str | None,
 ) -> Path:
     """Determine and log the appropriate output folder based on CLI flags."""
-    original_folder = Path(config_dict["folder_to_save"])
+    original_folder = Path(config_dict[KEY_FOLDER_TO_SAVE])
 
     if reuse_folder:
         logger.info(
@@ -402,6 +408,288 @@ def _preprocess_input(
         logger.info("Using preprocessed input: %s", prepared_path)
 
 
+class CliProgressTracker:
+    """Manages Rich progress display for CLI pipeline execution.
+
+    Wraps a :class:`rich.progress.Progress` bar and translates pipeline
+    progress events (dicts with ``type``, ``stage``, ``current``, ``total``,
+    etc.) into visual updates.  Intended to be used as a context manager so
+    that the underlying ``Progress`` widget is properly started/stopped.
+    """
+
+    _SHORT_STAGE_NAMES: dict[str, str] = {
+        "mol_prep": "Prep",
+        "descriptors": "Descriptors",
+        "struct_filters": "StructFilters",
+        "synthesis": "Synthesis",
+        "docking": "Docking",
+        "docking_filters": "DockFilters",
+        "final_descriptors": "FinalDesc",
+        "report": "Report",
+    }
+
+    def __init__(self, console: Console) -> None:
+        columns = _build_progress_columns(console.width)
+        self._progress = Progress(
+            *columns,
+            refresh_per_second=4,
+            console=console,
+        )
+        self._active_task_id: int | None = None
+        self._stage_started_at: float | None = None
+        self._current_stage_done: int | None = None
+        self._current_stage_total: int | None = None
+
+    # -- context manager --------------------------------------------------
+
+    def __enter__(self) -> "CliProgressTracker":
+        self._progress.__enter__()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._progress.__exit__(*exc)
+
+    # -- public API -------------------------------------------------------
+
+    def handle_event(self, event: dict) -> None:
+        """Handle a progress event emitted by the pipeline."""
+        event_type = event.get("type")
+        stage = str(event.get("stage", ""))
+        stage_index = int(event.get("stage_index", 0) or 0)
+        total_stages = int(event.get("total_stages", 0) or 0)
+        short_name = self._short_stage_name(stage)
+        message = event.get("message")
+        task_id = self._get_or_create_task(
+            stage_index, total_stages, short_name, message
+        )
+        if task_id is None:
+            return
+
+        if event_type == "stage_start":
+            self._handle_stage_start(
+                task_id,
+                stage_index,
+                total_stages,
+                short_name,
+                message,
+                molecules_in=event.get("molecules_in"),
+            )
+        elif event_type == "stage_progress":
+            self._handle_stage_progress(
+                event, task_id, stage_index, total_stages, short_name, message
+            )
+        elif event_type == "stage_complete":
+            self._handle_stage_complete(
+                task_id,
+                stage_index,
+                total_stages,
+                short_name,
+                message,
+                molecules_in=event.get("molecules_in"),
+                molecules_out=event.get("molecules_out"),
+            )
+
+    # -- private helpers --------------------------------------------------
+
+    def _short_stage_name(self, stage: str) -> str:
+        if stage in self._SHORT_STAGE_NAMES:
+            return self._SHORT_STAGE_NAMES[stage]
+        return stage.replace("_", " ").title()
+
+    @staticmethod
+    def _format_seconds(value: float | None) -> str:
+        if value is None:
+            return "-"
+        if value < 60:
+            return f"{value:.1f}s"
+        minutes, seconds = divmod(int(round(value)), 60)
+        if minutes < 60:
+            return f"{minutes:02d}:{seconds:02d}"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+
+    @staticmethod
+    def _format_count(value: int | None) -> str:
+        if value is None:
+            return "-"
+        return f"{value:,}"
+
+    @staticmethod
+    def _short_progress_message(value: str | None) -> str:
+        if not value:
+            return ""
+        text = " ".join(str(value).split())
+        if len(text) > 36:
+            return text[:33] + "..."
+        return text
+
+    @staticmethod
+    def _strip_stage_prefix(message: str, short_name: str) -> str:
+        lowered = message.lower()
+        stage_lower = short_name.lower()
+        if lowered == stage_lower:
+            return ""
+        for separator in (":", "-", "·", " "):
+            prefix = f"{stage_lower}{separator}"
+            if lowered.startswith(prefix):
+                return message[len(short_name + separator) :].strip()
+        return message
+
+    def _progress_description(
+        self,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None = None,
+    ) -> str:
+        base = f"{stage_index}/{total_stages} - {short_name}"
+        short_message = self._short_progress_message(message)
+        if short_message:
+            short_message = self._strip_stage_prefix(short_message, short_name)
+        if short_message:
+            return f"{base} · {short_message}"
+        return base
+
+    def _get_or_create_task(
+        self,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None = None,
+    ) -> int | None:
+        if stage_index <= 0:
+            return None
+        if self._active_task_id is None:
+            self._active_task_id = self._progress.add_task(
+                self._progress_description(
+                    stage_index, total_stages, short_name, message
+                ),
+                total=100,
+                done_total="-/-",
+                rate="-",
+                eta="-",
+            )
+        return self._active_task_id
+
+    def _handle_stage_start(
+        self,
+        task_id: int,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None,
+        molecules_in: int | None = None,
+    ) -> None:
+        self._stage_started_at = time.perf_counter()
+        input_total = int(molecules_in) if molecules_in is not None else None
+        if input_total is not None and input_total >= 0:
+            self._current_stage_done = 0
+            self._current_stage_total = input_total
+            done_total = f"0/{self._format_count(input_total)}"
+        else:
+            self._current_stage_done = None
+            self._current_stage_total = None
+            done_total = "-/-"
+        self._progress.update(
+            task_id,
+            completed=0,
+            description=self._progress_description(
+                stage_index, total_stages, short_name, message
+            ),
+            done_total=done_total,
+            rate="-",
+            eta="-",
+        )
+
+    def _handle_stage_progress(
+        self,
+        event: dict,
+        task_id: int,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None,
+    ) -> None:
+        current = int(event.get("current", 0) or 0)
+        total = int(event.get("total", 0) or 0)
+        self._current_stage_done = current if current >= 0 else None
+        self._current_stage_total = total if total > 0 else None
+        pct = int(round((current / total) * 100)) if total > 0 else 0
+        pct = max(0, min(100, pct))
+        elapsed_seconds = (
+            time.perf_counter() - self._stage_started_at
+            if self._stage_started_at is not None
+            else None
+        )
+        left_count = max(total - current, 0) if total > 0 and current >= 0 else None
+        rate = (
+            (current / elapsed_seconds)
+            if elapsed_seconds and elapsed_seconds > 0 and current > 0
+            else None
+        )
+        eta_seconds = (
+            (left_count / rate)
+            if left_count is not None and rate and rate > 0
+            else None
+        )
+        self._progress.update(
+            task_id,
+            completed=pct,
+            description=self._progress_description(
+                stage_index, total_stages, short_name, message
+            ),
+            done_total=(
+                f"{self._format_count(current)}/{self._format_count(total)}"
+                if total > 0
+                else "-/-"
+            ),
+            rate=(f"{rate:,.0f}/s" if rate is not None else "-"),
+            eta=self._format_seconds(eta_seconds),
+        )
+
+    def _handle_stage_complete(
+        self,
+        task_id: int,
+        stage_index: int,
+        total_stages: int,
+        short_name: str,
+        message: str | None,
+        molecules_in: int | None = None,
+        molecules_out: int | None = None,
+    ) -> None:
+        done_total = "-/-"
+        stage_total = self._current_stage_total
+        stage_done = self._current_stage_done
+        if stage_total is not None:
+            done = stage_done
+            if done is None or done < 0:
+                done = stage_total
+            done_total = f"{self._format_count(done)}/{self._format_count(stage_total)}"
+        else:
+            in_count = int(molecules_in) if molecules_in is not None else None
+            out_count = int(molecules_out) if molecules_out is not None else None
+            if in_count is not None and in_count >= 0:
+                if out_count is None or out_count < 0:
+                    out_count = in_count
+                done_total = (
+                    f"{self._format_count(out_count)}/{self._format_count(in_count)}"
+                )
+            elif out_count is not None and out_count >= 0:
+                done_total = (
+                    f"{self._format_count(out_count)}/{self._format_count(out_count)}"
+                )
+        self._progress.update(
+            task_id,
+            completed=100,
+            description=self._progress_description(
+                stage_index, total_stages, short_name, message
+            ),
+            done_total=done_total,
+            rate="-",
+            eta="-",
+        )
+
+
 def _save_sampled_molecules(
     data: pd.DataFrame,
     folder_to_save: Path,
@@ -428,8 +716,24 @@ def _save_sampled_molecules(
 app = typer.Typer(
     name="HEDGEHOG",
     help=(
-        "🦔 Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration - "
-        "Benchmark pipeline for generative models"
+        "Run the molecular analysis pipeline.\n\n"
+        "Examples:\n"
+        "  uv run hedgehog\n"
+        "  uv run hedge\n"
+        "  uv run hedgehog --stage docking\n"
+        '  uv run hedgehog --stage descriptors --mols "input/*.csv"\n'
+        "  uv run hedgehog --reuse\n"
+        "  uv run hedgehog --stage docking --force-new\n"
+        "  uv run hedgehog --auto-install\n"
+        "  uv run hedgehog --progress\n\n"
+        "Stage keys:\n"
+        "  mol_prep           Standardize input molecules\n"
+        "  descriptors        Compute molecular descriptors\n"
+        "  struct_filters     Apply structural alert filters\n"
+        "  synthesis          Evaluate synthetic accessibility\n"
+        "  docking            Run docking engines\n"
+        "  docking_filters    Filter docking poses and interactions\n"
+        "  final_descriptors  Recompute descriptors for final set"
     ),
     add_completion=False,
     rich_markup_mode="rich",
@@ -472,95 +776,17 @@ class Stage(str, Enum):
         return descriptions[self]
 
 
-@app.command()
-def run(
-    config_path: str = typer.Option(
-        DEFAULT_CONFIG_PATH,
-        "--config",
-        "-c",
-        help="Path to master YAML config file (default: src/hedgehog/configs/config.yml)",
-    ),
-    generated_mols_path: str | None = typer.Option(
-        None,
-        "--mols",
-        "-m",
-        help="Path or glob pattern to generated SMILES files (overrides config)",
-    ),
-    out_dir: str | None = typer.Option(
-        None,
-        "--out",
-        "-o",
-        help="Output directory for this run (overrides config folder_to_save).",
-    ),
-    stage: Stage | None = typer.Option(
-        None,
-        "--stage",
-        "-s",
-        help=(
-            "Run only a specific pipeline stage. Please provide also --mols "
-            "argument to specify the molecules path. If no --mols provided, "
-            "the pipeline will use the molecules from the config file."
-        ),
-        case_sensitive=False,
-    ),
-    reuse_folder: bool = typer.Option(
-        False,
-        "--reuse",
-        help="Force reuse of existing results folder (useful for reruns)",
-    ),
-    force_new_folder: bool = typer.Option(
-        False,
-        "--force-new",
-        help="Force creation of a new results folder even when rerunning stages",
-    ),
-    auto_install: bool = typer.Option(
-        False,
-        "--auto-install",
-        help="Auto-install missing optional tools (e.g., AiZynthFinder) without prompting.",
-    ),
-    show_progress: bool = typer.Option(
-        False,
-        "--progress",
-        help="Show a live progress bar during pipeline execution.",
-    ),
+def _run_pipeline_command(
+    *,
+    config_path: str,
+    generated_mols_path: str | None,
+    out_dir: str | None,
+    stage: Stage | None,
+    reuse_folder: bool,
+    force_new_folder: bool,
+    auto_install: bool,
+    show_progress: bool,
 ) -> None:
-    """
-    Run the molecular analysis pipeline.
-
-    Examples
-    --------
-    \b
-    # Run full pipeline (auto-creates new folder if results exist)
-    uv run hedgehog run
-
-    \b
-    # Alternatively, using the short-name alias:
-    uv run hedge run
-
-    \b
-    # Rerun specific stage (auto-reuses existing folder)
-    uv run hedgehog run --stage docking
-
-    \b
-    # Run stage with new molecules (auto-creates new folder)
-    uv run hedgehog run --stage descriptors --mols data/*.csv
-
-    \b
-    # Force reuse existing folder
-    uv run hedgehog run --reuse
-
-    \b
-    # Force create new folder even for stage rerun
-    uv run hedgehog run --stage docking --force-new
-
-    \b
-    # Auto-install optional external tools when needed
-    uv run hedgehog run --auto-install
-
-    \b
-    # Enable live progress bar
-    uv run hedgehog run --progress
-    """
     _display_banner()
 
     if auto_install:
@@ -593,7 +819,7 @@ def run(
         folder_to_save = _resolve_output_folder(
             config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
         )
-    config_dict["folder_to_save"] = str(folder_to_save)
+    config_dict[KEY_FOLDER_TO_SAVE] = str(folder_to_save)
     LoggerSingleton().configure_log_directory(folder_to_save)
 
     _preprocess_input(config_dict, folder_to_save)
@@ -613,210 +839,171 @@ def run(
     if _plain_output_enabled() or not show_progress:
         success = calculate_metrics(data, config_dict, None)
     else:
-        short_stage_names = {
-            "mol_prep": "Prep",
-            "descriptors": "Descriptors",
-            "struct_filters": "StructFilters",
-            "synthesis": "Synthesis",
-            "docking": "Docking",
-            "docking_filters": "DockFilters",
-            "final_descriptors": "FinalDesc",
-        }
-
-        def _short_stage_name(stage: str) -> str:
-            if stage in short_stage_names:
-                return short_stage_names[stage]
-            return stage.replace("_", " ").title()
-
-        def _to_int(value) -> int | None:
-            if value is None:
-                return None
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return None
-
-        def _format_seconds(value: float | None) -> str:
-            if value is None:
-                return "-"
-            if value < 60:
-                return f"{value:.1f}s"
-            minutes, seconds = divmod(int(round(value)), 60)
-            if minutes < 60:
-                return f"{minutes:02d}:{seconds:02d}"
-            hours, minutes = divmod(minutes, 60)
-            return f"{hours:d}:{minutes:02d}:{seconds:02d}"
-
-        def _format_count(value: int | None) -> str:
-            if value is None:
-                return "-"
-            return f"{value:,}"
-
-        def _short_progress_message(value: str | None) -> str:
-            if not value:
-                return ""
-            text = " ".join(str(value).split())
-            if len(text) > 36:
-                return text[:33] + "..."
-            return text
-
-        def _progress_description(
-            stage_index: int,
-            total_stages: int,
-            short_name: str,
-            message: str | None = None,
-        ) -> str:
-            base = f"{stage_index}/{total_stages} - {short_name}"
-            short_message = _short_progress_message(message)
-            if short_message:
-                return f"{base} · {short_message}"
-            return base
-
-        console_width = shared_console.width
-        progress_columns = _build_progress_columns(console_width)
-        with Progress(
-            *progress_columns,
-            refresh_per_second=4,
-            console=shared_console,
-        ) as progress:
-            active_task_id: int | None = None
-            stage_started_at: float | None = None
-            current_stage_done: int | None = None
-            current_stage_total: int | None = None
-
-            def _get_or_create_task(
-                stage_index: int,
-                total_stages: int,
-                short_name: str,
-                message: str | None = None,
-            ) -> int | None:
-                nonlocal active_task_id
-                if stage_index <= 0:
-                    return None
-                if active_task_id is None:
-                    active_task_id = progress.add_task(
-                        _progress_description(
-                            stage_index, total_stages, short_name, message
-                        ),
-                        total=100,
-                        done_total="-/-",
-                        rate="-",
-                        eta="-",
-                    )
-                return active_task_id
-
-            def _cli_progress(event: dict) -> None:
-                nonlocal stage_started_at, current_stage_done, current_stage_total
-                event_type = event.get("type")
-                stage = str(event.get("stage", ""))
-                stage_index = int(event.get("stage_index", 0) or 0)
-                total_stages = int(event.get("total_stages", 0) or 0)
-                short_name = _short_stage_name(stage)
-                message = event.get("message")
-                task_id = _get_or_create_task(
-                    stage_index,
-                    total_stages,
-                    short_name,
-                    message,
-                )
-                if task_id is None:
-                    return
-
-                if event_type == "stage_start":
-                    stage_started_at = time.perf_counter()
-                    current_stage_done = None
-                    current_stage_total = None
-                    progress.update(
-                        task_id,
-                        completed=0,
-                        description=_progress_description(
-                            stage_index,
-                            total_stages,
-                            short_name,
-                            message,
-                        ),
-                        done_total="-/-",
-                        rate="-",
-                        eta="-",
-                    )
-                    return
-
-                if event_type == "stage_progress":
-                    current = int(event.get("current", 0) or 0)
-                    total = int(event.get("total", 0) or 0)
-                    current_stage_done = current if current >= 0 else None
-                    current_stage_total = total if total > 0 else None
-                    pct = int(round((current / total) * 100)) if total > 0 else 0
-                    pct = max(0, min(100, pct))
-                    elapsed_seconds = (
-                        time.perf_counter() - stage_started_at
-                        if stage_started_at is not None
-                        else None
-                    )
-                    left_count = (
-                        max(total - current, 0) if total > 0 and current >= 0 else None
-                    )
-                    rate = (
-                        (current / elapsed_seconds)
-                        if elapsed_seconds and elapsed_seconds > 0 and current > 0
-                        else None
-                    )
-                    eta_seconds = (
-                        (left_count / rate)
-                        if left_count is not None and rate and rate > 0
-                        else None
-                    )
-                    progress.update(
-                        task_id,
-                        completed=pct,
-                        description=_progress_description(
-                            stage_index,
-                            total_stages,
-                            short_name,
-                            message,
-                        ),
-                        done_total=(
-                            f"{_format_count(current)}/{_format_count(total)}"
-                            if total > 0
-                            else "-/-"
-                        ),
-                        rate=(f"{rate:,.0f}/s" if rate is not None else "-"),
-                        eta=_format_seconds(eta_seconds),
-                    )
-                    return
-
-                if event_type == "stage_complete":
-                    done_total = "-/-"
-                    stage_total = current_stage_total
-                    stage_done = current_stage_done
-                    if stage_total is not None:
-                        done = stage_done
-                        if done is None or done < 0:
-                            done = stage_total
-                        done_total = (
-                            f"{_format_count(done)}/{_format_count(stage_total)}"
-                        )
-                    progress.update(
-                        task_id,
-                        completed=100,
-                        description=_progress_description(
-                            stage_index,
-                            total_stages,
-                            short_name,
-                            message,
-                        ),
-                        done_total=done_total,
-                        rate="-",
-                        eta="-",
-                    )
-                    return
-
-            success = calculate_metrics(data, config_dict, _cli_progress)
+        with CliProgressTracker(shared_console) as tracker:
+            success = calculate_metrics(data, config_dict, tracker.handle_event)
 
     if not success:
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)
     logger.info("Ligand Pro thanks you for using HEDGEHOG!")
+
+
+@app.callback(invoke_without_command=True)
+def run(
+    ctx: typer.Context = None,
+    config_path: str = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        "-c",
+        help="Master YAML config path (default: src/hedgehog/configs/config.yml).",
+        show_default=False,
+    ),
+    generated_mols_path: str | None = typer.Option(
+        None,
+        "--mols",
+        "-m",
+        help="SMILES file path or glob (overrides config).",
+    ),
+    out_dir: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Output directory (overrides config folder_to_save).",
+    ),
+    stage: Stage | None = typer.Option(
+        None,
+        "--stage",
+        "-s",
+        help="Run one stage only; see `hedgehog info`.",
+        case_sensitive=False,
+        metavar="STAGE",
+        show_choices=False,
+    ),
+    reuse_folder: bool = typer.Option(
+        False,
+        "--reuse",
+        help="Reuse existing results folder.",
+    ),
+    force_new_folder: bool = typer.Option(
+        False,
+        "--force-new",
+        help="Always create a new results folder.",
+    ),
+    auto_install: bool = typer.Option(
+        False,
+        "--auto-install",
+        help="Install missing optional tools automatically.",
+    ),
+    show_progress: bool = typer.Option(
+        False,
+        "--progress",
+        help="Show live progress bar.",
+    ),
+) -> None:
+    """
+    Run the molecular analysis pipeline.
+
+    Examples:
+    \b
+      uv run hedgehog
+
+    \b
+      uv run hedge
+
+    \b
+      uv run hedgehog --stage docking
+
+    \b
+      uv run hedgehog --stage descriptors --mols "input/*.csv"
+
+    \b
+      uv run hedgehog --reuse
+
+    \b
+      uv run hedgehog --stage docking --force-new
+
+    \b
+      uv run hedgehog --auto-install
+
+    \b
+      uv run hedgehog --progress
+
+    """
+    if ctx is None or ctx.invoked_subcommand is None:
+        _run_pipeline_command(
+            config_path=config_path,
+            generated_mols_path=generated_mols_path,
+            out_dir=out_dir,
+            stage=stage,
+            reuse_folder=reuse_folder,
+            force_new_folder=force_new_folder,
+            auto_install=auto_install,
+            show_progress=show_progress,
+        )
+
+
+@app.command("run")
+def run_command(
+    config_path: str = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        "-c",
+        help="Master YAML config path (default: src/hedgehog/configs/config.yml).",
+        show_default=False,
+    ),
+    generated_mols_path: str | None = typer.Option(
+        None,
+        "--mols",
+        "-m",
+        help="SMILES file path or glob (overrides config).",
+    ),
+    out_dir: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Output directory (overrides config folder_to_save).",
+    ),
+    stage: Stage | None = typer.Option(
+        None,
+        "--stage",
+        "-s",
+        help="Run one stage only; see `hedgehog info`.",
+        case_sensitive=False,
+        metavar="STAGE",
+        show_choices=False,
+    ),
+    reuse_folder: bool = typer.Option(
+        False,
+        "--reuse",
+        help="Reuse existing results folder.",
+    ),
+    force_new_folder: bool = typer.Option(
+        False,
+        "--force-new",
+        help="Always create a new results folder.",
+    ),
+    auto_install: bool = typer.Option(
+        False,
+        "--auto-install",
+        help="Install missing optional tools automatically.",
+    ),
+    show_progress: bool = typer.Option(
+        False,
+        "--progress",
+        help="Show live progress bar.",
+    ),
+) -> None:
+    """Run the molecular analysis pipeline as an explicit subcommand."""
+    _run_pipeline_command(
+        config_path=config_path,
+        generated_mols_path=generated_mols_path,
+        out_dir=out_dir,
+        stage=stage,
+        reuse_folder=reuse_folder,
+        force_new_folder=force_new_folder,
+        auto_install=auto_install,
+        show_progress=show_progress,
+    )
 
 
 @app.command()
@@ -865,14 +1052,14 @@ def report(
     else:
         config = {}
 
-    config["folder_to_save"] = str(results_path)
+    config[KEY_FOLDER_TO_SAVE] = str(results_path)
 
     # Point sub-config keys to actual files in the run's configs directory
     sub_config_keys = [
-        "config_descriptors",
-        "config_structFilters",
+        CFG_DESCRIPTORS,
+        CFG_STRUCT_FILTERS,
         "config_synthesis",
-        "config_docking",
+        CFG_DOCKING,
         "config_docking_filters",
         "config_moleval",
     ]
@@ -950,17 +1137,17 @@ def info() -> None:
         table.add_row(stage.value, stage.description)
 
     console.print(table)
-    console.print("\n[dim]Example (1): uv run hedgehog run --stage descriptors[/dim]")
-    console.print("[dim]Example (2): uv run hedge run --help [/dim]")
+    console.print("\n[dim]Example (1): uv run hedgehog --stage descriptors[/dim]")
+    console.print("[dim]Example (2): uv run hedge --help [/dim]")
 
 
 @app.command()
 def version() -> None:
     """Display version information."""
     if _plain_output_enabled():
-        console.print("HEDGEHOG version 1.0.13")
+        console.print("HEDGEHOG version 1.1.2")
     else:
-        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.0.13[/bold]")
+        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.1.2[/bold]")
     console.print(
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )
@@ -972,13 +1159,15 @@ def setup_aizynthfinder(
     yes: bool = typer.Option(
         True,
         "--yes/--no-yes",
-        "-y",
-        help="Auto-accept downloads (no prompt).",
+        "-y/-n",
+        help="Auto-accept downloads (default: yes). Use --no-yes to prompt.",
     ),
 ) -> None:
     """Install AiZynthFinder retrosynthesis tooling into modules/."""
     if yes:
         os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+    else:
+        os.environ.pop("HEDGEHOG_AUTO_INSTALL", None)
 
     from hedgehog.setup import ensure_aizynthfinder
 

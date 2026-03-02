@@ -16,6 +16,12 @@ from hedgehog.utils.data_prep import (
     _read_csv_with_fallback,
     _remove_duplicates,
 )
+from tests.constants import (
+    COL_MODEL_NAME,
+    COL_SMILES,
+    MODEL_TEST,
+    SMILES_ETHANOL,
+)
 
 
 class TestFindColumnCaseInsensitive:
@@ -23,33 +29,33 @@ class TestFindColumnCaseInsensitive:
 
     def test_exact_match(self):
         """Exact match - should return the column name."""
-        df = pd.DataFrame({"smiles": [], "Name": []})
-        assert _find_column_case_insensitive(df, "smiles") == "smiles"
+        df = pd.DataFrame({COL_SMILES: [], "Name": []})
+        assert _find_column_case_insensitive(df, COL_SMILES) == COL_SMILES
 
     def test_case_insensitive_match(self):
         """Case-insensitive match - should return original column name."""
         df = pd.DataFrame({"SMILES": [], "Name": []})
-        assert _find_column_case_insensitive(df, "smiles") == "SMILES"
+        assert _find_column_case_insensitive(df, COL_SMILES) == "SMILES"
 
     def test_mixed_case_match(self):
         """Mixed case match - should return original column name."""
         df = pd.DataFrame({"SmIlEs": [], "Name": []})
-        assert _find_column_case_insensitive(df, "smiles") == "SmIlEs"
+        assert _find_column_case_insensitive(df, COL_SMILES) == "SmIlEs"
 
     def test_missing_column(self):
         """Column not found - should return None."""
         df = pd.DataFrame({"col1": [], "col2": []})
-        assert _find_column_case_insensitive(df, "smiles") is None
+        assert _find_column_case_insensitive(df, COL_SMILES) is None
 
     def test_empty_dataframe(self):
         """Empty DataFrame - should return None."""
         df = pd.DataFrame()
-        assert _find_column_case_insensitive(df, "smiles") is None
+        assert _find_column_case_insensitive(df, COL_SMILES) is None
 
     def test_model_name_column(self):
         """Test finding model_name column."""
-        df = pd.DataFrame({"smiles": [], "MODEL_NAME": []})
-        assert _find_column_case_insensitive(df, "model_name") == "MODEL_NAME"
+        df = pd.DataFrame({COL_SMILES: [], "MODEL_NAME": []})
+        assert _find_column_case_insensitive(df, COL_MODEL_NAME) == "MODEL_NAME"
 
 
 class TestApplySampling:
@@ -58,14 +64,14 @@ class TestApplySampling:
     def test_sampling_smaller_than_data(self):
         """Sample size smaller than data - should return sampled data."""
         df = pd.DataFrame({"a": range(100)})
-        result, warning = _apply_sampling(df, 10, model_name="test")
+        result, warning = _apply_sampling(df, 10, model_name=MODEL_TEST)
         assert len(result) == 10
         assert warning is None
 
     def test_sampling_larger_than_data(self):
         """Sample size larger than data - should return all data with warning."""
         df = pd.DataFrame({"a": range(5)})
-        result, warning = _apply_sampling(df, 10, model_name="test")
+        result, warning = _apply_sampling(df, 10, model_name=MODEL_TEST)
         assert len(result) == 5
         assert warning is not None
         assert warning["requested"] == 10
@@ -100,22 +106,22 @@ class TestNormalizeSmilesColumn:
 
     def test_already_normalized(self):
         """Column already named 'smiles' - should return unchanged."""
-        df = pd.DataFrame({"smiles": ["CCO", "CC"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL, "CC"]})
         result = _normalize_smiles_column(df)
-        assert "smiles" in result.columns
+        assert COL_SMILES in result.columns
 
     def test_uppercase_smiles(self):
         """SMILES column - should be renamed to 'smiles'."""
-        df = pd.DataFrame({"SMILES": ["CCO", "CC"]})
+        df = pd.DataFrame({"SMILES": [SMILES_ETHANOL, "CC"]})
         result = _normalize_smiles_column(df)
-        assert "smiles" in result.columns
+        assert COL_SMILES in result.columns
         assert "SMILES" not in result.columns
 
     def test_no_smiles_column(self):
         """No smiles column - should return unchanged."""
         df = pd.DataFrame({"other": ["a", "b"]})
         result = _normalize_smiles_column(df)
-        assert "smiles" not in result.columns
+        assert COL_SMILES not in result.columns
 
 
 class TestNormalizeModelNameColumn:
@@ -123,27 +129,27 @@ class TestNormalizeModelNameColumn:
 
     def test_already_normalized(self):
         """Column already named 'model_name' - should return unchanged."""
-        df = pd.DataFrame({"smiles": ["CCO"], "model_name": ["test"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL], COL_MODEL_NAME: [MODEL_TEST]})
         result = _normalize_model_name_column(df, "/path/to/file.csv")
-        assert "model_name" in result.columns
+        assert COL_MODEL_NAME in result.columns
 
     def test_uppercase_model_name(self):
         """MODEL_NAME column - should be renamed."""
-        df = pd.DataFrame({"smiles": ["CCO"], "MODEL_NAME": ["test"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL], "MODEL_NAME": [MODEL_TEST]})
         result = _normalize_model_name_column(df, "/path/to/file.csv")
-        assert "model_name" in result.columns
+        assert COL_MODEL_NAME in result.columns
 
     def test_name_column(self):
         """name column - should be renamed to model_name."""
-        df = pd.DataFrame({"smiles": ["CCO"], "name": ["test"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL], "name": [MODEL_TEST]})
         result = _normalize_model_name_column(df, "/path/to/file.csv")
-        assert "model_name" in result.columns
+        assert COL_MODEL_NAME in result.columns
 
     def test_no_model_name_column(self):
         """No model_name column - should extract from path."""
-        df = pd.DataFrame({"smiles": ["CCO"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL]})
         result = _normalize_model_name_column(df, "/path/to/my_model.csv")
-        assert "model_name" in result.columns
+        assert COL_MODEL_NAME in result.columns
         assert result["model_name"].iloc[0] == "my_model"
 
 
@@ -223,8 +229,8 @@ class TestRemoveDuplicates:
         """Removes duplicates when model_name column present."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CCO", "CC"],
-                "model_name": ["a", "a", "a"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_ETHANOL, "CC"],
+                COL_MODEL_NAME: ["a", "a", "a"],
             }
         )
         result = _remove_duplicates(df, mock_logger)
@@ -233,7 +239,7 @@ class TestRemoveDuplicates:
 
     def test_removes_duplicates_without_model(self, mock_logger):
         """Removes duplicates when model_name column absent."""
-        df = pd.DataFrame({"smiles": ["CCO", "CCO", "CC"]})
+        df = pd.DataFrame({COL_SMILES: [SMILES_ETHANOL, SMILES_ETHANOL, "CC"]})
         result = _remove_duplicates(df, mock_logger)
 
         assert len(result) == 2
@@ -242,8 +248,8 @@ class TestRemoveDuplicates:
         """Same SMILES in different models should be kept."""
         df = pd.DataFrame(
             {
-                "smiles": ["CCO", "CCO", "CC"],
-                "model_name": ["a", "b", "a"],
+                COL_SMILES: [SMILES_ETHANOL, SMILES_ETHANOL, "CC"],
+                COL_MODEL_NAME: ["a", "b", "a"],
             }
         )
         result = _remove_duplicates(df, mock_logger)
@@ -276,12 +282,14 @@ class TestReadCsvWithFallback:
     def test_standard_csv(self, tmp_path):
         """Read standard CSV with header."""
         test_file = tmp_path / "test.csv"
-        test_file.write_text("smiles,model_name\nCCO,test")
+        test_file.write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME}\n{SMILES_ETHANOL},{MODEL_TEST}"
+        )
 
         result = _read_csv_with_fallback(str(test_file))
 
-        assert "smiles" in result.columns
-        assert "model_name" in result.columns
+        assert COL_SMILES in result.columns
+        assert COL_MODEL_NAME in result.columns
 
     def test_headerless_csv(self, tmp_path):
         """Read headerless CSV - first row becomes header unless parsing fails."""

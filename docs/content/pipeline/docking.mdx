@@ -89,7 +89,7 @@ For pipeline input preprocessing before stages:
 The receptor PDB file is specified in the docking config:
 
 ```yaml
-receptor_pdb: data/test/7EW9_apo.pdb
+receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 ```
 
 For best results, prepare the receptor with a dedicated structure-preparation tool (or PDB2PQR) before docking. Key steps include:
@@ -104,7 +104,7 @@ The docking search box defines the 3D region where the docking engine places lig
 
 ```yaml
 gnina_config:
-  autobox_ligand: data/test/05C_from_7EW9.sdf   # Reference ligand SDF
+  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf   # Reference ligand SDF
   autobox_add: 4                                  # Padding in Angstroms
 ```
 
@@ -119,13 +119,15 @@ Full configuration in `config_docking.yml`:
 ```yaml
 run: true
 tools: gnina                              # gnina, smina, or both
-receptor_pdb: data/test/7EW9_apo.pdb
+receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true                            # Execute scripts after generation
 run_in_background: false
+gnina_per_process_cpu: 8                  # CPU threads per GNINA process
+gnina_parallel_jobs_max: 6                # Cap auto parallel jobs
 
 smina_config:
   bin: smina                              # Binary name or path
-  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
@@ -134,9 +136,9 @@ smina_config:
 
 gnina_config:
   bin: gnina
-  autobox_ligand: data/test/05C_from_7EW9.sdf
+  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
   autobox_add: 4
-  cpu: 32
+  cpu: 8
   seed: 42
   no_gpu: false                          # Use GPU when available
 ```
@@ -177,13 +179,13 @@ stages/05_docking/
 
 ```bash
 # Run docking as part of the full pipeline
-uv run hedgehog run
+uv run hedgehog
 
 # Run docking stage only
-uv run hedgehog run --stage docking
+uv run hedgehog --stage docking
 
 # Short alias
-uv run hedge run --stage docking
+uv run hedge --stage docking
 ```
 
 To run the generated scripts manually (e.g., on a GPU node):

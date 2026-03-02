@@ -38,12 +38,12 @@ src/hedgehog/
 │   ├── config_docking_filters.yml
 │   ├── config_moleval.yml
 │   └── logger.py            # LoggerSingleton, load_config()
-├── stages/
-│   ├── descriptors/         # Stage 1: physicochemical descriptors
-│   ├── structFilters/       # Stage 2: structural filters
-│   ├── synthesis/           # Stage 3: retrosynthesis analysis
-│   ├── docking/             # Stage 4: molecular docking
-│   └── dockingFilters/      # Stage 5: docking pose filters
+├── molprep/                 # Stage 1: molecule preparation
+├── descriptors/             # Stages 2 and 7: descriptor calculations
+├── struct_filters/          # Stage 3: structural filters
+├── synthesis/               # Stage 4: retrosynthesis analysis
+├── docking/                 # Stage 5: molecular docking
+├── docking_filters/         # Stage 6: docking pose filters
 ├── reporting/
 │   ├── report_generator.py  # HTML report generation (Jinja2)
 │   ├── plots.py             # Matplotlib/Plotly visualizations
@@ -52,6 +52,8 @@ src/hedgehog/
 │   ├── server.py            # JSON-RPC server (stdio)
 │   ├── validators.py        # Configuration validation
 │   └── handlers/            # RPC method handlers
+├── setup/                   # Optional dependency installers
+├── workers/                 # Optional worker integrations
 ├── utils/                   # Shared utilities
 └── vendor/
     └── moleval/             # Vendored MolEval from MolScore v1.9.5
@@ -159,10 +161,10 @@ Configuration uses a hierarchical YAML structure. The master config (`config.yml
 
 ```yaml
 # config.yml (master)
-generated_mols_path: data/test/moses_1000.csv
+generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
 folder_to_save: results/run
 n_jobs: 62
-sample_size: 1000
+sample_size: 10000
 
 # Stage config file references
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
@@ -238,7 +240,7 @@ Each stage follows the same contract:
 The `DataChecker` class verifies stage outputs exist and contain data rows. The `PipelineStageRunner` uses a priority-ordered list to find the most recent stage with available data:
 
 ```
-Docking Filters → Synthesis → Struct Filters (post) → Descriptors → Struct Filters (pre)
+Docking Filters → Synthesis → Struct Filters (post) → Descriptors (initial) → Mol Prep
 ```
 
 When a stage produces zero output molecules, the pipeline can either exit early (for critical stages like structural filters) or continue (for non-critical stages like synthesis).
@@ -249,10 +251,10 @@ To add a new stage to the pipeline:
 
 ### 1. Create the stage module
 
-Create a new directory under `src/hedgehog/stages/`:
+Create a new package under `src/hedgehog/`:
 
 ```
-src/hedgehog/stages/myStage/
+src/hedgehog/my_stage/
 ├── __init__.py
 ├── main.py       # Entry point: main(config) or main(config, stage_dir)
 └── utils.py      # Stage logic
@@ -329,3 +331,30 @@ def _run_my_stage(self) -> tuple[bool, bool]:
 - Update the `DataChecker._STAGE_OUTPUT_PATHS` mapping.
 - Add the stage to `DATA_SOURCE_PRIORITY` if later stages should use its output.
 - Add report sections in `report_generator.py` if the stage produces visualizable data.
+
+## Documentation Freshness Loop
+
+Repeat this checklist whenever architecture, module paths, or stage wiring changes:
+
+1. Scan docs for stale path conventions:
+
+```bash
+rg -n "src/hedgehog/stages/|structFilters/|dockingFilters/" docs/content modules/README.md | rg -v "rg -n "
+```
+
+2. Confirm the current package layout:
+
+```bash
+find src/hedgehog -maxdepth 1 -type d | sort
+```
+
+3. Build docs to catch broken MDX/navigation issues:
+
+```bash
+cd docs && CI=1 pnpm install --frozen-lockfile --prefer-offline --reporter=append-only && pnpm build
+```
+
+4. If code moved, update docs in the same PR:
+   - `docs/content/advanced/architecture.mdx`
+   - affected pages under `docs/content/pipeline/`
+   - `modules/README.md` (if setup paths changed)

@@ -5,15 +5,24 @@ from pathlib import Path
 
 import pandas as pd
 
-from hedgehog.stages.docking.utils import (
-    _aggregate_docking_results,
+from hedgehog.docking.aggregation import _aggregate_docking_results
+from hedgehog.docking.binaries import _validate_optional_tool_path
+from hedgehog.docking.config_writer import _create_per_molecule_configs
+from hedgehog.docking.input import _find_latest_input_source, _prepare_ligands_dataframe
+from hedgehog.docking.ligand_prep import _convert_with_rdkit, _split_sdf_to_molecules
+from hedgehog.docking.scripts import (
     _build_gnina_command_template,
-    _create_per_molecule_configs,
-    _find_latest_input_source,
-    _prepare_ligands_dataframe,
-    _split_sdf_to_molecules,
-    _validate_optional_tool_path,
-    run_docking,
+    _resolve_gnina_parallelism,
+)
+from hedgehog.docking.stage import run as run_docking
+from tests.constants import (
+    COL_MODEL_NAME,
+    COL_MOL_IDX,
+    COL_SMILES,
+    FILE_FILTERED_MOLECULES,
+    MODEL_TEST,
+    SMILES_BENZENE,
+    SMILES_ETHANOL,
 )
 
 
@@ -24,7 +33,9 @@ class TestFindLatestInputSource:
         """Should find synthesis output in new structure."""
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (synthesis_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -34,7 +45,7 @@ class TestFindLatestInputSource:
         """Should find structural filters output."""
         sf_dir = tmp_path / "stages" / "03_structural_filters_post"
         sf_dir.mkdir(parents=True)
-        (sf_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (sf_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -44,7 +55,9 @@ class TestFindLatestInputSource:
         """Should find descriptors output."""
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -54,7 +67,9 @@ class TestFindLatestInputSource:
         """Should find MolPrep output."""
         prep_dir = tmp_path / "stages" / "00_mol_prep"
         prep_dir.mkdir(parents=True)
-        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (prep_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -64,7 +79,9 @@ class TestFindLatestInputSource:
         """Should find sampled molecules in input directory."""
         input_dir = tmp_path / "input"
         input_dir.mkdir(parents=True)
-        (input_dir / "sampled_molecules.csv").write_text("smiles\nCCO")
+        (input_dir / "sampled_molecules.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -75,15 +92,17 @@ class TestFindLatestInputSource:
         # Create both synthesis and descriptors outputs
         synthesis_dir = tmp_path / "stages" / "04_synthesis"
         synthesis_dir.mkdir(parents=True)
-        (synthesis_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (synthesis_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCC")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCC")
 
         prep_dir = tmp_path / "stages" / "00_mol_prep"
         prep_dir.mkdir(parents=True)
-        (prep_dir / "filtered_molecules.csv").write_text("smiles\nCCC")
+        (prep_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCCC")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -98,7 +117,9 @@ class TestFindLatestInputSource:
     def test_legacy_structure(self, tmp_path):
         """Should find legacy flat structure files."""
         (tmp_path / "Synthesis").mkdir()
-        (tmp_path / "Synthesis" / "passSynthesisSMILES.csv").write_text("smiles\nCCO")
+        (tmp_path / "Synthesis" / "passSynthesisSMILES.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -111,9 +132,9 @@ class TestPrepareLigandsDataframe:
         """All valid SMILES should be written."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "CCO", "CC"],
-                "model_name": ["test", "test", "test"],
-                "mol_idx": ["t-0", "t-1", "t-2"],
+                COL_SMILES: [SMILES_BENZENE, SMILES_ETHANOL, "CC"],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1", "t-2"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -128,9 +149,9 @@ class TestPrepareLigandsDataframe:
         """Invalid SMILES should be skipped."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "invalid_smiles", "CCO"],
-                "model_name": ["test", "test", "test"],
-                "mol_idx": ["t-0", "t-1", "t-2"],
+                COL_SMILES: [SMILES_BENZENE, "invalid_smiles", SMILES_ETHANOL],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1", "t-2"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -144,9 +165,9 @@ class TestPrepareLigandsDataframe:
         """All invalid SMILES - should write empty file."""
         df = pd.DataFrame(
             {
-                "smiles": ["invalid1", "invalid2"],
-                "model_name": ["test", "test"],
-                "mol_idx": ["t-0", "t-1"],
+                COL_SMILES: ["invalid1", "invalid2"],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["t-0", "t-1"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -159,27 +180,27 @@ class TestPrepareLigandsDataframe:
         """Output CSV should have correct columns."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: [SMILES_BENZENE],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
         _prepare_ligands_dataframe(df, output_csv)
 
         result = pd.read_csv(output_csv)
-        assert "smiles" in result.columns
+        assert COL_SMILES in result.columns
         assert "name" in result.columns
-        assert "model_name" in result.columns
-        assert "mol_idx" in result.columns
+        assert COL_MODEL_NAME in result.columns
+        assert COL_MOL_IDX in result.columns
 
     def test_creates_parent_directories(self, tmp_path):
         """Should create parent directories if they don't exist."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: [SMILES_BENZENE],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         output_csv = tmp_path / "nested" / "deep" / "ligands.csv"
@@ -192,9 +213,9 @@ class TestPrepareLigandsDataframe:
         """Empty dataframe should result in empty output."""
         df = pd.DataFrame(
             {
-                "smiles": [],
-                "model_name": [],
-                "mol_idx": [],
+                COL_SMILES: [],
+                COL_MODEL_NAME: [],
+                COL_MOL_IDX: [],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -213,11 +234,11 @@ class TestFindLatestInputSourcePriority:
         # Create both outputs
         sf_dir = tmp_path / "stages" / "03_structural_filters_post"
         sf_dir.mkdir(parents=True)
-        (sf_dir / "filtered_molecules.csv").write_text("smiles\nCCO")
+        (sf_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
         desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
-        (desc_dir / "filtered_molecules.csv").write_text("smiles\nCC")
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCC")
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -227,7 +248,9 @@ class TestFindLatestInputSourcePriority:
         """Should fall back to sampled_molecules if no stage outputs."""
         input_dir = tmp_path / "input"
         input_dir.mkdir()
-        (input_dir / "sampled_molecules.csv").write_text("smiles\nCCO")
+        (input_dir / "sampled_molecules.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -237,7 +260,9 @@ class TestFindLatestInputSourcePriority:
         """Should find legacy Descriptors directory."""
         legacy_dir = tmp_path / "Descriptors"
         legacy_dir.mkdir()
-        (legacy_dir / "passDescriptorsSMILES.csv").write_text("smiles\nCCO")
+        (legacy_dir / "passDescriptorsSMILES.csv").write_text(
+            f"{COL_SMILES}\n{SMILES_ETHANOL}"
+        )
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
@@ -250,9 +275,9 @@ class TestLigandNaming:
         """Name column should combine mol_idx and model_name."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1", "CCO"],
-                "model_name": ["model_a", "model_b"],
-                "mol_idx": ["LP-0001-00001", "LP-0002-00001"],
+                COL_SMILES: [SMILES_BENZENE, SMILES_ETHANOL],
+                COL_MODEL_NAME: ["model_a", "model_b"],
+                COL_MOL_IDX: ["LP-0001-00001", "LP-0002-00001"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
@@ -267,18 +292,18 @@ class TestLigandNaming:
         """Should preserve identity columns in output."""
         df = pd.DataFrame(
             {
-                "smiles": ["c1ccccc1"],
-                "model_name": ["test"],
-                "mol_idx": ["t-0"],
+                COL_SMILES: [SMILES_BENZENE],
+                COL_MODEL_NAME: [MODEL_TEST],
+                COL_MOL_IDX: ["t-0"],
             }
         )
         output_csv = tmp_path / "ligands.csv"
         _prepare_ligands_dataframe(df, output_csv)
 
         result = pd.read_csv(output_csv)
-        assert "smiles" in result.columns
-        assert "model_name" in result.columns
-        assert "mol_idx" in result.columns
+        assert COL_SMILES in result.columns
+        assert COL_MODEL_NAME in result.columns
+        assert COL_MOL_IDX in result.columns
 
 
 class TestToolValidation:
@@ -307,7 +332,11 @@ class TestRunDockingProteinPrepFallback:
         receptor.write_text("ATOM\n")
         input_csv = tmp_path / "input.csv"
         pd.DataFrame(
-            {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": ["m1-1"]}
+            {
+                COL_SMILES: [SMILES_ETHANOL],
+                COL_MODEL_NAME: ["m1"],
+                COL_MOL_IDX: ["m1-1"],
+            }
         ).to_csv(input_csv, index=False)
 
         docking_cfg = tmp_path / "config_docking.yml"
@@ -323,19 +352,19 @@ class TestRunDockingProteinPrepFallback:
         }
 
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._find_latest_input_source",
+            "hedgehog.docking.stage._find_latest_input_source",
             lambda *_: input_csv,
         )
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._prepare_ligands_dataframe",
+            "hedgehog.docking.stage._prepare_ligands_dataframe",
             lambda *_args, **_kwargs: {"total": 1, "written": 1, "skipped": 0},
         )
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._validate_optional_tool_path",
+            "hedgehog.docking.stage._validate_optional_tool_path",
             lambda path, label: path if label == "Protein preparation tool" else None,
         )
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._prepare_receptor_if_needed",
+            "hedgehog.docking.receptor_prep._prepare_receptor_if_needed",
             lambda *_, **__: None,
         )
 
@@ -344,7 +373,7 @@ class TestRunDockingProteinPrepFallback:
         )
         prep_cmd = ["/missing/prep_tool", str(receptor), str(prepared), "-WAIT"]
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._prepare_protein_for_docking",
+            "hedgehog.docking.receptor_prep._prepare_protein_for_docking",
             lambda *_args, **_kwargs: (str(prepared), prep_cmd),
         )
 
@@ -353,23 +382,23 @@ class TestRunDockingProteinPrepFallback:
         script_path.write_text("#!/usr/bin/env bash\n")
 
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._setup_smina",
+            "hedgehog.docking.scripts._setup_smina",
             lambda *_args, **_kwargs: script_path,
         )
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._save_job_metadata",
+            "hedgehog.docking.stage._save_job_metadata",
             lambda *_args, **_kwargs: None,
         )
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._save_job_ids",
+            "hedgehog.docking.stage._save_job_ids",
             lambda *_args, **_kwargs: None,
         )
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._run_smina",
+            "hedgehog.docking.execution._run_smina",
             lambda *_args, **_kwargs: {"status": "completed"},
         )
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils._update_metadata_with_run_status",
+            "hedgehog.docking.execution._update_metadata_with_run_status",
             lambda *_args, **_kwargs: None,
         )
 
@@ -377,7 +406,7 @@ class TestRunDockingProteinPrepFallback:
             raise FileNotFoundError("No such file or directory")
 
         monkeypatch.setattr(
-            "hedgehog.stages.docking.utils.subprocess.run", _raise_not_found
+            "hedgehog.docking.receptor_prep.subprocess.run", _raise_not_found
         )
 
         assert run_docking(run_config) is True
@@ -385,6 +414,33 @@ class TestRunDockingProteinPrepFallback:
 
 class TestPerMoleculeArchitecture:
     """Tests for per-molecule SDF splitting and aggregation."""
+
+    def test_rdkit_ligand_conversion_attempts_nvmolkit_enable(
+        self, tmp_path, monkeypatch
+    ):
+        """RDKit fallback conversion should attempt nvMolKit enablement."""
+        ligands_csv = tmp_path / "ligands.csv"
+        pd.DataFrame(
+            {
+                "smiles": [SMILES_ETHANOL],
+                "name": ["ethanol"],
+            }
+        ).to_csv(ligands_csv, index=False)
+
+        calls: list[dict[str, object]] = []
+
+        def _fake_enable(**kwargs):
+            calls.append(kwargs)
+            return False
+
+        monkeypatch.setattr(
+            "hedgehog.docking.ligand_prep.maybe_enable_nvmolkit",
+            _fake_enable,
+        )
+
+        output_path, _ = _convert_with_rdkit(ligands_csv, tmp_path)
+        assert Path(output_path).exists()
+        assert len(calls) == 1
 
     def test_split_sdf_to_molecules(self, tmp_path):
         """Should split multi-molecule SDF into individual files."""
@@ -627,3 +683,53 @@ class TestGninaNoGpuFlag:
         _, config_path, _ = entries[0]
         config_text = Path(config_path).read_text()
         assert "device = 7" in config_text
+
+
+class TestGninaParallelismAuto:
+    """Tests for auto parallel jobs behavior in GNINA per-molecule mode."""
+
+    def test_gpu_auto_uses_cpu_budget_even_with_visible_gpus(self, monkeypatch):
+        cfg = {"gnina_config": {"cpu": 32}}
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "192")
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._count_visible_nvidia_gpus", lambda: 4
+        )
+
+        cpu_per_process, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
+            cfg, cfg["gnina_config"]
+        )
+
+        assert cpu_per_process == 32
+        assert gpu_count == 4
+        assert parallel_jobs == 6
+
+    def test_gpu_auto_respects_cpu_budget_when_lower_than_gpu_count(self, monkeypatch):
+        cfg = {"gnina_config": {"cpu": 64}}
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "64")
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._count_visible_nvidia_gpus", lambda: 4
+        )
+
+        _, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
+            cfg, cfg["gnina_config"]
+        )
+
+        assert gpu_count == 4
+        assert parallel_jobs == 1
+
+    def test_gpu_auto_does_not_override_explicit_parallel_jobs(self, monkeypatch):
+        cfg = {
+            "gnina_parallel_jobs": 6,
+            "gnina_config": {"cpu": 32},
+        }
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "192")
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._count_visible_nvidia_gpus", lambda: 4
+        )
+
+        _, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
+            cfg, cfg["gnina_config"]
+        )
+
+        assert gpu_count == 4
+        assert parallel_jobs == 6

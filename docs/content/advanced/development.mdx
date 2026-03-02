@@ -34,7 +34,8 @@ The repository ships a `lefthook.yml` policy with two levels:
   - `uv run --extra lint ruff check .`
   - `uv run --extra test pytest`
   - `uv run python scripts/check_pipeline.py --mode ci`
-  - docs build: `cd docs && pnpm install --frozen-lockfile && pnpm build`
+  - docs build (runs only when docs-affecting files changed in the push range):
+    `cd docs && CI=1 pnpm install --frozen-lockfile --prefer-offline --reporter=append-only && pnpm build`
 
 This setup mirrors the main CI jobs and reduces "works locally, fails in CI" cases.
 
@@ -44,6 +45,40 @@ This setup mirrors the main CI jobs and reduces "works locally, fails in CI" cas
 lefthook run pre-commit
 lefthook run pre-push
 ```
+
+## Documentation Sync With Code
+
+When code structure changes, update docs in the same PR. Use this quick loop:
+
+1. Detect stale path patterns in docs:
+
+```bash
+rg -n "src/hedgehog/stages/|structFilters/|dockingFilters/" docs/content modules/README.md | rg -v "rg -n "
+```
+
+2. Confirm current package layout:
+
+```bash
+find src/hedgehog -maxdepth 1 -type d | sort
+```
+
+3. Rebuild docs:
+
+```bash
+cd docs && CI=1 pnpm install --frozen-lockfile --prefer-offline --reporter=append-only && pnpm build
+```
+
+`pnpm build` runs a prebuild step that generates `docs/content/api/index.mdx`
+from runtime introspection (`scripts/generate_api_docs.py`). Do not edit the
+generated API page manually.
+
+4. If CLI behavior changed, refresh `docs/content/cli.mdx` from:
+   - `uv run hedgehog --help`
+   - `uv run hedge --help`
+   - `uv run hedgehog run --help`
+   - `uv run hedgehog setup --help`
+   - `uv run hedgehog setup aizynthfinder --help`
+   - `uv run hedgehog version`
 
 ## Temporary Skip (Use Sparingly)
 

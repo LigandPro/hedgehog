@@ -81,12 +81,18 @@ Checks if the docked pose is geometrically plausible by generating multiple low-
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `enabled` | `true` | Enable/disable this filter |
+| `use_nvmolkit` | `true` | Try nvMolKit acceleration when available (falls back to RDKit if unavailable) |
 | `num_conformers` | `50` | Number of conformers to generate |
 | `conformer_method` | `ETKDGv3` | Conformer generation method (ETKDG, ETKDGv2, ETKDGv3) |
 | `max_rmsd_to_conformer` | `3.0` | Maximum RMSD in Angstroms to closest conformer |
 | `random_seed` | `42` | Seed for reproducible conformer generation |
 
 A high minimum RMSD indicates that the docking engine placed the ligand in a conformation that is energetically unlikely for the molecule to adopt in solution. This catches docking artifacts where the scoring function found a favorable protein-ligand interaction at the cost of internal strain.
+For isolated setup of optional nvMolKit dependencies:
+
+```bash
+uv run hedgehog setup nvmolkit-worker
+```
 
 ## Aggregation
 
@@ -158,6 +164,7 @@ shepherd_score:
 
 conformer_deviation:
   enabled: true
+  use_nvmolkit: true
   num_conformers: 50
   conformer_method: "ETKDGv3"
   max_rmsd_to_conformer: 3.0
@@ -192,11 +199,11 @@ For each tool, values are taken from the best pose per molecule (minimum affinit
 
 ```bash
 # Run docking filters as part of the full pipeline
-uv run hedgehog run
+uv run hedgehog
 
 # Run docking filters stage only (requires docking output to exist)
-uv run hedgehog run --stage docking_filters
+uv run hedgehog --stage docking_filters
 
 # Short alias
-uv run hedge run --stage docking_filters
+uv run hedge --stage docking_filters
 ```

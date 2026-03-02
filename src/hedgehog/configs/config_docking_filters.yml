@@ -66,6 +66,7 @@ shepherd_score:
 # backend: "symmetry_rmsd" (correct, default) or "naive" (legacy)
 conformer_deviation:
   enabled: true
+  use_nvmolkit: true  # Use nvMolKit acceleration when available; fallback to RDKit
   backend: "symmetry_rmsd"
   num_conformers: 50
   conformer_method: "ETKDGv3"  # ETKDG, ETKDGv2, ETKDGv3

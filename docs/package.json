@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next --turbopack",
+    "prebuild": "cd .. && uv run python scripts/generate_api_docs.py --output docs/content/api/index.mdx",
     "build": "next build",
     "postbuild": "pagefind --site .next/server/app --output-path public/_pagefind",
     "start": "next start"
@@ -20,5 +21,11 @@
     "@types/react": "^19.2.13",
     "pagefind": "^1.4.0",
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash-es": "4.17.23",
+      "minimatch": "10.2.3"
+    }
   }
 }

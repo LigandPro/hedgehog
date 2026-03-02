@@ -86,6 +86,7 @@ export function ConfigRetrosynthesis(): React.ReactElement {
 
   // Determine where to go back to (Wizard or ConfigSynthesis)
   const backScreen: Screen = previousScreen === 'wizardConfigSynthesis' ? 'wizardConfigSynthesis' : 'configSynthesis';
+  const isWizardMode = backScreen === 'wizardConfigSynthesis';
 
   const [loading, setLoading] = useState(!config);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -136,7 +137,21 @@ export function ConfigRetrosynthesis(): React.ReactElement {
   const saveConfig = async () => {
     try {
       const bridge = getBridge();
-      await bridge.saveConfig('retrosynthesis', values as Record<string, unknown>);
+      const payload = values as Record<string, unknown>;
+      const validation = await bridge.validateConfig('retrosynthesis', payload);
+      if (!validation.valid) {
+        showToast('error', `Invalid config: ${validation.errors.join('; ')}`);
+        return;
+      }
+
+      if (isWizardMode) {
+        setConfig('retrosynthesis', values as RetrosynthesisConfig);
+        setIsDirty(false);
+        showToast('info', 'Retrosynthesis settings saved for this run only');
+        return;
+      }
+
+      await bridge.saveConfig('retrosynthesis', payload);
       setConfig('retrosynthesis', values as RetrosynthesisConfig);
       setIsDirty(false);
       showToast('success', 'Configuration saved');
@@ -268,6 +283,14 @@ export function ConfigRetrosynthesis(): React.ReactElement {
 
   if (browsingField) {
     const currentValue = String(values[browsingField.key] || process.cwd());
+    const browserShortcuts = [
+      { key: '↑↓', label: 'Navigate' },
+      { key: 'Enter', label: 'Open/Select' },
+      { key: '→/e', label: 'Edit path' },
+      { key: 'Space', label: 'Search' },
+      { key: '/', label: 'Search' },
+      { key: '←', label: 'Back' },
+    ];
     return (
       <Box flexDirection="column" padding={1}>
         <Header title="Select File" subtitle={browsingField.label} />
@@ -277,6 +300,7 @@ export function ConfigRetrosynthesis(): React.ReactElement {
           onSelect={handlePathSelect}
           onCancel={handleBrowseCancel}
         />
+        <Footer shortcuts={browserShortcuts} />
       </Box>
     );
   }

@@ -78,7 +78,9 @@ def ensure_gnina() -> str:
     url = _resolve_gnina_download()
     cached.parent.mkdir(parents=True, exist_ok=True)
     download_with_progress(url, cached, "GNINA")
-    os.chmod(cached, 0o755)
+    os.chmod(
+        cached, 0o755
+    )  # World-readable+executable: shared binary on multi-user systems
 
     if not _is_working_gnina(str(cached)):
         cached.unlink(missing_ok=True)
@@ -102,6 +104,42 @@ def _is_working_gnina(path: str) -> bool:
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def _raise_no_asset_error(select_mode, query_errors, release_urls):
+    """Raise an appropriate RuntimeError when no assets were found."""
+    if query_errors and len(query_errors) == len(release_urls):
+        raise RuntimeError(
+            f"Failed to query GNINA releases from GitHub: {'; '.join(query_errors)}"
+        )
+    mode_messages = {
+        "gpu": (
+            "No suitable GNINA CUDA release asset found on GitHub. "
+            "Set HEDGEHOG_GNINA_VARIANT=auto or cpu to allow CPU fallback."
+        ),
+        "cpu": "No suitable GNINA release asset found on GitHub (all assets appear CUDA-specific).",
+    }
+    raise RuntimeError(
+        mode_messages.get(
+            select_mode, "No suitable GNINA release asset found on GitHub."
+        )
+    )
+
+
+def _raise_oversize_error(oversize_assets, select_mode, max_bytes):
+    """Raise RuntimeError when all candidate assets exceed the size limit."""
+    smallest = min(oversize_assets)
+    asset_label = (
+        "CUDA-compatible asset"
+        if select_mode in ("gpu", "auto_gpu")
+        else "non-CUDA asset"
+    )
+    raise RuntimeError(
+        "No suitable GNINA release asset found on GitHub under auto-install size "
+        f"limit ({_format_size(max_bytes)}). Smallest {asset_label} was "
+        f"{_format_size(smallest)}. Set HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES to "
+        "override or install GNINA manually."
+    )
 
 
 def _resolve_gnina_download() -> str:
@@ -149,34 +187,10 @@ def _resolve_gnina_download() -> str:
             return str(asset["browser_download_url"])
 
     if not saw_any_asset:
-        if query_errors and len(query_errors) == len(release_urls):
-            raise RuntimeError(
-                f"Failed to query GNINA releases from GitHub: {'; '.join(query_errors)}"
-            )
-        if select_mode == "gpu":
-            raise RuntimeError(
-                "No suitable GNINA CUDA release asset found on GitHub. "
-                "Set HEDGEHOG_GNINA_VARIANT=auto or cpu to allow CPU fallback."
-            )
-        if select_mode == "cpu":
-            raise RuntimeError(
-                "No suitable GNINA release asset found on GitHub (all assets appear CUDA-specific)."
-            )
-        raise RuntimeError("No suitable GNINA release asset found on GitHub.")
+        _raise_no_asset_error(select_mode, query_errors, release_urls)
 
     if oversize_assets:
-        smallest = min(oversize_assets)
-        asset_label = (
-            "CUDA-compatible asset"
-            if select_mode in ("gpu", "auto_gpu")
-            else "non-CUDA asset"
-        )
-        raise RuntimeError(
-            "No suitable GNINA release asset found on GitHub under auto-install size "
-            f"limit ({_format_size(max_bytes)}). Smallest {asset_label} was "
-            f"{_format_size(smallest)}. Set HEDGEHOG_GNINA_MAX_DOWNLOAD_BYTES to "
-            "override or install GNINA manually."
-        )
+        _raise_oversize_error(oversize_assets, select_mode, max_bytes)
 
     if select_mode == "gpu" and saw_non_cuda_asset and not saw_cuda_asset:
         raise RuntimeError(
@@ -314,10 +328,10 @@ def _gnina_variant() -> str:
       - ``gpu``: CUDA assets only
       - ``auto``: prefer CUDA assets when a GPU is detected
     """
-    raw = str(os.environ.get("HEDGEHOG_GNINA_VARIANT", "cpu")).strip().lower()
+    raw = str(os.environ.get("HEDGEHOG_GNINA_VARIANT", "auto")).strip().lower()
     if raw in {"cpu", "gpu", "auto"}:
         return raw
-    return "cpu"
+    return "auto"
 
 
 def _select_mode_for_variant(variant: str) -> str:

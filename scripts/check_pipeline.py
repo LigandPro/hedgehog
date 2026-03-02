@@ -26,7 +26,6 @@ def run_cli_smoke(repo_root: Path) -> None:
     """Run required CLI smoke checks."""
     run_cmd(["uv", "run", "hedgehog", "--help"], repo_root)
     run_cmd(["uv", "run", "hedge", "--help"], repo_root)
-    run_cmd(["uv", "run", "hedgehog", "run", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "setup", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "setup", "aizynthfinder", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "version"], repo_root)
@@ -153,7 +152,7 @@ def run_tui_smoke(repo_root: Path, startup_timeout_sec: int = 25) -> None:
 
 def run_full_pipeline(repo_root: Path) -> None:
     """Run the production pipeline with the default config (all stages)."""
-    run_cmd(["uv", "run", "hedgehog", "run"], repo_root)
+    run_cmd(["uv", "run", "hedgehog"], repo_root)
 
 
 def parse_args() -> argparse.Namespace:
