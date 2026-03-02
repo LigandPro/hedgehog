@@ -3,6 +3,8 @@ tools: gnina  # Options: gnina, smina, both
 receptor_pdb: data/test/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
+prepare_ligands: false  # If true, use ligand_preparation_tool for conformer generation (may expand molecules 4x times).
+                        # If false, use input molecules directly (1:1 mapping)
 smina_config:
   bin: smina
   autobox_ligand: data/test/05C_from_7EW9.sdf
