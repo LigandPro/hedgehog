@@ -880,66 +880,31 @@ def _create_smina_per_molecule_script(
             _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, "smina")
 
         f.write(f"cd {ligands_dir}\n")
-        f.write(f'mkdir -p "{logs_dir}"\n\n')
-
-        f.write("# Per-molecule docking with error handling\n")
+        f.write(f'mkdir -p "{logs_dir}"\n')
         f.write("FAILED=()\n")
         f.write("SUCCESS=0\n")
         f.write("TOTAL=0\n\n")
 
+        results_dir = ligands_dir / "_workdir" / "smina" / "results"
         f.write(f'for config in "{configs_dir}"/smina_*.ini; do\n')
         f.write('    [ -e "$config" ] || continue\n')
         f.write("    mol_id=$(basename \"$config\" .ini | sed 's/smina_//')\n")
         f.write("    TOTAL=$((TOTAL + 1))\n")
-        f.write('    echo "[$TOTAL] Processing $mol_id..."\n\n')
-
+        f.write(f'    output_file="{results_dir}/${{mol_id}}_out.sdf"\n')
         f.write(
-            f'    if {smina_bin} --config "$config" 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
+            f'    if {smina_bin} --config "$config" 2>> "{logs_dir}/${{mol_id}}.log" && [ -f "$output_file" ] && [ -s "$output_file" ]; then\n'
         )
-        f.write('        echo "  $mol_id: SUCCESS"\n')
         f.write("        SUCCESS=$((SUCCESS + 1))\n")
         f.write("    else\n")
-        f.write("        EXIT_CODE=$?\n")
-        f.write('        echo "  $mol_id: FAILED (exit $EXIT_CODE)"\n')
+        f.write('        rm -f "$output_file"\n')
         f.write('        FAILED+=("$mol_id")\n')
-        f.write("        if [ $EXIT_CODE -eq 143 ]; then\n")
-        f.write(
-            '            echo "    -> SIGTERM detected (timeout/memory limit/killed)"\n'
-        )
-        f.write("        fi\n")
         f.write("    fi\n")
         f.write("done\n\n")
 
-        f.write("# Report summary\n")
-        f.write('echo ""\n')
-        f.write('echo "========================================"\n')
-        f.write('echo "SMINA Docking Summary"\n')
-        f.write('echo "========================================"\n')
-        f.write('echo "Total molecules: $TOTAL"\n')
-        f.write('echo "Successful: $SUCCESS"\n')
-        f.write('echo "Failed: ${#FAILED[@]}"\n\n')
-
-        f.write("if [ ${#FAILED[@]} -gt 0 ]; then\n")
-        f.write('    echo ""\n')
-        f.write('    echo "Failed molecules:"\n')
-        f.write('    printf "  %s\\n" "${FAILED[@]}"\n')
-        f.write(
-            f'    printf "%s\\n" "${{FAILED[@]}}" > "{ligands_dir}/smina/failed_molecules.txt"\n'
-        )
-        f.write("fi\n\n")
-
-        f.write("# Exit with success if at least one molecule succeeded\n")
-        f.write("if [ $SUCCESS -gt 0 ]; then\n")
-        f.write('    echo ""\n')
-        f.write(
-            '    echo "Docking completed with $SUCCESS/$TOTAL molecules successful"\n'
-        )
-        f.write("    exit 0\n")
-        f.write("else\n")
-        f.write('    echo ""\n')
-        f.write('    echo "ERROR: All molecules failed docking"\n')
-        f.write("    exit 1\n")
-        f.write("fi\n")
+        f.write('echo "SMINA: $SUCCESS/$TOTAL successful"\n')
+        failed_file = ligands_dir / "smina" / "failed_molecules.txt"
+        f.write(f'[ "${{#FAILED[@]}}" -gt 0 ] && printf "%s\\n" "${{FAILED[@]}}" > "{failed_file}"\n')
+        f.write("[ $SUCCESS -gt 0 ] && exit 0 || exit 1\n")
 
     os.chmod(script_path, 0o755)
     return script_path
@@ -1019,6 +984,14 @@ def _prepare_ligands_for_docking(
             ligands_path = (ligands_dir / ligands_val).resolve()
         return str(ligands_path), None
 
+    prepare_ligands = cfg.get("prepare_ligands", True)
+    if not prepare_ligands:
+        logger.info(
+            "Ligand preprocessing disabled (prepare_ligands=false). Using direct conversion with 1:1 molecule mapping."
+        )
+        ligands_path, _ = _convert_with_rdkit(ligands_csv, ligands_dir)
+        return ligands_path, None
+
     ligand_preparation_tool = _validate_optional_tool_path(
         ligand_preparation_tool, "Ligand preparation tool"
     )
@@ -1084,31 +1057,54 @@ def _split_sdf_to_molecules(sdf_path: Path, molecules_dir: Path) -> list[Path]:
     except ImportError as err:
         raise RuntimeError("RDKit not available for SDF splitting") from err
 
+    from tqdm import tqdm
+
     molecules_dir.mkdir(parents=True, exist_ok=True)
     molecule_files = []
 
     suppl = Chem.SDMolSupplier(str(sdf_path))
-    for mol in suppl:
-        if mol is None:
-            continue
+    
+    pbar = tqdm(
+        iterable=[],
+        desc="Splitting SDF into individual molecules",
+        unit="mol",
+        dynamic_ncols=True,
+        total=None,
+    )
 
-        mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
-        if not mol_name:
-            mol_name = f"mol_{len(molecule_files):05d}"
+    try:
+        for mol in suppl:
+            if mol is None:
+                if pbar:
+                    pbar.update(1)
+                continue
 
-        # Sanitize molecule name for filesystem and force uniqueness with index prefix
-        base_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in mol_name)
-        if not base_name:
-            base_name = "mol"
-        base_name = base_name[:180]
-        safe_name = f"{len(molecule_files):06d}_{base_name}"
-        mol_path = molecules_dir / f"{safe_name}.sdf"
+            mol_name = mol.GetProp("_Name") if mol.HasProp("_Name") else None
+            if not mol_name:
+                mol_name = f"mol_{len(molecule_files):05d}"
 
-        writer = Chem.SDWriter(str(mol_path))
-        writer.write(mol)
-        writer.close()
+            # Sanitize molecule name for filesystem and force uniqueness with index prefix
+            base_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in mol_name)
+            if not base_name:
+                base_name = "mol"
+            base_name = base_name[:180]
+            safe_name = f"{len(molecule_files):06d}_{base_name}"
+            mol_path = molecules_dir / f"{safe_name}.sdf"
 
-        molecule_files.append(mol_path)
+            writer = Chem.SDWriter(str(mol_path))
+            writer.write(mol)
+            writer.close()
+
+            molecule_files.append(mol_path)
+            
+            if pbar:
+                pbar.update(1)
+                pbar.set_postfix({"split": len(molecule_files)})
+            elif len(molecule_files) % 1000 == 0:
+                logger.info("Split %d molecules so far...", len(molecule_files))
+    finally:
+        if pbar:
+            pbar.close()
 
     logger.info(
         "Split SDF into %d individual molecule files in %s",
@@ -1238,6 +1234,88 @@ def _materialize_prepared_ligands(
     return True
 
 
+def _aggregate_docking_results_stable(
+    results_dir: Path, output_sdf: Path, stable_files: list[Path], processed_files: set
+) -> int:
+    """Aggregate only stable (not recently modified) docking result files.
+    
+    This is used for progressive aggregation to avoid reading files that are
+    still being written by SMINA/GNINA.
+    """
+    try:
+        from rdkit import Chem
+    except ImportError as err:
+        raise RuntimeError("RDKit not available for result aggregation") from err
+
+    output_sdf.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Read existing aggregated file to get current count
+    existing_count = 0
+    existing_mols = {}
+    if output_sdf.exists() and output_sdf.stat().st_size > 0:
+        try:
+            for mol in Chem.SDMolSupplier(str(output_sdf)):
+                if mol is not None and mol.HasProp("_Name"):
+                    existing_mols[mol.GetProp("_Name")] = mol
+            existing_count = len(existing_mols)
+        except Exception:
+            pass  # If we can't read existing, start fresh
+    
+    def _extract_pose_affinity(mol) -> float | None:
+        for prop_name in ("minimizedAffinity", "affinity", "score"):
+            if mol.HasProp(prop_name):
+                try:
+                    return float(mol.GetProp(prop_name))
+                except Exception:
+                    continue
+        return None
+
+    def _pick_best_pose(result_file: Path):
+        best_mol = None
+        best_affinity = float("inf")
+        try:
+            for mol in Chem.SDMolSupplier(str(result_file)):
+                if mol is None:
+                    continue
+                affinity = _extract_pose_affinity(mol)
+                affinity_sort = affinity if affinity is not None else float("inf")
+                if best_mol is None or affinity_sort < best_affinity:
+                    best_mol = mol
+                    best_affinity = affinity_sort
+        except Exception:
+            # File might be invalid - skip silently during progressive aggregation
+            return None
+        return best_mol
+
+    # Process only stable files we haven't seen before
+    new_count = 0
+    for result_file in stable_files:
+        if result_file in processed_files:
+            continue
+        try:
+            best_pose = _pick_best_pose(result_file)
+            if best_pose is not None:
+                # Check if we already have this molecule (by name)
+                mol_name = best_pose.GetProp("_Name") if best_pose.HasProp("_Name") else None
+                if mol_name and mol_name in existing_mols:
+                    continue  # Already aggregated
+                existing_mols[mol_name] = best_pose
+                new_count += 1
+                processed_files.add(result_file)
+        except Exception:
+            # Skip files that fail - don't log during progressive aggregation
+            continue
+
+    # Write updated aggregated file
+    if new_count > 0 or existing_count > 0:
+        writer = Chem.SDWriter(str(output_sdf))
+        for mol in existing_mols.values():
+            writer.write(mol)
+        writer.close()
+    
+    return len(existing_mols)
+
+
 def _aggregate_docking_results(results_dir: Path, output_sdf: Path) -> int:
     """Aggregate per-molecule docking results into a single SDF file.
 
@@ -1314,40 +1392,81 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     except ImportError as err:
         raise RuntimeError("RDKit not available for ligand conversion") from err
 
+    # Try to import tqdm for progress bar, fallback to None if not available
+    try:
+        from tqdm import tqdm
+        use_tqdm = True
+    except ImportError:
+        use_tqdm = False
+
     sdf_path = ligands_dir / "_workdir" / "ligands_prepared.sdf"
     sdf_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check if SDF already exists to avoid redundant conversion
+    if sdf_path.exists():
+        logger.info("Reusing existing SDF file: %s", sdf_path)
+        return str(sdf_path.resolve()), None
+    
     df = pd.read_csv(ligands_csv)
     smiles_series = df["smiles"]
     name_series = df["name"]
 
+    total_molecules = len(smiles_series)
+    
     writer = Chem.SDWriter(str(sdf_path))
     written_count = 0
 
-    for smi, name in zip(
-        smiles_series.astype(str), name_series.astype(str), strict=False
-    ):
-        try:
-            mol = Chem.MolFromSmiles(smi)
-            if mol is None:
-                continue
-            mol = Chem.AddHs(mol)
+    # Create progress bar if tqdm is available
+    if use_tqdm:
+        pbar = tqdm(
+            total=total_molecules,
+            desc="Converting SMILES to SDF",
+            unit="mol",
+            dynamic_ncols=True,
+        )
+    else:
+        pbar = None
+        logger.info("Converting %d molecules from SMILES to SDF...", total_molecules)
+
+    try:
+        for idx, (smi, name) in enumerate(
+            zip(smiles_series.astype(str), name_series.astype(str), strict=False), 1
+        ):
             try:
-                AllChem.EmbedMolecule(mol, AllChem.ETKDG())
-                AllChem.UFFOptimizeMolecule(mol)
+                mol = Chem.MolFromSmiles(smi)
+                if mol is None:
+                    if pbar:
+                        pbar.update(1)
+                    elif idx % 1000 == 0:
+                        logger.info("Processed %d/%d molecules (written: %d)...", idx, total_molecules, written_count)
+                    continue
+                mol = Chem.AddHs(mol)
+                try:
+                    AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+                    AllChem.UFFOptimizeMolecule(mol)
+                except Exception:
+                    pass
+                mol.SetProp("_Name", name)
+                writer.write(mol)
+                written_count += 1
             except Exception:
                 pass
-            mol.SetProp("_Name", name)
-            writer.write(mol)
-            written_count += 1
-        except Exception:
-            continue
+            finally:
+                if pbar:
+                    pbar.update(1)
+                    pbar.set_postfix({"written": written_count})
+                elif idx % 1000 == 0:
+                    logger.info("Processed %d/%d molecules (written: %d)...", idx, total_molecules, written_count)
+    finally:
+        if pbar:
+            pbar.close()
+        logger.info("Converted %d molecules to SDF using RDKit", written_count)
 
     writer.close()
 
     if written_count == 0:
         raise RuntimeError("RDKit conversion produced 0 molecules for GNINA SDF")
 
-    logger.info("Converted %d molecules to SDF using RDKit", written_count)
     return str(sdf_path.resolve()), None
 
 
@@ -1923,19 +2042,121 @@ def _run_smina(ligands_dir, background, job_id, tick=None):
     workdir = ligands_dir / "_workdir"
     script_path = workdir / "run_smina.sh"
     log_path = workdir / "smina_run.log"
-    status = _run_docking_script(script_path, workdir, log_path, background, tick=tick)
+    results_dir = workdir / "smina" / "results"
+    output_sdf = ligands_dir / "smina" / "smina_out.sdf"
+    configs_dir = workdir / "configs"
+    
+    # Try to import tqdm for progress bar
+    try:
+        from tqdm import tqdm
+        use_tqdm = True
+    except ImportError:
+        use_tqdm = False
+    
+    # Count total molecules from config files
+    total_molecules = 0
+    pbar = None
+    if not background and configs_dir.exists():
+        config_files = list(configs_dir.glob("smina_*.ini"))
+        total_molecules = len(config_files)
+        if use_tqdm and total_molecules > 0:
+            pbar = tqdm(
+                total=total_molecules,
+                desc="SMINA docking",
+                unit="mol",
+                dynamic_ncols=True,
+                leave=True,
+            )
+    
+    # Track aggregation state for progressive updates
+    last_aggregated_count = 0
+    last_progress_count = 0
+    tick_counter = 0
+    processed_files = set()  # Track files we've already successfully processed
+    AGGREGATE_INTERVAL = 10  # Aggregate every 10 ticks (5 seconds)
+    FILE_STABILITY_SECONDS = 5  # Don't read files modified in last 5 seconds (likely still being written)
+    
+    def progressive_aggregate():
+        """Aggregate results progressively while script is running.
+        
+        Best practice: Only aggregate files that are stable (not recently modified)
+        to avoid reading incomplete files that are still being written.
+        """
+        nonlocal last_aggregated_count, last_progress_count, tick_counter, processed_files
+        tick_counter += 1
+        
+        # Update progress bar
+        if pbar and results_dir.exists():
+            try:
+                result_files = sorted(results_dir.glob("*_out.sdf"))
+                current_count = len(result_files)
+                if current_count > last_progress_count:
+                    pbar.n = current_count
+                    pbar.refresh()
+                    last_progress_count = current_count
+            except Exception:
+                pass
+        
+        # Progressive aggregation - only process stable files
+        if tick_counter % AGGREGATE_INTERVAL == 0 and not background and results_dir.exists():
+            try:
+                import time
+                now = time.time()
+                result_files = sorted(results_dir.glob("*_out.sdf"))
+                
+                # Filter to only stable files (not modified recently) that we haven't processed
+                stable_files = []
+                for f in result_files:
+                    if f in processed_files:
+                        continue  # Already processed
+                    try:
+                        mtime = f.stat().st_mtime
+                        age = now - mtime
+                        # Only process files that are stable (not being written) and not empty
+                        if age >= FILE_STABILITY_SECONDS and f.stat().st_size > 0:
+                            stable_files.append(f)
+                    except (OSError, ValueError):
+                        continue  # Skip files we can't stat
+                
+                if stable_files:
+                    # Aggregate only stable files
+                    count = _aggregate_docking_results_stable(
+                        results_dir, output_sdf, stable_files, processed_files
+                    )
+                    if count > last_aggregated_count:
+                        logger.debug(
+                            "Progressively aggregated %d/%d SMINA docking results (%d new files)",
+                            count,
+                            len(result_files),
+                            len(stable_files),
+                        )
+                        last_aggregated_count = count
+            except Exception as e:
+                logger.debug("Progressive aggregation check failed: %s", e)
+    
+    # Create a custom tick function that also does progressive aggregation
+    def tick_with_aggregate():
+        if tick:
+            tick()
+        progressive_aggregate()
+    
+    try:
+        status = _run_docking_script(script_path, workdir, log_path, background, tick=tick_with_aggregate if not background else tick)
+    finally:
+        if pbar:
+            pbar.close()
     if job_id:
         status["job_id"] = job_id
 
-    # Aggregate per-molecule results if they exist
-    results_dir = workdir / "smina" / "results"
-    output_sdf = ligands_dir / "smina" / "smina_out.sdf"
-
+    # Final aggregation after script completes
     if not background and results_dir.exists():
         try:
             count = _aggregate_docking_results(results_dir, output_sdf)
             status["aggregated_molecules"] = count
-            logger.info("Aggregated %d SMINA docking results", count)
+            if count > last_aggregated_count:
+                logger.info("Final aggregation: %d SMINA docking results", count)
+            else:
+                logger.info("Aggregated %d SMINA docking results", count)
         except Exception as e:
             logger.warning("Failed to aggregate SMINA results: %s", e)
 
@@ -1949,7 +2170,55 @@ def _run_gnina(ligands_dir, output_sdf, background, job_id, tick=None):
     workdir = ligands_dir / "_workdir"
     script_path = workdir / "run_gnina.sh"
     log_path = workdir / "gnina_run.log"
-    status = _run_docking_script(script_path, workdir, log_path, background, tick=tick)
+    results_dir = workdir / "gnina" / "results"
+    configs_dir = workdir / "configs"
+    
+    # Try to import tqdm for progress bar
+    try:
+        from tqdm import tqdm
+        use_tqdm = True
+    except ImportError:
+        use_tqdm = False
+    
+    # Count total molecules from config files
+    total_molecules = 0
+    pbar = None
+    if not background and configs_dir.exists():
+        config_files = list(configs_dir.glob("gnina_*.ini"))
+        total_molecules = len(config_files)
+        if use_tqdm and total_molecules > 0:
+            pbar = tqdm(
+                total=total_molecules,
+                desc="GNINA docking",
+                unit="mol",
+                dynamic_ncols=True,
+                leave=True,
+            )
+    
+    # Track progress for progress bar
+    last_progress_count = 0
+    
+    def tick_with_progress():
+        """Update progress bar while script is running."""
+        nonlocal last_progress_count
+        if tick:
+            tick()
+        if pbar and results_dir.exists():
+            try:
+                result_files = sorted(results_dir.glob("*_out.sdf"))
+                current_count = len(result_files)
+                if current_count > last_progress_count:
+                    pbar.n = current_count
+                    pbar.refresh()
+                    last_progress_count = current_count
+            except Exception:
+                pass
+    
+    try:
+        status = _run_docking_script(script_path, workdir, log_path, background, tick=tick_with_progress if not background else tick)
+    finally:
+        if pbar:
+            pbar.close()
     if job_id:
         status["job_id"] = job_id
 
