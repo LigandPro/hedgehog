@@ -122,10 +122,10 @@ def _remove_duplicates(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame
         df[MODEL_NAME_COLUMN] = DEFAULT_MODEL_NAME
 
     # Always deduplicate within models (smiles + model_name)
-        df = df.drop_duplicates(subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]).reset_index(
-            drop=True
-        )
-        msg = "Removed %s duplicate molecules within models"
+    df = df.drop_duplicates(subset=[SMILES_COLUMN, MODEL_NAME_COLUMN]).reset_index(
+        drop=True
+    )
+    msg = "Removed %s duplicate molecules within models"
 
     duplicates_removed = initial_count - len(df)
     if duplicates_removed > 0:

@@ -226,6 +226,13 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     df = pd.read_csv(ligands_csv)
     smiles_series = df["smiles"]
     name_series = df["name"]
+    
+    # Try to get model_name and mol_idx if present
+    has_model_name = "model_name" in df.columns
+    has_mol_idx = "mol_idx" in df.columns
+    model_name_series = df["model_name"] if has_model_name else None
+    mol_idx_series = df["mol_idx"] if has_mol_idx else None
+    
     maybe_enable_nvmolkit(
         project_root=_project_root(),
         context="docking.ligand_prep",
@@ -234,9 +241,9 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     writer = Chem.SDWriter(str(sdf_path))
     written_count = 0
 
-    for smi, name in zip(
+    for idx, (smi, name) in enumerate(zip(
         smiles_series.astype(str), name_series.astype(str), strict=False
-    ):
+    )):
         try:
             mol = Chem.MolFromSmiles(smi)
             if mol is None:
@@ -248,6 +255,18 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
             except Exception:
                 pass
             mol.SetProp("_Name", name)
+            
+            # Preserve model_name and mol_idx as SDF properties
+            if has_model_name and model_name_series is not None:
+                model_name = str(model_name_series.iloc[idx])
+                if model_name and model_name != "nan":
+                    mol.SetProp("model_name", model_name)
+            
+            if has_mol_idx and mol_idx_series is not None:
+                mol_idx = str(mol_idx_series.iloc[idx])
+                if mol_idx and mol_idx != "nan":
+                    mol.SetProp("mol_idx", mol_idx)
+            
             writer.write(mol)
             written_count += 1
         except Exception:
