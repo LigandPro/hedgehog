@@ -59,51 +59,37 @@ jobs:
       - name: Validate docs artifact
         run: test -f docs/out/index.html
 
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DOCS_DEPLOY_SSH_KEY }}
+      - name: Pack static docs artifact
+        run: tar -C docs/out -czf docs-out.tgz .
 
-      - name: Add deploy host to known_hosts
+      - name: Trigger token-based deploy webhook
         env:
-          DOCS_DEPLOY_HOST: ${{ vars.DOCS_DEPLOY_HOST }}
-          DOCS_DEPLOY_PORT: ${{ vars.DOCS_DEPLOY_PORT }}
+          DOCS_DEPLOY_WEBHOOK_URL: ${{ secrets.DOCS_DEPLOY_WEBHOOK_URL }}
+          DOCS_DEPLOY_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          test -n "${DOCS_DEPLOY_HOST:-}"
-          test -n "${DOCS_DEPLOY_PORT:-}"
-          mkdir -p ~/.ssh
-          ssh-keyscan -p "$DOCS_DEPLOY_PORT" "$DOCS_DEPLOY_HOST" >> ~/.ssh/known_hosts
+          test -n "${DOCS_DEPLOY_WEBHOOK_URL:-}"
+          test -n "${DOCS_DEPLOY_TOKEN:-}"
 
-      - name: Upload and activate release
-        env:
-          DOCS_DEPLOY_HOST: ${{ vars.DOCS_DEPLOY_HOST }}
-          DOCS_DEPLOY_PORT: ${{ vars.DOCS_DEPLOY_PORT }}
-          DOCS_DEPLOY_USER: ${{ vars.DOCS_DEPLOY_USER }}
-          DOCS_DEPLOY_PATH: ${{ vars.DOCS_DEPLOY_PATH }}
-          RELEASE_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          test -n "${DOCS_DEPLOY_HOST:-}"
-          test -n "${DOCS_DEPLOY_PORT:-}"
-          test -n "${DOCS_DEPLOY_USER:-}"
-          test -n "${DOCS_DEPLOY_PATH:-}"
+          curl --fail --show-error --silent \
+            --retry 3 --retry-delay 2 --retry-connrefused \
+            -X POST "$DOCS_DEPLOY_WEBHOOK_URL" \
+            -H "Authorization: Bearer $DOCS_DEPLOY_TOKEN" \
+            -H "X-Hedgehog-Repo: $REPO" \
+            -H "X-Hedgehog-Sha: $SHA" \
+            -F "repo=$REPO" \
+            -F "sha=$SHA" \
+            -F "ref=$REF_NAME" \
+            -F "actor=$ACTOR" \
+            -F "run_id=$RUN_ID" \
+            -F "run_attempt=$RUN_ATTEMPT" \
+            -F "artifact=@docs-out.tgz;type=application/gzip" \
+            -o deploy-response.json
 
-          RELEASE_DIR="$DOCS_DEPLOY_PATH/releases/$RELEASE_SHA"
-          SSH_TARGET="$DOCS_DEPLOY_USER@$DOCS_DEPLOY_HOST"
-
-          ssh -p "$DOCS_DEPLOY_PORT" "$SSH_TARGET" "mkdir -p '$DOCS_DEPLOY_PATH/releases' '$RELEASE_DIR'"
-          rsync -az --delete -e "ssh -p $DOCS_DEPLOY_PORT" docs/out/ "$SSH_TARGET:$RELEASE_DIR/"
-          ssh -p "$DOCS_DEPLOY_PORT" "$SSH_TARGET" "ln -sfn '$RELEASE_DIR' '$DOCS_DEPLOY_PATH/current'"
-
-      - name: Cleanup old releases
-        env:
-          DOCS_DEPLOY_HOST: ${{ vars.DOCS_DEPLOY_HOST }}
-          DOCS_DEPLOY_PORT: ${{ vars.DOCS_DEPLOY_PORT }}
-          DOCS_DEPLOY_USER: ${{ vars.DOCS_DEPLOY_USER }}
-          DOCS_DEPLOY_PATH: ${{ vars.DOCS_DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          SSH_TARGET="$DOCS_DEPLOY_USER@$DOCS_DEPLOY_HOST"
-          ssh -p "$DOCS_DEPLOY_PORT" "$SSH_TARGET" \
-            "ls -1dt '$DOCS_DEPLOY_PATH'/releases/* 2>/dev/null | tail -n +6 | xargs -r rm -rf"
+          cat deploy-response.json
