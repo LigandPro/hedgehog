@@ -52,6 +52,14 @@ Notes:
 - If you add/change CLI commands, options, defaults, or error behavior, update `docs/content/cli.mdx` accordingly.
 - If README examples become inaccurate, update `README.md` as well.
 
+### Release Notes (PyPI/GitHub)
+
+- Releases are created automatically on each push to `main` via `.github/workflows/release.yml`.
+- GitHub release notes are generated with `gh release create --generate-notes`.
+- To avoid empty release notes, prefer PR-based changes instead of direct feature/fix pushes to `main`.
+- Each PR with user-visible changes should include a `Release notes` section in the PR description with 1-3 concise bullets.
+- Write release-note bullets in user-facing language (what changed and why it matters), not internal-only implementation details.
+
 ### CI Verification
 
 - Always check CI status before considering a task complete.
