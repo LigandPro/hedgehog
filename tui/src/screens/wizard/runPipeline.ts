@@ -13,30 +13,52 @@ const STAGE_TO_CONFIG_TYPE: Record<string, Exclude<ConfigType, 'main'>> = {
   docking_filters: 'docking_filters',
 };
 
-function buildWizardConfigOverrides(
-  state: ReturnType<typeof useStore.getState>,
+async function buildWizardConfigOverrides(
   selectedStages: string[]
-): Partial<Record<ConfigType, Record<string, unknown>>> {
+): Promise<Partial<Record<ConfigType, Record<string, unknown>>>> {
+  const bridge = getBridge();
+  type StoreConfigs = ReturnType<typeof useStore.getState>['configs'];
   const overrides: Partial<Record<ConfigType, Record<string, unknown>>> = {};
 
-  const main = state.configs.main;
+  const getConfig = async (configType: ConfigType): Promise<Record<string, unknown> | null> => {
+    const currentState = useStore.getState();
+    const cached = currentState.configs[configType];
+    if (cached) {
+      return cached as unknown as Record<string, unknown>;
+    }
+
+    try {
+      const loaded = await bridge.loadConfig(configType);
+      useStore.getState().setConfig(configType as keyof StoreConfigs, loaded as never);
+      return loaded as Record<string, unknown>;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      useStore.getState().showToast(
+        'warning',
+        `Unable to load ${configType} config: ${message}`
+      );
+      return null;
+    }
+  };
+
+  const main = await getConfig('main');
   if (main) {
-    overrides.main = main as unknown as Record<string, unknown>;
+    overrides.main = main;
   }
 
   for (const stage of selectedStages) {
     const configType = STAGE_TO_CONFIG_TYPE[stage];
     if (!configType) continue;
-    const config = state.configs[configType];
+    const config = await getConfig(configType);
     if (config) {
-      overrides[configType] = config as unknown as Record<string, unknown>;
+      overrides[configType] = config;
     }
   }
 
   if (selectedStages.includes('synthesis')) {
-    const retrosynthesis = state.configs.retrosynthesis;
+    const retrosynthesis = await getConfig('retrosynthesis');
     if (retrosynthesis) {
-      overrides.retrosynthesis = retrosynthesis as unknown as Record<string, unknown>;
+      overrides.retrosynthesis = retrosynthesis;
     }
   }
 
@@ -92,8 +114,7 @@ export async function refreshWizardPreflight(
 
   try {
     const bridge = getBridge();
-    const latestState = useStore.getState();
-    const configOverrides = buildWizardConfigOverrides(latestState, selectedStages);
+    const configOverrides = await buildWizardConfigOverrides(selectedStages);
     const preflight = await bridge.preflightPipeline(selectedStages, configOverrides);
     useStore.getState().setWizardPreflight(preflight);
     return preflight;
@@ -136,7 +157,7 @@ export async function runWizardPipeline(
   try {
     const bridge = getBridge();
     const latestState = useStore.getState();
-    const configOverrides = buildWizardConfigOverrides(latestState, selectedStages);
+    const configOverrides = await buildWizardConfigOverrides(selectedStages);
     const jobId = await bridge.startPipeline(selectedStages, configOverrides);
     const now = new Date();
     const mainConfig = latestState.configs.main;

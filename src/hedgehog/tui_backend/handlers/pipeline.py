@@ -403,6 +403,19 @@ class PipelineHandler:
             return "medium"
         return "long"
 
+    @staticmethod
+    def _resolve_config_path(path_value: Any, config_handler: ConfigHandler) -> str:
+        """Resolve config path values against project root for deterministic checks."""
+        if not isinstance(path_value, str):
+            return str(path_value)
+
+        candidate = Path(path_value).expanduser()
+        if candidate.is_absolute():
+            return str(candidate)
+
+        project_root = getattr(config_handler, "_project_root", Path.cwd())
+        return str((Path(project_root) / candidate).resolve())
+
     def preflight_pipeline(
         self,
         stages: list[str],
@@ -459,8 +472,9 @@ class PipelineHandler:
         for msg in main_validation.get("warnings", []):
             add_global("MAIN_CONFIG_WARNING", "warning", msg)
 
-        input_path = main_config.get("generated_mols_path")
-        if input_path:
+        input_path_raw = main_config.get("generated_mols_path")
+        if input_path_raw:
+            input_path = self._resolve_config_path(input_path_raw, config_handler)
             try:
                 input_validation = validation_handler.validate_input_file(input_path)
                 for msg in input_validation.get("errors", []):
@@ -501,8 +515,9 @@ class PipelineHandler:
                     field="generated_mols_path",
                 )
 
-        output_path = main_config.get("folder_to_save")
-        if output_path:
+        output_path_raw = main_config.get("folder_to_save")
+        if output_path_raw:
+            output_path = self._resolve_config_path(output_path_raw, config_handler)
             try:
                 output_validation = validation_handler.validate_output_directory(
                     output_path
@@ -564,7 +579,12 @@ class PipelineHandler:
                 add_stage("STAGE_CONFIG_WARNING", "warning", msg)
 
             if stage == "docking" and stage_config.get("run", False):
-                receptor = stage_config.get("receptor_pdb")
+                receptor_raw = stage_config.get("receptor_pdb")
+                receptor = (
+                    self._resolve_config_path(receptor_raw, config_handler)
+                    if receptor_raw
+                    else None
+                )
                 if not receptor:
                     add_stage(
                         "DOCKING_RECEPTOR_REQUIRED",
@@ -601,8 +621,18 @@ class PipelineHandler:
 
             if stage == "docking_filters" and stage_config.get("run", False):
                 run_after_docking = bool(stage_config.get("run_after_docking", True))
-                input_sdf = stage_config.get("input_sdf")
-                receptor_pdb = stage_config.get("receptor_pdb")
+                input_sdf_raw = stage_config.get("input_sdf")
+                receptor_pdb_raw = stage_config.get("receptor_pdb")
+                input_sdf = (
+                    self._resolve_config_path(input_sdf_raw, config_handler)
+                    if input_sdf_raw
+                    else None
+                )
+                receptor_pdb = (
+                    self._resolve_config_path(receptor_pdb_raw, config_handler)
+                    if receptor_pdb_raw
+                    else None
+                )
 
                 if not run_after_docking and not input_sdf:
                     add_stage(

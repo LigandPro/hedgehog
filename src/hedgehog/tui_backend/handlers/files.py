@@ -140,7 +140,7 @@ class FilesHandler:
         return entries
 
     def count_molecules(self, path: str) -> dict[str, Any]:
-        """Count molecules in a file (CSV, SMI, SDF)."""
+        """Count molecules in a file (CSV, SMI/SMILES, SDF, MOL2)."""
         file_path = Path(path).expanduser().resolve()
         _validate_path(file_path)
 
@@ -163,12 +163,21 @@ class FilesHandler:
                 # SMI: count non-empty lines
                 with open(file_path) as f:
                     count = sum(1 for line in f if line.strip())
-            elif ext in (".sdf", ".mol2"):
+            elif ext == ".sdf":
                 # SDF: count $$$$ delimiters using streaming to avoid OOM on large files
                 with open(file_path) as f:
                     count = sum(1 for line in f if "$$$$" in line)
                     if count == 0:
                         # Fallback: might be single molecule without delimiter
+                        count = 1 if file_path.stat().st_size > 0 else 0
+            elif ext == ".mol2":
+                # MOL2: count molecule records by @<TRIPOS>MOLECULE headers.
+                with open(file_path) as f:
+                    count = sum(
+                        1 for line in f if line.strip().upper() == "@<TRIPOS>MOLECULE"
+                    )
+                    if count == 0:
+                        # Fallback for malformed MOL2 files with no explicit headers
                         count = 1 if file_path.stat().st_size > 0 else 0
             else:
                 # Unknown format - try counting lines
