@@ -21,7 +21,7 @@ function truncate(value: string, maxWidth: number): string {
 
 export function ToastContainer(): React.ReactElement | null {
   const { theme } = useTheme();
-  const { width } = useTerminalSize();
+  const { width, height } = useTerminalSize();
   const toasts = useStore((state) => state.toasts);
 
   if (toasts.length === 0) {
@@ -35,17 +35,22 @@ export function ToastContainer(): React.ReactElement | null {
     warning: theme.palette.warning,
   };
   const toast = toasts[toasts.length - 1];
-  const messageWidth = Math.max(14, Math.min(58, width - 18));
+  const rightPadding = width >= 36 ? 2 : 1;
+  const bottomOffset = height >= 24 ? 6 : height >= 16 ? 4 : 2;
+  const safeBottomOffset = Math.min(bottomOffset, Math.max(0, Math.floor(height / 3)));
+  const messageWidth = Math.max(1, Math.min(58, width - rightPadding - 6));
   const message = truncate(toast.message, messageWidth).padEnd(messageWidth, ' ');
 
   return (
     <Box
-      flexDirection="row"
+      flexDirection="column"
       position="absolute"
       width={width}
+      height={height}
       justifyContent="flex-end"
-      marginTop={1}
-      paddingRight={2}
+      alignItems="flex-end"
+      paddingRight={rightPadding}
+      paddingBottom={safeBottomOffset}
     >
       <Box
         key={toast.id}

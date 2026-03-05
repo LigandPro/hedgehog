@@ -43,6 +43,9 @@ class CaptureStep:
     name: str
     keys: str
     wait_seconds: float = 0.9
+    enter_delay_seconds: float = 0.0
+    inter_key_delay_seconds: float = 0.0
+    actions: tuple[tuple[str, float], ...] = ()
 
 
 CAPTURE_STEPS: list[CaptureStep] = [
@@ -57,9 +60,29 @@ CAPTURE_STEPS: list[CaptureStep] = [
     CaptureStep("08_open_command_menu", "/"),
     CaptureStep("09_close_command_menu", "\x1b"),
     CaptureStep("10_open_command_menu_ctrl_p", "\x10"),
-    CaptureStep("11_open_theme_menu_from_commands", "theme\r"),
+    # Select `/theme` from the already open command palette.
+    CaptureStep(
+        "11_open_theme_menu_from_commands",
+        "",
+        wait_seconds=1.0,
+        inter_key_delay_seconds=0.25,
+        actions=(
+            ("\x1b", 0.6),
+            ("/theme\r", 2.0),
+        ),
+    ),
     CaptureStep("12_close_theme_menu", "\x1b"),
-    CaptureStep("13_return_home", "\x1b\x1b\x1b"),
+    CaptureStep(
+        "13_return_home",
+        "",
+        wait_seconds=1.3,
+        inter_key_delay_seconds=0.25,
+        actions=(
+            ("/back\r", 2.0),
+            ("/back\r", 2.0),
+            ("/back\r", 2.2),
+        ),
+    ),
     CaptureStep("14_exit_app", "\x03"),
 ]
 
@@ -303,6 +326,19 @@ def clean_frame(raw: str) -> str:
 
 
 def run_capture_sequence(raw_dir: pathlib.Path, clean_dir: pathlib.Path) -> list[str]:
+    def send_keys(fd: int, keys: str, inter_key_delay_seconds: float) -> str:
+        if not keys:
+            return ""
+        captured = ""
+        if inter_key_delay_seconds <= 0:
+            os.write(fd, keys.encode("utf-8", errors="ignore"))
+            return read_available(fd, timeout=0.03)
+        for ch in keys:
+            os.write(fd, ch.encode("utf-8", errors="ignore"))
+            time.sleep(inter_key_delay_seconds)
+            captured += read_available(fd, timeout=0.03)
+        return captured
+
     master_fd, slave_fd = pty.openpty()
     set_nonblocking(master_fd)
 
@@ -324,8 +360,30 @@ def run_capture_sequence(raw_dir: pathlib.Path, clean_dir: pathlib.Path) -> list
 
     try:
         for idx, step in enumerate(CAPTURE_STEPS, start=1):
-            if step.keys:
-                os.write(master_fd, step.keys.encode("utf-8", errors="ignore"))
+            if step.actions:
+                for keys, delay_seconds in step.actions:
+                    all_output += send_keys(
+                        master_fd, keys, step.inter_key_delay_seconds
+                    )
+                    time.sleep(delay_seconds)
+                    all_output += read_available(master_fd, timeout=0.05)
+            elif step.keys:
+                if step.enter_delay_seconds > 0 and "\r" in step.keys:
+                    enter_idx = step.keys.find("\r")
+                    typed = step.keys[:enter_idx]
+                    submitted = step.keys[enter_idx:]
+                    if typed:
+                        all_output += send_keys(
+                            master_fd, typed, step.inter_key_delay_seconds
+                        )
+                    time.sleep(step.enter_delay_seconds)
+                    all_output += send_keys(
+                        master_fd, submitted, step.inter_key_delay_seconds
+                    )
+                else:
+                    all_output += send_keys(
+                        master_fd, step.keys, step.inter_key_delay_seconds
+                    )
             time.sleep(step.wait_seconds)
             all_output += read_available(master_fd, timeout=0.35)
 

@@ -378,22 +378,29 @@ export function App(): React.ReactElement {
 
   // Global keyboard shortcuts (Matcha pattern)
   useInput((input, key) => {
-    if (key.ctrl && input === 'c') {
+    const closeActiveOverlay = (): boolean => {
       if (confirmDialog) {
         hideConfirm();
-        return;
+        return true;
       }
       if (showThemeMenu) {
         setShowThemeMenu(false);
-        return;
+        return true;
       }
       if (showCommandMenu) {
         setShowCommandMenu(false);
         setCommandMenuSeed('/');
-        return;
+        return true;
       }
       if (showHelp) {
         setShowHelp(false);
+        return true;
+      }
+      return false;
+    };
+
+    if (key.ctrl && input === 'c') {
+      if (closeActiveOverlay()) {
         return;
       }
       setExitSummary(buildExitSummary({
@@ -403,6 +410,10 @@ export function App(): React.ReactElement {
         screen,
       }));
       exit();
+      return;
+    }
+
+    if ((key.escape || key.leftArrow) && closeActiveOverlay()) {
       return;
     }
 
