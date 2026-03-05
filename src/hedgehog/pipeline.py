@@ -2018,7 +2018,7 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
 
         # Pipeline finished normally -- remove the marker.
         incomplete_marker.unlink(missing_ok=True)
-        
+
         return success
     except Exception as e:
         logger.error("Pipeline execution failed: %s", e)

@@ -107,7 +107,7 @@ def _log_sampling_warnings(warnings: list[dict], logger: logging.Logger) -> None
 
 def _remove_duplicates(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
     """Remove duplicate molecules within each model, logging if any were removed.
-    
+
     Important: Deduplication is done per-model (smiles + model_name) to preserve
     model-specific statistics. If model_name is missing, it's added as a fallback.
     """

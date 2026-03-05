@@ -335,29 +335,31 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 name_to_mol_idx = {}
                 if "name" in lig_df.columns:
                     name_to_model_name = dict(
-                        zip(lig_df["name"].astype(str), lig_df["model_name"].astype(str))
+                        zip(
+                            lig_df["name"].astype(str), lig_df["model_name"].astype(str)
+                        )
                     )
                     name_to_mol_idx = dict(
                         zip(lig_df["name"].astype(str), lig_df["mol_idx"].astype(str))
                     )
-                
+
                 # Fill in missing values using mol_idx or name as lookup key
                 for i, mol in enumerate(mols):
                     model_name = model_names[i]
                     mol_idx = mol_idxs[i]
-                    
+
                     # Try to get name from molecule if mol_idx is missing
                     mol_name = None
                     if not mol_idx:
                         mol_name = _get_first_prop_value(mol, {"name", "_Name"})
-                    
+
                     # Fill model_name if missing
                     if not model_name:
                         if mol_idx and mol_idx in mol_idx_to_model_name:
                             model_names[i] = mol_idx_to_model_name[mol_idx]
                         elif mol_name and mol_name in name_to_model_name:
                             model_names[i] = name_to_model_name[mol_name]
-                    
+
                     # Fill mol_idx if missing
                     if not mol_idx:
                         if mol_name and mol_name in name_to_mol_idx:
