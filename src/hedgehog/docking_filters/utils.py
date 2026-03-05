@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -572,6 +573,90 @@ def apply_interaction_filter(
 
     logger.info("Running interaction filter (min_hbonds=%d)", min_hbonds)
 
+    residue_pattern = re.compile(r"[A-Z]{3}[:\s]?\d+[A-Za-z]?")
+
+    def _parse_interaction_label(raw_label: Any) -> dict[str, str]:
+        label = str(raw_label)
+        interaction_type = "unknown"
+        residue = "unknown"
+
+        parts: list[str] = []
+        if isinstance(raw_label, tuple):
+            parts = [str(part) for part in raw_label]
+        else:
+            stripped = label.strip()
+            if stripped.startswith("(") and stripped.endswith(")"):
+                stripped = stripped[1:-1]
+            if "," in stripped:
+                parts = [part.strip().strip("'\"") for part in stripped.split(",")]
+            elif "|" in stripped:
+                parts = [part.strip().strip("'\"") for part in stripped.split("|")]
+            elif "/" in stripped:
+                parts = [part.strip().strip("'\"") for part in stripped.split("/")]
+            elif stripped:
+                parts = [stripped]
+
+        interaction_candidates = set(interaction_types)
+        for part in reversed(parts):
+            cleaned = part.strip().strip("'\"")
+            if cleaned in interaction_candidates:
+                interaction_type = cleaned
+                break
+            for candidate in interaction_candidates:
+                if candidate and candidate in cleaned:
+                    interaction_type = candidate
+                    break
+            if interaction_type != "unknown":
+                break
+
+        for part in parts:
+            cleaned = part.strip().strip("'\"")
+            if not cleaned:
+                continue
+            if cleaned == interaction_type or cleaned in interaction_candidates:
+                continue
+            match = residue_pattern.search(cleaned)
+            if match:
+                residue = match.group(0).replace(" ", ":")
+                break
+            if residue == "unknown":
+                residue = cleaned
+
+        return {
+            "label": label,
+            "residue": residue,
+            "interaction_type": interaction_type,
+        }
+
+    def _collect_active_labels(row: pd.Series) -> list[dict[str, str]]:
+        labels: list[dict[str, str]] = []
+        for column in row.index:
+            value = row[column]
+            try:
+                is_active = bool(value)
+            except Exception:
+                is_active = False
+            if not is_active:
+                continue
+            labels.append(_parse_interaction_label(column))
+
+        dedup: dict[tuple[str, str, str], dict[str, str]] = {}
+        for item in labels:
+            key = (
+                item["label"],
+                item["residue"],
+                item["interaction_type"],
+            )
+            dedup[key] = item
+        return sorted(
+            dedup.values(),
+            key=lambda item: (
+                item["residue"],
+                item["interaction_type"],
+                item["label"],
+            ),
+        )
+
     with _suppress_interaction_filter_warnings():
         # Load protein
         u = mda.Universe(str(protein_pdb))
@@ -619,17 +704,21 @@ def apply_interaction_filter(
                     break
 
             passed = n_hbonds >= min_hbonds and has_required and not has_forbidden
-            interactions_str = ",".join([str(c) for c in row.index if row[c]])
+            active_labels = _collect_active_labels(row)
+            interactions_str = ",".join(item["label"] for item in active_labels)
+            interaction_labels_json = json.dumps(active_labels, sort_keys=True)
         else:
             n_hbonds = 0
             passed = min_hbonds == 0 and not required_residues
             interactions_str = ""
+            interaction_labels_json = "[]"
 
         results.append(
             {
                 "mol_idx": i,
                 "n_hbonds": n_hbonds,
                 "interactions": interactions_str,
+                "interaction_labels_json": interaction_labels_json,
                 "pass_interactions": passed,
             }
         )

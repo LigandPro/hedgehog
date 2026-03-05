@@ -1669,6 +1669,11 @@ _STAGE_TREE_TEMPLATES: dict[str, list[str]] = {
         "|   +-- filtered_molecules.csv     Passing molecules (single best pose)",
         "|   +-- filtered_poses.csv         Passing poses with full metrics (1 per molecule)",
         "|   +-- filtered_poses.sdf         Filtered poses (SDF, 1 per molecule)",
+        "|   +-- interaction_events.csv     Per-interaction event records",
+        "|   +-- interaction_residue_summary.csv  Residue-level interaction counts",
+        "|   +-- interaction_type_summary.csv     Interaction-type distribution",
+        "|   +-- interaction_matrix.csv     Residue x interaction-type matrix",
+        "|   +-- interaction_report_meta.json     Interaction reporting metadata",
     ],
     STAGE_FINAL_DESCRIPTORS: [
         "|   +-- metrics/",

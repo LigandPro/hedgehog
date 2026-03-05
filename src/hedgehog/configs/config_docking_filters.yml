@@ -44,6 +44,8 @@ interactions:
     - HBAcceptor
     - Hydrophobic
     - VdWContact
+  reporting:
+    enabled: true  # Generate interaction reporting artifacts in stage output
   similarity_threshold: 0.0  # Tanimoto to reference (0 = disabled)
   # Note: FaceToFace interaction excluded due to edge cases causing errors
 

@@ -689,3 +689,150 @@ class TestSinglePoseCollapse:
         row_mol_a = collapsed_df[collapsed_df["source_mol_idx"] == "mol-A"].iloc[0]
         assert row_mol_a["gnina_minimizedAffinity"] == -8.0
         assert collapsed_df["mol_idx"].tolist() == [0, 1]
+
+
+class TestInteractionReportingArtifacts:
+    """Tests for Stage 06 interaction reporting artifact generation."""
+
+    def test_writes_interaction_reporting_artifacts(self, tmp_path):
+        """Should write all interaction reporting files from structured labels."""
+        from hedgehog.docking_filters.main import _write_interaction_reporting_artifacts
+
+        results_df = pd.DataFrame(
+            {
+                "mol_idx": [0, 1],
+                "source_mol_idx": ["mol-0", "mol-1"],
+                "model_name": ["ModelA", "ModelA"],
+                "pass": [True, False],
+                "pass_interactions": [True, False],
+                "interaction_labels_json": [
+                    json.dumps(
+                        [
+                            {
+                                "label": "ASP:123|HBDonor",
+                                "residue": "ASP:123",
+                                "interaction_type": "HBDonor",
+                            },
+                            {
+                                "label": "SER:45|Hydrophobic",
+                                "residue": "SER:45",
+                                "interaction_type": "Hydrophobic",
+                            },
+                        ]
+                    ),
+                    "[]",
+                ],
+                "interactions": ["", ""],
+            }
+        )
+
+        _write_interaction_reporting_artifacts(
+            results_df=results_df,
+            output_dir=tmp_path,
+            interaction_filter_enabled=True,
+        )
+
+        expected_files = [
+            "interaction_events.csv",
+            "interaction_residue_summary.csv",
+            "interaction_type_summary.csv",
+            "interaction_matrix.csv",
+            "interaction_report_meta.json",
+        ]
+        for filename in expected_files:
+            assert (tmp_path / filename).exists()
+
+        events_df = pd.read_csv(tmp_path / "interaction_events.csv")
+        assert len(events_df) == 2
+        assert set(events_df["residue"].tolist()) == {"ASP:123", "SER:45"}
+
+        residue_df = pd.read_csv(tmp_path / "interaction_residue_summary.csv")
+        assert residue_df["total_events"].sum() == 2
+
+        matrix_df = pd.read_csv(tmp_path / "interaction_matrix.csv")
+        assert len(matrix_df) == 2
+
+        meta = json.loads((tmp_path / "interaction_report_meta.json").read_text())
+        assert meta["total_events"] == 2
+        assert meta["poses_with_interactions"] == 1
+        assert meta["interaction_filter_enabled"] is True
+
+    def test_uses_legacy_interactions_when_labels_missing(self, tmp_path):
+        """Should fallback to legacy interactions string when JSON labels are absent."""
+        from hedgehog.docking_filters.main import _write_interaction_reporting_artifacts
+
+        results_df = pd.DataFrame(
+            {
+                "mol_idx": [0],
+                "source_mol_idx": ["mol-0"],
+                "model_name": ["ModelA"],
+                "pass": [True],
+                "pass_interactions": [True],
+                "interactions": ["ASP:123|HBDonor,SER:45|Hydrophobic"],
+            }
+        )
+
+        _write_interaction_reporting_artifacts(
+            results_df=results_df,
+            output_dir=tmp_path,
+            interaction_filter_enabled=True,
+        )
+
+        events_df = pd.read_csv(tmp_path / "interaction_events.csv")
+        assert len(events_df) == 2
+        assert set(events_df["interaction_type"].tolist()) == {"HBDonor", "Hydrophobic"}
+        assert set(events_df["residue"].tolist()) == {"ASP:123", "SER:45"}
+
+    def test_parses_tuple_sequence_legacy_interactions(self, tmp_path):
+        """Should parse tuple-sequence legacy interaction string without comma splitting bugs."""
+        from hedgehog.docking_filters.main import _write_interaction_reporting_artifacts
+
+        results_df = pd.DataFrame(
+            {
+                "mol_idx": [0],
+                "source_mol_idx": ["mol-0"],
+                "model_name": ["ModelA"],
+                "pass": [True],
+                "pass_interactions": [True],
+                "interactions": ["('ASP:123', 'HBDonor'),('SER:45', 'Hydrophobic')"],
+            }
+        )
+
+        _write_interaction_reporting_artifacts(
+            results_df=results_df,
+            output_dir=tmp_path,
+            interaction_filter_enabled=True,
+        )
+
+        events_df = pd.read_csv(tmp_path / "interaction_events.csv")
+        assert len(events_df) == 2
+        assert set(events_df["residue"].tolist()) == {"ASP:123", "SER:45"}
+        assert set(events_df["interaction_type"].tolist()) == {"HBDonor", "Hydrophobic"}
+
+    def test_reporting_enabled_string_false_disables_artifacts(self, tmp_path):
+        """String false-like values should disable interaction reporting."""
+        from hedgehog.docking_filters.main import (
+            _INTERACTION_REPORT_FILES,
+            _cleanup_interaction_reporting_artifacts,
+            _is_interaction_reporting_enabled,
+        )
+
+        for filename in _INTERACTION_REPORT_FILES:
+            (tmp_path / filename).write_text("placeholder")
+
+        assert (
+            _is_interaction_reporting_enabled({"reporting": {"enabled": "false"}})
+            is False
+        )
+        assert (
+            _is_interaction_reporting_enabled({"reporting": {"enabled": "0"}}) is False
+        )
+        assert (
+            _is_interaction_reporting_enabled({"reporting": {"enabled": "no"}}) is False
+        )
+
+        if not _is_interaction_reporting_enabled({"reporting": {"enabled": "false"}}):
+            _cleanup_interaction_reporting_artifacts(tmp_path)
+
+        for filename in _INTERACTION_REPORT_FILES:
+            assert not (tmp_path / filename).exists()

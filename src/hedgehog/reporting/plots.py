@@ -2072,6 +2072,171 @@ def plot_docking_filters_by_model_bar(
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
+def plot_docking_filters_interaction_top_residues_bar(
+    top_residues: list[dict[str, Any]],
+) -> str:
+    """Create horizontal bar chart for top interaction residues."""
+    if not top_residues:
+        return _empty_plot("No interaction residue data available")
+
+    sorted_rows = sorted(
+        top_residues,
+        key=lambda row: (
+            -int(row.get("total_events", 0) or 0),
+            str(row.get("residue", "")),
+        ),
+    )[:15]
+    if not sorted_rows:
+        return _empty_plot("No interaction residue data available")
+
+    residues = [str(row.get("residue", "unknown")) for row in sorted_rows]
+    event_counts = [int(row.get("total_events", 0) or 0) for row in sorted_rows]
+    unique_pose_counts = [int(row.get("unique_poses", 0) or 0) for row in sorted_rows]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            y=residues,
+            x=event_counts,
+            orientation="h",
+            marker_color="rgba(59, 130, 246, 0.8)",
+            text=[str(v) for v in event_counts],
+            textposition="outside",
+            customdata=unique_pose_counts,
+            hovertemplate=(
+                "Residue: %{y}<br>"
+                "Events: %{x}<br>"
+                "Unique poses: %{customdata}<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        height=max(280, 36 * len(residues)),
+        margin={"l": 130, "r": 30, "t": 30, "b": 40},
+        xaxis_title="Interaction Events",
+        yaxis={"autorange": "reversed"},
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_docking_filters_interaction_type_distribution_bar(
+    type_distribution: list[dict[str, Any]],
+) -> str:
+    """Create bar chart for interaction type distribution."""
+    if not type_distribution:
+        return _empty_plot("No interaction type data available")
+
+    sorted_rows = sorted(
+        type_distribution,
+        key=lambda row: (
+            -int(row.get("total_events", 0) or 0),
+            str(row.get("interaction_type", "")),
+        ),
+    )
+    if not sorted_rows:
+        return _empty_plot("No interaction type data available")
+
+    types = [str(row.get("interaction_type", "unknown")) for row in sorted_rows]
+    event_counts = [int(row.get("total_events", 0) or 0) for row in sorted_rows]
+    unique_residues = [int(row.get("unique_residues", 0) or 0) for row in sorted_rows]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=types,
+            y=event_counts,
+            marker_color=[
+                COMPARE_PALETTE[i % len(COMPARE_PALETTE)] for i in range(len(types))
+            ],
+            text=[str(v) for v in event_counts],
+            textposition="outside",
+            customdata=unique_residues,
+            hovertemplate=(
+                "Interaction type: %{x}<br>"
+                "Events: %{y}<br>"
+                "Unique residues: %{customdata}<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        height=320,
+        margin={"l": 50, "r": 30, "t": 30, "b": 80},
+        yaxis_title="Interaction Events",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_docking_filters_interaction_matrix_heatmap(
+    matrix: list[dict[str, Any]],
+) -> str:
+    """Create residue x interaction type heatmap for interaction event counts."""
+    if not matrix:
+        return _empty_plot("No interaction matrix data available")
+
+    residues = sorted(
+        {str(row.get("residue", "unknown")) for row in matrix if row.get("residue")}
+    )
+    types = sorted(
+        {
+            str(row.get("interaction_type", "unknown"))
+            for row in matrix
+            if row.get("interaction_type")
+        }
+    )
+    if not residues or not types:
+        return _empty_plot("No interaction matrix data available")
+
+    counts = {(res, itype): 0 for res in residues for itype in types}
+    for row in matrix:
+        residue = str(row.get("residue", "unknown"))
+        interaction_type = str(row.get("interaction_type", "unknown"))
+        if residue not in residues or interaction_type not in types:
+            continue
+        counts[(residue, interaction_type)] = int(row.get("event_count", 0) or 0)
+
+    z: list[list[int]] = []
+    text: list[list[str]] = []
+    for residue in residues:
+        row_values: list[int] = []
+        row_text: list[str] = []
+        for interaction_type in types:
+            value = counts[(residue, interaction_type)]
+            row_values.append(value)
+            row_text.append(str(value))
+        z.append(row_values)
+        text.append(row_text)
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=types,
+            y=residues,
+            text=text,
+            texttemplate="%{text}",
+            textfont={"size": 10},
+            colorscale="Blues",
+            colorbar={"title": "Events", "thickness": 15},
+            hovertemplate=(
+                "Residue: %{y}<br>Interaction type: %{x}<br>Events: %{z}<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        height=max(320, 28 * len(residues) + 120),
+        margin={"l": 120, "r": 40, "t": 20, "b": 80},
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
 # =========================================================================
 # MolEval Generative Metrics
 # =========================================================================

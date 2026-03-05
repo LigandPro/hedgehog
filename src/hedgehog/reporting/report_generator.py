@@ -101,6 +101,19 @@ def _try_read_csv(*paths: Path) -> pd.DataFrame | None:
     return None
 
 
+def _try_read_json(path: Path) -> dict[str, Any]:
+    """Try reading a JSON object file, returning {} on failure."""
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.debug("Could not read %s: %s", path, e)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 class ReportGenerator:
     """Generates comprehensive HTML reports for HEDGEHOG pipeline runs."""
 
@@ -1923,6 +1936,275 @@ class ReportGenerator:
 
         return {"descriptors": list(comparison.keys()), "data": comparison}
 
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        """Convert value to int with a default fallback."""
+        if value is None:
+            return default
+        try:
+            if pd.isna(value):
+                return default
+        except Exception:
+            pass
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_str(value: Any, default: str = "") -> str:
+        """Convert value to stripped string with default fallback."""
+        if value is None:
+            return default
+        try:
+            if pd.isna(value):
+                return default
+        except Exception:
+            pass
+        text = str(value).strip()
+        return text if text else default
+
+    @staticmethod
+    def _safe_bool(value: Any, default: bool = False) -> bool:
+        """Convert value to bool with tolerant string/number handling."""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        try:
+            if pd.isna(value):
+                return default
+        except Exception:
+            pass
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y"}:
+                return True
+            if normalized in {"0", "false", "no", "n", ""}:
+                return False
+            return default
+        if isinstance(value, (int, float)):
+            return value != 0
+        return bool(value)
+
+    def _get_interaction_summary(self, stage_dir: Path) -> dict[str, Any]:
+        """Read and normalize interaction reporting artifacts from stage 06."""
+        events_df = _try_read_csv(stage_dir / "interaction_events.csv")
+        residue_df = _try_read_csv(stage_dir / "interaction_residue_summary.csv")
+        type_df = _try_read_csv(stage_dir / "interaction_type_summary.csv")
+        matrix_df = _try_read_csv(stage_dir / "interaction_matrix.csv")
+        meta = _try_read_json(stage_dir / "interaction_report_meta.json")
+
+        event_records: list[dict[str, Any]] = []
+        if events_df is not None and not events_df.empty:
+            has_pass = "pass" in events_df.columns
+            has_pass_interactions = "pass_interactions" in events_df.columns
+            for _, row in events_df.iterrows():
+                pass_value = (
+                    row.get("pass") if has_pass else row.get("pass_interactions", False)
+                )
+                event_records.append(
+                    {
+                        "mol_idx": self._safe_int(row.get("mol_idx"), -1),
+                        "source_mol_idx": self._safe_str(row.get("source_mol_idx"), ""),
+                        "model_name": self._safe_str(row.get("model_name"), ""),
+                        "residue": self._safe_str(row.get("residue"), "unknown"),
+                        "interaction_type": self._safe_str(
+                            row.get("interaction_type"), "unknown"
+                        ),
+                        "label": self._safe_str(row.get("label"), ""),
+                        "pass": self._safe_bool(pass_value, False),
+                        "pass_interactions": self._safe_bool(
+                            row.get("pass_interactions")
+                            if has_pass_interactions
+                            else False,
+                            False,
+                        ),
+                    }
+                )
+
+        if (
+            not event_records
+            and not meta
+            and all(df is None or df.empty for df in (residue_df, type_df, matrix_df))
+        ):
+            return {}
+
+        if (residue_df is None or residue_df.empty) and event_records:
+            tmp = pd.DataFrame(event_records)
+            residue_df = (
+                tmp.groupby("residue", sort=False)
+                .agg(
+                    total_events=("residue", "size"),
+                    unique_poses=("mol_idx", "nunique"),
+                    interaction_types=("interaction_type", "nunique"),
+                )
+                .reset_index()
+            )
+            passed_unique = (
+                tmp[tmp["pass"] == True]  # noqa: E712
+                .groupby("residue", sort=False)["mol_idx"]
+                .nunique()
+            )
+            residue_df["unique_passed_poses"] = (
+                residue_df["residue"].map(passed_unique).fillna(0).astype(int)
+            )
+
+        if (type_df is None or type_df.empty) and event_records:
+            tmp = pd.DataFrame(event_records)
+            type_df = (
+                tmp.groupby("interaction_type", sort=False)
+                .agg(
+                    total_events=("interaction_type", "size"),
+                    unique_poses=("mol_idx", "nunique"),
+                    unique_residues=("residue", "nunique"),
+                )
+                .reset_index()
+            )
+
+        if (matrix_df is None or matrix_df.empty) and event_records:
+            tmp = pd.DataFrame(event_records)
+            matrix_df = (
+                tmp.groupby(["residue", "interaction_type"], sort=False)
+                .agg(
+                    event_count=("label", "size"),
+                    unique_poses=("mol_idx", "nunique"),
+                )
+                .reset_index()
+            )
+
+        top_residues: list[dict[str, Any]] = []
+        if residue_df is not None and not residue_df.empty:
+            safe_df = residue_df.copy()
+            if "residue" not in safe_df.columns:
+                safe_df["residue"] = "unknown"
+            if "total_events" not in safe_df.columns:
+                safe_df["total_events"] = 0
+            if "unique_poses" not in safe_df.columns:
+                safe_df["unique_poses"] = 0
+            if "unique_passed_poses" not in safe_df.columns:
+                safe_df["unique_passed_poses"] = 0
+            if "interaction_types" not in safe_df.columns:
+                safe_df["interaction_types"] = 0
+
+            safe_df = safe_df.sort_values(
+                ["total_events", "residue"],
+                ascending=[False, True],
+                kind="mergesort",
+            )
+            for _, row in safe_df.iterrows():
+                top_residues.append(
+                    {
+                        "residue": self._safe_str(row.get("residue"), "unknown"),
+                        "total_events": self._safe_int(row.get("total_events"), 0),
+                        "unique_poses": self._safe_int(row.get("unique_poses"), 0),
+                        "unique_passed_poses": self._safe_int(
+                            row.get("unique_passed_poses"), 0
+                        ),
+                        "interaction_types": self._safe_int(
+                            row.get("interaction_types"), 0
+                        ),
+                    }
+                )
+
+        type_distribution: list[dict[str, Any]] = []
+        if type_df is not None and not type_df.empty:
+            safe_df = type_df.copy()
+            if "interaction_type" not in safe_df.columns:
+                safe_df["interaction_type"] = "unknown"
+            if "total_events" not in safe_df.columns:
+                safe_df["total_events"] = 0
+            if "unique_poses" not in safe_df.columns:
+                safe_df["unique_poses"] = 0
+            if "unique_residues" not in safe_df.columns:
+                safe_df["unique_residues"] = 0
+
+            safe_df = safe_df.sort_values(
+                ["total_events", "interaction_type"],
+                ascending=[False, True],
+                kind="mergesort",
+            )
+            for _, row in safe_df.iterrows():
+                type_distribution.append(
+                    {
+                        "interaction_type": self._safe_str(
+                            row.get("interaction_type"), "unknown"
+                        ),
+                        "total_events": self._safe_int(row.get("total_events"), 0),
+                        "unique_poses": self._safe_int(row.get("unique_poses"), 0),
+                        "unique_residues": self._safe_int(
+                            row.get("unique_residues"), 0
+                        ),
+                    }
+                )
+
+        matrix: list[dict[str, Any]] = []
+        if matrix_df is not None and not matrix_df.empty:
+            safe_df = matrix_df.copy()
+            if "residue" not in safe_df.columns:
+                safe_df["residue"] = "unknown"
+            if "interaction_type" not in safe_df.columns:
+                safe_df["interaction_type"] = "unknown"
+            if "event_count" not in safe_df.columns:
+                safe_df["event_count"] = 0
+            if "unique_poses" not in safe_df.columns:
+                safe_df["unique_poses"] = 0
+
+            safe_df = safe_df.sort_values(
+                ["residue", "interaction_type"],
+                ascending=[True, True],
+                kind="mergesort",
+            )
+            for _, row in safe_df.iterrows():
+                matrix.append(
+                    {
+                        "residue": self._safe_str(row.get("residue"), "unknown"),
+                        "interaction_type": self._safe_str(
+                            row.get("interaction_type"), "unknown"
+                        ),
+                        "event_count": self._safe_int(row.get("event_count"), 0),
+                        "unique_poses": self._safe_int(row.get("unique_poses"), 0),
+                    }
+                )
+
+        total_events_computed = sum(item["total_events"] for item in type_distribution)
+        poses_with_interactions_computed = len(
+            {item["mol_idx"] for item in event_records if item["mol_idx"] >= 0}
+        )
+
+        total_events = self._safe_int(meta.get("total_events"), total_events_computed)
+        poses_with_interactions = self._safe_int(
+            meta.get("poses_with_interactions"), poses_with_interactions_computed
+        )
+        unique_residues = self._safe_int(
+            meta.get("unique_residues"),
+            len({item["residue"] for item in top_residues}),
+        )
+        unique_interaction_types = self._safe_int(
+            meta.get("unique_interaction_types"),
+            len({item["interaction_type"] for item in type_distribution}),
+        )
+
+        if (
+            total_events <= 0
+            and not top_residues
+            and not type_distribution
+            and not matrix
+            and not meta
+        ):
+            return {}
+
+        return {
+            "total_events": total_events,
+            "poses_with_interactions": poses_with_interactions,
+            "unique_residues": unique_residues,
+            "unique_interaction_types": unique_interaction_types,
+            "top_residues": top_residues,
+            "type_distribution": type_distribution,
+            "matrix": matrix,
+            "meta": meta,
+        }
+
     def _get_docking_filters_detailed(self) -> dict[str, Any]:
         """Get detailed docking filters data for report visualization.
 
@@ -1966,9 +2248,14 @@ class ReportGenerator:
             except Exception:
                 pass
 
-        # Read aggregation mode from pipeline config
+        # Read aggregation mode from stage config
         aggregation_mode = "all"
-        dock_filt_config = self.config.get("docking_filters", {})
+        dock_filt_config = {}
+        stage_cfg = self._load_stage_config("config_docking_filters")
+        if isinstance(stage_cfg, dict) and stage_cfg:
+            dock_filt_config = stage_cfg
+        elif isinstance(self.config.get("docking_filters"), dict):
+            dock_filt_config = self.config.get("docking_filters", {})
         if isinstance(dock_filt_config, dict):
             agg = dock_filt_config.get("aggregation", {})
             if isinstance(agg, dict):
@@ -2046,6 +2333,8 @@ class ReportGenerator:
                 if ss.get("min_shape_score") is not None:
                     thresholds["shape_score"] = {"min": ss["min_shape_score"]}
 
+        interaction_summary = self._get_interaction_summary(df_dir)
+
         return {
             "total_poses": total_poses,
             "passed_poses": passed_poses,
@@ -2056,6 +2345,7 @@ class ReportGenerator:
             "numeric_metrics": numeric_metrics,
             "thresholds": thresholds,
             "by_model": by_model,
+            "interaction_summary": interaction_summary,
         }
 
     # =====================================================================
@@ -2555,6 +2845,24 @@ class ReportGenerator:
             for model, model_data in df_detailed["by_model"].items():
                 df_by_model_js[model] = model_data
             plot_htmls["docking_filters_data"] = df_by_model_js
+
+        interaction_summary = df_detailed.get("interaction_summary", {})
+        if interaction_summary:
+            plot_htmls["docking_filters_interactions_top_residues"] = (
+                plots.plot_docking_filters_interaction_top_residues_bar(
+                    interaction_summary.get("top_residues", [])
+                )
+            )
+            plot_htmls["docking_filters_interactions_type_distribution"] = (
+                plots.plot_docking_filters_interaction_type_distribution_bar(
+                    interaction_summary.get("type_distribution", [])
+                )
+            )
+            plot_htmls["docking_filters_interactions_matrix"] = (
+                plots.plot_docking_filters_interaction_matrix_heatmap(
+                    interaction_summary.get("matrix", [])
+                )
+            )
 
         # =====================================================================
         # Final Descriptors (Stage 07)
