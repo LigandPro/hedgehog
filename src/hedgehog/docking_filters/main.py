@@ -654,7 +654,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             mol, {"model_name", "sm_model_name", "s_sm_model_name"}
         )
         mol_idx = _get_first_prop_value(
-            mol, {"mol_idx", "sm_mol_idx", "s_sm_mol_idx", "name"}
+            mol, {"mol_idx", "sm_mol_idx", "s_sm_mol_idx", "name", "_Name"}
         )
         model_names.append(model_name or "")
         mol_idxs.append(mol_idx or "")
@@ -662,6 +662,52 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         gnina_min_aff.append(_get_prop_as_float(mol, "minimizedAffinity"))
         gnina_cnn_score.append(_get_prop_as_float(mol, "CNNscore"))
         gnina_cnn_aff.append(_get_prop_as_float(mol, "CNNaffinity"))
+
+    # Fallback: try to fill missing model_name and mol_idx from ligands.csv
+    ligands_csv = docking_dir / "ligands.csv"
+    if ligands_csv.exists():
+        try:
+            lig_df = pd.read_csv(ligands_csv)
+            if "mol_idx" in lig_df.columns and "model_name" in lig_df.columns:
+                # Create lookup dictionaries by mol_idx and by name
+                mol_idx_to_model_name = dict(
+                    zip(lig_df["mol_idx"].astype(str), lig_df["model_name"].astype(str))
+                )
+                name_to_model_name = {}
+                name_to_mol_idx = {}
+                if "name" in lig_df.columns:
+                    name_to_model_name = dict(
+                        zip(
+                            lig_df["name"].astype(str), lig_df["model_name"].astype(str)
+                        )
+                    )
+                    name_to_mol_idx = dict(
+                        zip(lig_df["name"].astype(str), lig_df["mol_idx"].astype(str))
+                    )
+
+                # Fill in missing values using mol_idx or name as lookup key
+                for i, mol in enumerate(mols):
+                    model_name = model_names[i]
+                    mol_idx = mol_idxs[i]
+
+                    # Try to get name from molecule if mol_idx is missing
+                    mol_name = None
+                    if not mol_idx:
+                        mol_name = _get_first_prop_value(mol, {"name", "_Name"})
+
+                    # Fill model_name if missing
+                    if not model_name:
+                        if mol_idx and mol_idx in mol_idx_to_model_name:
+                            model_names[i] = mol_idx_to_model_name[mol_idx]
+                        elif mol_name and mol_name in name_to_model_name:
+                            model_names[i] = name_to_model_name[mol_name]
+
+                    # Fill mol_idx if missing
+                    if not mol_idx:
+                        if mol_name and mol_name in name_to_mol_idx:
+                            mol_idxs[i] = name_to_mol_idx[mol_name]
+        except Exception as e:
+            logger.debug("Could not load model_name/mol_idx from ligands.csv: %s", e)
 
     # Initialize results DataFrame
     results_df = pd.DataFrame(

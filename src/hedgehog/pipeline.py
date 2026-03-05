@@ -2010,8 +2010,11 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
         folder.mkdir(parents=True, exist_ok=True)
         incomplete_marker.write_text(
             f"Pipeline started: {datetime.now().isoformat()}\n"
-            "This file is removed automatically on successful completion.\n"
-            "If you see it, the run was interrupted or failed.\n"
+            "This file exists while the pipeline is running or if it was interrupted/failed.\n"
+            "It will be removed automatically on successful completion.\n"
+            f"If the pipeline is still running please check progress in: {folder}/_workdir/\n"
+            "\n"
+            f"If the pipeline failed please review the run log: {folder}/run_*.log.\n"
         )
 
         _save_config_snapshot(config)
@@ -2020,6 +2023,8 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
 
         # Pipeline finished normally -- remove the marker.
         incomplete_marker.unlink(missing_ok=True)
+
+        return success
     except Exception as e:
         logger.error("Pipeline execution failed: %s", e)
         success = False
