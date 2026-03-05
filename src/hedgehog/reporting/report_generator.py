@@ -1944,8 +1944,12 @@ class ReportGenerator:
         try:
             if pd.isna(value):
                 return default
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "pd.isna(%r) raised %r in _safe_int; continuing with fallback conversion",
+                value,
+                exc,
+            )
         try:
             return int(float(value))
         except (TypeError, ValueError):
@@ -1959,8 +1963,12 @@ class ReportGenerator:
         try:
             if pd.isna(value):
                 return default
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "pd.isna(%r) raised %r in _safe_str; continuing with string coercion",
+                value,
+                exc,
+            )
         text = str(value).strip()
         return text if text else default
 
@@ -1974,8 +1982,12 @@ class ReportGenerator:
         try:
             if pd.isna(value):
                 return default
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "pd.isna(%r) raised %r in _safe_bool; continuing with generic bool coercion",
+                value,
+                exc,
+            )
         if isinstance(value, str):
             normalized = value.strip().lower()
             if normalized in {"1", "true", "yes", "y"}:

@@ -218,8 +218,12 @@ def _coerce_bool(value: Any) -> bool:
     try:
         if pd.isna(value):
             return False
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(
+            "pd.isna(%r) raised %r; falling back to generic bool coercion",
+            value,
+            exc,
+        )
     if isinstance(value, (int, float)):
         return value != 0
     return bool(value)
