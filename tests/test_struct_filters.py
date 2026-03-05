@@ -656,6 +656,56 @@ class TestCommonAlertsContract:
 
     @patch("hedgehog.struct_filters.utils.filter_alerts")
     @patch("hedgehog.struct_filters.utils.load_config")
+    def test_unordered_parallel_results_are_realigned_by_mol_idx(
+        self, mock_load_config, mock_filter_alerts, monkeypatch
+    ):
+        """Common Alerts must keep row identity even with unordered worker output."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {"RulesetA": [("[#7]", "nitrogen atom")]}
+        )
+
+        def _fake_parallel_map(
+            func,
+            items,
+            n_jobs,
+            chunksize=None,
+            progress=None,
+            initializer=None,
+            initargs=(),
+            preserve_order=True,
+            start_method=None,
+        ):
+            if initializer is not None:
+                initializer(*initargs)
+            out = [func(item) for item in items]
+            # Simulate imap_unordered delivery order.
+            out.reverse()
+            if progress is not None:
+                progress(len(items), len(items))
+            return out
+
+        monkeypatch.setattr(structfilters_utils, "parallel_map", _fake_parallel_map)
+
+        mol0 = Chem.MolFromSmiles(SMILES_ETHANOL)  # no nitrogen -> passes RulesetA
+        mol1 = Chem.MolFromSmiles("CCN")  # contains nitrogen -> fails RulesetA
+        smiles_payload = [
+            (SMILES_ETHANOL, "m1", mol0, 0),
+            ("CCN", "m1", mol1, 1),
+        ]
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        result = apply_structural_alerts(
+            config,
+            [mol0, mol1],
+            smiles_model_name_mols=smiles_payload,
+        )
+
+        by_idx = result.set_index("mol_idx")
+        assert by_idx.loc[0, "pass_RulesetA"] == True  # noqa: E712
+        assert by_idx.loc[1, "pass_RulesetA"] == False  # noqa: E712
+
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
     def test_linux_defaults_common_alerts_to_fork(
         self, mock_load_config, mock_filter_alerts, monkeypatch
     ):
