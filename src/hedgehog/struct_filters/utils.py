@@ -886,10 +886,14 @@ def _build_alerts_results(results_list, mols):
     """Reconstruct alerts results DataFrame from parallel worker output."""
     # Restore mol column (RDKit Mol objects are not picklable across processes).
     for row_data in results_list:
-        idx = row_data.pop("_mol_idx")
+        idx = row_data.get("_mol_idx")
         row_data["mol"] = mols[idx]
 
     results = pd.DataFrame(results_list)
+    if "_mol_idx" in results.columns:
+        # apply_structural_alerts runs workers unordered for throughput; sort back to
+        # the original molecule order before identity columns are attached.
+        results = results.sort_values("_mol_idx").reset_index(drop=True)
 
     # Calculate pass and pass_any columns.
     pass_cols = [
@@ -899,6 +903,8 @@ def _build_alerts_results(results_list, mols):
     ]
     results["pass"] = results[pass_cols].all(axis=1)
     results["pass_any"] = results[pass_cols].any(axis=1)
+    if "_mol_idx" in results.columns:
+        results = results.drop(columns=["_mol_idx"])
     return results
 
 
