@@ -447,6 +447,20 @@ class TestCountMolecules:
         # Fallback: no $$$$ but file is non-empty -> count = 1
         assert result["count"] == 1
 
+    def test_mol2_multi_molecule(self, handler, tmp_path):
+        mol2 = tmp_path / "mols.mol2"
+        mol2.write_text(
+            "@<TRIPOS>MOLECULE\nmol1\n@<TRIPOS>MOLECULE\nmol2\n@<TRIPOS>MOLECULE\nmol3\n"
+        )
+        result = handler.count_molecules(str(mol2))
+        assert result["count"] == 3
+
+    def test_mol2_single_malformed_fallback(self, handler, tmp_path):
+        mol2 = tmp_path / "single.mol2"
+        mol2.write_text("MOL2 without tripos headers\n")
+        result = handler.count_molecules(str(mol2))
+        assert result["count"] == 1
+
     def test_csv_count(self, handler, tmp_path):
         csv = tmp_path / "mols.csv"
         csv.write_text("smiles,name\nCCC,ethane\nCCCC,butane\n")
@@ -996,6 +1010,67 @@ class TestPipelinePreflight:
         assert any(
             check["code"] == "MAIN_OUTPUT_WARNING" and check["level"] == "warning"
             for check in result["checks"]
+        )
+
+    def test_preflight_resolves_relative_paths_against_project_root(
+        self, preflight_env, monkeypatch, tmp_path
+    ):
+        project_root = preflight_env["paths"]["project_root"]
+        config_dir = project_root / "src" / "hedgehog" / "configs"
+
+        rel_data_dir = project_root / "data"
+        rel_data_dir.mkdir(parents=True, exist_ok=True)
+        rel_input = rel_data_dir / "input.csv"
+        rel_input.write_text("smiles\nCCO\n")
+        rel_receptor = rel_data_dir / "receptor.pdb"
+        rel_receptor.write_text(
+            "ATOM      1  N   ALA A   1      11.104  13.207  14.281  1.00 20.00           N\n"
+        )
+        (project_root / "results").mkdir(parents=True, exist_ok=True)
+
+        (config_dir / "config.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "generated_mols_path": "data/input.csv",
+                    "folder_to_save": "results/relative",
+                    "n_jobs": 1,
+                    "config_mol_prep": str(config_dir / "config_mol_prep.yml"),
+                    "config_descriptors": str(config_dir / "config_descriptors.yml"),
+                    "config_structFilters": str(
+                        config_dir / "config_structFilters.yml"
+                    ),
+                    "config_synthesis": str(config_dir / "config_synthesis.yml"),
+                    "config_docking": str(config_dir / "config_docking.yml"),
+                    "config_docking_filters": str(
+                        config_dir / "config_docking_filters.yml"
+                    ),
+                },
+                sort_keys=False,
+            )
+        )
+        (config_dir / "config_docking.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "run": True,
+                    "tools": "smina",
+                    "receptor_pdb": "data/receptor.pdb",
+                },
+                sort_keys=False,
+            )
+        )
+
+        # Simulate backend running from a directory outside project_root.
+        monkeypatch.chdir(tmp_path)
+
+        handler = preflight_env["server"].pipeline_handler
+        result = handler.preflight_pipeline(["docking"])
+
+        assert result["valid"] is True
+        assert result["molecule_count"] == 1
+        assert not any(
+            check["code"] == "DOCKING_RECEPTOR_INVALID"
+            for report in result["stage_reports"]
+            for check in report["checks"]
         )
 
     def test_preflight_requires_input_sdf_for_manual_docking_filters(

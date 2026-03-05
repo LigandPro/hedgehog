@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ast
+import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,14 @@ from .utils import (
 )
 
 apply_posecheck_fast_filter = apply_posebusters_fast_filter
+
+_INTERACTION_REPORT_FILES = (
+    "interaction_events.csv",
+    "interaction_residue_summary.csv",
+    "interaction_type_summary.csv",
+    "interaction_matrix.csv",
+    "interaction_report_meta.json",
+)
 
 
 def _project_root() -> Path:
@@ -185,6 +196,337 @@ def _run_single_filter(
             message=f"DockingFilters: {filter_name}",
         )
     return results_df
+
+
+def _cleanup_interaction_reporting_artifacts(output_dir: Path) -> None:
+    for filename in _INTERACTION_REPORT_FILES:
+        path = output_dir / filename
+        if path.exists():
+            try:
+                path.unlink()
+            except OSError as e:
+                logger.warning("Could not remove %s: %s", path, e)
+
+
+def _coerce_bool(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    try:
+        if pd.isna(value):
+            return False
+    except Exception as exc:
+        logger.debug(
+            "pd.isna(%r) raised %r; falling back to generic bool coercion",
+            value,
+            exc,
+        )
+    if isinstance(value, (int, float)):
+        return value != 0
+    return bool(value)
+
+
+def _normalize_interaction_label(item: Any) -> dict[str, str] | None:
+    if not isinstance(item, dict):
+        return None
+
+    label = str(item.get("label", "")).strip()
+    if not label:
+        return None
+    residue = str(item.get("residue", "") or "unknown").strip() or "unknown"
+    interaction_type = (
+        str(item.get("interaction_type", "") or "unknown").strip() or "unknown"
+    )
+    return {
+        "label": label,
+        "residue": residue,
+        "interaction_type": interaction_type,
+    }
+
+
+def _interaction_labels_from_row(row: pd.Series) -> list[dict[str, str]]:
+    labels: list[dict[str, str]] = []
+    payload = row.get("interaction_labels_json")
+    if isinstance(payload, str) and payload.strip():
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    normalized = _normalize_interaction_label(item)
+                    if normalized is not None:
+                        labels.append(normalized)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            labels = []
+
+    # Backward-compatible fallback for historical metrics.csv where only the
+    # legacy "interactions" CSV string is available.
+    if not labels:
+        interactions_raw = row.get("interactions")
+        if isinstance(interactions_raw, str) and interactions_raw.strip():
+            labels.extend(_parse_legacy_interactions(interactions_raw))
+
+    dedup: dict[tuple[str, str, str], dict[str, str]] = {}
+    for label in labels:
+        key = (label["label"], label["residue"], label["interaction_type"])
+        dedup[key] = label
+    return sorted(
+        dedup.values(),
+        key=lambda item: (item["residue"], item["interaction_type"], item["label"]),
+    )
+
+
+def _extract_interaction_pairs_from_literal(parsed: Any) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    if not isinstance(parsed, (list, tuple)):
+        return pairs
+
+    # Single pair form: ("ASP:123", "HBDonor")
+    if len(parsed) >= 2 and not any(
+        isinstance(item, (list, tuple, dict)) for item in parsed[:2]
+    ):
+        residue = str(parsed[0]).strip()
+        interaction_type = str(parsed[1]).strip()
+        if residue or interaction_type:
+            pairs.append((residue, interaction_type))
+        return pairs
+
+    # Sequence form: [("ASP:123", "HBDonor"), ("SER:45", "Hydrophobic")]
+    for item in parsed:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        residue = str(item[0]).strip()
+        interaction_type = str(item[1]).strip()
+        if residue or interaction_type:
+            pairs.append((residue, interaction_type))
+    return pairs
+
+
+def _parse_legacy_interactions(interactions_raw: str) -> list[dict[str, str]]:
+    text = interactions_raw.strip()
+    if not text:
+        return []
+
+    pair_tokens: list[tuple[str, str]] = []
+    for candidate in (text, f"[{text}]"):
+        try:
+            parsed = ast.literal_eval(candidate)
+        except (ValueError, SyntaxError):
+            continue
+        pair_tokens = _extract_interaction_pairs_from_literal(parsed)
+        if pair_tokens:
+            break
+
+    if not pair_tokens:
+        tuple_matches = re.findall(
+            r"\(\s*['\"]?([^,'\")]+)['\"]?\s*,\s*['\"]?([^,'\")]+)['\"]?\s*\)",
+            text,
+        )
+        pair_tokens = [
+            (residue, interaction_type) for residue, interaction_type in tuple_matches
+        ]
+
+    rows: list[dict[str, str]] = []
+    if pair_tokens:
+        for residue, interaction_type in pair_tokens:
+            residue_clean = residue.strip().strip("'\"") or "unknown"
+            type_clean = interaction_type.strip().strip("'\"") or "unknown"
+            rows.append(
+                {
+                    "label": f"{residue_clean}|{type_clean}",
+                    "residue": residue_clean,
+                    "interaction_type": type_clean,
+                }
+            )
+        return rows
+
+    for token in text.split(","):
+        label = token.strip().strip("'\"")
+        if not label:
+            continue
+        if "|" in label:
+            residue, interaction_type = label.split("|", 1)
+            residue_clean = residue.strip().strip("'\"") or "unknown"
+            type_clean = interaction_type.strip().strip("'\"") or "unknown"
+            rows.append(
+                {
+                    "label": label,
+                    "residue": residue_clean,
+                    "interaction_type": type_clean,
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "label": label,
+                    "residue": "unknown",
+                    "interaction_type": "unknown",
+                }
+            )
+    return rows
+
+
+def _is_interaction_reporting_enabled(int_config: dict[str, Any]) -> bool:
+    interaction_reporting_cfg = int_config.get("reporting", {})
+    if isinstance(interaction_reporting_cfg, dict):
+        return _coerce_bool(interaction_reporting_cfg.get("enabled", True))
+    return _coerce_bool(interaction_reporting_cfg)
+
+
+def _write_interaction_reporting_artifacts(
+    *,
+    results_df: pd.DataFrame,
+    output_dir: Path,
+    interaction_filter_enabled: bool,
+) -> None:
+    events_rows: list[dict[str, Any]] = []
+
+    sorted_df = results_df.sort_values("mol_idx", kind="mergesort")
+    for _, row in sorted_df.iterrows():
+        labels = _interaction_labels_from_row(row)
+        if not labels:
+            continue
+
+        raw_mol_idx = row.get("mol_idx")
+        mol_idx = int(raw_mol_idx) if pd.notna(raw_mol_idx) else -1
+        source_mol_idx = row.get("source_mol_idx")
+        model_name = row.get("model_name")
+        pass_all = _coerce_bool(row.get("pass", False))
+        pass_interactions = _coerce_bool(row.get("pass_interactions", False))
+
+        for label in labels:
+            events_rows.append(
+                {
+                    "mol_idx": mol_idx,
+                    "source_mol_idx": ""
+                    if pd.isna(source_mol_idx)
+                    else str(source_mol_idx),
+                    "model_name": "" if pd.isna(model_name) else str(model_name),
+                    "pass": pass_all,
+                    "pass_interactions": pass_interactions,
+                    "residue": label["residue"],
+                    "interaction_type": label["interaction_type"],
+                    "label": label["label"],
+                }
+            )
+
+    events_df = pd.DataFrame(
+        events_rows,
+        columns=[
+            "mol_idx",
+            "source_mol_idx",
+            "model_name",
+            "pass",
+            "pass_interactions",
+            "residue",
+            "interaction_type",
+            "label",
+        ],
+    )
+    events_df.to_csv(output_dir / "interaction_events.csv", index=False)
+
+    residue_summary_rows: list[dict[str, Any]] = []
+    type_summary_rows: list[dict[str, Any]] = []
+    matrix_rows: list[dict[str, Any]] = []
+
+    if not events_df.empty:
+        for residue, group in events_df.groupby("residue", sort=False):
+            residue_summary_rows.append(
+                {
+                    "residue": residue,
+                    "total_events": int(len(group)),
+                    "unique_poses": int(group["mol_idx"].nunique()),
+                    "unique_passed_poses": int(
+                        group.loc[group["pass"].fillna(False), "mol_idx"].nunique()
+                    ),
+                    "interaction_types": int(group["interaction_type"].nunique()),
+                }
+            )
+
+        for interaction_type, group in events_df.groupby(
+            "interaction_type", sort=False
+        ):
+            type_summary_rows.append(
+                {
+                    "interaction_type": interaction_type,
+                    "total_events": int(len(group)),
+                    "unique_poses": int(group["mol_idx"].nunique()),
+                    "unique_residues": int(group["residue"].nunique()),
+                }
+            )
+
+        for (residue, interaction_type), group in events_df.groupby(
+            ["residue", "interaction_type"], sort=False
+        ):
+            matrix_rows.append(
+                {
+                    "residue": residue,
+                    "interaction_type": interaction_type,
+                    "event_count": int(len(group)),
+                    "unique_poses": int(group["mol_idx"].nunique()),
+                }
+            )
+
+    residue_summary_df = pd.DataFrame(
+        residue_summary_rows,
+        columns=[
+            "residue",
+            "total_events",
+            "unique_poses",
+            "unique_passed_poses",
+            "interaction_types",
+        ],
+    )
+    residue_summary_df = residue_summary_df.sort_values(
+        ["total_events", "residue"], ascending=[False, True], kind="mergesort"
+    )
+    residue_summary_df.to_csv(
+        output_dir / "interaction_residue_summary.csv", index=False
+    )
+
+    type_summary_df = pd.DataFrame(
+        type_summary_rows,
+        columns=[
+            "interaction_type",
+            "total_events",
+            "unique_poses",
+            "unique_residues",
+        ],
+    )
+    type_summary_df = type_summary_df.sort_values(
+        ["total_events", "interaction_type"], ascending=[False, True], kind="mergesort"
+    )
+    type_summary_df.to_csv(output_dir / "interaction_type_summary.csv", index=False)
+
+    matrix_df = pd.DataFrame(
+        matrix_rows,
+        columns=["residue", "interaction_type", "event_count", "unique_poses"],
+    )
+    matrix_df = matrix_df.sort_values(
+        ["residue", "interaction_type"], ascending=[True, True], kind="mergesort"
+    )
+    matrix_df.to_csv(output_dir / "interaction_matrix.csv", index=False)
+
+    meta = {
+        "schema_version": 1,
+        "reporting_enabled": True,
+        "interaction_filter_enabled": interaction_filter_enabled,
+        "total_poses": int(len(results_df)),
+        "poses_with_interactions": int(events_df["mol_idx"].nunique())
+        if not events_df.empty
+        else 0,
+        "total_events": int(len(events_df)),
+        "unique_residues": int(residue_summary_df["residue"].nunique())
+        if not residue_summary_df.empty
+        else 0,
+        "unique_interaction_types": int(type_summary_df["interaction_type"].nunique())
+        if not type_summary_df.empty
+        else 0,
+    }
+    with open(output_dir / "interaction_report_meta.json", "w") as f:
+        json.dump(meta, f, indent=2, sort_keys=True)
 
 
 def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame | None:
@@ -526,6 +868,19 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     n_total = len(results_df)
     logger.info("Docking filters complete: %d/%d molecules passed", n_passed, n_total)
     logger.info("Filters applied: %s", ", ".join(filters_applied))
+
+    interaction_reporting_enabled = _is_interaction_reporting_enabled(int_config)
+
+    if interaction_reporting_enabled:
+        _write_interaction_reporting_artifacts(
+            results_df=results_df,
+            output_dir=output_dir,
+            interaction_filter_enabled=bool(int_config.get("enabled", True)),
+        )
+        logger.info("Saved interaction reporting artifacts to %s", output_dir)
+    else:
+        _cleanup_interaction_reporting_artifacts(output_dir)
+        logger.info("Interaction reporting artifacts disabled by config")
 
     # Save results
     if filter_config.get("aggregation", {}).get("save_metrics", True):

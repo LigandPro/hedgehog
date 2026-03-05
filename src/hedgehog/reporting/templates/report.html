@@ -2038,6 +2038,45 @@
             <div class="plot-container">{{ plots.docking_filters_by_model | safe }}</div>
             {% endif %}
 
+            <!-- Interaction reporting -->
+            {% set interaction_summary = data.docking_filters_detailed.interaction_summary %}
+            {% if interaction_summary and (interaction_summary.total_events or interaction_summary.top_residues or interaction_summary.type_distribution or interaction_summary.matrix) %}
+            <h3 style="margin-top: 24px; margin-bottom: 12px;">Interaction Profile</h3>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">{{ interaction_summary.total_events or 0 }}</div>
+                    <div class="metric-label">Interaction Events</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ interaction_summary.poses_with_interactions or 0 }}</div>
+                    <div class="metric-label">Poses With Interactions</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ interaction_summary.unique_residues or 0 }}</div>
+                    <div class="metric-label">Unique Residues</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ interaction_summary.unique_interaction_types or 0 }}</div>
+                    <div class="metric-label">Interaction Types</div>
+                </div>
+            </div>
+
+            {% if plots.docking_filters_interactions_top_residues %}
+            <h4 style="margin-top: 18px; margin-bottom: 10px;">Top Residues</h4>
+            <div class="plot-container">{{ plots.docking_filters_interactions_top_residues | safe }}</div>
+            {% endif %}
+
+            {% if plots.docking_filters_interactions_type_distribution %}
+            <h4 style="margin-top: 18px; margin-bottom: 10px;">Interaction Type Distribution</h4>
+            <div class="plot-container">{{ plots.docking_filters_interactions_type_distribution | safe }}</div>
+            {% endif %}
+
+            {% if plots.docking_filters_interactions_matrix %}
+            <h4 style="margin-top: 18px; margin-bottom: 10px;">Residue x Interaction Type Matrix</h4>
+            <div class="plot-container">{{ plots.docking_filters_interactions_matrix | safe }}</div>
+            {% endif %}
+            {% endif %}
+
             <script>
                 var dockingFiltersData = {{ (plots.docking_filters_data or {}) | tojson }};
                 var currentDockingFiltersModel = 'all';

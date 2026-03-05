@@ -1,5 +1,7 @@
 """Tests for report generator docking filters and final descriptors support."""
 
+import json
+
 import pandas as pd
 import pytest
 
@@ -152,6 +154,200 @@ class TestGetDockingFiltersDetailed:
         result = report_gen._get_docking_filters_detailed()
         assert result["unique_molecules_passed"] == 0
         assert result["total_poses"] == 2
+
+    def test_includes_interaction_summary_when_artifacts_present(
+        self, report_gen, base_path
+    ):
+        """Should include normalized interaction summary when artifact files exist."""
+        df_dir = base_path / "stages" / "06_docking_filters"
+
+        pd.DataFrame(
+            {
+                "mol_idx": [0, 1, 2],
+                "model_name": ["ModelA", "ModelA", "ModelB"],
+                "pass_search_box": [True, True, True],
+                "pass_interactions": [True, True, False],
+                "pass": [True, True, False],
+            }
+        ).to_csv(df_dir / "metrics.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN"],
+                "model_name": ["ModelA", "ModelA"],
+                "mol_idx": [0, 1],
+            }
+        ).to_csv(df_dir / "filtered_molecules.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "mol_idx": [0, 0, 1],
+                "source_mol_idx": ["10", "10", "11"],
+                "model_name": ["ModelA", "ModelA", "ModelA"],
+                "pass": [True, True, True],
+                "pass_interactions": [True, True, True],
+                "residue": ["ASP:123", "ASP:123", "SER:45"],
+                "interaction_type": ["HBDonor", "Hydrophobic", "HBAcceptor"],
+                "label": [
+                    "ASP:123|HBDonor",
+                    "ASP:123|Hydrophobic",
+                    "SER:45|HBAcceptor",
+                ],
+            }
+        ).to_csv(df_dir / "interaction_events.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "residue": ["ASP:123", "SER:45"],
+                "total_events": ["2", "1"],
+                "unique_poses": ["1", "1"],
+                "unique_passed_poses": ["1", "1"],
+                "interaction_types": ["2", "1"],
+            }
+        ).to_csv(df_dir / "interaction_residue_summary.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "interaction_type": ["HBDonor", "Hydrophobic", "HBAcceptor"],
+                "total_events": [1, 1, 1],
+                "unique_poses": [1, 1, 1],
+                "unique_residues": [1, 1, 1],
+            }
+        ).to_csv(df_dir / "interaction_type_summary.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "residue": ["ASP:123", "ASP:123", "SER:45"],
+                "interaction_type": ["HBDonor", "Hydrophobic", "HBAcceptor"],
+                "event_count": [1, 1, 1],
+                "unique_poses": [1, 1, 1],
+            }
+        ).to_csv(df_dir / "interaction_matrix.csv", index=False)
+
+        (df_dir / "interaction_report_meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "total_events": "3",
+                    "poses_with_interactions": "2",
+                    "unique_residues": "2",
+                    "unique_interaction_types": "3",
+                }
+            )
+        )
+
+        result = report_gen._get_docking_filters_detailed()
+        summary = result["interaction_summary"]
+
+        assert summary["total_events"] == 3
+        assert summary["poses_with_interactions"] == 2
+        assert summary["unique_residues"] == 2
+        assert summary["unique_interaction_types"] == 3
+        assert summary["top_residues"][0]["residue"] == "ASP:123"
+        assert summary["top_residues"][0]["total_events"] == 2
+        assert len(summary["type_distribution"]) == 3
+        assert len(summary["matrix"]) == 3
+
+    def test_interaction_artifact_parsing_is_robust(self, report_gen, base_path):
+        """Should tolerate missing/malformed interaction artifact files."""
+        df_dir = base_path / "stages" / "06_docking_filters"
+
+        pd.DataFrame(
+            {
+                "mol_idx": [0],
+                "model_name": ["ModelA"],
+                "pass_search_box": [True],
+                "pass": [True],
+            }
+        ).to_csv(df_dir / "metrics.csv", index=False)
+
+        pd.DataFrame({"residue": ["ASP:123"]}).to_csv(
+            df_dir / "interaction_residue_summary.csv", index=False
+        )
+        pd.DataFrame(
+            {
+                "interaction_type": ["HBDonor"],
+                "total_events": ["not-a-number"],
+            }
+        ).to_csv(df_dir / "interaction_type_summary.csv", index=False)
+        (df_dir / "interaction_matrix.csv").write_text(
+            'residue,interaction_type,event_count\n"ASP:123,HBDonor,2\n'
+        )
+        (df_dir / "interaction_report_meta.json").write_text("{invalid-json}")
+
+        result = report_gen._get_docking_filters_detailed()
+        summary = result.get("interaction_summary", {})
+
+        assert isinstance(summary, dict)
+        assert summary["top_residues"][0]["residue"] == "ASP:123"
+        assert summary["top_residues"][0]["total_events"] == 0
+        assert summary["type_distribution"][0]["interaction_type"] == "HBDonor"
+        assert summary["type_distribution"][0]["total_events"] == 0
+
+    def test_interaction_fallback_unique_passed_poses_uses_pass_flag(
+        self, report_gen, base_path
+    ):
+        """Fallback aggregation should compute unique_passed_poses from pass==True only."""
+        df_dir = base_path / "stages" / "06_docking_filters"
+
+        pd.DataFrame(
+            {
+                "mol_idx": [0, 1, 2],
+                "model_name": ["ModelA", "ModelA", "ModelA"],
+                "pass_search_box": [True, True, True],
+                "pass": [True, False, True],
+            }
+        ).to_csv(df_dir / "metrics.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "mol_idx": [0, 1, 2],
+                "source_mol_idx": ["10", "11", "12"],
+                "model_name": ["ModelA", "ModelA", "ModelA"],
+                "pass": [True, False, True],
+                "pass_interactions": [True, True, True],
+                "residue": ["ASP:123", "ASP:123", "SER:45"],
+                "interaction_type": ["HBDonor", "Hydrophobic", "HBAcceptor"],
+                "label": ["L1", "L2", "L3"],
+            }
+        ).to_csv(df_dir / "interaction_events.csv", index=False)
+
+        # Intentionally skip residue summary to trigger fallback aggregation.
+        result = report_gen._get_docking_filters_detailed()
+        summary = result["interaction_summary"]
+        residue_rows = {row["residue"]: row for row in summary["top_residues"]}
+
+        assert residue_rows["ASP:123"]["unique_poses"] == 2
+        assert residue_rows["ASP:123"]["unique_passed_poses"] == 1
+        assert residue_rows["SER:45"]["unique_poses"] == 1
+        assert residue_rows["SER:45"]["unique_passed_poses"] == 1
+
+    def test_generate_plots_includes_interaction_plots(self, report_gen):
+        """_generate_plots should include interaction plot keys when data exists."""
+        data = {
+            "docking_filters_detailed": {
+                "interaction_summary": {
+                    "top_residues": [
+                        {"residue": "ASP:123", "total_events": 3, "unique_poses": 2}
+                    ],
+                    "type_distribution": [
+                        {"interaction_type": "HBDonor", "total_events": 3}
+                    ],
+                    "matrix": [
+                        {
+                            "residue": "ASP:123",
+                            "interaction_type": "HBDonor",
+                            "event_count": 3,
+                        }
+                    ],
+                }
+            }
+        }
+
+        plot_htmls = report_gen._generate_plots(data)
+        assert "docking_filters_interactions_top_residues" in plot_htmls
+        assert "docking_filters_interactions_type_distribution" in plot_htmls
+        assert "docking_filters_interactions_matrix" in plot_htmls
 
 
 class TestParametrizedDescriptors:
@@ -308,4 +504,92 @@ class TestNewPlotFunctions:
         from hedgehog.reporting.plots import plot_docking_filters_by_model_bar
 
         html = plot_docking_filters_by_model_bar({})
+        assert html
+
+    def test_interaction_top_residues_returns_html(self):
+        """Top-residues interaction plot should return non-empty HTML."""
+        from hedgehog.reporting.plots import (
+            plot_docking_filters_interaction_top_residues_bar,
+        )
+
+        html = plot_docking_filters_interaction_top_residues_bar(
+            [
+                {"residue": "ASP:123", "total_events": 5, "unique_poses": 3},
+                {"residue": "SER:45", "total_events": 2, "unique_poses": 2},
+            ]
+        )
+        assert html
+        assert "plotly" in html.lower() or "div" in html.lower()
+
+    def test_interaction_top_residues_empty(self):
+        """Top-residues interaction plot should handle empty input."""
+        from hedgehog.reporting.plots import (
+            plot_docking_filters_interaction_top_residues_bar,
+        )
+
+        html = plot_docking_filters_interaction_top_residues_bar([])
+        assert html
+
+    def test_interaction_type_distribution_returns_html(self):
+        """Interaction-type distribution plot should return non-empty HTML."""
+        from hedgehog.reporting.plots import (
+            plot_docking_filters_interaction_type_distribution_bar,
+        )
+
+        html = plot_docking_filters_interaction_type_distribution_bar(
+            [
+                {
+                    "interaction_type": "HBDonor",
+                    "total_events": 4,
+                    "unique_residues": 2,
+                },
+                {
+                    "interaction_type": "Hydrophobic",
+                    "total_events": 3,
+                    "unique_residues": 2,
+                },
+            ]
+        )
+        assert html
+        assert "plotly" in html.lower() or "div" in html.lower()
+
+    def test_interaction_type_distribution_empty(self):
+        """Interaction-type distribution plot should handle empty input."""
+        from hedgehog.reporting.plots import (
+            plot_docking_filters_interaction_type_distribution_bar,
+        )
+
+        html = plot_docking_filters_interaction_type_distribution_bar([])
+        assert html
+
+    def test_interaction_matrix_heatmap_returns_html(self):
+        """Interaction matrix heatmap should return non-empty HTML."""
+        from hedgehog.reporting.plots import (
+            plot_docking_filters_interaction_matrix_heatmap,
+        )
+
+        html = plot_docking_filters_interaction_matrix_heatmap(
+            [
+                {
+                    "residue": "ASP:123",
+                    "interaction_type": "HBDonor",
+                    "event_count": 2,
+                },
+                {
+                    "residue": "SER:45",
+                    "interaction_type": "Hydrophobic",
+                    "event_count": 1,
+                },
+            ]
+        )
+        assert html
+        assert "plotly" in html.lower() or "div" in html.lower()
+
+    def test_interaction_matrix_heatmap_empty(self):
+        """Interaction matrix heatmap should handle empty input."""
+        from hedgehog.reporting.plots import (
+            plot_docking_filters_interaction_matrix_heatmap,
+        )
+
+        html = plot_docking_filters_interaction_matrix_heatmap([])
         assert html

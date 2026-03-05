@@ -10,6 +10,8 @@ jobs:
   ruff:
     name: Ruff (format + lint)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +51,8 @@ jobs:
         python-version: ['3.10', '3.11', '3.12', '3.13']
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
@@ -81,6 +85,8 @@ jobs:
   pipeline-smoke:
     name: Pipeline Smoke (CLI + TUI)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -120,6 +126,8 @@ jobs:
   docs-build:
     name: Build Docs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
