@@ -156,10 +156,12 @@ def _setup_alerts_progress(total_items, progress_cb):
 def _build_alerts_results(results_list, mols):
     """Reconstruct alerts results DataFrame from parallel worker output."""
     for row_data in results_list:
-        idx = row_data.pop("_mol_idx")
+        idx = row_data.get("_mol_idx")
         row_data["mol"] = mols[idx]
 
     results = pd.DataFrame(results_list)
+    if "_mol_idx" in results.columns:
+        results = results.sort_values("_mol_idx").reset_index(drop=True)
 
     pass_cols = [
         c
@@ -168,6 +170,8 @@ def _build_alerts_results(results_list, mols):
     ]
     results["pass"] = results[pass_cols].all(axis=1)
     results["pass_any"] = results[pass_cols].any(axis=1)
+    if "_mol_idx" in results.columns:
+        results = results.drop(columns=["_mol_idx"])
     return results
 
 
