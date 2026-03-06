@@ -702,9 +702,17 @@ def _align_result_length(final_result, expected_len, smiles_with_model):
     return final_result
 
 
+def _realign_result_by_temp_mol_idx(final_result):
+    """Restore original molecule order when worker code returns ``_mol_idx``."""
+    if "_mol_idx" not in final_result.columns:
+        return final_result
+    return final_result.sort_values("_mol_idx").reset_index(drop=True)
+
+
 def add_model_name_col(final_result, smiles_with_model):
     """Add smiles, model_name, and mol_idx columns from input data."""
     expected_len = len(smiles_with_model)
+    final_result = _realign_result_by_temp_mol_idx(final_result)
     final_result = _align_result_length(final_result, expected_len, smiles_with_model)
 
     smiles_vals = [item[0] for item in smiles_with_model]
@@ -716,6 +724,8 @@ def add_model_name_col(final_result, smiles_with_model):
     final_result["smiles"] = smiles_vals
     final_result["model_name"] = model_vals
     final_result["mol_idx"] = mol_idx_vals
+    if "_mol_idx" in final_result.columns:
+        final_result = final_result.drop(columns=["_mol_idx"])
 
     return final_result
 
