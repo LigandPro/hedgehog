@@ -168,16 +168,76 @@ export function ReviewRun(): React.ReactElement {
   const isPreflightBlocked = Boolean(preflight && !preflight.valid);
 
   const separatorWidth = Math.max(1, terminalWidth - 2);
-  const maxPreflightItems = terminalHeight < 34 ? 3 : terminalHeight < 42 ? 5 : 8;
-  const showTwoColumns = terminalWidth >= 92;
+  const showTwoColumns = terminalWidth >= 80;
+  const columnGap = showTwoColumns ? 2 : 0;
   const stageColumnWidth = showTwoColumns
-    ? Math.max(26, Math.min(36, Math.floor(terminalWidth * 0.33)))
-    : Math.max(20, terminalWidth - 2);
+    ? Math.max(26, Math.min(36, Math.floor(separatorWidth * 0.34)))
+    : separatorWidth;
   const detailsColumnWidth = showTwoColumns
-    ? Math.max(20, separatorWidth - stageColumnWidth - 2)
+    ? Math.max(20, separatorWidth - stageColumnWidth - columnGap)
     : separatorWidth;
   const stageLabelWidth = Math.max(12, stageColumnWidth - 8);
   const focusedStage = stageViews[focusedIndex];
+
+  const hasChecks = preflightItems.length > 0;
+  const shellReservedRows = 12;
+  const bodyRowsBudget = Math.max(8, terminalHeight - shellReservedRows);
+  const fixedRows = (config ? 2 : 0) + 2 + (hasChecks ? 1 : 0) + 1 + 2 + 1;
+  const variableRows = Math.max(2, bodyRowsBudget - fixedRows);
+
+  const preferredStageRows = showTwoColumns ? 7 : 8;
+  let stageRowsBudget = Math.max(2, Math.min(variableRows, preferredStageRows));
+  let checksRowsBudget = hasChecks ? Math.max(0, variableRows - stageRowsBudget) : 0;
+  if (hasChecks && checksRowsBudget === 0) {
+    stageRowsBudget = Math.max(1, stageRowsBudget - 1);
+    checksRowsBudget = 1;
+  }
+
+  const canRenderChecksOverflow = checksRowsBudget > 1;
+  const preflightNeedsOverflow = hasChecks && canRenderChecksOverflow && preflightItems.length > checksRowsBudget;
+  const visiblePreflightItems = !hasChecks || checksRowsBudget <= 0
+    ? []
+    : preflightNeedsOverflow
+      ? preflightItems.slice(0, Math.max(1, checksRowsBudget - 1))
+      : preflightItems.slice(0, checksRowsBudget);
+  const hiddenPreflightItems = preflightItems.length - visiblePreflightItems.length;
+
+  const stageListRows = showTwoColumns
+    ? Math.max(1, stageRowsBudget - 1)
+    : Math.max(1, Math.min(stageViews.length, Math.max(1, Math.floor((stageRowsBudget - 2) / 2))));
+  const stageWindowStart = stageViews.length <= stageListRows
+    ? 0
+    : Math.min(
+      Math.max(0, focusedIndex - Math.floor(stageListRows / 2)),
+      stageViews.length - stageListRows
+    );
+  const visibleStages = stageViews.slice(stageWindowStart, stageWindowStart + stageListRows);
+
+  const detailLineBudget = showTwoColumns
+    ? Math.max(1, stageRowsBudget - 1)
+    : Math.max(1, stageRowsBudget - stageListRows - 2);
+  const detailLines = focusedStage
+    ? [
+      focusedStage.summary,
+      ...(viewMode === 'detailed'
+        ? [
+          `Purpose: ${focusedStage.whatItDoes}`,
+          `Reads: ${focusedStage.reads.join(', ')}`,
+          `Writes: ${focusedStage.writes.join(', ')}`,
+          ...(focusedStage.keyParams.length > 0
+            ? [`Key params: ${focusedStage.keyParams.join(' | ')}`]
+            : []),
+        ]
+        : []),
+    ]
+    : ['No stages selected'];
+
+  let visibleDetailLines = detailLines.slice(0, detailLineBudget);
+  const hiddenDetailLines = detailLines.length - visibleDetailLines.length;
+  if (hiddenDetailLines > 0 && visibleDetailLines.length > 0) {
+    const suffix = `... and ${hiddenDetailLines} more line${hiddenDetailLines === 1 ? '' : 's'}`;
+    visibleDetailLines = [...visibleDetailLines.slice(0, -1), suffix];
+  }
 
   useInput((input, key) => {
     if (starting) return;
@@ -211,7 +271,7 @@ export function ReviewRun(): React.ReactElement {
     >
 
       {config && (
-        <Box flexDirection="column" marginY={1}>
+        <Box flexDirection="column">
           {(() => {
             const inputLabel = 'Input:  ';
             const outputLabel = 'Output: ';
@@ -244,38 +304,49 @@ export function ReviewRun(): React.ReactElement {
         </Box>
       )}
 
-      <Box flexDirection="column" marginY={1}>
-        <Text color={theme.palette.accent} bold>Preflight</Text>
+      <Box flexDirection="column">
         <Box width={separatorWidth}>
-          <Text color={theme.palette.textMuted}>Status: </Text>
+          <Text color={theme.palette.accent} bold>Preflight: </Text>
           <Text color={preflightStatus.color} bold>{preflightStatus.label}</Text>
           {refreshingPreflight && <Text color={theme.palette.warning}> (refreshing...)</Text>}
           {(() => {
             const suffix = refreshingPreflight ? ' (refreshing...)' : '';
-            const used = 'Status: '.length + preflightStatus.label.length + suffix.length;
+            const used = 'Preflight: '.length + preflightStatus.label.length + suffix.length;
             const pad = Math.max(0, separatorWidth - used);
             return pad > 0 ? <Text>{' '.repeat(pad)}</Text> : null;
           })()}
         </Box>
-        <Box>
-          <Text color={theme.palette.textMuted}>Molecules: </Text>
-          <Text color={theme.palette.text}>{preflight?.molecule_count?.toLocaleString() ?? 'Unknown'}</Text>
-          <Text color={theme.palette.textMuted}> | Runtime: </Text>
-          <Text color={theme.palette.text}>{runtimeLabel(preflight?.estimated_runtime || 'unknown')}</Text>
-        </Box>
-        <Box>
-          <Text color={theme.palette.error}>Errors: {counters.errors}</Text>
-          <Text color={theme.palette.textMuted}> | </Text>
-          <Text color={theme.palette.warning}>Warnings: {counters.warnings}</Text>
-          <Text color={theme.palette.textMuted}> | </Text>
-          <Text color={theme.palette.info}>Info: {counters.infos}</Text>
+        <Box width={separatorWidth}>
+          {(() => {
+            const line = `Molecules: ${preflight?.molecule_count?.toLocaleString() ?? 'Unknown'} | Runtime: ${runtimeLabel(preflight?.estimated_runtime || 'unknown')} | E:${counters.errors} W:${counters.warnings} I:${counters.infos}`;
+            const shown = truncateLine(line, separatorWidth);
+            const pad = Math.max(0, separatorWidth - shown.length);
+            return (
+              <>
+                <Text color={theme.palette.textMuted} wrap="truncate-end">{shown}</Text>
+                {pad > 0 && <Text>{' '.repeat(pad)}</Text>}
+              </>
+            );
+          })()}
         </Box>
       </Box>
 
-      {preflightItems.length > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text color={theme.palette.accent} bold>Checks</Text>
-          {preflightItems.slice(0, maxPreflightItems).map((check, index) => {
+      {hasChecks && (
+        <Box flexDirection="column">
+          <Box width={separatorWidth}>
+            {(() => {
+              const line = `Checks (${preflightItems.length})`;
+              const shown = truncateLine(line, separatorWidth);
+              const pad = Math.max(0, separatorWidth - shown.length);
+              return (
+                <>
+                  <Text color={theme.palette.accent} bold wrap="truncate-end">{shown}</Text>
+                  {pad > 0 && <Text>{' '.repeat(pad)}</Text>}
+                </>
+              );
+            })()}
+          </Box>
+          {visiblePreflightItems.map((check, index) => {
             const marker = check.level === 'error' ? 'E' : check.level === 'warning' ? 'W' : 'I';
             const color = check.level === 'error' ? theme.palette.error : check.level === 'warning' ? theme.palette.warning : theme.palette.info;
             const scope = check.scope === 'global' ? 'global' : check.scope;
@@ -294,10 +365,10 @@ export function ReviewRun(): React.ReactElement {
               </Box>
             );
           })}
-          {preflightItems.length > maxPreflightItems && (
+          {canRenderChecksOverflow && hiddenPreflightItems > 0 && (
             <Box width={separatorWidth}>
               {(() => {
-                const line = `... and ${preflightItems.length - maxPreflightItems} more checks`;
+                const line = `... and ${hiddenPreflightItems} more checks`;
                 const shown = truncateLine(line, separatorWidth);
                 const pad = Math.max(0, separatorWidth - shown.length);
                 return (
@@ -312,7 +383,11 @@ export function ReviewRun(): React.ReactElement {
         </Box>
       )}
 
-      <Box marginBottom={1} width={separatorWidth}>
+      <Box width={separatorWidth}>
+        <Text color={theme.palette.border}>{'─'.repeat(separatorWidth)}</Text>
+      </Box>
+
+      <Box width={separatorWidth}>
         {(() => {
           const line = `Pipeline Stages (${viewMode})`;
           const shown = truncateLine(line, separatorWidth);
@@ -326,16 +401,16 @@ export function ReviewRun(): React.ReactElement {
         })()}
       </Box>
 
-      <Box flexDirection={showTwoColumns ? 'row' : 'column'} marginY={1} width={separatorWidth}>
+      <Box flexDirection={showTwoColumns ? 'row' : 'column'} width={separatorWidth}>
         <Box
           flexDirection="column"
           width={stageColumnWidth}
           flexShrink={0}
-          paddingRight={showTwoColumns ? 2 : 0}
-          marginBottom={showTwoColumns ? 0 : 1}
+          paddingRight={showTwoColumns ? columnGap : 0}
         >
           <Text color={theme.palette.accent} bold>Stages</Text>
-          {stageViews.map((stage, index) => {
+          {visibleStages.map((stage, localIndex) => {
+            const index = stageWindowStart + localIndex;
             const isFocused = focusedIndex === index;
             const label = truncateLine(stage.displayName, stageLabelWidth);
             const prefix = `${index + 1}. `;
@@ -356,36 +431,32 @@ export function ReviewRun(): React.ReactElement {
 
         <Box flexDirection="column" width={detailsColumnWidth} flexGrow={1} flexShrink={1}>
           {focusedStage ? (
-            <>
-              <Box>
-                <Text color={theme.palette.text} bold>{focusedStage.displayName}</Text>
-                <Text color={theme.palette.textMuted}> ({formatHeavyLevel(focusedStage.heavyLevel)})</Text>
-              </Box>
-              <Text color={theme.palette.textMuted} wrap="truncate-end">{focusedStage.summary}</Text>
-
-              {viewMode === 'detailed' && (
-                <Box flexDirection="column">
-                  <Text color={theme.palette.textMuted} wrap="truncate-end">Purpose: {focusedStage.whatItDoes}</Text>
-                  <Text color={theme.palette.textMuted} wrap="truncate-end">Reads: {focusedStage.reads.join(', ')}</Text>
-                  <Text color={theme.palette.textMuted} wrap="truncate-end">Writes: {focusedStage.writes.join(', ')}</Text>
-                  {focusedStage.keyParams.length > 0 && (
-                    <Text color={theme.palette.textMuted} wrap="truncate-end">Key params: {focusedStage.keyParams.join(' | ')}</Text>
-                  )}
-                </Box>
-              )}
-            </>
+            <Box width={detailsColumnWidth}>
+              <Text color={theme.palette.text} bold wrap="truncate-end">{truncateLine(focusedStage.displayName, detailsColumnWidth)}</Text>
+              <Text color={theme.palette.textMuted}> ({formatHeavyLevel(focusedStage.heavyLevel)})</Text>
+            </Box>
           ) : (
             <Text color={theme.palette.textMuted}>No stages selected</Text>
           )}
+          {visibleDetailLines.map((line, index) => {
+            const shown = truncateLine(line, detailsColumnWidth);
+            const pad = Math.max(0, detailsColumnWidth - shown.length);
+            return (
+              <Box key={`detail-${index}`} width={detailsColumnWidth}>
+                <Text color={theme.palette.textMuted} wrap="truncate-end">{shown}</Text>
+                {pad > 0 && <Text>{' '.repeat(pad)}</Text>}
+              </Box>
+            );
+          })}
         </Box>
       </Box>
 
-      <Box marginY={1}>
+      <Box width={separatorWidth}>
         <Text color={theme.palette.border}>{'─'.repeat(separatorWidth)}</Text>
       </Box>
 
       {starting ? (
-        <Box marginY={1} width={separatorWidth}>
+        <Box width={separatorWidth}>
           {(() => {
             const line = 'Running preflight and starting pipeline...';
             const shown = truncateLine(line, separatorWidth);
@@ -399,7 +470,7 @@ export function ReviewRun(): React.ReactElement {
           })()}
         </Box>
       ) : (
-        <Box marginY={1} width={separatorWidth}>
+        <Box width={separatorWidth}>
           {(() => {
             const line = isPreflightBlocked
               ? 'Preflight failed. Fix errors and press r to refresh.'

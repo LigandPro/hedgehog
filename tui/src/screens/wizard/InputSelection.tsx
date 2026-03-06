@@ -82,9 +82,10 @@ export function InputSelection(): React.ReactElement {
   // Get terminal size with resize support
   const { width: terminalWidth } = useTerminalSize();
 
-  const panelWidth = Math.max(48, Math.min(96, terminalWidth - 4));
-  const labelWidth = Math.max(14, Math.min(20, panelWidth - 30));
-  const maxPathLen = Math.max(20, panelWidth - labelWidth - 8);
+  const panelWidth = Math.max(48, Math.min(96, terminalWidth - 6));
+  const rowWidth = Math.max(28, panelWidth - 4);
+  const labelWidth = Math.max(12, Math.min(20, Math.floor(rowWidth * 0.32)));
+  const valueWidth = Math.max(12, rowWidth - labelWidth - 6);
 
   useEffect(() => {
     if (!mainConfig && isBackendReady) {
@@ -231,7 +232,33 @@ export function InputSelection(): React.ReactElement {
     typeof values.generated_mols_path === 'string'
       ? values.generated_mols_path.trim()
       : '';
-  const compactInputPath = truncatePath(trimmedInputPath, Math.max(24, panelWidth - 26));
+  const compactInputPath = truncatePath(trimmedInputPath, Math.max(24, rowWidth - 14));
+  const hasInputPath = trimmedInputPath.length > 0;
+
+  const moleculeStatus = (() => {
+    if (!hasInputPath) {
+      return {
+        color: theme.palette.textMuted,
+        text: 'Select an input file to estimate molecule count.',
+      };
+    }
+    if (countingMolecules) {
+      return {
+        color: theme.palette.warning,
+        text: 'Counting molecules from selected input file...',
+      };
+    }
+    if (moleculeCount !== null) {
+      return {
+        color: theme.palette.success,
+        text: `${moleculeCount.toLocaleString()} molecules detected.`,
+      };
+    }
+    return {
+      color: theme.palette.error,
+      text: `Unable to count molecules (${moleculeCountErrorHint ?? 'check file path and supported extension'}).`,
+    };
+  })();
 
   if (loading) {
     return (
@@ -282,79 +309,105 @@ export function InputSelection(): React.ReactElement {
       footer={<Footer />}
       contentJustify="center"
     >
-      <Box>
+      <Box width={Math.max(1, terminalWidth - 2)} justifyContent="center">
         <Box flexDirection="column" width={panelWidth}>
-          <Text color={theme.palette.textMuted}>Select source molecules and where to store outputs for this run.</Text>
-          <Text color={theme.palette.textMuted}>Space opens browser, Right/e edits the path directly.</Text>
-
-          <Box flexDirection="column" marginTop={1}>
-            {CONFIG_FIELDS.map((field, index) => {
-              const isFocused = focusedIndex === index;
-              const value = values[field.key];
-              const isEditing = isFocused && editMode && field.type === 'number';
-
-              let displayValue = '';
-              if (field.type === 'path') {
-                displayValue = value ? truncatePath(String(value), maxPathLen) : '(not set)';
-              } else if (field.type === 'boolean') {
-                displayValue = value ? 'Yes' : 'No';
-              } else if (field.type === 'number') {
-                displayValue = String(value ?? '');
-              }
-
-              const valueColor = field.type === 'path'
-                ? (value ? theme.palette.primary : theme.palette.error)
-                : field.type === 'boolean'
-                  ? (value ? theme.palette.success : theme.palette.error)
-                  : theme.palette.accent;
-
-              return (
-                <Box key={field.key}>
-                  <Text color={isFocused ? theme.palette.primary : theme.palette.textMuted}>
-                    {isFocused ? '▸ ' : '  '}
-                  </Text>
-                  <Text color={isFocused ? theme.palette.text : theme.palette.textMuted}>
-                    {field.label.padEnd(labelWidth)}
-                  </Text>
-                  {isEditing ? (
-                    <Box>
-                      <TextInput
-                        value={editValue}
-                        onChange={setEditValue}
-                        focus={true}
-                      />
-                    </Box>
-                  ) : (
-                    <Text color={valueColor}>{displayValue}</Text>
-                  )}
-                </Box>
-              );
-            })}
+          <Box flexDirection="column" marginBottom={1}>
+            <Text color={theme.palette.textMuted}>
+              Configure input molecules and output folder for this pipeline run.
+            </Text>
           </Box>
 
-          {trimmedInputPath && (
-            <Box marginTop={1} flexDirection="column">
-              <Box>
-                <Text color={theme.palette.textMuted}>Molecules: </Text>
-                {countingMolecules ? (
-                  <Text color={theme.palette.warning}>counting...</Text>
-                ) : moleculeCount !== null ? (
-                  <Text color={theme.palette.success} bold>{moleculeCount.toLocaleString()}</Text>
-                ) : (
-                  <Text color={theme.palette.error}>unable to count</Text>
-                )}
-              </Box>
+          <Box flexDirection="column" marginBottom={1}>
+            <Text color={theme.palette.accent} bold>Input/Output Fields</Text>
+            <Box flexDirection="column" marginTop={1}>
+              {CONFIG_FIELDS.map((field, index) => {
+                const isFocused = focusedIndex === index;
+                const value = values[field.key];
+                const isEditing = isFocused && editMode && field.type === 'number';
 
-              {!countingMolecules && moleculeCount === null && (
-                <Box flexDirection="column">
-                  <Text color={theme.palette.textMuted}>
-                    Hint: {moleculeCountErrorHint ?? 'check file path and supported extension'}; use Space to browse or →/e to edit.
-                  </Text>
-                  <Text color={theme.palette.textMuted}>Path: {compactInputPath}</Text>
-                </Box>
-              )}
+                let displayValue = '';
+                if (field.type === 'path') {
+                  displayValue = value ? String(value) : '(not set)';
+                } else if (field.type === 'boolean') {
+                  displayValue = value ? 'Yes' : 'No';
+                } else if (field.type === 'number') {
+                  displayValue = String(value ?? '');
+                }
+
+                const valueColor = field.type === 'path'
+                  ? (value ? theme.palette.primary : theme.palette.error)
+                  : field.type === 'boolean'
+                    ? (value ? theme.palette.success : theme.palette.error)
+                    : theme.palette.accent;
+                const rowBackground = isFocused ? theme.palette.panelStrong : undefined;
+
+                return (
+                  <Box
+                    key={field.key}
+                    width={rowWidth}
+                    paddingX={1}
+                  >
+                    <Text
+                      color={isFocused ? theme.palette.primary : theme.palette.textMuted}
+                      backgroundColor={rowBackground}
+                    >
+                      {isFocused ? '▸' : ' '}
+                    </Text>
+                    <Text backgroundColor={rowBackground}> </Text>
+                    <Box width={labelWidth}>
+                      <Text
+                        color={isFocused ? theme.palette.text : theme.palette.textMuted}
+                        backgroundColor={rowBackground}
+                        wrap="truncate-end"
+                      >
+                        {field.label}
+                      </Text>
+                    </Box>
+                    <Text color={theme.palette.textMuted} backgroundColor={rowBackground}>: </Text>
+                    {isEditing ? (
+                      <Box>
+                        <TextInput
+                          value={editValue}
+                          onChange={setEditValue}
+                          focus={true}
+                        />
+                      </Box>
+                    ) : (
+                      <Box width={valueWidth}>
+                        <Text color={valueColor} backgroundColor={rowBackground} wrap="truncate-end">
+                          {displayValue}
+                        </Text>
+                      </Box>
+                    )}
+                  </Box>
+                );
+              })}
             </Box>
-          )}
+          </Box>
+
+          <Box flexDirection="column" marginBottom={1}>
+            <Text color={theme.palette.accent} bold>Molecule Info</Text>
+            <Box width={rowWidth} marginTop={1}>
+              <Text color={theme.palette.textMuted}>Status: </Text>
+              <Text color={moleculeStatus.color} bold={moleculeCount !== null}>{moleculeStatus.text}</Text>
+            </Box>
+            {hasInputPath && (
+              <Box width={rowWidth}>
+                <Text color={theme.palette.textMuted}>Input: </Text>
+                <Text color={theme.palette.text} wrap="truncate-end">{compactInputPath}</Text>
+              </Box>
+            )}
+          </Box>
+
+          <Box flexDirection="column">
+            <Text color={theme.palette.accent} bold>Guidance</Text>
+            <Box marginTop={1}>
+              <Text color={theme.palette.textMuted}>Space: browse selection | →/e: edit path | Enter: validate and continue</Text>
+            </Box>
+            <Box>
+              <Text color={theme.palette.textMuted}>↑/↓/Tab/Shift+Tab: switch field | ←/Esc: back</Text>
+            </Box>
+          </Box>
         </Box>
       </Box>
     </AppShell>

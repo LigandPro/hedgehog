@@ -213,6 +213,17 @@ export function CommandMenu(): React.ReactElement | null {
     });
   }, [filteredCommands.length]);
 
+  useEffect(() => {
+    if (!showCommandMenu) return;
+    const normalizedQuery = (query.startsWith('/') ? query : `/${query}`)
+      .trim()
+      .toLowerCase();
+    const exactMatchIndex = filteredCommands.findIndex((item) => item.command === normalizedQuery);
+    if (exactMatchIndex >= 0 && exactMatchIndex !== selectedIndex) {
+      setSelectedIndex(exactMatchIndex);
+    }
+  }, [filteredCommands, query, selectedIndex, showCommandMenu]);
+
   useInput(
     (input, key) => {
       if (!showCommandMenu) return;

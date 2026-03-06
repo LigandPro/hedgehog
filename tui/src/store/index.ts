@@ -570,9 +570,15 @@ export const useStore = create<AppState>((set, get) => ({
 
   // Help overlay actions
   setShowHelp: (show) => set({ showHelp: show }),
-  setShowCommandMenu: (show) => set({ showCommandMenu: show }),
+  setShowCommandMenu: (show) => set((state) => ({
+    showCommandMenu: show,
+    showThemeMenu: show ? false : state.showThemeMenu,
+  })),
   setCommandMenuSeed: (seed) => set({ commandMenuSeed: seed }),
-  setShowThemeMenu: (show) => set({ showThemeMenu: show }),
+  setShowThemeMenu: (show) => set((state) => ({
+    showThemeMenu: show,
+    showCommandMenu: show ? false : state.showCommandMenu,
+  })),
   setExitSummary: (summary) => set({ exitSummary: summary }),
   setInputLocked: (locked) => set({ inputLocked: locked }),
 
