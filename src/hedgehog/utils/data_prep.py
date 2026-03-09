@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from pathlib import Path
 from typing import cast
 
@@ -125,6 +126,44 @@ def _remove_duplicates(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame
     return df
 
 
+def _finalize_identity_columns(df: pd.DataFrame, path: str) -> pd.DataFrame:
+    """Validate and trim input data to the identity columns used by the pipeline."""
+    if SMILES_COLUMN not in df.columns:
+        msg = f"Input file {path} is missing required '{SMILES_COLUMN}' column."
+        raise ValueError(msg)
+
+    normalized = df.copy()
+    for col in (SMILES_COLUMN, MODEL_NAME_COLUMN, MOL_IDX_COLUMN):
+        if col in normalized.columns:
+            series = normalized[col].astype("string").str.strip()
+            normalized[col] = series.mask(series.eq(""), pd.NA)
+
+    missing_smiles = normalized[SMILES_COLUMN].isna()
+    if missing_smiles.any():
+        if MODEL_NAME_COLUMN in normalized.columns:
+            model_counts = Counter(
+                normalized.loc[missing_smiles, MODEL_NAME_COLUMN]
+                .fillna("unknown")
+                .astype(str)
+            )
+            preview = ", ".join(
+                f"{model}={count}" for model, count in model_counts.most_common(5)
+            )
+        else:
+            preview = "model_name unavailable"
+
+        msg = (
+            f"Input file {path} contains {int(missing_smiles.sum())} row(s) with "
+            f"empty '{SMILES_COLUMN}' values ({preview})."
+        )
+        raise ValueError(msg)
+
+    cols_to_keep = [SMILES_COLUMN, MODEL_NAME_COLUMN]
+    if MOL_IDX_COLUMN in normalized.columns:
+        cols_to_keep.append(MOL_IDX_COLUMN)
+    return normalized[cols_to_keep].copy()
+
+
 def _read_csv_with_fallback(path: str) -> pd.DataFrame:
     """Read CSV, falling back to headerless format if parsing fails."""
     try:
@@ -200,6 +239,7 @@ def _load_multi_comparison_data(
     for path in paths:
         df = _read_csv_with_fallback(path)
         df = _normalize_columns(df, path)
+        df = _finalize_identity_columns(df, path)
 
         model_name = (
             df[MODEL_NAME_COLUMN].iloc[0]
@@ -221,6 +261,7 @@ def _load_single_comparison_data(
     """Load data from a single file (single model comparison)."""
     data = _read_csv_with_fallback(single_path)
     data = _normalize_columns(data, single_path)
+    data = _finalize_identity_columns(data, single_path)
     data = _remove_duplicates(data, logger)
 
     data, warning_info = _apply_sampling(data, sample_size)
@@ -248,12 +289,7 @@ def _load_multi_file_with_model_column(
         raise ValueError(msg)
 
     df = _normalize_model_name_column(df, single_path)
-
-    cols_to_keep = [SMILES_COLUMN, MODEL_NAME_COLUMN]
-    if MOL_IDX_COLUMN in df.columns:
-        cols_to_keep.append(MOL_IDX_COLUMN)
-
-    df = df[cols_to_keep].dropna(subset=[SMILES_COLUMN])
+    df = _finalize_identity_columns(df, single_path)
     df = _remove_duplicates(df, logger)
 
     if sample_size is None:

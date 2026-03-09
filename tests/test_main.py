@@ -12,6 +12,7 @@ from hedgehog.main import (
     _folder_is_empty,
     _get_input_format_flag,
     _get_unique_results_folder,
+    _save_sampled_molecules,
     _validate_input_path,
     preprocess_input_with_rdkit,
 )
@@ -251,6 +252,27 @@ class TestPreprocessInputWithRdkit:
 
         output_df = pd.read_csv(result)
         assert len(output_df) == 3
+
+
+def test_save_sampled_molecules_writes_identity_columns_only(tmp_path):
+    data = pd.DataFrame(
+        {
+            "smiles": ["CCO"],
+            "model_name": ["m1"],
+            "mol_idx": ["LP-0001-00001"],
+            "extra": ["should_not_be_saved"],
+        }
+    )
+
+    _save_sampled_molecules(data, tmp_path, should_save=True)
+
+    saved = pd.read_csv(tmp_path / "input" / "sampled_molecules.csv")
+    assert list(saved.columns) == ["smiles", "model_name", "mol_idx"]
+    assert saved.iloc[0].to_dict() == {
+        "smiles": "CCO",
+        "model_name": "m1",
+        "mol_idx": "LP-0001-00001",
+    }
 
 
 class TestStageEnum:

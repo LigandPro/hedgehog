@@ -704,10 +704,14 @@ def _save_sampled_molecules(
     input_dir.mkdir(parents=True, exist_ok=True)
     output_path = input_dir / SAMPLED_MOLS_FILENAME
 
-    data.to_csv(output_path, index=False)
+    identity_cols = [
+        col for col in ["smiles", "model_name", "mol_idx"] if col in data.columns
+    ]
+    sampled = data[identity_cols].copy() if identity_cols else data.copy()
+    sampled.to_csv(output_path, index=False)
     logger.info(
         "Sampled total of %d molecules saved to %s",
-        len(data),
+        len(sampled),
         output_path,
     )
 
