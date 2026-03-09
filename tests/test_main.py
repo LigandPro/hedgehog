@@ -253,6 +253,20 @@ class TestPreprocessInputWithRdkit:
         output_df = pd.read_csv(result)
         assert len(output_df) == 3
 
+    def test_empty_smiles_rows_disable_preprocessing(self, tmp_path, mock_logger):
+        """Malformed CSV with empty smiles should fall back to raw input handling."""
+        input_file = tmp_path / "input.csv"
+        input_file.write_text(
+            "smiles,model_name,extra\nCCO,test,\n,jtvae,CCN\n,hiergraphvae,CCC"
+        )
+
+        output_folder = tmp_path / "output"
+        result = preprocess_input_with_rdkit(
+            str(input_file), output_folder, mock_logger
+        )
+
+        assert result is None
+
 
 def test_save_sampled_molecules_writes_identity_columns_only(tmp_path):
     data = pd.DataFrame(
