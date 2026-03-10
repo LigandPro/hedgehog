@@ -85,6 +85,7 @@ If docking filters are enabled, this section shows:
 - **Per-filter pass/fail stats** for each enabled filter (search box, pose quality, interactions, conformer deviation, shepherd score).
 - **Histograms** of numeric metrics (clashes, strain energy, conformer RMSD, shape score, etc.) with threshold lines.
 - **Per-model breakdown** of total poses, passed poses, and pass rates.
+- **Interaction analytics (ProLIF)** when interaction reporting is enabled: top-contact residues, interaction type distribution, and residue × interaction-type heatmap.
 - The aggregation mode (`all` or `any`) and overall pass rate.
 
 ### Descriptors
@@ -129,6 +130,8 @@ After report generation, the run directory contains:
 | `report.html` | Self-contained interactive HTML report |
 | `report_data.json` | Raw JSON data used to build the report |
 | `RUN_INFO.md` | Markdown summary with MolEval metrics table |
+| `stages/06_docking_filters/interaction_*.csv` | Interaction reporting artifacts (events, residue summary, type summary, matrix) produced by docking filters |
+| `stages/06_docking_filters/interaction_report_meta.json` | Metadata summary for interaction reporting totals used by report visualizations |
 
 ## Configuration
 
