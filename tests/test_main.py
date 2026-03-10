@@ -12,6 +12,7 @@ from hedgehog.main import (
     _folder_is_empty,
     _get_input_format_flag,
     _get_unique_results_folder,
+    _save_sampled_molecules,
     _validate_input_path,
     preprocess_input_with_rdkit,
 )
@@ -251,6 +252,41 @@ class TestPreprocessInputWithRdkit:
 
         output_df = pd.read_csv(result)
         assert len(output_df) == 3
+
+    def test_empty_smiles_rows_disable_preprocessing(self, tmp_path, mock_logger):
+        """Malformed CSV with empty smiles should fall back to raw input handling."""
+        input_file = tmp_path / "input.csv"
+        input_file.write_text(
+            "smiles,model_name,extra\nCCO,test,\n,jtvae,CCN\n,hiergraphvae,CCC"
+        )
+
+        output_folder = tmp_path / "output"
+        result = preprocess_input_with_rdkit(
+            str(input_file), output_folder, mock_logger
+        )
+
+        assert result is None
+
+
+def test_save_sampled_molecules_writes_identity_columns_only(tmp_path):
+    data = pd.DataFrame(
+        {
+            "smiles": ["CCO"],
+            "model_name": ["m1"],
+            "mol_idx": ["LP-0001-00001"],
+            "extra": ["should_not_be_saved"],
+        }
+    )
+
+    _save_sampled_molecules(data, tmp_path, should_save=True)
+
+    saved = pd.read_csv(tmp_path / "input" / "sampled_molecules.csv")
+    assert list(saved.columns) == ["smiles", "model_name", "mol_idx"]
+    assert saved.iloc[0].to_dict() == {
+        "smiles": "CCO",
+        "model_name": "m1",
+        "mol_idx": "LP-0001-00001",
+    }
 
 
 class TestStageEnum:

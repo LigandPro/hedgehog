@@ -176,7 +176,16 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
         else:
             df["model_name"] = input_path_obj.stem
 
-        output_df = df[["smiles", "model_name"]].dropna(subset=["smiles"]).copy()
+        output_df = df[["smiles", "model_name"]].copy()
+        smiles_series = output_df["smiles"].astype("string").str.strip()
+        if smiles_series.isna().any() or smiles_series.eq("").any():
+            invalid_rows = int((smiles_series.isna() | smiles_series.eq("")).sum())
+            msg = (
+                f"Input file {input_path_obj} contains {invalid_rows} row(s) with "
+                "empty 'smiles' values."
+            )
+            raise ValueError(msg)
+        output_df["smiles"] = smiles_series
         initial_count = len(output_df)
         output_df = output_df.drop_duplicates(
             subset=["smiles", "model_name"]
@@ -704,10 +713,14 @@ def _save_sampled_molecules(
     input_dir.mkdir(parents=True, exist_ok=True)
     output_path = input_dir / SAMPLED_MOLS_FILENAME
 
-    data.to_csv(output_path, index=False)
+    identity_cols = [
+        col for col in ["smiles", "model_name", "mol_idx"] if col in data.columns
+    ]
+    sampled = data[identity_cols].copy() if identity_cols else data.copy()
+    sampled.to_csv(output_path, index=False)
     logger.info(
         "Sampled total of %d molecules saved to %s",
-        len(data),
+        len(sampled),
         output_path,
     )
 

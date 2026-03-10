@@ -1,5 +1,7 @@
 """Tests for data_prep.py utilities."""
 
+import logging
+
 import pandas as pd
 import pytest
 
@@ -15,6 +17,7 @@ from hedgehog.utils.data_prep import (
     _normalize_smiles_column,
     _read_csv_with_fallback,
     _remove_duplicates,
+    prepare_input_data,
 )
 from tests.constants import (
     COL_MODEL_NAME,
@@ -301,3 +304,61 @@ class TestReadCsvWithFallback:
         # First row 'CCO' becomes column name
         assert "CCO" in result.columns
         assert len(result) == 2  # CC and CCC are data rows
+
+
+def test_prepare_input_data_rejects_empty_smiles_rows(tmp_path):
+    input_csv = tmp_path / "unconditional.csv"
+    input_csv.write_text(
+        "\n".join(
+            [
+                "smiles,model_name,NLL,ref_a,ref_b,mol_idx",
+                "CCO,reinvent4,18.87,,,LP-0001-00001",
+                ",jtvae,,CCN,,LP-0003-00001",
+                ",hiergraphvae,,,CCC,LP-0006-00001",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = {
+        "generated_mols_path": str(input_csv),
+        "folder_to_save": str(tmp_path / "results"),
+        "save_sampled_mols": False,
+    }
+
+    with pytest.raises(ValueError, match="empty 'smiles' values"):
+        prepare_input_data(config, logging.getLogger("test"))
+
+
+def test_prepare_input_data_trims_extra_columns(tmp_path):
+    input_csv = tmp_path / "multi.csv"
+    input_csv.write_text(
+        "\n".join(
+            [
+                "smiles,model_name,extra,mol_idx",
+                "CCO,m1,foo,LP-0001-00001",
+                "CCN,m2,bar,LP-0002-00001",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = {
+        "generated_mols_path": str(input_csv),
+        "folder_to_save": str(tmp_path / "results"),
+        "save_sampled_mols": False,
+    }
+
+    prepared = prepare_input_data(config, logging.getLogger("test"))
+
+    assert list(prepared.columns) == ["smiles", "model_name", "mol_idx"]
+    pd.testing.assert_frame_equal(
+        prepared.reset_index(drop=True),
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN"],
+                "model_name": ["m1", "m2"],
+                "mol_idx": ["LP-0001-00001", "LP-0002-00001"],
+            }
+        ).astype("string"),
+    )
