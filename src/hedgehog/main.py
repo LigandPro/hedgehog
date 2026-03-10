@@ -37,6 +37,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "config.yml")
 SAMPLED_MOLS_FILENAME = "sampled_molecules.csv"
 STAGE_OVERRIDE_KEY = "_run_single_stage_override"
+STAGE_SELECTION_KEY = "_run_stage_selection_override"
 PLAIN_OUTPUT_ENV = "HEDGEHOG_PLAIN_OUTPUT"
 
 # Supported SMI-like file extensions for ligand preparation tool
@@ -309,41 +310,83 @@ def _display_banner() -> None:
     console.print("")
 
 
+def _normalize_stage_selection(
+    stages: "Stage | list[Stage] | tuple[Stage, ...] | None",
+) -> list["Stage"]:
+    """Return unique stages in the order they were requested."""
+    if stages is None:
+        return []
+    if isinstance(stages, Stage):
+        candidates = [stages]
+    else:
+        candidates = list(stages)
+
+    normalized: list[Stage] = []
+    seen: set[Stage] = set()
+    for stage in candidates:
+        if stage in seen:
+            continue
+        seen.add(stage)
+        normalized.append(stage)
+    return normalized
+
+
+def _format_stage_selection(stages: list["Stage"]) -> str:
+    """Format a stage selection for user-facing logs."""
+    return ", ".join(stage.value for stage in stages)
+
+
 def _apply_cli_overrides(
     config_dict: dict,
     generated_mols_path: str | None,
-    stage: "Stage | None",
+    stages: "Stage | list[Stage] | tuple[Stage, ...] | None",
 ) -> None:
     """Apply CLI argument overrides to config dictionary."""
+    selected_stages = _normalize_stage_selection(stages)
+
     if generated_mols_path:
         config_dict["generated_mols_path"] = generated_mols_path
         logger.info(
             "[bold]Override:[/bold] Using molecules from: %s",
             generated_mols_path,
         )
-    elif stage:
+    elif selected_stages:
         logger.info(
             "Using molecules from config: %s",
             config_dict["generated_mols_path"],
         )
 
-    if stage:
-        config_dict[STAGE_OVERRIDE_KEY] = stage.value
+    if not selected_stages:
+        config_dict.pop(STAGE_OVERRIDE_KEY, None)
+        config_dict.pop(STAGE_SELECTION_KEY, None)
+        return
+
+    config_dict[STAGE_SELECTION_KEY] = [stage.value for stage in selected_stages]
+    if len(selected_stages) == 1:
+        config_dict[STAGE_OVERRIDE_KEY] = selected_stages[0].value
         logger.info(
             "[bold]Override:[/bold] Running only stage: [bold]%s[/bold]",
-            stage.value,
+            selected_stages[0].value,
         )
+        return
+
+    config_dict.pop(STAGE_OVERRIDE_KEY, None)
+    logger.info(
+        "[bold]Override:[/bold] Running only stages: [bold]%s[/bold]",
+        _format_stage_selection(selected_stages),
+    )
 
 
 def _resolve_output_folder(
     config_dict: dict,
     reuse_folder: bool,
     force_new_folder: bool,
-    stage: "Stage | None",
+    stages: "Stage | list[Stage] | tuple[Stage, ...] | None",
     generated_mols_path: str | None,
 ) -> Path:
     """Determine and log the appropriate output folder based on CLI flags."""
     original_folder = Path(config_dict[KEY_FOLDER_TO_SAVE])
+    selected_stages = _normalize_stage_selection(stages)
 
     if reuse_folder:
         logger.info(
@@ -362,7 +405,7 @@ def _resolve_output_folder(
         return folder
 
     # Auto-mode: reuse for stage reruns, create new otherwise
-    if stage and not generated_mols_path:
+    if selected_stages and not generated_mols_path:
         logger.info(
             "[bold]Folder mode:[/bold] Reusing folder '%s' for stage execution",
             original_folder,
@@ -735,6 +778,7 @@ app = typer.Typer(
         "  uv run hedge\n"
         "  uv run hedgehog --stage docking\n"
         '  uv run hedgehog --stage descriptors --mols "input/*.csv"\n'
+        "  uv run hedgehog --stage descriptors --stage struct_filters\n"
         "  uv run hedgehog --reuse\n"
         "  uv run hedgehog --stage docking --force-new\n"
         "  uv run hedgehog --auto-install\n"
@@ -794,7 +838,7 @@ def _run_pipeline_command(
     config_path: str,
     generated_mols_path: str | None,
     out_dir: str | None,
-    stage: Stage | None,
+    stage: list[Stage] | None,
     reuse_folder: bool,
     force_new_folder: bool,
     auto_install: bool,
@@ -842,7 +886,7 @@ def _run_pipeline_command(
     if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
         data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
 
-    should_save = config_dict.get("save_sampled_mols", False) or stage is not None
+    should_save = config_dict.get("save_sampled_mols", False) or bool(stage)
     _save_sampled_molecules(data, folder_to_save, should_save)
 
     logger.info("[bold]Starting pipeline...[/bold]")
@@ -883,11 +927,11 @@ def run(
         "-o",
         help="Output directory (overrides config folder_to_save).",
     ),
-    stage: Stage | None = typer.Option(
+    stage: list[Stage] | None = typer.Option(
         None,
         "--stage",
         "-s",
-        help="Run one stage only; see `hedgehog info`.",
+        help="Run one or more stages only; repeat --stage. See `hedgehog info`.",
         case_sensitive=False,
         metavar="STAGE",
         show_choices=False,
@@ -928,6 +972,9 @@ def run(
 
     \b
       uv run hedgehog --stage descriptors --mols "input/*.csv"
+
+    \b
+      uv run hedgehog --stage descriptors --stage struct_filters
 
     \b
       uv run hedgehog --reuse
@@ -976,11 +1023,11 @@ def run_command(
         "-o",
         help="Output directory (overrides config folder_to_save).",
     ),
-    stage: Stage | None = typer.Option(
+    stage: list[Stage] | None = typer.Option(
         None,
         "--stage",
         "-s",
-        help="Run one stage only; see `hedgehog info`.",
+        help="Run one or more stages only; repeat --stage. See `hedgehog info`.",
         case_sensitive=False,
         metavar="STAGE",
         show_choices=False,

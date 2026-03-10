@@ -43,7 +43,7 @@ uv run hedgehog run [OPTIONS]
 | `--config` | `-c` | `TEXT` | `src/hedgehog/configs/config.yml` | Master YAML config path. |
 | `--mols` | `-m` | `TEXT` | `None` | Input SMILES path or glob. Overrides config input. |
 | `--out` | `-o` | `TEXT` | `None` | Output directory override (`folder_to_save`). |
-| `--stage` | `-s` | `STAGE` | `None` | Run one stage only. Uses config molecules unless `--mols` is provided. See `hedgehog info` for stage descriptions. |
+| `--stage` | `-s` | `STAGE` | `None` | Run one or more stages only. Repeat `--stage` to select multiple stages. Uses config molecules unless `--mols` is provided. See `hedgehog info` for stage descriptions. |
 | `--reuse` | | `FLAG` | `False` | Reuse existing results folder. |
 | `--force-new` | | `FLAG` | `False` | Always create a new results folder. |
 | `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools without prompts. |
@@ -57,7 +57,7 @@ The progress bar is disabled by default in CLI runs. Use `--progress` when you w
 
 ### Available Stages
 
-The `--stage` option accepts one of the following values:
+Each `--stage` occurrence accepts one of the following values:
 
 | Stage | Description |
 |-------|-------------|
@@ -73,6 +73,12 @@ When running `--stage struct_filters`, input resolution is:
 1. Existing descriptors output (if present in the run folder)
 2. MolPrep output
 3. Sampled molecules input
+
+To run multiple stages in a single invocation, repeat `--stage`:
+
+```bash
+uv run hedgehog --stage descriptors --stage struct_filters
+```
 
 ### Folder Behavior
 
@@ -104,6 +110,9 @@ uv run hedgehog --mols "input/generated/*.csv"
 
 # Run only the docking stage
 uv run hedge --stage docking
+
+# Run descriptors and structural filters in one invocation
+uv run hedge --stage descriptors --stage struct_filters
 
 # Run a specific stage with custom molecules
 uv run hedge --stage descriptors --mols input/candidates.csv

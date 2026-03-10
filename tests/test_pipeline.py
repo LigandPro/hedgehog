@@ -319,6 +319,29 @@ class TestPipelineStage:
 
         assert stage.enabled is True
 
+    def test_stage_selection_enables_requested_stages_and_mol_prep(self, tmp_path):
+        """Multi-stage selection should enable the requested stages plus Mol Prep."""
+        cfg_path = tmp_path / "stage_config.yml"
+        cfg_path.write_text("run: true\n", encoding="utf-8")
+        config = {
+            "folder_to_save": str(tmp_path),
+            "config_mol_prep": str(cfg_path),
+            "config_descriptors": str(cfg_path),
+            "config_structFilters": str(cfg_path),
+            "config_synthesis": str(cfg_path),
+            "config_docking": str(cfg_path),
+            "config_docking_filters": str(cfg_path),
+            "_run_stage_selection_override": [
+                "descriptors",
+                "struct_filters",
+            ],
+        }
+
+        pipeline = MolecularAnalysisPipeline(config)
+        enabled = {stage.name for stage in pipeline.stages if stage.enabled}
+
+        assert enabled == {"mol_prep", "descriptors", "struct_filters"}
+
 
 def _build_enabled_pipeline(tmp_path: Path, stage_name: str, progress_callback=None):
     """Create a pipeline with only one enabled stage for focused unit tests."""

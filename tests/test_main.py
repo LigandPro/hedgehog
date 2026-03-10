@@ -309,6 +309,25 @@ class TestStageEnum:
         assert "docking" in Stage.docking.description.lower()
 
 
+def test_apply_cli_overrides_supports_multiple_stage_selection():
+    """Repeated --stage flags should map to an ordered stage-selection override."""
+    import hedgehog.main as main_mod
+
+    config = {"generated_mols_path": "input.csv"}
+
+    main_mod._apply_cli_overrides(
+        config,
+        generated_mols_path=None,
+        stages=[main_mod.Stage.descriptors, main_mod.Stage.struct_filters],
+    )
+
+    assert config[main_mod.STAGE_SELECTION_KEY] == [
+        "descriptors",
+        "struct_filters",
+    ]
+    assert main_mod.STAGE_OVERRIDE_KEY not in config
+
+
 def test_setup_aizynthfinder_auto_accepts_by_default(monkeypatch, tmp_path):
     """setup aizynthfinder should auto-accept downloads without extra flags."""
     import hedgehog.main as main_mod
@@ -668,7 +687,7 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
         config_path="cfg.yml",
         generated_mols_path="input.csv",
         out_dir="results/x",
-        stage=main_mod.Stage.docking,
+        stage=[main_mod.Stage.docking],
         reuse_folder=True,
         force_new_folder=False,
         auto_install=True,
@@ -679,7 +698,7 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
         "config_path": "cfg.yml",
         "generated_mols_path": "input.csv",
         "out_dir": "results/x",
-        "stage": main_mod.Stage.docking,
+        "stage": [main_mod.Stage.docking],
         "reuse_folder": True,
         "force_new_folder": False,
         "auto_install": True,
