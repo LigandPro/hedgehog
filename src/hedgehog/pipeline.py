@@ -79,6 +79,7 @@ CONFIG_FOLDER_TO_SAVE = "folder_to_save"
 
 # Command-line override keys
 OVERRIDE_SINGLE_STAGE = "_run_single_stage_override"
+OVERRIDE_STAGE_SELECTION = "_run_stage_selection_override"
 
 # Docking tools
 DOCKING_TOOL_SMINA = "smina"
@@ -1084,13 +1085,41 @@ class MolecularAnalysisPipeline:
     def _initialize_stages(self) -> None:
         """Initialize stages by loading their configs and determining enabled status."""
         single_stage_override = self.config.get(OVERRIDE_SINGLE_STAGE)
+        selected_stage_names: set[str] | None = None
+        selection_override = self.config.get(OVERRIDE_STAGE_SELECTION)
+
+        if isinstance(selection_override, str):
+            selected_stage_names = {
+                part.strip() for part in selection_override.split(",") if part.strip()
+            }
+        elif isinstance(selection_override, (list, tuple, set)):
+            selected_stage_names = {str(part).strip() for part in selection_override}
+            selected_stage_names = {part for part in selected_stage_names if part}
+
+        if selected_stage_names:
+            if len(selected_stage_names) == 1:
+                single_stage_override = next(iter(selected_stage_names))
+                logger.info(
+                    "Single stage mode: enabling only %s", single_stage_override
+                )
+            else:
+                ordered = [
+                    stage_name
+                    for stage_name, _, _ in self._STAGE_DEFINITIONS
+                    if stage_name in selected_stage_names
+                ]
+                logger.info(
+                    "Stage selection mode: enabling only %s", ", ".join(ordered)
+                )
 
         for stage in self.stages:
             try:
                 stage_config = load_config(self.config[stage.config_key])
                 stage.enabled = stage_config.get(CONFIG_RUN_KEY, False)
 
-                if single_stage_override:
+                if selected_stage_names is not None:
+                    stage.enabled = stage.name in selected_stage_names
+                elif single_stage_override:
                     stage.enabled = stage.name == single_stage_override
                     if stage.enabled:
                         logger.info("Single stage mode: enabling only %s", stage.name)
@@ -1104,9 +1133,17 @@ class MolecularAnalysisPipeline:
                 logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
 
-        # In single-stage mode, always run Mol Prep first (if enabled in config),
+        # In stage-selection mode, always run Mol Prep first (if enabled in config),
         # so downstream stages operate on standardized molecules.
-        if single_stage_override and single_stage_override != STAGE_MOL_PREP:
+        selection_requires_mol_prep = False
+        if selected_stage_names:
+            selection_requires_mol_prep = any(
+                stage_name != STAGE_MOL_PREP for stage_name in selected_stage_names
+            )
+        elif single_stage_override:
+            selection_requires_mol_prep = single_stage_override != STAGE_MOL_PREP
+
+        if selection_requires_mol_prep:
             mol_prep = self._stage_by_name.get(STAGE_MOL_PREP)
             if mol_prep is not None:
                 try:

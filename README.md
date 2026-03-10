@@ -57,6 +57,9 @@ uv run hedgehog --mols input/my_molecules.csv
 # Run a single stage
 uv run hedgehog --stage descriptors
 
+# Run multiple selected stages
+uv run hedgehog --stage descriptors --stage struct_filters
+
 # Run docking with a live progress bar
 uv run hedgehog --stage docking --progress
 
