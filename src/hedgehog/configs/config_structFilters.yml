@@ -22,16 +22,16 @@ include_rulesets:
 - AlphaScreen-Hitters
 - Frequent-Hitter
 - Chelator
-- Toxicophore
-- Skin
-- Reactive-Unstable-Toxic
+# - Toxicophore
+# - Skin
+# - Reactive-Unstable-Toxic
 - SureChEMBL
-- Electrophilic
-- Genotoxic-Carcinogenicity
+# - Electrophilic
+# - Genotoxic-Carcinogenicity
 - MLSMR
 - LINT
 - GST-Hitters
-- Non-Genotoxic-Carcinogenicity
+# - Non-Genotoxic-Carcinogenicity
 - HIS-Hitters
 - LuciferaseInhibitor
 exclude_descriptions:
