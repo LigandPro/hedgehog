@@ -15,6 +15,7 @@ from jinja2 import Environment, PackageLoader
 
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
+from hedgehog.reporting.stage_audit_notebook import write_stage_audit_notebook
 from hedgehog.utils.parallel import resolve_n_jobs
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,13 @@ class ReportGenerator:
 
         # Collect all data
         data = self._collect_data()
+        self._emit_progress(64, 100, "Preparing audit notebook")
+        notebook_path = self._generate_stage_audit_notebook()
+        if notebook_path is not None:
+            data["metadata"]["stage_audit_notebook"] = {
+                "path": notebook_path.name,
+                "name": notebook_path.name,
+            }
         self._emit_progress(70, 100, "Generating plots")
 
         # Generate plots
@@ -193,6 +201,14 @@ class ReportGenerator:
 
         logger.info("Report generated: %s", report_path)
         return report_path
+
+    def _generate_stage_audit_notebook(self) -> Path | None:
+        """Generate a Jupyter notebook for stage-by-stage molecule auditing."""
+        try:
+            return write_stage_audit_notebook(self.base_path)
+        except Exception as e:
+            logger.warning("Failed to generate stage audit notebook: %s", e)
+            return None
 
     def _collect_data(self) -> dict[str, Any]:
         """Collect all metrics from stage outputs.
@@ -2971,6 +2987,24 @@ class ReportGenerator:
             return json.dumps(obj).replace("</", "<\\/")
 
         sankey_data_json = _json_for_script(plot_htmls.get("sankey_data") or {})
+        notebook_meta = metadata.get("stage_audit_notebook")
+        notebook_meta_html = ""
+        notebook_section_html = ""
+        if notebook_meta:
+            notebook_path = html_lib.escape(
+                str(notebook_meta.get("path", "")), quote=True
+            )
+            notebook_name = html_lib.escape(str(notebook_meta.get("name", "")))
+            notebook_meta_html = (
+                f'<p>Audit notebook: <a href="{notebook_path}">{notebook_name}</a></p>'
+            )
+            notebook_section_html = (
+                "<section><h2>Stage Audit Notebook</h2><p>Open "
+                f'<a href="{notebook_path}">{notebook_name}</a> '
+                "to inspect passed and dropped molecules in <code>mols2grid</code>, "
+                "compare them against descriptor or docking thresholds, and document "
+                "why specific filters are justified.</p></section>"
+            )
 
         # Build stage status HTML
         stage_rows = ""
@@ -3178,6 +3212,7 @@ class ReportGenerator:
             <div class="meta">
                 <p>Generated: {metadata.get("generated_at", "N/A")}</p>
                 <p>Run path: {metadata.get("run_path", "N/A")}</p>
+                {notebook_meta_html}
             </div>
         </header>
 
@@ -3199,6 +3234,8 @@ class ReportGenerator:
                 <div class="label">Stages Completed</div>
             </div>
         </div>
+
+        {notebook_section_html}
 
         <section>
             <h2>Pipeline Flow</h2>

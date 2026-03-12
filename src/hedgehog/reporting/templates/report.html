@@ -326,6 +326,9 @@
                 <p><strong>Generated:</strong> {{ generated_at }}</p>
                 <p><strong>Run path:</strong> {{ data.metadata.run_path }}</p>
                 <p><strong>Version:</strong> {{ data.metadata.hedgehog_version }}</p>
+                {% if data.metadata.stage_audit_notebook %}
+                <p><strong>Audit notebook:</strong> <a href="{{ data.metadata.stage_audit_notebook.path }}">{{ data.metadata.stage_audit_notebook.name }}</a></p>
+                {% endif %}
             </div>
         </header>
 
@@ -348,6 +351,17 @@
                 <div class="label">Stages Completed</div>
             </div>
         </div>
+
+        {% if data.metadata.stage_audit_notebook %}
+        <section>
+            <h2>Stage Audit Notebook</h2>
+            <p>
+                Open
+                <a href="{{ data.metadata.stage_audit_notebook.path }}">{{ data.metadata.stage_audit_notebook.name }}</a>
+                to inspect passed and dropped molecules in <code>mols2grid</code>, compare them against descriptor or docking thresholds, and document why specific filters are justified.
+            </p>
+        </section>
+        {% endif %}
 
         <!-- Stage Execution Summary -->
         {% if data.summary.stage_statuses %}

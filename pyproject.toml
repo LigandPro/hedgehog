@@ -18,6 +18,7 @@ dependencies = [
     "syba",
     "jinja2>=3.0.0",
     "plotly>=5.0.0",
+    "mols2grid",
     "prolif>=2.1.0",
     "xgboost>=2",
     "posecheck-fast>=0.1.6 ; python_full_version >= '3.11'",

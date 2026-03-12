@@ -14,6 +14,8 @@ The report uses [Plotly.js](https://plotly.com/javascript/) for interactive char
 filter dropdown that lets you view metrics for individual generative models or compare all models
 side-by-side.
 
+Each run also writes a companion Jupyter notebook, `stage_filter_audit.ipynb`, for deeper stage-by-stage inspection. The notebook uses `mols2grid` to review molecules that passed or dropped at each stage and to compare them against descriptor, synthesis, or docking-filter thresholds.
+
 ## Report Sections
 
 ### Pipeline Flow (Sankey Diagram)
@@ -129,6 +131,7 @@ After report generation, the run directory contains:
 |------|-------------|
 | `report.html` | Self-contained interactive HTML report |
 | `report_data.json` | Raw JSON data used to build the report |
+| `stage_filter_audit.ipynb` | Jupyter notebook for molecule-level stage audit with `mols2grid` |
 | `RUN_INFO.md` | Markdown summary with MolEval metrics table |
 | `stages/06_docking_filters/interaction_*.csv` | Interaction reporting artifacts (events, residue summary, type summary, matrix) produced by docking filters |
 | `stages/06_docking_filters/interaction_report_meta.json` | Metadata summary for interaction reporting totals used by report visualizations |

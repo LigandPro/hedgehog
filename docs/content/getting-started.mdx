@@ -74,7 +74,7 @@ When you run the pipeline, you will see:
 1. **Banner** — the HEDGEHOG banner with version information.
 2. **Mol Prep** — Datamol-based standardization and strict filtering (salts/fragments cleanup, uncharging, tautomer canonicalization, stereo removal).
 3. **Stage execution** — each enabled stage runs in order, logging progress and molecule counts. Stages that are disabled in the configuration are skipped.
-4. **Report generation** — an HTML report and associated plots are generated automatically at the end of a successful run.
+4. **Report generation** — an HTML report, report data, and a stage-audit Jupyter notebook are generated automatically at the end of a successful run.
 
 Typical console output looks like:
 
@@ -114,7 +114,8 @@ results/run_1/
 │   └── config_*.yml
 ├── report.html                     # Interactive HTML report
 ├── report_data.json                # Report data
+├── stage_filter_audit.ipynb        # Jupyter notebook for stage-by-stage molecule audit
 └── RUN_INFO.md                     # Run summary with MolEval metrics table
 ```
 
-Each stage directory contains a `filtered_molecules.csv` file with the molecules that passed that stage, along with any stage-specific outputs (plots, intermediate files). The `report.html` file is the primary deliverable — open it in a browser to explore per-stage statistics, descriptor distributions, filter breakdowns, and generative quality metrics.
+Each stage directory contains a `filtered_molecules.csv` file with the molecules that passed that stage, along with any stage-specific outputs (plots, intermediate files). The `report.html` file is the primary deliverable for a browser-based overview, while `stage_filter_audit.ipynb` lets you inspect passed or dropped molecules per stage in `mols2grid` and compare them against descriptor, synthesis, or docking-filter thresholds.
