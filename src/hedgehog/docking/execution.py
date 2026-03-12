@@ -2,9 +2,12 @@ import subprocess
 import time
 from pathlib import Path
 
-from hedgehog._constants import TOOL_GNINA, TOOL_SMINA
+from hedgehog._constants import TOOL_GNINA, TOOL_MATCHA, TOOL_SMINA
 from hedgehog.configs.logger import logger
-from hedgehog.docking.aggregation import _aggregate_docking_results
+from hedgehog.docking.aggregation import (
+    _aggregate_docking_results,
+    _aggregate_matcha_results,
+)
 from hedgehog.docking.metadata import _update_metadata_with_run_status
 from hedgehog.docking.monitoring import _create_progress_tracker, _evaluate_run_results
 from hedgehog.docking.paths import _emit_post_docking_warnings
@@ -124,6 +127,35 @@ def _run_gnina(ligands_dir, output_sdf, background, job_id, tick=None):
     return status
 
 
+def _run_matcha(ligands_dir, cfg, background, job_id, tick=None):
+    """Run Matcha docking."""
+    workdir = ligands_dir / "_workdir"
+    script_path = workdir / "run_matcha.sh"
+    log_path = workdir / "matcha_run.log"
+    status = _run_docking_script(script_path, workdir, log_path, background, tick=tick)
+    if job_id:
+        status["job_id"] = job_id
+
+    matcha_cfg = cfg.get("matcha_config", {}) or {}
+    run_name = str(matcha_cfg.get("run_name") or "matcha_run").strip() or "matcha_run"
+    run_dir = ligands_dir / "matcha" / run_name
+    best_dir = run_dir / "best_poses"
+    output_sdf = ligands_dir / "matcha" / "matcha_out.sdf"
+
+    if not background and best_dir.exists():
+        try:
+            count = _aggregate_matcha_results(best_dir, output_sdf)
+            status["aggregated_molecules"] = count
+            logger.info("Aggregated %d Matcha docking results", count)
+        except Exception as e:
+            logger.warning("Failed to aggregate Matcha results: %s", e)
+
+    status["output"] = str(output_sdf)
+    status["run_dir"] = str(run_dir)
+    status["log"] = str(log_path)
+    return status
+
+
 def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, reporter):
     """Execute docking tools and evaluate results. Returns True on success."""
     background = bool(cfg.get("run_in_background", False))
@@ -188,6 +220,30 @@ def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, report
         except Exception as e:
             logger.error("GNINA execution failed: %s", e)
             run_status[TOOL_GNINA] = {"status": "failed", "error": str(e)}
+
+    if TOOL_MATCHA in job_ids:
+        logger.info("Running Matcha docking")
+        try:
+            if reporter is not None and not background:
+                reporter.progress(
+                    0,
+                    tool_totals.get(TOOL_MATCHA, 1),
+                    message=f"Docking ({TOOL_MATCHA})",
+                )
+            tick = make_tick(TOOL_MATCHA) if make_tick and not background else None
+            run_status[TOOL_MATCHA] = _run_matcha(
+                ligands_dir, cfg, background, job_ids[TOOL_MATCHA], tick=tick
+            )
+            if (
+                reporter is not None
+                and not background
+                and run_status[TOOL_MATCHA].get("status") == "completed"
+            ):
+                total = tool_totals.get(TOOL_MATCHA, 1)
+                reporter.progress(total, total, message=f"Docking ({TOOL_MATCHA})")
+        except Exception as e:
+            logger.error("Matcha execution failed: %s", e)
+            run_status[TOOL_MATCHA] = {"status": "failed", "error": str(e)}
 
     try:
         _update_metadata_with_run_status(ligands_dir, run_status)

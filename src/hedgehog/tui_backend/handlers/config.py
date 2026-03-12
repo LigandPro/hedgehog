@@ -284,7 +284,7 @@ class ConfigHandler:
             if mapped:
                 data["receptor_pdb"] = mapped
 
-            for tool_key in ("smina_config", "gnina_config"):
+            for tool_key in ("smina_config", "gnina_config", "matcha_config"):
                 tool_cfg = data.get(tool_key)
                 if not isinstance(tool_cfg, dict):
                     continue

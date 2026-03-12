@@ -707,6 +707,39 @@ class TestConfigValidatorUnknownType:
         assert not any("No specific validator" in w for w in result.get("warnings", []))
 
 
+class TestConfigValidatorDocking:
+    """Docking config validator should accept the supported engine names."""
+
+    def test_validate_docking_accepts_matcha(self):
+        result = ConfigValidator.validate(
+            "docking",
+            {"run": True, "tools": "matcha", "receptor_pdb": "/tmp/receptor.pdb"},
+        )
+        assert result["valid"] is True
+
+    def test_validate_docking_accepts_comma_separated_tools(self):
+        result = ConfigValidator.validate(
+            "docking",
+            {
+                "run": True,
+                "tools": "gnina, matcha",
+                "receptor_pdb": "/tmp/receptor.pdb",
+            },
+        )
+        assert result["valid"] is True
+
+    def test_validate_docking_accepts_both_and_matcha(self):
+        result = ConfigValidator.validate(
+            "docking",
+            {
+                "run": True,
+                "tools": "both, matcha",
+                "receptor_pdb": "/tmp/receptor.pdb",
+            },
+        )
+        assert result["valid"] is True
+
+
 # =====================================================================
 # H2 — _disable_unrequested_stages
 # =====================================================================

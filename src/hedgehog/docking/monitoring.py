@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from hedgehog._constants import TOOL_GNINA, TOOL_SMINA
+from hedgehog._constants import TOOL_GNINA, TOOL_MATCHA, TOOL_SMINA
 from hedgehog.configs.logger import logger
 
 
@@ -49,6 +49,18 @@ def _count_gnina_done(ligands_dir: Path, output_sdf: Path) -> int:
     return 0
 
 
+def _count_matcha_done(ligands_dir: Path) -> int:
+    done = 0
+    for best_dir in (ligands_dir / "matcha").glob("*/best_poses"):
+        for path in best_dir.glob("*.sdf"):
+            try:
+                if path.is_file() and path.stat().st_size > 0:
+                    done += 1
+            except OSError:
+                continue
+    return done
+
+
 def _create_progress_tracker(reporter, selected_tools, ligands_dir, gnina_output_sdf):
     """Build per-tool molecule progress tracking closures for docking execution.
 
@@ -74,6 +86,11 @@ def _create_progress_tracker(reporter, selected_tools, ligands_dir, gnina_output
             return min(
                 _count_gnina_done(ligands_dir, gnina_output_sdf),
                 tool_totals.get(TOOL_GNINA, 1),
+            )
+        if tool_name == TOOL_MATCHA:
+            return min(
+                _count_matcha_done(ligands_dir),
+                tool_totals.get(TOOL_MATCHA, 1),
             )
         return 0
 

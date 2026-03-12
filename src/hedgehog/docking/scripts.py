@@ -4,7 +4,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from hedgehog._constants import TOOL_GNINA, TOOL_SMINA
+from hedgehog._constants import TOOL_GNINA, TOOL_MATCHA, TOOL_SMINA
 from hedgehog.configs.logger import logger
 from hedgehog.docking.binaries import _resolve_docking_binary
 from hedgehog.docking.config_writer import (
@@ -21,12 +21,13 @@ from hedgehog.docking.ligand_prep import (
     _split_sdf_to_molecules,
 )
 from hedgehog.docking.metadata import _generate_job_id
-from hedgehog.docking.paths import _emit_post_docking_warnings
+from hedgehog.docking.paths import _emit_post_docking_warnings, _resolve_autobox_path
 from hedgehog.docking.receptor_prep import (
     _get_receptor_and_prep_cmd,
     _prepare_receptor_if_needed,
     _restore_gnina_receptor,
 )
+from hedgehog.setup import ensure_matcha_checkout
 
 
 def _extract_pdb_output_from_cmd(cmd, ligands_dir):
@@ -314,6 +315,199 @@ def _build_gnina_command_template(cfg: dict, gnina_bin: str, ligands_dir: Path) 
     return _build_docker_gnina_command(
         container_cfg, ligands_dir, no_gpu_enabled, placeholder
     )
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _resolve_executable(bin_name: str) -> str | None:
+    """Resolve an executable path from config or PATH."""
+    candidate = Path(bin_name).expanduser()
+    if candidate.exists() and candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return shutil.which(bin_name)
+
+
+def _resolve_matcha_path(path_value: str | None, *extra_roots: Path) -> str | None:
+    """Resolve a Matcha-related input path to an existing absolute path."""
+    if not path_value:
+        return None
+    path = Path(str(path_value)).expanduser()
+    if path.is_absolute() and path.exists():
+        return str(path.resolve())
+    for root in (*extra_roots, _project_root(), Path.cwd()):
+        candidate = (root / path).resolve()
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _resolve_matcha_autobox(cfg: dict, matcha_cfg: dict) -> str | None:
+    """Resolve Matcha autobox path with fallback to GNINA/SMINA autobox config."""
+    raw_autobox = (
+        matcha_cfg.get("autobox_ligand")
+        or (cfg.get("gnina_config", {}) or {}).get("autobox_ligand")
+        or (cfg.get("smina_config", {}) or {}).get("autobox_ligand")
+    )
+    if not raw_autobox:
+        return None
+    resolved = _resolve_matcha_path(str(raw_autobox))
+    if resolved:
+        return resolved
+    fallback = _resolve_autobox_path(str(raw_autobox), _project_root())
+    return str(fallback) if fallback else None
+
+
+def _resolve_matcha_center(
+    cfg: dict, matcha_cfg: dict
+) -> tuple[float, float, float] | None:
+    """Resolve Matcha box center from Matcha/GNINA/SMINA configs."""
+    for config_dict in (
+        matcha_cfg,
+        cfg.get("gnina_config", {}) or {},
+        cfg.get("smina_config", {}) or {},
+    ):
+        center = config_dict.get("center")
+        if isinstance(center, (list, tuple)) and len(center) >= 3:
+            return (float(center[0]), float(center[1]), float(center[2]))
+        cx = config_dict.get("center_x")
+        cy = config_dict.get("center_y")
+        cz = config_dict.get("center_z")
+        if cx is not None and cy is not None and cz is not None:
+            return (float(cx), float(cy), float(cz))
+    return None
+
+
+def _build_matcha_command(
+    cfg: dict,
+    ligands_dir: Path,
+    receptor: str,
+    ligands_path: str,
+) -> tuple[list[str], str]:
+    """Build Matcha CLI command and return (command_parts, run_name)."""
+    matcha_cfg = cfg.get("matcha_config", {}) or {}
+    matcha_repo = ensure_matcha_checkout(
+        _project_root(),
+        checkout_dir=matcha_cfg.get("checkout_dir"),
+        pr_number=matcha_cfg.get("pr_number"),
+    )
+    uv_bin = str(matcha_cfg.get("uv_bin") or "uv").strip() or "uv"
+    resolved_uv = _resolve_executable(uv_bin)
+    if resolved_uv is None:
+        raise FileNotFoundError(
+            f"Matcha launcher '{uv_bin}' was not found. Install uv or configure matcha_config.uv_bin."
+        )
+
+    run_name = str(matcha_cfg.get("run_name") or "matcha_run").strip() or "matcha_run"
+    output_dir = ligands_dir / "matcha"
+    command = [
+        resolved_uv,
+        "run",
+        "--project",
+        str(matcha_repo),
+        "matcha",
+        "--receptor",
+        receptor,
+        "--ligand-dir",
+        ligands_path,
+        "--out",
+        str(output_dir.resolve()),
+        "--run-name",
+        run_name,
+        "--overwrite",
+        "--device",
+        str(matcha_cfg.get("device") or "auto"),
+        "--n-samples",
+        str(int(matcha_cfg.get("n_samples", 20))),
+        "--scorer",
+        str(matcha_cfg.get("scorer") or "gnina"),
+    ]
+
+    n_confs = matcha_cfg.get("n_confs")
+    if n_confs is not None:
+        command.extend(["--n-confs", str(int(n_confs))])
+
+    checkpoints = _resolve_matcha_path(matcha_cfg.get("checkpoints"), matcha_repo)
+    if checkpoints:
+        command.extend(["--checkpoints", checkpoints])
+
+    matcha_config_path = _resolve_matcha_path(matcha_cfg.get("config"), matcha_repo)
+    if matcha_config_path:
+        command.extend(["--config", matcha_config_path])
+
+    scorer_path = _resolve_matcha_path(matcha_cfg.get("scorer_path"), matcha_repo)
+    if not scorer_path:
+        gnina_bin = ((cfg.get("gnina_config", {}) or {}).get("bin") or "").strip()
+        scorer_path = _resolve_executable(gnina_bin) if gnina_bin else None
+    if scorer_path:
+        command.extend(["--scorer-path", scorer_path])
+
+    if _parse_bool_config(matcha_cfg.get("scorer_minimize", True), True):
+        command.append("--scorer-minimize")
+    else:
+        command.append("--no-scorer-minimize")
+
+    if _parse_bool_config(matcha_cfg.get("physical_only", False), False):
+        command.append("--physical-only")
+    else:
+        command.append("--keep-all-poses")
+
+    if _parse_bool_config(matcha_cfg.get("keep_workdir", False), False):
+        command.append("--keep-workdir")
+
+    gpus = matcha_cfg.get("gpus")
+    if gpus:
+        command.extend(["--gpus", str(gpus)])
+
+    autobox_path = _resolve_matcha_autobox(cfg, matcha_cfg)
+    center = _resolve_matcha_center(cfg, matcha_cfg)
+    if autobox_path:
+        command.extend(["--autobox-ligand", autobox_path])
+    elif center is not None:
+        command.extend(
+            [
+                "--center-x",
+                str(center[0]),
+                "--center-y",
+                str(center[1]),
+                "--center-z",
+                str(center[2]),
+            ]
+        )
+
+    return command, run_name
+
+
+def _create_matcha_script(
+    ligands_dir: Path,
+    matcha_command: list[str],
+    run_name: str,
+    preparation_cmd=None,
+    prepared_output_relative=None,
+):
+    """Create Matcha run script."""
+    script_path = ligands_dir / "_workdir" / "run_matcha.sh"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(script_path, "w") as f:
+        f.write("#!/usr/bin/env bash\n")
+        f.write("set -eo pipefail\n")
+        f.write(f"cd {ligands_dir}\n")
+
+        if preparation_cmd and prepared_output_relative:
+            _write_ligand_prep_bash(f, preparation_cmd, prepared_output_relative)
+
+        f.write(f'echo "Starting MATCHA docking run: {shlex.quote(run_name)}"\n')
+        f.write(" ".join(shlex.quote(part) for part in matcha_command) + "\n")
+        f.write("if [ $? -eq 0 ]; then\n")
+        f.write('  echo "MATCHA docking completed successfully"\n')
+        f.write("else\n")
+        f.write('  echo "MATCHA docking failed with exit code $?"\n')
+        f.write("  exit 1\n")
+        f.write("fi\n")
+
+    os.chmod(script_path, 0o700)
+    return script_path
 
 
 def _create_smina_script(
@@ -1077,6 +1271,35 @@ def _setup_docking_tools(
         except Exception as e:
             logger.warning("GNINA setup failed, continuing without GNINA: %s", e)
             tools_list[:] = [t for t in tools_list if t != TOOL_GNINA]
+
+    if TOOL_MATCHA in tools_list:
+        try:
+            receptor, _ = _get_receptor_and_prep_cmd(
+                cfg, ligands_dir, None, TOOL_MATCHA
+            )
+            if receptor:
+                ligands_path, prep_cmd = _prepare_ligands_for_docking(
+                    ligands_csv,
+                    ligands_dir,
+                    ligand_preparation_tool,
+                    cfg,
+                    tool_name=TOOL_MATCHA,
+                )
+                matcha_command, run_name = _build_matcha_command(
+                    cfg, ligands_dir, receptor, ligands_path
+                )
+                script = _create_matcha_script(
+                    ligands_dir,
+                    matcha_command,
+                    run_name,
+                    prep_cmd,
+                    _extract_prepared_output_from_cmd(prep_cmd),
+                )
+                scripts_prepared.append(str(script))
+                job_ids[TOOL_MATCHA] = _generate_job_id(TOOL_MATCHA)
+        except Exception as e:
+            logger.warning("Matcha setup failed, continuing without Matcha: %s", e)
+            tools_list[:] = [t for t in tools_list if t != TOOL_MATCHA]
 
     return scripts_prepared, job_ids
 
