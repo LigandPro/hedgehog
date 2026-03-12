@@ -31,11 +31,19 @@ def __getattr__(name: str):
         from hedgehog.setup._nvmolkit_worker import ensure_nvmolkit_worker
 
         return ensure_nvmolkit_worker
-    if name == "ensure_matcha_checkout":
-        from hedgehog.setup._matcha import ensure_matcha_checkout
-
-        return ensure_matcha_checkout
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Expose lazy exports in module introspection without eager binding."""
+    return sorted(set(globals()) | set(__all__))
+
+
+def ensure_matcha_checkout(*args, **kwargs):
+    """Expose Matcha checkout setup as a real module attribute."""
+    from hedgehog.setup._matcha import ensure_matcha_checkout as _impl
+
+    return _impl(*args, **kwargs)
 
 
 __all__ = [

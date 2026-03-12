@@ -2,6 +2,7 @@
 
 import pytest
 
+import hedgehog.setup as setup_pkg
 from hedgehog.setup._matcha import _select_matcha_pr
 
 
@@ -140,3 +141,11 @@ def test_select_matcha_pr_raises_when_all_open_prs_are_approved(monkeypatch):
 
     with pytest.raises(RuntimeError, match="No eligible Matcha pull request was found"):
         _select_matcha_pr()
+
+
+def test_setup_dir_exposes_other_lazy_exports_without_binding():
+    setup_pkg.__dict__.pop("ensure_nvmolkit_worker", None)
+
+    assert "ensure_nvmolkit_worker" in dir(setup_pkg)
+    assert "ensure_nvmolkit_worker" not in setup_pkg.__dict__
+    assert callable(setup_pkg.ensure_nvmolkit_worker)
