@@ -129,7 +129,7 @@ uv run hedge --progress
 
 ## `hedgehog report`
 
-Regenerates the HTML report from an existing pipeline run directory without re-running any pipeline stages. Useful when report templates or plotting logic have been updated.
+Regenerates the reporting artifacts from an existing pipeline run directory without re-running any pipeline stages. Useful when report templates, plotting logic, or the stage-audit notebook have been updated.
 
 ```bash
 uv run hedgehog report <RESULTS_DIR>
@@ -141,7 +141,12 @@ uv run hedgehog report <RESULTS_DIR>
 |----------|------|----------|-------------|
 | `RESULTS_DIR` | `TEXT` | Yes | Path to an existing pipeline results directory (e.g., `results/run_10`). |
 
-The command loads the saved configuration from `configs/master_config_resolved.yml` inside the results directory and regenerates `report.html`.
+The command loads the saved configuration from `configs/master_config_resolved.yml` inside the results directory and regenerates:
+
+- `report.html`
+- `report_data.json`
+- `RUN_INFO.md`
+- `stage_filter_audit.ipynb`
 
 ### Examples
 

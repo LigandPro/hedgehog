@@ -593,3 +593,34 @@ class TestNewPlotFunctions:
 
         html = plot_docking_filters_interaction_matrix_heatmap([])
         assert html
+
+
+class TestStageAuditNotebook:
+    """Tests for stage-audit notebook generation."""
+
+    def test_generate_writes_stage_audit_notebook_and_links_it(
+        self, report_gen, base_path
+    ):
+        """Full report generation should create and reference the audit notebook."""
+        report_path = report_gen.generate()
+
+        notebook_path = base_path / "stage_filter_audit.ipynb"
+        assert notebook_path.exists()
+
+        notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+        sources = "\n".join(
+            "".join(cell.get("source", [])) for cell in notebook.get("cells", [])
+        )
+        assert "mols2grid" in sources
+        assert "stage_view" in sources
+        assert "molecules_near_threshold" in sources
+        assert 'STAGE_KEY = "descriptors_initial"' in sources
+
+        html = report_path.read_text(encoding="utf-8")
+        assert "stage_filter_audit.ipynb" in html
+        assert "Stage Audit Notebook" in html
+
+        report_data = json.loads((base_path / "report_data.json").read_text())
+        notebook_meta = report_data["metadata"]["stage_audit_notebook"]
+        assert notebook_meta["path"] == "stage_filter_audit.ipynb"
+        assert notebook_meta["name"] == "stage_filter_audit.ipynb"
