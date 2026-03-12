@@ -85,7 +85,7 @@ const SYNTHESIS_PARAMS: ParamDef[] = [
 
 const DOCKING_PARAMS: ParamDef[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable docking' },
-  { key: 'tools', label: 'Tool', type: 'select', options: ['smina', 'gnina', 'both'], description: 'smina (CPU), gnina (GPU+CNN)' },
+  { key: 'tools', label: 'Tool', type: 'select', options: ['all', 'smina', 'gnina', 'matcha'], description: 'Use all engines or select one here; multi-engine subsets can be set manually in YAML' },
   { key: 'exhaustiveness', label: 'Exhaustiveness', type: 'number', configPath: ['smina_config'], description: 'Search depth (8=fast, 32=thorough)' },
   { key: 'num_modes', label: 'Num Modes', type: 'number', configPath: ['smina_config'], description: 'Max binding poses to generate' },
   { key: 'energy_range', label: 'Energy Range', type: 'number', configPath: ['smina_config'], description: 'Max energy diff from best (kcal/mol)' },

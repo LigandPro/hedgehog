@@ -5,13 +5,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from hedgehog.docking.aggregation import _aggregate_docking_results
+from hedgehog.docking.aggregation import (
+    _aggregate_docking_results,
+    _aggregate_matcha_results,
+)
 from hedgehog.docking.binaries import _validate_optional_tool_path
 from hedgehog.docking.config_writer import _create_per_molecule_configs
 from hedgehog.docking.input import _find_latest_input_source, _prepare_ligands_dataframe
 from hedgehog.docking.ligand_prep import _convert_with_rdkit, _split_sdf_to_molecules
 from hedgehog.docking.scripts import (
     _build_gnina_command_template,
+    _build_matcha_command,
     _resolve_gnina_parallelism,
 )
 from hedgehog.docking.stage import run as run_docking
@@ -578,6 +582,32 @@ class TestPerMoleculeArchitecture:
         assert "mol1_worse" not in names
         assert "mol2_only" in names
 
+    def test_aggregate_matcha_best_poses_uses_file_stems_as_names(self, tmp_path):
+        """Matcha aggregation should restore mol_idx from best-pose filenames."""
+        from rdkit import Chem
+
+        best_dir = tmp_path / "best_poses"
+        best_dir.mkdir()
+
+        for filename, original_name, affinity in (
+            ("mol-1.sdf", "unexpected_best_name", -7.6),
+            ("mol-2.sdf", "another_name", -6.1),
+        ):
+            mol = Chem.MolFromSmiles("CCO")
+            mol.SetProp("_Name", original_name)
+            mol.SetProp("minimizedAffinity", str(affinity))
+            writer = Chem.SDWriter(str(best_dir / filename))
+            writer.write(mol)
+            writer.close()
+
+        output_sdf = tmp_path / "matcha_out.sdf"
+        count = _aggregate_matcha_results(best_dir, output_sdf)
+
+        assert count == 2
+        suppl = Chem.SDMolSupplier(str(output_sdf))
+        names = [m.GetProp("_Name") for m in suppl if m is not None]
+        assert names == ["mol-1", "mol-2"]
+
 
 class TestGninaNoGpuFlag:
     """Tests for no_gpu command/config behavior."""
@@ -733,3 +763,47 @@ class TestGninaParallelismAuto:
 
         assert gpu_count == 4
         assert parallel_jobs == 6
+
+
+class TestMatchaCommand:
+    """Tests for Matcha command generation."""
+
+    def test_build_matcha_command_uses_managed_checkout(self, tmp_path, monkeypatch):
+        managed_repo = tmp_path / "matcha_remote"
+        managed_repo.mkdir()
+        cfg = {
+            "matcha_config": {
+                "checkout_dir": "modules/matcha_remote",
+                "n_samples": 12,
+                "device": "cuda:0",
+                "scorer": "gnina",
+            },
+            "gnina_config": {"bin": "gnina"},
+        }
+
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts.ensure_matcha_checkout",
+            lambda *args, **kwargs: managed_repo,
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._resolve_executable",
+            lambda value: f"/resolved/{value}",
+        )
+
+        command, run_name = _build_matcha_command(
+            cfg,
+            tmp_path,
+            receptor="/tmp/receptor.pdb",
+            ligands_path="/tmp/ligands.sdf",
+        )
+
+        assert run_name == "matcha_run"
+        assert command[:5] == [
+            "/resolved/uv",
+            "run",
+            "--project",
+            str(managed_repo),
+            "matcha",
+        ]
+        assert "--n-samples" in command
+        assert "12" in command

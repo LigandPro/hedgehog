@@ -583,6 +583,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         candidates = [
             docking_dir / "smina" / "smina_out.sdf",
             docking_dir / "gnina" / "gnina_out.sdf",
+            docking_dir / "matcha" / "matcha_out.sdf",
         ]
         input_sdf = next((p for p in candidates if p.exists()), None)
         if input_sdf is None:

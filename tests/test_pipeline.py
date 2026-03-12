@@ -289,14 +289,61 @@ class TestPipelineStageRunner:
         result = runner._parse_docking_tools(["smina"])
         assert result == ["smina"]
 
-    def test_parse_docking_tools_both(self, tmp_path):
-        """Parse docking tools when 'both' specified."""
+    def test_parse_docking_tools_all(self, tmp_path):
+        """Parse docking tools when 'all' is specified."""
+        config = {"folder_to_save": str(tmp_path)}
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        result = runner._parse_docking_tools("all")
+        assert result == ["smina", "gnina", "matcha"]
+
+    def test_parse_docking_tools_matcha(self, tmp_path):
+        """Parse Matcha as an explicit docking engine."""
+        config = {"folder_to_save": str(tmp_path)}
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        result = runner._parse_docking_tools("matcha")
+        assert result == ["matcha"]
+
+    def test_parse_docking_tools_all_and_matcha_deduplicates(self, tmp_path):
+        """Parse all + Matcha without duplicating Matcha."""
+        config = {"folder_to_save": str(tmp_path)}
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        result = runner._parse_docking_tools("all, matcha")
+        assert result == ["smina", "gnina", "matcha"]
+
+    def test_parse_docking_tools_legacy_both_alias(self, tmp_path):
+        """Parse legacy both alias as SMINA + GNINA only."""
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
         runner = PipelineStageRunner(config, checker)
 
         result = runner._parse_docking_tools("both")
-        assert set(result) == {"smina", "gnina"}
+        assert result == ["smina", "gnina"]
+
+    def test_docking_results_present_detects_matcha_output(self, tmp_path):
+        """Matcha output SDF should satisfy docking result detection."""
+        docking_cfg = tmp_path / "config_docking.yml"
+        docking_cfg.write_text(
+            "run: true\ntools: matcha\nreceptor_pdb: receptor.pdb\n",
+            encoding="utf-8",
+        )
+        matcha_out = tmp_path / "stages" / "05_docking" / "matcha" / "matcha_out.sdf"
+        matcha_out.parent.mkdir(parents=True, exist_ok=True)
+        matcha_out.write_text("dummy", encoding="utf-8")
+
+        config = {
+            "folder_to_save": str(tmp_path),
+            "config_docking": str(docking_cfg),
+        }
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        assert runner.docking_results_present() is True
 
 
 class TestPipelineStage:
@@ -620,6 +667,37 @@ class TestFinalOutputWithDockingScores:
 
         assert pd.isna(rows.loc["mol-3", "gnina_affinity"])
         assert pd.isna(rows.loc["mol-3", "smina_affinity"])
+
+    def test_adds_matcha_affinity_when_matcha_output_exists(self, tmp_path):
+        """Matcha affinity should be merged into final output when available."""
+        pipeline = self._pipeline(tmp_path)
+
+        _write_test_docking_sdf(
+            tmp_path / "stages" / "05_docking" / "matcha" / "matcha_out.sdf",
+            [
+                {"name": "mol-1", "minimizedAffinity": -7.9},
+                {"name": "mol-2", "minimizedAffinity": -6.4},
+            ],
+        )
+
+        final_data = pd.DataFrame(
+            {
+                COL_SMILES: [SMILES_ETHANOL, "CCC", "CCN"],
+                COL_MODEL_NAME: ["model_a", "model_a", "model_b"],
+                COL_MOL_IDX: ["mol-1", "mol-2", "mol-3"],
+            }
+        )
+        pipeline._save_final_output(final_data, len(final_data))
+
+        output_path = tmp_path / "output" / "final_molecules.csv"
+        out = pd.read_csv(output_path).assign(
+            mol_idx=lambda df: df[COL_MOL_IDX].astype(str)
+        )
+        rows = out.set_index(COL_MOL_IDX)
+
+        assert rows.loc["mol-1", "matcha_affinity"] == pytest.approx(-7.9)
+        assert rows.loc["mol-2", "matcha_affinity"] == pytest.approx(-6.4)
+        assert pd.isna(rows.loc["mol-3", "matcha_affinity"])
 
     def test_empty_final_output_has_stable_header(self, tmp_path):
         """Empty final output should still expose a stable score schema."""

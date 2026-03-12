@@ -118,9 +118,25 @@ class ConfigValidator:
                 )
 
         tools = data.get("tools", "both")
-        valid_tools = {"both", "smina", "gnina"}
-        if tools not in valid_tools:
-            result["errors"].append(f"tools must be one of: {', '.join(valid_tools)}")
+        valid_tools = {"all", "smina", "gnina", "matcha"}
+        legacy_valid_tools = {"both"}
+        if isinstance(tools, str):
+            tools_list = [
+                chunk.strip().lower() for chunk in tools.split(",") if chunk.strip()
+            ]
+        elif isinstance(tools, (list, tuple)):
+            tools_list = [
+                str(chunk).strip().lower() for chunk in tools if str(chunk).strip()
+            ]
+        else:
+            tools_list = [str(tools).strip().lower()]
+        if not tools_list or any(
+            tool not in valid_tools and tool not in legacy_valid_tools
+            for tool in tools_list
+        ):
+            result["errors"].append(
+                f"tools must contain only: {', '.join(sorted(valid_tools))}"
+            )
 
     @staticmethod
     def _validate_docking_filters(data: dict[str, Any], result: dict[str, Any]) -> None:
