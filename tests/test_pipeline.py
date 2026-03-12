@@ -289,14 +289,14 @@ class TestPipelineStageRunner:
         result = runner._parse_docking_tools(["smina"])
         assert result == ["smina"]
 
-    def test_parse_docking_tools_both(self, tmp_path):
-        """Parse docking tools when 'both' specified."""
+    def test_parse_docking_tools_all(self, tmp_path):
+        """Parse docking tools when 'all' is specified."""
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
         runner = PipelineStageRunner(config, checker)
 
-        result = runner._parse_docking_tools("both")
-        assert set(result) == {"smina", "gnina"}
+        result = runner._parse_docking_tools("all")
+        assert result == ["smina", "gnina", "matcha"]
 
     def test_parse_docking_tools_matcha(self, tmp_path):
         """Parse Matcha as an explicit docking engine."""
@@ -307,14 +307,23 @@ class TestPipelineStageRunner:
         result = runner._parse_docking_tools("matcha")
         assert result == ["matcha"]
 
-    def test_parse_docking_tools_both_and_matcha(self, tmp_path):
-        """Parse both + Matcha as the full three-engine set."""
+    def test_parse_docking_tools_all_and_matcha_deduplicates(self, tmp_path):
+        """Parse all + Matcha without duplicating Matcha."""
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
         runner = PipelineStageRunner(config, checker)
 
-        result = runner._parse_docking_tools("both, matcha")
+        result = runner._parse_docking_tools("all, matcha")
         assert result == ["smina", "gnina", "matcha"]
+
+    def test_parse_docking_tools_legacy_both_alias(self, tmp_path):
+        """Parse legacy both alias as SMINA + GNINA only."""
+        config = {"folder_to_save": str(tmp_path)}
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        result = runner._parse_docking_tools("both")
+        assert result == ["smina", "gnina"]
 
     def test_docking_results_present_detects_matcha_output(self, tmp_path):
         """Matcha output SDF should satisfy docking result detection."""

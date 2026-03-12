@@ -728,12 +728,23 @@ class TestConfigValidatorDocking:
         )
         assert result["valid"] is True
 
-    def test_validate_docking_accepts_both_and_matcha(self):
+    def test_validate_docking_accepts_all(self):
         result = ConfigValidator.validate(
             "docking",
             {
                 "run": True,
-                "tools": "both, matcha",
+                "tools": "all",
+                "receptor_pdb": "/tmp/receptor.pdb",
+            },
+        )
+        assert result["valid"] is True
+
+    def test_validate_docking_accepts_legacy_both_alias(self):
+        result = ConfigValidator.validate(
+            "docking",
+            {
+                "run": True,
+                "tools": "both",
                 "receptor_pdb": "/tmp/receptor.pdb",
             },
         )

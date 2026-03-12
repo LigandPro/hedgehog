@@ -118,7 +118,8 @@ class ConfigValidator:
                 )
 
         tools = data.get("tools", "both")
-        valid_tools = {"both", "smina", "gnina", "matcha"}
+        valid_tools = {"all", "smina", "gnina", "matcha"}
+        legacy_valid_tools = {"both"}
         if isinstance(tools, str):
             tools_list = [
                 chunk.strip().lower() for chunk in tools.split(",") if chunk.strip()
@@ -129,7 +130,10 @@ class ConfigValidator:
             ]
         else:
             tools_list = [str(tools).strip().lower()]
-        if not tools_list or any(tool not in valid_tools for tool in tools_list):
+        if not tools_list or any(
+            tool not in valid_tools and tool not in legacy_valid_tools
+            for tool in tools_list
+        ):
             result["errors"].append(
                 f"tools must contain only: {', '.join(sorted(valid_tools))}"
             )

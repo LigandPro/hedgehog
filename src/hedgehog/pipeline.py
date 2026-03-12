@@ -87,6 +87,7 @@ OVERRIDE_STAGE_SELECTION = "_run_stage_selection_override"
 DOCKING_TOOL_SMINA = "smina"
 DOCKING_TOOL_GNINA = "gnina"
 DOCKING_TOOL_MATCHA = "matcha"
+DOCKING_TOOL_ALL = "all"
 DOCKING_TOOL_BOTH = "both"
 DOCKING_RESULTS_DIR_TEMPLATE = {
     DOCKING_TOOL_SMINA: f"{DIR_DOCKING}/smina",
@@ -631,6 +632,11 @@ class PipelineStageRunner:
                 selected_tools.append(tool_name)
 
         for tool_name in tools_list:
+            if tool_name == DOCKING_TOOL_ALL:
+                _append(DOCKING_TOOL_SMINA)
+                _append(DOCKING_TOOL_GNINA)
+                _append(DOCKING_TOOL_MATCHA)
+                continue
             if tool_name == DOCKING_TOOL_BOTH:
                 _append(DOCKING_TOOL_SMINA)
                 _append(DOCKING_TOOL_GNINA)
@@ -1794,9 +1800,17 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
                     }
                 else:
                     tools = set()
-                has_smina = DOCKING_TOOL_SMINA in tools or DOCKING_TOOL_BOTH in tools
-                has_gnina = DOCKING_TOOL_GNINA in tools or DOCKING_TOOL_BOTH in tools
-                has_matcha = DOCKING_TOOL_MATCHA in tools
+                has_smina = (
+                    DOCKING_TOOL_SMINA in tools
+                    or DOCKING_TOOL_BOTH in tools
+                    or DOCKING_TOOL_ALL in tools
+                )
+                has_gnina = (
+                    DOCKING_TOOL_GNINA in tools
+                    or DOCKING_TOOL_BOTH in tools
+                    or DOCKING_TOOL_ALL in tools
+                )
+                has_matcha = DOCKING_TOOL_MATCHA in tools or DOCKING_TOOL_ALL in tools
             except Exception:
                 has_smina = has_gnina = has_matcha = True
 

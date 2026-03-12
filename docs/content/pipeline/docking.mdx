@@ -22,10 +22,10 @@ SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA e
 Select the tool in the docking config:
 
 ```yaml
-tools: gnina    # Options: gnina, smina, matcha, both
+tools: gnina    # Options: all, gnina, smina, matcha, or a comma-separated list
 ```
 
-When `tools: both`, the pipeline runs SMINA and GNINA sequentially. Matcha is enabled explicitly with `tools: matcha` or a comma-separated YAML value such as `gnina,matcha`.
+Use `tools: all` to run SMINA, GNINA, and Matcha together. For subsets, provide a comma-separated YAML value such as `gnina,matcha` or `smina,gnina`.
 
 ## Ligand Preparation
 
@@ -118,7 +118,7 @@ Full configuration in `config_docking.yml`:
 
 ```yaml
 run: true
-tools: gnina                              # gnina, smina, matcha, or both
+tools: gnina                              # all, gnina, smina, matcha, or a comma-separated list
 receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true                            # Execute scripts after generation
 run_in_background: false

@@ -550,14 +550,14 @@ ra_score_max: 1
 
 ## config_docking.yml
 
-Controls molecular docking using SMINA, GNINA, Matcha, or both. Defines the receptor, search box, and engine-specific parameters.
+Controls molecular docking using SMINA, GNINA, Matcha, or any explicit combination of them. Defines the receptor, search box, and engine-specific parameters.
 
 ### General Settings
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the docking stage |
-| `tools` | string | `gnina` | Docking engine: `gnina`, `smina`, `matcha`, or `both` |
+| `tools` | string | `gnina` | Docking engine selection: `all`, `gnina`, `smina`, `matcha`, or a comma-separated list such as `gnina,matcha` |
 | `receptor_pdb` | string | `src/hedgehog/configs/examples/7EW9_apo.pdb` | Path to the receptor PDB file |
 | `auto_run` | bool | `true` | Automatically start docking after ligand preparation |
 | `run_in_background` | bool | `false` | Run docking as a background process |

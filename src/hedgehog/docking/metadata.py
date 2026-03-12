@@ -104,6 +104,11 @@ def _parse_tools_config(cfg):
             selected_tools.append(tool_name)
 
     for tool_name in tools_list:
+        if tool_name == "all":
+            _append(TOOL_SMINA)
+            _append(TOOL_GNINA)
+            _append(TOOL_MATCHA)
+            continue
         if tool_name == "both":
             _append(TOOL_SMINA)
             _append(TOOL_GNINA)
