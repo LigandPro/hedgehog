@@ -20,4 +20,3 @@ KEY_FOLDER_TO_SAVE = "folder_to_save"
 # Docking tool names
 TOOL_GNINA = "gnina"
 TOOL_SMINA = "smina"
-TOOL_MATCHA = "matcha"

@@ -39,7 +39,7 @@ input/sampled_molecules.csv
         |  filtered_molecules.csv
         v
  [Stage 5: Molecular Docking]
-        |  gnina_out.sdf / smina_out.sdf / matcha_out.sdf
+        |  gnina_out.sdf / smina_out.sdf
         v
  [Stage 6: Docking Filters]
         |  filtered_molecules.csv
@@ -105,4 +105,4 @@ results/run_N/
 +-- run_YYYYMMDD_HHMMSS.log
 ```
 
-`output/final_molecules.csv` is the canonical final artifact. It preserves all columns from the latest filtered dataset and includes aggregated docking score columns (`gnina_affinity`, `gnina_cnnscore`, `gnina_cnnaffinity`, `gnina_cnn_vs`, `smina_affinity`, `matcha_affinity`) when docking outputs are available.
+`output/final_molecules.csv` is the canonical final artifact. It preserves all columns from the latest filtered dataset and includes aggregated docking score columns (`gnina_affinity`, `gnina_cnnscore`, `gnina_cnnaffinity`, `gnina_cnn_vs`, `smina_affinity`) when docking outputs are available.

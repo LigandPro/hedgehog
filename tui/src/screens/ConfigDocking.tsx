@@ -30,7 +30,7 @@ interface FormField {
 const fields: FormField[] = [
   // General section
   { key: 'run', label: 'Run Stage', type: 'boolean', section: 'General', description: 'Enable/disable docking stage' },
-  { key: 'tools', label: 'Tools', type: 'select', options: ['all', 'smina', 'gnina', 'matcha'], description: 'Docking engines: all, or select one engine here and use YAML for comma-separated combinations' },
+  { key: 'tools', label: 'Tools', type: 'select', options: ['both', 'smina', 'gnina'], description: 'Docking engine: smina (CPU), gnina (GPU+CNN), or both' },
   { key: 'receptor_pdb', label: 'Receptor PDB', type: 'path', extensions: ['.pdb'], description: 'Target protein structure file' },
   { key: 'auto_run', label: 'Auto Run', type: 'boolean', description: 'Start docking automatically when ready' },
   { key: 'run_in_background', label: 'Run in Background', type: 'boolean', description: 'Run docking as background process' },

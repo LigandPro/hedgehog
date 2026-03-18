@@ -34,23 +34,10 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__() -> list[str]:
-    """Expose lazy exports in module introspection without eager binding."""
-    return sorted(set(globals()) | set(__all__))
-
-
-def ensure_matcha_checkout(*args, **kwargs):
-    """Expose Matcha checkout setup as a real module attribute."""
-    from hedgehog.setup._matcha import ensure_matcha_checkout as _impl
-
-    return _impl(*args, **kwargs)
-
-
 __all__ = [
     "ensure_gnina",
     "ensure_aizynthfinder",
     "ensure_rascore_model",
     "ensure_shepherd_worker",
     "ensure_nvmolkit_worker",
-    "ensure_matcha_checkout",
 ]

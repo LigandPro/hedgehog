@@ -1,5 +1,5 @@
 run: true
-tools: gnina  # Options: all, gnina, smina, matcha, or a comma-separated list such as gnina,matcha
+tools: gnina  # Options: gnina, smina, both
 receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
@@ -23,13 +23,3 @@ gnina_config:
   seed: 42
   no_gpu: false
   num_modes: 1
-matcha_config:
-  checkout_dir: modules/matcha_remote
-  uv_bin: uv
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
-  device: auto
-  n_samples: 20
-  scorer: gnina
-  scorer_minimize: true
-  physical_only: false
-  keep_workdir: false

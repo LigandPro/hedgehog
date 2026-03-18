@@ -47,7 +47,6 @@ FILE_PASS_SMILES_TEMPLATE = "filtered_molecules.csv"
 FILE_MASTER_CONFIG = "master_config_resolved.yml"
 FILE_GNINA_OUTPUT = "gnina_out.sdf"
 FILE_SMINA_OUTPUT = "smina_out.sdf"
-FILE_MATCHA_OUTPUT = "matcha_out.sdf"
 
 DOCKING_SCORE_COLUMNS = [
     "gnina_affinity",
@@ -55,7 +54,6 @@ DOCKING_SCORE_COLUMNS = [
     "gnina_cnnaffinity",
     "gnina_cnn_vs",
     "smina_affinity",
-    "matcha_affinity",
 ]
 
 # Stage names
@@ -86,13 +84,10 @@ OVERRIDE_STAGE_SELECTION = "_run_stage_selection_override"
 # Docking tools
 DOCKING_TOOL_SMINA = "smina"
 DOCKING_TOOL_GNINA = "gnina"
-DOCKING_TOOL_MATCHA = "matcha"
-DOCKING_TOOL_ALL = "all"
 DOCKING_TOOL_BOTH = "both"
 DOCKING_RESULTS_DIR_TEMPLATE = {
     DOCKING_TOOL_SMINA: f"{DIR_DOCKING}/smina",
     DOCKING_TOOL_GNINA: f"{DIR_DOCKING}/gnina",
-    DOCKING_TOOL_MATCHA: f"{DIR_DOCKING}/matcha",
 }
 
 
@@ -313,12 +308,9 @@ def _extract_float_prop(mol, prop_names: list[str]) -> float | None:
 def _find_docking_sdf(base_path: Path, tool_name: str) -> Path | None:
     """Find docking output SDF for a docking tool."""
     docking_dir = base_path / DIR_DOCKING
-    output_names = {
-        DOCKING_TOOL_GNINA: FILE_GNINA_OUTPUT,
-        DOCKING_TOOL_SMINA: FILE_SMINA_OUTPUT,
-        DOCKING_TOOL_MATCHA: FILE_MATCHA_OUTPUT,
-    }
-    output_name = output_names.get(tool_name, f"{tool_name}_out.sdf")
+    output_name = (
+        FILE_GNINA_OUTPUT if tool_name == DOCKING_TOOL_GNINA else FILE_SMINA_OUTPUT
+    )
     candidates = [
         docking_dir / tool_name / output_name,
         docking_dir / f"{tool_name}_out.sdf",
@@ -369,9 +361,6 @@ def _extract_best_tool_scores(sdf_path: Path, tool_name: str) -> dict[str, dict]
                 "gnina_cnn_vs": _extract_float_prop(mol, ["CNN_VS"]),
             }
             key = "gnina_affinity"
-        elif tool_name == DOCKING_TOOL_MATCHA:
-            record = {"matcha_affinity": affinity}
-            key = "matcha_affinity"
         else:
             record = {"smina_affinity": affinity}
             key = "smina_affinity"
@@ -387,7 +376,7 @@ def _collect_docking_scores(base_path: Path) -> pd.DataFrame:
     """Collect best docking scores per molecule across configured tools."""
     merged: dict[str, dict] = {}
 
-    for tool in (DOCKING_TOOL_GNINA, DOCKING_TOOL_SMINA, DOCKING_TOOL_MATCHA):
+    for tool in (DOCKING_TOOL_GNINA, DOCKING_TOOL_SMINA):
         sdf_path = _find_docking_sdf(base_path, tool)
         if not sdf_path:
             continue
@@ -622,33 +611,9 @@ class PipelineStageRunner:
         else:
             tools_list = [DOCKING_TOOL_BOTH]
 
-        if not tools_list:
+        if DOCKING_TOOL_BOTH in tools_list or not tools_list:
             return [DOCKING_TOOL_SMINA, DOCKING_TOOL_GNINA]
-
-        selected_tools = []
-
-        def _append(tool_name: str) -> None:
-            if tool_name not in selected_tools:
-                selected_tools.append(tool_name)
-
-        for tool_name in tools_list:
-            if tool_name == DOCKING_TOOL_ALL:
-                _append(DOCKING_TOOL_SMINA)
-                _append(DOCKING_TOOL_GNINA)
-                _append(DOCKING_TOOL_MATCHA)
-                continue
-            if tool_name == DOCKING_TOOL_BOTH:
-                _append(DOCKING_TOOL_SMINA)
-                _append(DOCKING_TOOL_GNINA)
-                continue
-            if tool_name in {
-                DOCKING_TOOL_SMINA,
-                DOCKING_TOOL_GNINA,
-                DOCKING_TOOL_MATCHA,
-            }:
-                _append(tool_name)
-
-        return selected_tools or [DOCKING_TOOL_SMINA, DOCKING_TOOL_GNINA]
+        return tools_list
 
     def docking_results_present(self) -> bool:
         """Check if docking results exist for any configured tools."""
@@ -675,15 +640,6 @@ class PipelineStageRunner:
                 if _directory_has_files(smina_dir):
                     return True
                 logger.debug("SMINA results not found in %s", smina_dir)
-            elif tool == DOCKING_TOOL_MATCHA:
-                matcha_sdf = (
-                    base_folder
-                    / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_MATCHA]
-                    / FILE_MATCHA_OUTPUT
-                )
-                if _file_exists_and_not_empty(matcha_sdf):
-                    return True
-                logger.debug("MATCHA results not found at %s", matcha_sdf)
         return False
 
     def _get_gnina_output_dir(self, cfg: dict, base_folder: Path) -> Path:
@@ -1777,42 +1733,18 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
     docking_dir = base_path / DIR_DOCKING
     has_smina = (docking_dir / "smina").is_dir()
     has_gnina = (docking_dir / "gnina").is_dir()
-    has_matcha = (docking_dir / "matcha").is_dir()
 
     # Fall back to config if directories don't exist yet
-    if not has_smina and not has_gnina and not has_matcha and config:
+    if not has_smina and not has_gnina and config:
         docking_cfg_path = config.get(CONFIG_DOCKING)
         if docking_cfg_path:
             try:
                 docking_cfg = load_config(docking_cfg_path)
-                raw_tools = docking_cfg.get(CONFIG_TOOLS, "")
-                if isinstance(raw_tools, str):
-                    tools = {
-                        tool.strip().lower()
-                        for tool in raw_tools.split(",")
-                        if tool.strip()
-                    }
-                elif isinstance(raw_tools, (list, tuple)):
-                    tools = {
-                        str(tool).strip().lower()
-                        for tool in raw_tools
-                        if str(tool).strip()
-                    }
-                else:
-                    tools = set()
-                has_smina = (
-                    DOCKING_TOOL_SMINA in tools
-                    or DOCKING_TOOL_BOTH in tools
-                    or DOCKING_TOOL_ALL in tools
-                )
-                has_gnina = (
-                    DOCKING_TOOL_GNINA in tools
-                    or DOCKING_TOOL_BOTH in tools
-                    or DOCKING_TOOL_ALL in tools
-                )
-                has_matcha = DOCKING_TOOL_MATCHA in tools or DOCKING_TOOL_ALL in tools
+                tools = docking_cfg.get(CONFIG_TOOLS, "")
+                has_smina = tools in (DOCKING_TOOL_SMINA, DOCKING_TOOL_BOTH)
+                has_gnina = tools in (DOCKING_TOOL_GNINA, DOCKING_TOOL_BOTH)
             except Exception:
-                has_smina = has_gnina = has_matcha = True
+                has_smina = has_gnina = True  # Show both as fallback
 
     lines = [
         "|   +-- ligands.csv                Prepared ligands",
@@ -1828,11 +1760,6 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
         lines.append(
             "|   |   +-- gnina_out.sdf          Aggregated GNINA results (1 pose/molecule)"
         )
-    if has_matcha:
-        lines.append("|   +-- matcha/")
-        lines.append(
-            "|   |   +-- matcha_out.sdf         Aggregated Matcha results (1 pose/molecule)"
-        )
 
     # _workdir subtree
     lines.append("|   +-- _workdir/                  Intermediate files")
@@ -1846,8 +1773,6 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
         lines.append(
             "|       +-- gnina/                 GNINA per-molecule results & logs"
         )
-    if has_matcha:
-        lines.append("|       +-- run_matcha.sh          Matcha launch script")
 
     # Batch scripts and config files present in _workdir
     workdir = docking_dir / "_workdir"

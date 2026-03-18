@@ -550,14 +550,14 @@ ra_score_max: 1
 
 ## config_docking.yml
 
-Controls molecular docking using SMINA, GNINA, Matcha, or any explicit combination of them. Defines the receptor, search box, and engine-specific parameters.
+Controls molecular docking using SMINA, GNINA, or both. Defines the receptor, search box, and engine-specific parameters.
 
 ### General Settings
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the docking stage |
-| `tools` | string | `gnina` | Docking engine selection: `all`, `gnina`, `smina`, `matcha`, or a comma-separated list such as `gnina,matcha` |
+| `tools` | string | `gnina` | Docking engine: `gnina`, `smina`, or `both` |
 | `receptor_pdb` | string | `src/hedgehog/configs/examples/7EW9_apo.pdb` | Path to the receptor PDB file |
 | `auto_run` | bool | `true` | Automatically start docking after ligand preparation |
 | `run_in_background` | bool | `false` | Run docking as a background process |
@@ -590,22 +590,6 @@ Controls molecular docking using SMINA, GNINA, Matcha, or any explicit combinati
 | `seed` | int | `42` | Random seed for reproducibility |
 | `no_gpu` | bool | `false` | Disable GPU acceleration (`false` keeps GPU enabled when available) |
 
-### Matcha Configuration (`matcha_config`)
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `checkout_dir` | string | `modules/matcha_remote` | Managed Matcha checkout directory populated from GitHub |
-| `pr_number` | int \| null | latest open unapproved | Optional explicit Matcha PR number to pin instead of auto-selecting the latest open unapproved PR |
-| `uv_bin` | string | `uv` | Launcher used to invoke Matcha |
-| `autobox_ligand` | string | `src/hedgehog/configs/examples/05C_from_7EW9.sdf` | Optional Matcha autobox reference ligand |
-| `device` | string | `auto` | Matcha device selection (`auto`, `cpu`, `cuda`, `cuda:N`, `mps`) |
-| `n_samples` | int | `20` | Number of Matcha poses generated per ligand |
-| `scorer` | string | `gnina` | Matcha scorer mode (`gnina`, `custom`, `none`) |
-| `scorer_path` | string \| null | `null` | Optional explicit path to the scorer binary/script |
-| `scorer_minimize` | bool | `true` | Minimize poses during Matcha GNINA scoring |
-| `physical_only` | bool | `false` | Keep only physically valid poses in Matcha outputs |
-| `keep_workdir` | bool | `false` | Preserve Matcha internal work directory after the run |
-
 ### Default YAML
 
 ```yaml
@@ -631,14 +615,6 @@ gnina_config:
   cpu: 8
   seed: 42
   no_gpu: false
-matcha_config:
-  checkout_dir: modules/matcha_remote
-  uv_bin: uv
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
-  device: auto
-  n_samples: 20
-  scorer: gnina
-  scorer_minimize: true
 ```
 
 ---

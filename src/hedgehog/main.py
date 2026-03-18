@@ -826,7 +826,7 @@ class Stage(str, Enum):
                 "Evaluate synthetic accessibility using retrosynthesis "
                 "(AiZynthFinder) and other metrics"
             ),
-            Stage.docking: "Calculate docking scores with Smina/Gnina/Matcha",
+            Stage.docking: "Calculate docking scores with Smina/Gnina",
             Stage.docking_filters: "Filter docking poses by quality and interactions",
             Stage.final_descriptors: "Recompute descriptors on the final filtered set",
         }

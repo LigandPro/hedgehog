@@ -14,7 +14,7 @@ config.yml                  (main — global settings + paths to stage configs)
   ├── config_descriptors.yml       (molecular descriptor calculation)
   ├── config_structFilters.yml     (structural / medchem filters)
   ├── config_synthesis.yml         (retrosynthesis scoring)
-  ├── config_docking.yml           (molecular docking — SMINA / GNINA / Matcha)
+  ├── config_docking.yml           (molecular docking — SMINA / GNINA)
   ├── config_docking_filters.yml   (post-docking pose filters)
   └── config_moleval.yml           (generative metrics & reporting)
 ```
@@ -99,7 +99,7 @@ Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. Th
 | `config_descriptors.yml` | Descriptor borders, filtering flags, plotting options |
 | `config_structFilters.yml` | Structural alerts, medchem filters (Bredt, NIBR, Lilly, etc.) |
 | `config_synthesis.yml` | Retrosynthesis toggle, SA/SYBA/RA score thresholds |
-| `config_docking.yml` | Docking tool selection (GNINA/SMINA/Matcha), receptor, autobox settings |
+| `config_docking.yml` | Docking tool selection (GNINA/SMINA), receptor, autobox settings |
 | `config_docking_filters.yml` | Post-docking filters: search box, pose quality, interactions, shape, conformer deviation |
 | `config_moleval.yml` | Generative evaluation metrics: diversity, scaffolds, filter pass rates |
 

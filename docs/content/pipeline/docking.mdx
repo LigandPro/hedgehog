@@ -4,28 +4,28 @@ title: Docking
 
 # Docking
 
-The docking stage prepares ligands and runs molecular docking simulations against a target protein structure. HEDGEHOG supports three docking engines (SMINA, GNINA, and Matcha) and two ligand preparation methods.
+The docking stage prepares ligands and runs molecular docking simulations against a target protein structure. HEDGEHOG supports two docking engines (SMINA and GNINA) and two ligand preparation methods.
 
 ## Docking Engines
 
-| Feature | SMINA | GNINA | Matcha |
-|---------|-------|-------|--------|
-| Scoring | Empirical (Vina-based) | CNN-based + empirical | Learned pose generation + optional GNINA scoring |
-| Speed | Fast | Slower (GPU-accelerated) | Slower (ML inference) |
-| Output scores | `minimizedAffinity` | `minimizedAffinity`, `CNNscore`, `CNNaffinity` | `minimizedAffinity` when GNINA scoring is enabled |
-| GPU support | No | Yes (CUDA) | Yes (recommended) |
-| Output format | SDF | SDF | SDF |
-| Best for | Large-scale virtual screening | Accurate pose prediction | ML-based pose generation with optional rescoring |
+| Feature | SMINA | GNINA |
+|---------|-------|-------|
+| Scoring | Empirical (Vina-based) | CNN-based + empirical |
+| Speed | Fast | Slower (GPU-accelerated) |
+| Output scores | `minimizedAffinity` | `minimizedAffinity`, `CNNscore`, `CNNaffinity` |
+| GPU support | No | Yes (CUDA) |
+| Output format | SDF | SDF |
+| Best for | Large-scale virtual screening | Accurate pose prediction |
 
 SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA extends SMINA with convolutional neural network (CNN) scoring functions trained on protein-ligand complexes from the PDB.
 
 Select the tool in the docking config:
 
 ```yaml
-tools: gnina    # Options: all, gnina, smina, matcha, or a comma-separated list
+tools: gnina    # Options: gnina, smina, both
 ```
 
-Use `tools: all` to run SMINA, GNINA, and Matcha together. For subsets, provide a comma-separated YAML value such as `gnina,matcha` or `smina,gnina`.
+When `tools: both`, the pipeline runs both engines sequentially and stores results in separate subdirectories.
 
 ## Ligand Preparation
 
@@ -118,7 +118,7 @@ Full configuration in `config_docking.yml`:
 
 ```yaml
 run: true
-tools: gnina                              # all, gnina, smina, matcha, or a comma-separated list
+tools: gnina                              # gnina, smina, or both
 receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
 auto_run: true                            # Execute scripts after generation
 run_in_background: false
@@ -141,17 +141,7 @@ gnina_config:
   cpu: 8
   seed: 42
   no_gpu: false                          # Use GPU when available
-
-matcha_config:
-  checkout_dir: modules/matcha_remote    # Managed git checkout created from GitHub PR head
-  uv_bin: uv                             # Launcher used for `uv run --project`
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
-  device: auto
-  n_samples: 20
-  scorer: gnina
 ```
-
-By default, Matcha is fetched from the remote `LigandPro/Matcha` repository and checked out at the head SHA of the latest open PR without approvals. The managed checkout is stored under `modules/matcha_remote/`.
 
 Set `auto_run: false` to generate docking scripts without executing them. This is useful for running docking on a cluster or GPU node separately.
 
@@ -161,10 +151,10 @@ The docking stage processes molecules individually:
 
 1. Each molecule is written to a separate SDF file in `_workdir/molecules/`
 2. Per-molecule docking config files are generated in `_workdir/configs/`
-3. Batch shell scripts (`run_gnina.sh`, `run_smina.sh`, `run_matcha.sh`) are generated
+3. Batch shell scripts (`run_gnina.sh`, `run_smina.sh`) are generated
 4. If `auto_run: true`, scripts are executed automatically
-5. Per-molecule results are collected in `_workdir/gnina/`, `_workdir/smina/`, or `matcha/<run_name>/best_poses/`
-6. Results are aggregated into `gnina/gnina_out.sdf`, `smina/smina_out.sdf`, or `matcha/matcha_out.sdf`
+5. Per-molecule results are collected in `_workdir/gnina/` or `_workdir/smina/`
+6. Results are aggregated into `gnina/gnina_out.sdf` or `smina/smina_out.sdf`
 
 ## Output Structure
 
@@ -176,14 +166,11 @@ stages/05_docking/
 |   +-- gnina_out.sdf          Aggregated GNINA results
 +-- smina/
 |   +-- smina_out.sdf          Aggregated SMINA results
-+-- matcha/
-|   +-- matcha_out.sdf         Aggregated Matcha results
 +-- _workdir/
     +-- molecules/             Per-molecule SDF files
     +-- configs/               Per-molecule docking configs
     +-- gnina/                 GNINA per-molecule results & logs
     +-- smina/                 SMINA per-molecule results & logs
-    +-- run_matcha.sh
     +-- run_gnina.sh
     +-- run_smina.sh
 ```
@@ -205,7 +192,6 @@ To run the generated scripts manually (e.g., on a GPU node):
 
 ```bash
 cd results/stages/05_docking/_workdir
-./run_matcha.sh
 ./run_gnina.sh
 ./run_smina.sh
 ```
