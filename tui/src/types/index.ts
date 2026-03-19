@@ -104,11 +104,29 @@ export interface DescriptorBorder {
   max: number | string;
 }
 
+export interface DescriptorTypeLimits {
+  [typeName: string]: number | string;
+}
+
+export interface DescriptorElementLimits {
+  [element: string]: number | string;
+}
+
+export interface DescriptorStructuralConstraints {
+  enabled?: boolean;
+  type_limits?: DescriptorTypeLimits;
+  element_limits?: DescriptorElementLimits;
+  max_n_or_o_atoms?: number | string;
+  max_small_rings_3_4?: number | string;
+  max_acyclic_chain_length?: number | string;
+}
+
 export interface DescriptorsConfig {
   run: boolean;
   batch_size: number;
   filter_data: boolean;
   borders: Record<string, DescriptorBorder | string[] | boolean>;
+  structural_constraints?: DescriptorStructuralConstraints;
   filtered_cols_to_plot: string[];
   discrete_features_to_plot: string[];
   not_to_smooth_plot_by_sides: string[];

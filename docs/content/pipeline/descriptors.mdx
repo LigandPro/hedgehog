@@ -8,6 +8,11 @@ The descriptors stage computes physicochemical descriptors for each molecule usi
 
 This stage runs twice in the pipeline: once early (initial filtering) and once at the end (recompute descriptors on the surviving molecule set). Filtering behavior is controlled by `filter_data` in `config_descriptors.yml` and applies to both runs unless you disable it.
 
+In addition to the generic descriptor borders, the stage can also enforce
+Inventum-inspired structural constraints such as typed atom class limits,
+element count limits, maximum 3/4-membered rings, and maximum acyclic chain
+length.
+
 ## Descriptor Reference
 
 ### Molecular Properties
@@ -39,6 +44,8 @@ This stage runs twice in the pipeline: once early (initial filtering) and once a
 | Ring Size | `ring_size` | List of all ring sizes (each must fall within min--max) | 3 | 12 |
 | Number of Rings | `n_rings` | Total ring count | 0 | 6 |
 | Aromatic Rings | `n_aroma_rings` | Count of aromatic rings | 0 | 5 |
+| Small 3/4-Membered Rings | `n_small_rings_3_4` | Count of 3- or 4-membered rings | 0 | via `structural_constraints.max_small_rings_3_4` |
+| Max Acyclic Chain Length | `max_acyclic_chain_length` | Length of the longest acyclic chain | 0 | via `structural_constraints.max_acyclic_chain_length` |
 | Fused Aromatic Rings | `n_fused_aromatic_rings` | Count of fused aromatic ring systems | 0 | 2 |
 | Rigid Bonds | `n_rigid_bonds` | Non-rotatable bonds | 0 | 30 |
 | Rotatable Bonds | `n_rot_bonds` | Freely rotatable bonds | 0 | 8 |
@@ -53,6 +60,16 @@ This stage runs twice in the pipeline: once early (initial filtering) and once a
 |-----------|------------|-------------|-------------|-------------|
 | QED | `qed` | Quantitative Estimation of Drug-likeness (0--1) | 0.3 | 1 |
 | MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 20 | 140 |
+
+### Structural Constraints
+
+| Constraint | Config Key | Description | Default |
+|-----------|------------|-------------|---------|
+| Typed Atom Class Limits | `structural_constraints.type_limits` | Maximum allowed counts for Inventum-style aliases such as `.=O`, `Car`, `Nd+`, `O_a`, `SO2`, `Hal` | See YAML |
+| Element Limits | `structural_constraints.element_limits` | Maximum allowed counts for `N`, `O`, and `S` | `N=6`, `O=4`, `S=1` |
+| Max N or O Atoms | `structural_constraints.max_n_or_o_atoms` | Maximum combined count of nitrogen and oxygen atoms | `10` |
+| Max 3/4-Atom Rings | `structural_constraints.max_small_rings_3_4` | Maximum allowed count of 3- and 4-membered rings | `0` |
+| Max Acyclic Chain Length | `structural_constraints.max_acyclic_chain_length` | Maximum allowed longest acyclic chain length | `4` |
 
 ## How Threshold Filtering Works
 
@@ -69,6 +86,10 @@ borders:
 
 Molecules that fail any single descriptor threshold are written to `failed_molecules.csv` with detailed per-descriptor pass/fail flags in `pass_flags.csv`.
 
+Structural constraints are evaluated alongside the border filters. They write
+their own count columns and pass flags, so failures can be traced in the same
+`pass_flags.csv` and `descriptors_failed.csv` outputs.
+
 ## Configuration
 
 The full configuration lives in `config_descriptors.yml`:
@@ -82,6 +103,9 @@ preprocess:
   remove_charges: false
   remove_radicals: false
   remove_stereochemistry: false
+structural_constraints:
+  enabled: true
+  # ... typed atom class limits and structural caps
 borders:
   # ... threshold values for each descriptor
 ```

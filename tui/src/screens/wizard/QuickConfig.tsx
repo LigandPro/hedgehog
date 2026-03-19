@@ -64,6 +64,9 @@ const DESCRIPTORS_PARAMS: ParamDef[] = [
   { key: 'n_rings', label: 'Number of Rings', type: 'range', minKey: 'n_rings_min', maxKey: 'n_rings_max', configPath: ['borders'], description: 'Ring systems count' },
   { key: 'fsp3', label: 'Fraction SP3', type: 'range', minKey: 'fsp3_min', maxKey: 'fsp3_max', configPath: ['borders'], description: 'Saturation: sp3 carbons / total C' },
   { key: 'qed', label: 'QED', type: 'range', minKey: 'qed_min', maxKey: 'qed_max', configPath: ['borders'], description: 'Quantitative drug-likeness (0-1)' },
+  { key: 'max_n_or_o_atoms', label: 'Max N or O Atoms', type: 'number', configPath: ['structural_constraints'], description: 'Upper bound for N + O atom count' },
+  { key: 'max_small_rings_3_4', label: 'Max 3/4-Atom Rings', type: 'number', configPath: ['structural_constraints'], description: 'Upper bound for 3/4-membered rings' },
+  { key: 'max_acyclic_chain_length', label: 'Max Acyclic Chain Length', type: 'number', configPath: ['structural_constraints'], description: 'Upper bound for longest acyclic chain length' },
 ];
 
 const FILTERS_PARAMS: ParamDef[] = [
@@ -173,6 +176,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
   const navigateBack = useStore((state) => state.goBack);
   const showToast = useStore((state) => state.showToast);
   const setConfig = useStore((state) => state.setConfig);
+  const setWizardQuickParam = useStore((state) => state.setWizardQuickParam);
   const configs = useStore((state) => state.configs);
 
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -208,6 +212,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
         setConfig(configType, cfg as any);
       }
       setRawConfig(cfg);
+      syncDescriptorQuickParams(cfg);
     } catch (err) {
       showToast('error', `Failed to load config: ${err}`);
     } finally {
@@ -215,29 +220,66 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
     }
   };
 
-  const getValue = (param: ParamDef): unknown => {
-    if (!rawConfig) return undefined;
-
+  const getValueFromConfig = (configData: Record<string, unknown>, param: ParamDef): unknown => {
     if (param.type === 'range' && param.minKey && param.maxKey) {
       if (param.configPath) {
-        let target = rawConfig as Record<string, unknown>;
+        let target = configData as Record<string, unknown>;
         for (const key of param.configPath) {
           target = (target[key] || {}) as Record<string, unknown>;
         }
         return { min: target[param.minKey], max: target[param.maxKey] };
       }
-      return { min: rawConfig[param.minKey], max: rawConfig[param.maxKey] };
+      return { min: configData[param.minKey], max: configData[param.maxKey] };
     }
 
     if (param.configPath) {
-      let target = rawConfig as Record<string, unknown>;
+      let target = configData as Record<string, unknown>;
       for (const key of param.configPath) {
         target = (target[key] || {}) as Record<string, unknown>;
       }
       return target[param.key];
     }
 
-    return rawConfig[param.key];
+    return configData[param.key];
+  };
+
+  const getValue = (param: ParamDef): unknown => {
+    if (!rawConfig) return undefined;
+    return getValueFromConfig(rawConfig, param);
+  };
+
+  const syncDescriptorQuickParams = (configData: Record<string, unknown>): void => {
+    if (stageName !== 'descriptors') return;
+
+    const descriptorParams = [
+      'batch_size',
+      'filter_data',
+      'molWt_min',
+      'molWt_max',
+      'logP_min',
+      'logP_max',
+      'max_n_or_o_atoms',
+      'max_small_rings_3_4',
+      'max_acyclic_chain_length',
+    ];
+
+    for (const param of stageConfig.params) {
+      if (param.type === 'range' && param.minKey && param.maxKey) {
+        if (descriptorParams.includes(param.minKey)) {
+          const range = getValueFromConfig(configData, param) as RangeValue;
+          setWizardQuickParam(stageName, param.minKey, range?.min);
+          setWizardQuickParam(stageName, param.maxKey, range?.max);
+        }
+        continue;
+      }
+
+      if (!descriptorParams.includes(param.key)) {
+        continue;
+      }
+
+      const value = getValueFromConfig(configData, param);
+      setWizardQuickParam(stageName, param.key, value);
+    }
   };
 
   const setValue = (param: ParamDef, value: unknown, isMin?: boolean) => {
@@ -300,6 +342,7 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
         return;
       }
       setConfig(stageConfig.configType, rawConfig as any);
+      syncDescriptorQuickParams(rawConfig);
       setIsDirty(false);
       showToast('info', `${stageConfig.displayName} settings saved for this run only`);
       // Return to where the user came from (stage selection or review).

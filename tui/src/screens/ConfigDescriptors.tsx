@@ -68,7 +68,7 @@ const DESCRIPTOR_NAMES: Record<string, string> = {
 interface SettingField {
   key: string;
   label: string;
-  type: 'boolean' | 'number' | 'text';
+  type: 'boolean' | 'number' | 'text' | 'map';
   path?: string[];
   description?: string;
 }
@@ -90,16 +90,110 @@ const settingsFields: SettingField[] = [
   { key: 'allowed_chars', label: 'Allowed Atoms', type: 'text', path: ['borders', 'allowed_chars'], description: 'Allowed atom types (e.g., C, N, O, S, F, Cl, Br)' },
   { key: 'charged_mol_allowed', label: 'Charged Allowed', type: 'boolean', path: ['borders', 'charged_mol_allowed'], description: 'Allow charged molecules to pass' },
   { key: 'filter_charged_mol', label: 'Filter Charged', type: 'boolean', path: ['borders', 'filter_charged_mol'], description: 'Remove molecules with formal charges' },
+  {
+    key: 'enabled',
+    label: 'Enable Structural Constraints',
+    type: 'boolean',
+    path: ['structural_constraints', 'enabled'],
+    description: 'Apply Inventum-inspired type, element, ring, and chain limits',
+  },
+  {
+    key: 'max_n_or_o_atoms',
+    label: 'Max N or O Atoms',
+    type: 'number',
+    path: ['structural_constraints', 'max_n_or_o_atoms'],
+    description: 'Upper bound for total N + O atoms in a molecule',
+  },
+  {
+    key: 'max_small_rings_3_4',
+    label: 'Max 3/4-Atom Rings',
+    type: 'number',
+    path: ['structural_constraints', 'max_small_rings_3_4'],
+    description: 'Upper bound for the number of 3/4-membered rings',
+  },
+  {
+    key: 'max_acyclic_chain_length',
+    label: 'Max Acyclic Chain',
+    type: 'number',
+    path: ['structural_constraints', 'max_acyclic_chain_length'],
+    description: 'Upper bound for longest acyclic chain length',
+  },
+  {
+    key: 'type_limits',
+    label: 'Type Limits',
+    type: 'map',
+    path: ['structural_constraints', 'type_limits'],
+    description: 'Type-specific maxima, e.g. .=O=2, Car=6, Nd+=1',
+  },
+  {
+    key: 'element_limits',
+    label: 'Element Limits',
+    type: 'map',
+    path: ['structural_constraints', 'element_limits'],
+    description: 'Element-specific maxima, e.g. N=4, O=6, S=2',
+  },
 ];
 
 function formatSettingValue(fieldType: string, value: unknown): string {
   if (fieldType === 'boolean') {
     return value ? 'Yes' : 'No';
   }
+  if (fieldType === 'map') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return '';
+    }
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => `${k}=${String(v)}`)
+      .join(', ');
+  }
   if (Array.isArray(value)) {
     return value.join(', ');
   }
-  return String(value ?? '');
+  if (value === undefined || value === null) {
+    return '';
+  }
+  return String(value);
+}
+
+function parseMapInput(input: string): Record<string, number> {
+  const result: Record<string, number> = {};
+  const parts = input
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const part of parts) {
+    const sepIndex = part.includes('=') ? part.indexOf('=') : part.indexOf(':');
+    if (sepIndex <= 0) {
+      continue;
+    }
+    const key = part.slice(0, sepIndex).trim();
+    const rawValue = part.slice(sepIndex + 1).trim();
+    const value = Number(rawValue);
+    if (!key || !Number.isFinite(value) || value < 0) {
+      continue;
+    }
+    result[key] = Math.floor(value);
+  }
+
+  return result;
+}
+
+function parseSettingsEditValue(
+  field: SettingField,
+  value: string,
+): string | number | string[] | Record<string, number> {
+  if (field.type === 'number') {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (field.key === 'allowed_chars') {
+    return value.split(',').map((part) => part.trim());
+  }
+  if (field.type === 'map') {
+    return parseMapInput(value);
+  }
+  return value;
 }
 
 type ViewMode = 'settings' | 'borders';
@@ -266,12 +360,7 @@ export function ConfigDescriptors(): React.ReactElement {
           setSettingsEditMode(false);
         } else if (key.return) {
           const field = settingsFields[settingsIndex];
-          let newValue: string | number | string[] = settingsEditValue;
-          if (field.type === 'number') {
-            newValue = parseInt(settingsEditValue, 10) || 0;
-          } else if (field.key === 'allowed_chars') {
-            newValue = settingsEditValue.split(',').map(s => s.trim());
-          }
+          const newValue = parseSettingsEditValue(field, settingsEditValue);
           setSettingValue(field, newValue);
           setSettingsEditMode(false);
         }
@@ -288,7 +377,8 @@ export function ConfigDescriptors(): React.ReactElement {
           setSettingValue(field, !getSettingValue(field));
         } else {
           const val = getSettingValue(field);
-          setSettingsEditValue(Array.isArray(val) ? val.join(', ') : String(val || ''));
+          const formatted = formatSettingValue(field.type, val);
+          setSettingsEditValue(formatted);
           setSettingsEditMode(true);
         }
       } else if (input === 'b') {

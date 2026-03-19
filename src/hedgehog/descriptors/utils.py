@@ -1,6 +1,7 @@
 import ast
 import json
 import math
+from collections import deque
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -8,39 +9,191 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from medchem.rules._utils import n_fused_aromatic_rings
-from rdkit import Chem, RDLogger, rdBase
-from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
+from rdkit import Chem, RDConfig, RDLogger, rdBase
+from rdkit.Chem import (
+    QED,
+    ChemicalFeatures,
+    Crippen,
+    Descriptors,
+    Lipinski,
+    rdMolDescriptors,
+)
 
 from hedgehog._constants import CFG_DESCRIPTORS
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.descriptors.constants import (
+    _DESCRIPTOR_KEY_MAP,
+    STRUCTURAL_ELEMENT_LIMIT_MAP,
+    TYPE_ALIAS_COLUMNS,
+)
 from hedgehog.struct_filters.utils import process_path
 from hedgehog.utils.mce18 import compute_mce18
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 
-# Canonical mapping for descriptor keys (lowercase -> canonical case)
-# Used to prevent confusion between similar names like logP and clogP
-_DESCRIPTOR_KEY_MAP = {
-    "logp": "logP",
-    "clogp": "clogP",
-    "molwt": "molWt",
-    "tpsa": "tpsa",
-    "hbd": "hbd",
-    "hba": "hba",
-    "qed": "qed",
-    "fsp3": "fsp3",
-    "mce18": "mce18",
-    "sw": "sw",
-    "n_atoms": "n_atoms",
-    "n_heavy_atoms": "n_heavy_atoms",
-    "n_rot_bonds": "n_rot_bonds",
-    "n_rigid_bonds": "n_rigid_bonds",
-    "n_rings": "n_rings",
-    "fns_atoms": "fNS_atoms",
-}
-
 # Disable RDKit warnings
 RDLogger.DisableLog("rdApp.*")
 rdBase.DisableLog("rdApp.*")
+
+try:
+    _FEATURE_FACTORY = ChemicalFeatures.BuildFeatureFactory(
+        str(Path(RDConfig.RDDataDir) / "BaseFeatures.fdef")
+    )
+except Exception:
+    _FEATURE_FACTORY = None
+
+
+def _collect_donor_acceptor_atom_sets(mol):
+    """Collect donor/acceptor atom ids from RDKit feature definitions."""
+    if _FEATURE_FACTORY is None:
+        return set(), set()
+
+    donors = set()
+    acceptors = set()
+    for feature in _FEATURE_FACTORY.GetFeaturesForMol(mol):
+        family = feature.GetFamily()
+        if family == "Donor":
+            donors.update(feature.GetAtomIds())
+        elif family == "Acceptor":
+            acceptors.update(feature.GetAtomIds())
+    return donors, acceptors
+
+
+def _count_small_rings_3_4(rings):
+    """Count 3/4-membered rings."""
+    return sum(1 for ring_size in rings if ring_size in (3, 4))
+
+
+def _compute_max_acyclic_chain_length(mol):
+    """Compute maximum atom count along a non-ring chain."""
+    adjacency = {}
+    for bond in mol.GetBonds():
+        if bond.IsInRing():
+            continue
+        begin = bond.GetBeginAtom()
+        end = bond.GetEndAtom()
+        if begin.GetAtomicNum() == 1 or end.GetAtomicNum() == 1:
+            continue
+        a_idx = begin.GetIdx()
+        b_idx = end.GetIdx()
+        adjacency.setdefault(a_idx, set()).add(b_idx)
+        adjacency.setdefault(b_idx, set()).add(a_idx)
+
+    if not adjacency:
+        return 0
+
+    def _farthest(start, allowed):
+        visited = {start}
+        queue = deque([(start, 0)])
+        farthest_node = start
+        farthest_dist = 0
+        while queue:
+            node, dist = queue.popleft()
+            if dist > farthest_dist:
+                farthest_node = node
+                farthest_dist = dist
+            for neighbor in adjacency.get(node, ()):
+                if neighbor not in allowed or neighbor in visited:
+                    continue
+                visited.add(neighbor)
+                queue.append((neighbor, dist + 1))
+        return farthest_node, farthest_dist
+
+    remaining = set(adjacency)
+    best_diameter_edges = 0
+
+    while remaining:
+        start = next(iter(remaining))
+        component = {start}
+        queue = deque([start])
+        while queue:
+            node = queue.popleft()
+            for neighbor in adjacency.get(node, ()):
+                if neighbor in component:
+                    continue
+                component.add(neighbor)
+                queue.append(neighbor)
+        remaining.difference_update(component)
+
+        endpoint, _ = _farthest(start, component)
+        _, diameter_edges = _farthest(endpoint, component)
+        best_diameter_edges = max(best_diameter_edges, diameter_edges)
+
+    return best_diameter_edges + 1
+
+
+def _compute_type_alias_counts(mol):
+    """Compute Inventum-inspired atom type alias counts."""
+    donors, acceptors = _collect_donor_acceptor_atom_sets(mol)
+    counts = {alias: 0 for alias in TYPE_ALIAS_COLUMNS}
+
+    so2_sulfur_ids = set()
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 16:
+            continue
+        n_double_bonded_oxygens = 0
+        for bond in atom.GetBonds():
+            neighbor = bond.GetOtherAtom(atom)
+            if (
+                neighbor.GetAtomicNum() == 8
+                and bond.GetBondType() == Chem.BondType.DOUBLE
+            ):
+                n_double_bonded_oxygens += 1
+        if n_double_bonded_oxygens >= 2:
+            so2_sulfur_ids.add(atom.GetIdx())
+
+    for atom in mol.GetAtoms():
+        atomic_num = atom.GetAtomicNum()
+        atom_idx = atom.GetIdx()
+        in_ring = atom.IsInRing()
+        is_aromatic = atom.GetIsAromatic()
+        hyb = atom.GetHybridization()
+        formal_charge = atom.GetFormalCharge()
+        total_h = atom.GetTotalNumHs()
+
+        if atomic_num == 8:
+            if hyb == Chem.HybridizationType.SP2 and atom_idx in acceptors:
+                counts[".=O"] += 1
+            if (
+                hyb == Chem.HybridizationType.SP3
+                and atom_idx in acceptors
+                and total_h == 0
+            ):
+                counts["O_a"] += 1
+            if hyb == Chem.HybridizationType.SP3 and atom_idx in donors and total_h > 0:
+                counts["O_d"] += 1
+
+        elif atomic_num == 6:
+            if is_aromatic:
+                counts["Car"] += 1
+            if in_ring and not is_aromatic and hyb == Chem.HybridizationType.SP2:
+                counts["C2r"] += 1
+            if in_ring and hyb == Chem.HybridizationType.SP3:
+                counts["C3r"] += 1
+            if not in_ring and not is_aromatic and hyb == Chem.HybridizationType.SP2:
+                counts["Cs2"] += 1
+            if not in_ring and hyb == Chem.HybridizationType.SP3:
+                counts["Cs3"] += 1
+            if hyb == Chem.HybridizationType.SP:
+                counts["Csp"] += 1
+
+        elif atomic_num == 7:
+            if formal_charge == 0 and atom_idx in acceptors:
+                counts["Nac"] += 1
+            if formal_charge > 0 and atom_idx in donors and total_h > 0:
+                counts["Nd+"] += 1
+            if formal_charge == 0 and atom_idx in donors and total_h > 0:
+                counts["Nd0"] += 1
+
+        elif atomic_num == 16:
+            if atom_idx in so2_sulfur_ids:
+                counts["SO2"] += 1
+            elif atom.GetTotalValence() == 2:
+                counts["Sul"] += 1
+
+        elif atomic_num in (9, 17, 35, 53):
+            counts["Hal"] += 1
+
+    return counts
 
 
 def order_identity_columns(df):
@@ -172,7 +325,12 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     mol_wt = Descriptors.ExactMolWt(mol_n)
     clogp = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
+    n_O_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 8)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
+    n_NO_atoms = n_N_atoms + n_O_atoms
+    n_small_rings_3_4 = _count_small_rings_3_4(rings)
+    max_acyclic_chain_length = _compute_max_acyclic_chain_length(mol_n)
+    type_alias_counts = _compute_type_alias_counts(mol_n)
 
     return {
         "model_name": model_name,
@@ -184,6 +342,9 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
             1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() not in (1, 6)
         ),
         "n_N_atoms": n_N_atoms,
+        "n_O_atoms": n_O_atoms,
+        "n_S_atoms": n_S_atoms,
+        "n_NO_atoms": n_NO_atoms,
         "fN_atoms": n_N_atoms / n_heavy_atoms if n_heavy_atoms > 0 else 0,
         "fNS_atoms": (n_N_atoms + n_S_atoms) / n_heavy_atoms
         if n_heavy_atoms > 0
@@ -201,6 +362,8 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         - 0.74 * n_aromatic_atoms,
         "ring_size": rings,
         "n_rings": mol_n.GetRingInfo().NumRings(),
+        "n_small_rings_3_4": n_small_rings_3_4,
+        "max_acyclic_chain_length": max_acyclic_chain_length,
         "n_aroma_rings": rdMolDescriptors.CalcNumAromaticRings(mol_n),
         "n_fused_aromatic_rings": n_fused_aromatic_rings(mol_n),
         "n_rigid_bonds": n_rigid_bonds,
@@ -211,6 +374,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         "mce18": compute_mce18(mol_n),
         "tpsa": rdMolDescriptors.CalcTPSA(mol_n),
         "qed": QED.qed(mol_n),
+        **type_alias_counts,
     }
 
 
@@ -590,7 +754,75 @@ def _save_failed_molecules(fail_filters, folder_to_save, flags_path):
     fail_filters[id_cols].to_csv(folder_to_save / "failed_molecules.csv", index=False)
 
 
-def filter_molecules(df, borders, folder_to_save):
+def _extract_borders_and_constraints(borders, structural_constraints):
+    """Normalize descriptors config into plain borders + structural constraints."""
+    if not isinstance(borders, dict):
+        if isinstance(structural_constraints, dict):
+            return {}, structural_constraints
+        return {}, {}
+
+    normalized_borders = borders
+    constraints = structural_constraints
+
+    if "borders" in borders and isinstance(borders.get("borders"), dict):
+        normalized_borders = borders.get("borders", {}) or {}
+        if constraints is None:
+            constraints = borders.get("structural_constraints")
+    elif constraints is None:
+        constraints = borders.get("structural_constraints")
+
+    normalized_borders = {
+        key: value
+        for key, value in normalized_borders.items()
+        if key != "structural_constraints"
+    }
+    if not isinstance(constraints, dict):
+        constraints = {}
+    return normalized_borders, constraints
+
+
+def _build_structural_constraint_borders(structural_constraints):
+    """Convert structural constraints block to regular *_max border entries."""
+    if not structural_constraints.get("enabled", False):
+        return {}
+
+    translated = {}
+
+    type_limits = structural_constraints.get("type_limits") or {}
+    if isinstance(type_limits, dict):
+        for alias, max_value in type_limits.items():
+            if max_value is None:
+                continue
+            alias_key = str(alias)
+            canonical_alias = _DESCRIPTOR_KEY_MAP.get(alias_key.lower(), alias_key)
+            translated[f"{canonical_alias}_max"] = max_value
+
+    element_limits = structural_constraints.get("element_limits") or {}
+    if isinstance(element_limits, dict):
+        for key, max_value in element_limits.items():
+            if max_value is None:
+                continue
+            key_str = str(key)
+            element_col = STRUCTURAL_ELEMENT_LIMIT_MAP.get(
+                key_str, STRUCTURAL_ELEMENT_LIMIT_MAP.get(key_str.lower())
+            )
+            if element_col is not None:
+                translated[f"{element_col}_max"] = max_value
+
+    direct_limits = {
+        "max_n_or_o_atoms": "n_NO_atoms",
+        "max_small_rings_3_4": "n_small_rings_3_4",
+        "max_acyclic_chain_length": "max_acyclic_chain_length",
+    }
+    for config_key, column in direct_limits.items():
+        max_value = structural_constraints.get(config_key)
+        if max_value is not None:
+            translated[f"{column}_max"] = max_value
+
+    return translated
+
+
+def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
     """Filter molecules based on descriptor thresholds.
 
     Args:
@@ -600,9 +832,14 @@ def filter_molecules(df, borders, folder_to_save):
     """
     folder_to_save = Path(process_path(folder_to_save))
     id_cols = ["smiles", "model_name", "mol_idx"]
+    normalized_borders, constraints = _extract_borders_and_constraints(
+        borders, structural_constraints
+    )
+    effective_borders = dict(normalized_borders)
+    effective_borders.update(_build_structural_constraint_borders(constraints))
 
     logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
-    for line in json.dumps(borders, indent=2, ensure_ascii=False).split("\n"):
+    for line in json.dumps(effective_borders, indent=2, ensure_ascii=False).split("\n"):
         logger.info("  %s", line)
 
     # Build filtered data with pass flags
@@ -612,16 +849,23 @@ def filter_molecules(df, borders, folder_to_save):
             filtered_data[col] = df[col]
             continue
 
-        col_in_borders = any(v is not None for v in _get_border_values(col, borders))
+        col_in_borders = any(
+            v is not None for v in _get_border_values(col, effective_borders)
+        )
         # Some filters are configured without *_min/*_max keys.
         # Treat them as "in borders" if their controlling keys exist.
-        if col == "chars" and "allowed_chars" in borders:
+        if col == "chars" and "allowed_chars" in effective_borders:
             col_in_borders = True
-        if col in ("charged_mol", "is_neutral") and "charged_mol_allowed" in borders:
+        if (
+            col in ("charged_mol", "is_neutral")
+            and "charged_mol_allowed" in effective_borders
+        ):
             col_in_borders = True
         if col_in_borders:
             filtered_data[col] = df[col]
-            filtered_data[f"{col}_pass"] = _apply_column_filter(df, col, borders)
+            filtered_data[f"{col}_pass"] = _apply_column_filter(
+                df, col, effective_borders
+            )
 
     filtered_data_df = pd.DataFrame(filtered_data)
     filtered_data_df = order_identity_columns(filtered_data_df)
@@ -629,7 +873,7 @@ def filter_molecules(df, borders, folder_to_save):
         folder_to_save / "pass_flags.csv", index_label="SMILES", index=False
     )
 
-    pass_filters = drop_false_rows(filtered_data_df, borders)
+    pass_filters = drop_false_rows(filtered_data_df, effective_borders)
 
     # Save passed molecules
     if len(pass_filters) > 0:
@@ -1078,7 +1322,12 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     folder_to_save = Path(process_path(folder_to_save))
 
     descriptors_config = load_config(config[CFG_DESCRIPTORS])
-    borders = descriptors_config["borders"]
+    normalized_borders, constraints = _extract_borders_and_constraints(
+        descriptors_config.get("borders", {}),
+        descriptors_config.get("structural_constraints"),
+    )
+    borders = dict(normalized_borders)
+    borders.update(_build_structural_constraint_borders(constraints))
     if "charged_mol_allowed" in borders:
         borders["charged_mol_allowed"] = int(borders["charged_mol_allowed"])
     else:

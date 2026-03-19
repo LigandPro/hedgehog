@@ -1,16 +1,186 @@
 """Descriptor computation functions."""
 
+from collections import deque
 from pathlib import Path
 
 import pandas as pd
 from medchem.rules._utils import n_fused_aromatic_rings
-from rdkit import Chem
-from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
+from rdkit import Chem, RDConfig
+from rdkit.Chem import (
+    QED,
+    ChemicalFeatures,
+    Crippen,
+    Descriptors,
+    Lipinski,
+    rdMolDescriptors,
+)
 
 from hedgehog.configs.logger import logger
+from hedgehog.descriptors.constants import TYPE_ALIAS_COLUMNS
 from hedgehog.descriptors.io import order_identity_columns, process_path
 from hedgehog.utils.mce18 import compute_mce18
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
+
+try:
+    _FEATURE_FACTORY = ChemicalFeatures.BuildFeatureFactory(
+        str(Path(RDConfig.RDDataDir) / "BaseFeatures.fdef")
+    )
+except Exception:
+    _FEATURE_FACTORY = None
+
+
+def _collect_donor_acceptor_atom_sets(mol):
+    """Collect donor/acceptor atom ids from RDKit feature definitions."""
+    if _FEATURE_FACTORY is None:
+        return set(), set()
+
+    donors = set()
+    acceptors = set()
+    for feature in _FEATURE_FACTORY.GetFeaturesForMol(mol):
+        family = feature.GetFamily()
+        if family == "Donor":
+            donors.update(feature.GetAtomIds())
+        elif family == "Acceptor":
+            acceptors.update(feature.GetAtomIds())
+    return donors, acceptors
+
+
+def _count_small_rings_3_4(rings):
+    """Count 3/4-membered rings."""
+    return sum(1 for ring_size in rings if ring_size in (3, 4))
+
+
+def _compute_max_acyclic_chain_length(mol):
+    """Compute maximum atom count along a non-ring chain."""
+    adjacency = {}
+    for bond in mol.GetBonds():
+        if bond.IsInRing():
+            continue
+        begin = bond.GetBeginAtom()
+        end = bond.GetEndAtom()
+        if begin.GetAtomicNum() == 1 or end.GetAtomicNum() == 1:
+            continue
+        a_idx = begin.GetIdx()
+        b_idx = end.GetIdx()
+        adjacency.setdefault(a_idx, set()).add(b_idx)
+        adjacency.setdefault(b_idx, set()).add(a_idx)
+
+    if not adjacency:
+        return 0
+
+    def _farthest(start, allowed):
+        visited = {start}
+        queue = deque([(start, 0)])
+        farthest_node = start
+        farthest_dist = 0
+        while queue:
+            node, dist = queue.popleft()
+            if dist > farthest_dist:
+                farthest_node = node
+                farthest_dist = dist
+            for neighbor in adjacency.get(node, ()):
+                if neighbor not in allowed or neighbor in visited:
+                    continue
+                visited.add(neighbor)
+                queue.append((neighbor, dist + 1))
+        return farthest_node, farthest_dist
+
+    remaining = set(adjacency)
+    best_diameter_edges = 0
+
+    while remaining:
+        start = next(iter(remaining))
+        component = {start}
+        queue = deque([start])
+        while queue:
+            node = queue.popleft()
+            for neighbor in adjacency.get(node, ()):
+                if neighbor in component:
+                    continue
+                component.add(neighbor)
+                queue.append(neighbor)
+        remaining.difference_update(component)
+
+        endpoint, _ = _farthest(start, component)
+        _, diameter_edges = _farthest(endpoint, component)
+        best_diameter_edges = max(best_diameter_edges, diameter_edges)
+
+    return best_diameter_edges + 1
+
+
+def _compute_type_alias_counts(mol):
+    """Compute Inventum-inspired atom type alias counts."""
+    donors, acceptors = _collect_donor_acceptor_atom_sets(mol)
+    counts = {alias: 0 for alias in TYPE_ALIAS_COLUMNS}
+
+    so2_sulfur_ids = set()
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 16:
+            continue
+        n_double_bonded_oxygens = 0
+        for bond in atom.GetBonds():
+            neighbor = bond.GetOtherAtom(atom)
+            if (
+                neighbor.GetAtomicNum() == 8
+                and bond.GetBondType() == Chem.BondType.DOUBLE
+            ):
+                n_double_bonded_oxygens += 1
+        if n_double_bonded_oxygens >= 2:
+            so2_sulfur_ids.add(atom.GetIdx())
+
+    for atom in mol.GetAtoms():
+        atomic_num = atom.GetAtomicNum()
+        atom_idx = atom.GetIdx()
+        in_ring = atom.IsInRing()
+        is_aromatic = atom.GetIsAromatic()
+        hyb = atom.GetHybridization()
+        formal_charge = atom.GetFormalCharge()
+        total_h = atom.GetTotalNumHs()
+
+        if atomic_num == 8:
+            if hyb == Chem.HybridizationType.SP2 and atom_idx in acceptors:
+                counts[".=O"] += 1
+            if (
+                hyb == Chem.HybridizationType.SP3
+                and atom_idx in acceptors
+                and total_h == 0
+            ):
+                counts["O_a"] += 1
+            if hyb == Chem.HybridizationType.SP3 and atom_idx in donors and total_h > 0:
+                counts["O_d"] += 1
+
+        elif atomic_num == 6:
+            if is_aromatic:
+                counts["Car"] += 1
+            if in_ring and not is_aromatic and hyb == Chem.HybridizationType.SP2:
+                counts["C2r"] += 1
+            if in_ring and hyb == Chem.HybridizationType.SP3:
+                counts["C3r"] += 1
+            if not in_ring and not is_aromatic and hyb == Chem.HybridizationType.SP2:
+                counts["Cs2"] += 1
+            if not in_ring and hyb == Chem.HybridizationType.SP3:
+                counts["Cs3"] += 1
+            if hyb == Chem.HybridizationType.SP:
+                counts["Csp"] += 1
+
+        elif atomic_num == 7:
+            if formal_charge == 0 and atom_idx in acceptors:
+                counts["Nac"] += 1
+            if formal_charge > 0 and atom_idx in donors and total_h > 0:
+                counts["Nd+"] += 1
+            if formal_charge == 0 and atom_idx in donors and total_h > 0:
+                counts["Nd0"] += 1
+
+        elif atomic_num == 16:
+            if atom_idx in so2_sulfur_ids:
+                counts["SO2"] += 1
+            elif atom.GetTotalValence() == 2:
+                counts["Sul"] += 1
+
+        elif atomic_num in (9, 17, 35, 53):
+            counts["Hal"] += 1
+
+    return counts
 
 
 def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
@@ -45,7 +215,12 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     mol_wt = Descriptors.ExactMolWt(mol_n)
     clogp = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
+    n_O_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 8)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
+    n_NO_atoms = n_N_atoms + n_O_atoms
+    n_small_rings_3_4 = _count_small_rings_3_4(rings)
+    max_acyclic_chain_length = _compute_max_acyclic_chain_length(mol_n)
+    type_alias_counts = _compute_type_alias_counts(mol_n)
 
     return {
         "model_name": model_name,
@@ -57,6 +232,9 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
             1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() not in (1, 6)
         ),
         "n_N_atoms": n_N_atoms,
+        "n_O_atoms": n_O_atoms,
+        "n_S_atoms": n_S_atoms,
+        "n_NO_atoms": n_NO_atoms,
         "fN_atoms": n_N_atoms / n_heavy_atoms if n_heavy_atoms > 0 else 0,
         "fNS_atoms": (n_N_atoms + n_S_atoms) / n_heavy_atoms
         if n_heavy_atoms > 0
@@ -74,6 +252,8 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         - 0.74 * n_aromatic_atoms,
         "ring_size": rings,
         "n_rings": mol_n.GetRingInfo().NumRings(),
+        "n_small_rings_3_4": n_small_rings_3_4,
+        "max_acyclic_chain_length": max_acyclic_chain_length,
         "n_aroma_rings": rdMolDescriptors.CalcNumAromaticRings(mol_n),
         "n_fused_aromatic_rings": n_fused_aromatic_rings(mol_n),
         "n_rigid_bonds": n_rigid_bonds,
@@ -84,6 +264,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         "mce18": compute_mce18(mol_n),
         "tpsa": rdMolDescriptors.CalcTPSA(mol_n),
         "qed": QED.qed(mol_n),
+        **type_alias_counts,
     }
 
 

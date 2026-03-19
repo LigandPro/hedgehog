@@ -11,6 +11,32 @@ preprocess:
   remove_radicals: false
   remove_stereochemistry: false
 
+structural_constraints:
+  enabled: true
+  type_limits:
+    ".=O": 4
+    C2r: 6
+    C3r: 6
+    Car: 12
+    Cs2: 6
+    Cs3: 8
+    Csp: 2
+    Nac: 3
+    Nd+: 1
+    Nd0: 2
+    O_a: 4
+    O_d: 2
+    SO2: 1
+    Sul: 1
+    Hal: 3
+  element_limits:
+    N: 6
+    O: 4
+    S: 1
+  max_n_or_o_atoms: 10
+  max_small_rings_3_4: 0
+  max_acyclic_chain_length: 4
+
 borders:
   allowed_chars:
   - C
@@ -77,8 +103,28 @@ filtered_cols_to_plot:
 - n_heavy_atoms
 - n_het_atoms
 - n_N_atoms
+- n_O_atoms
+- n_S_atoms
+- n_NO_atoms
 - fN_atoms
 - fNS_atoms
+- n_small_rings_3_4
+- max_acyclic_chain_length
+- ".=O"
+- C2r
+- C3r
+- Car
+- Cs2
+- Cs3
+- Csp
+- Nac
+- Nd+
+- Nd0
+- O_a
+- O_d
+- SO2
+- Sul
+- Hal
 - charged_mol
 - molWt
 - logP
@@ -100,10 +146,30 @@ discrete_features_to_plot:
 - chars
 - n_het_atoms
 - n_N_atoms
+- n_O_atoms
+- n_S_atoms
+- n_NO_atoms
 - charged_mol
 - ring_size
 - n_rings
 - n_aroma_rings
+- n_small_rings_3_4
+- max_acyclic_chain_length
+- ".=O"
+- C2r
+- C3r
+- Car
+- Cs2
+- Cs3
+- Csp
+- Nac
+- Nd+
+- Nd0
+- O_a
+- O_d
+- SO2
+- Sul
+- Hal
 - n_fused_aromatic_rings
 - n_rigid_bonds
 - n_rot_bonds
@@ -124,6 +190,9 @@ renamer:
   n_heavy_atoms: Number of Heavy Atoms
   n_het_atoms: Number of heteroatoms
   n_N_atoms: Number of Nitrogen Atoms
+  n_O_atoms: Number of Oxygen Atoms
+  n_S_atoms: Number of Sulfur Atoms
+  n_NO_atoms: Number of Nitrogen or Oxygen Atoms
   fN_atoms: Fraction of Nitrogen Atoms
   fNS_atoms: Fraction of Nitrogen and Sulfur Atoms
   charged_mol: Charged Molecule
@@ -134,6 +203,8 @@ renamer:
   ring_size: Size of rings
   n_rings: Number of rings
   n_aroma_rings: Number of aromatic rings
+  n_small_rings_3_4: Number of 3/4-membered rings
+  max_acyclic_chain_length: Longest acyclic chain length
   n_fused_aromatic_rings: Number of fused aromatic rings
   n_rigid_bonds: Number of rigid bonds
   n_rot_bonds: Number of rotatable bonds
@@ -143,3 +214,18 @@ renamer:
   mce18: MCE-18 Complexity
   tpsa: TPSA
   qed: QED
+  ".=O": Type Limit count for .=O
+  C2r: Type Limit count for C2r
+  C3r: Type Limit count for C3r
+  Car: Type Limit count for Car
+  Cs2: Type Limit count for Cs2
+  Cs3: Type Limit count for Cs3
+  Csp: Type Limit count for Csp
+  Nac: Type Limit count for Nac
+  Nd+: Type Limit count for Nd+
+  Nd0: Type Limit count for Nd0
+  O_a: Type Limit count for O_a
+  O_d: Type Limit count for O_d
+  SO2: Type Limit count for SO2
+  Sul: Type Limit count for Sul
+  Hal: Type Limit count for Hal
