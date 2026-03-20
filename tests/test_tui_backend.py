@@ -707,6 +707,117 @@ class TestConfigValidatorUnknownType:
         assert not any("No specific validator" in w for w in result.get("warnings", []))
 
 
+class TestConfigValidatorDescriptorsStructuralConstraints:
+    """Descriptors validator should validate structural_constraints shape and values."""
+
+    def test_validate_descriptors_accepts_structural_constraints(self):
+        result = ConfigValidator.validate(
+            "descriptors",
+            {
+                "borders": {
+                    "molWt_min": 200,
+                    "molWt_max": 500,
+                    "logP_min": -1.0,
+                    "logP_max": 5.0,
+                },
+                "structural_constraints": {
+                    "max_n_or_o_atoms": 8,
+                    "max_small_rings_3_4": 2,
+                    "max_acyclic_chain_length": 10,
+                    "type_limits": {
+                        ".=O": 2,
+                        "Car": 8,
+                        "Nd+": 1,
+                    },
+                    "element_limits": {"N": 4, "O": 6},
+                },
+            },
+        )
+        assert result["valid"] is True
+        assert result["errors"] == []
+
+    def test_validate_descriptors_rejects_non_mapping_structural_constraints(self):
+        result = ConfigValidator.validate(
+            "descriptors",
+            {
+                "borders": {
+                    "molWt_min": 200,
+                    "molWt_max": 500,
+                    "logP_min": -1.0,
+                    "logP_max": 5.0,
+                },
+                "structural_constraints": "invalid",
+            },
+        )
+        assert result["valid"] is False
+        assert "structural_constraints must be a mapping" in result["errors"]
+
+    def test_validate_descriptors_rejects_invalid_structural_constraint_values(self):
+        result = ConfigValidator.validate(
+            "descriptors",
+            {
+                "borders": {
+                    "molWt_min": 200,
+                    "molWt_max": 500,
+                    "logP_min": -1.0,
+                    "logP_max": 5.0,
+                },
+                "structural_constraints": {
+                    "max_n_or_o_atoms": -1,
+                    "max_small_rings_3_4": 1.5,
+                    "type_limits": {"Car": "bad"},
+                    "element_limits": {"": 2, "O": True},
+                },
+            },
+        )
+        assert result["valid"] is False
+        assert (
+            "structural_constraints.max_n_or_o_atoms must be a non-negative integer"
+            in result["errors"]
+        )
+        assert (
+            "structural_constraints.max_small_rings_3_4 must be a non-negative integer"
+            in result["errors"]
+        )
+        assert (
+            "structural_constraints.type_limits.Car must be a non-negative integer"
+            in result["errors"]
+        )
+        assert (
+            "structural_constraints.element_limits keys must be non-empty strings"
+            in result["errors"]
+        )
+        assert (
+            "structural_constraints.element_limits.O must be a non-negative integer"
+            in result["errors"]
+        )
+
+    def test_validate_descriptors_rejects_non_mapping_limit_maps(self):
+        result = ConfigValidator.validate(
+            "descriptors",
+            {
+                "borders": {
+                    "molWt_min": 200,
+                    "molWt_max": 500,
+                    "logP_min": -1.0,
+                    "logP_max": 5.0,
+                },
+                "structural_constraints": {
+                    "type_limits": ["Car=8"],
+                    "element_limits": "N=4",
+                },
+            },
+        )
+        assert result["valid"] is False
+        assert (
+            "structural_constraints.type_limits must be a mapping" in result["errors"]
+        )
+        assert (
+            "structural_constraints.element_limits must be a mapping"
+            in result["errors"]
+        )
+
+
 class TestConfigValidatorDocking:
     """Docking config validator should accept the supported engine names."""
 
