@@ -60,6 +60,33 @@ def _write_protein_pdb(path: Path, coords: np.ndarray | None = None) -> Path:
     return pdb_path
 
 
+def _write_minimal_docking_filters_cfg(path: Path, *, save_metrics: bool) -> None:
+    """Write a minimal docking filters config with all heavy filters disabled."""
+    path.write_text(
+        "\n".join(
+            [
+                "run: true",
+                "input_sdf: null",
+                "search_box:",
+                "  enabled: false",
+                "pose_quality:",
+                "  enabled: false",
+                "interactions:",
+                "  enabled: false",
+                "shepherd_score:",
+                "  enabled: false",
+                "conformer_deviation:",
+                "  enabled: false",
+                "aggregation:",
+                "  mode: all",
+                f"  save_metrics: {str(save_metrics).lower()}",
+                "  save_failed: false",
+                "",
+            ]
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # posecheck-fast filter tests
 # ---------------------------------------------------------------------------
@@ -689,6 +716,106 @@ class TestSinglePoseCollapse:
         row_mol_a = collapsed_df[collapsed_df["source_mol_idx"] == "mol-A"].iloc[0]
         assert row_mol_a["gnina_minimizedAffinity"] == -8.0
         assert collapsed_df["mol_idx"].tolist() == [0, 1]
+
+
+class TestDockingFiltersIdentityRegression:
+    """Regression tests for identity/SMILES preservation in docking filters."""
+
+    def test_filtered_smiles_comes_from_ligands_csv_not_pose_smiles(self, tmp_path):
+        """Output SMILES should be restored from ligands.csv by source molecule identity."""
+        from hedgehog.docking_filters.main import docking_filters_main
+
+        base = tmp_path
+        docking_dir = base / "stages" / "05_docking"
+        smina_dir = docking_dir / "smina"
+        smina_dir.mkdir(parents=True)
+
+        # Pose SDF encodes ethanol, but ligands.csv maps the same mol_idx to benzene.
+        pose_mol = Chem.MolFromSmiles("CCO")
+        pose_mol.SetProp("_Name", "pose_name_should_not_drive_identity")
+        pose_mol.SetProp("mol_idx", "LP-1")
+        pose_mol.SetProp("model_name", "model-a")
+        pose_mol.SetProp("smiles", "CCO")
+        writer = Chem.SDWriter(str(smina_dir / "smina_out.sdf"))
+        writer.write(pose_mol)
+        writer.close()
+
+        ligands_df = pd.DataFrame(
+            {
+                "smiles": ["c1ccccc1"],
+                "name": ["LP-1"],
+                "model_name": ["model-a"],
+                "mol_idx": ["LP-1"],
+            }
+        )
+        ligands_df.to_csv(docking_dir / "ligands.csv", index=False)
+
+        filter_cfg = base / "config_docking_filters.yml"
+        _write_minimal_docking_filters_cfg(filter_cfg, save_metrics=False)
+
+        result = docking_filters_main(
+            {
+                "folder_to_save": str(base),
+                "config_docking_filters": str(filter_cfg),
+            }
+        )
+        assert result is not None
+
+        filtered_path = (
+            base / "stages" / "06_docking_filters" / "filtered_molecules.csv"
+        )
+        filtered_df = pd.read_csv(filtered_path)
+        assert len(filtered_df) == 1
+        assert filtered_df.loc[0, "mol_idx"] == "LP-1"
+        assert filtered_df.loc[0, "smiles"] == "c1ccccc1"
+        assert filtered_df.loc[0, "smiles"] != "CCO"
+
+    def test_docking_filters_fails_when_source_identity_is_missing(self, tmp_path):
+        """Identity loss must fail stage instead of silently rebuilding SMILES from pose."""
+        from hedgehog.docking_filters.main import docking_filters_main
+
+        base = tmp_path
+        docking_dir = base / "stages" / "05_docking"
+        smina_dir = docking_dir / "smina"
+        smina_dir.mkdir(parents=True)
+
+        # No source identity: neither mol_idx nor meaningful mapping through ligands.csv.
+        pose_mol = Chem.MolFromSmiles("CCO")
+        pose_mol.SetProp("_Name", "pose_only_name")
+        pose_mol.SetProp("smiles", "CCO")
+        writer = Chem.SDWriter(str(smina_dir / "smina_out.sdf"))
+        writer.write(pose_mol)
+        writer.close()
+
+        # Deliberately mismatched/irrelevant identity mapping.
+        pd.DataFrame(
+            {
+                "smiles": ["c1ccccc1"],
+                "name": ["LP-other"],
+                "model_name": ["model-a"],
+                "mol_idx": ["LP-other"],
+            }
+        ).to_csv(docking_dir / "ligands.csv", index=False)
+
+        filter_cfg = base / "config_docking_filters.yml"
+        _write_minimal_docking_filters_cfg(filter_cfg, save_metrics=False)
+
+        failed = False
+        try:
+            result = docking_filters_main(
+                {
+                    "folder_to_save": str(base),
+                    "config_docking_filters": str(filter_cfg),
+                }
+            )
+            failed = result is None
+        except Exception:
+            failed = True
+
+        assert failed, (
+            "docking_filters must fail when source identity cannot be resolved; "
+            "silent SMILES regeneration from docked pose is not allowed"
+        )
 
 
 class TestInteractionReportingArtifacts:

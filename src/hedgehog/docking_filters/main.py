@@ -36,6 +36,16 @@ _INTERACTION_REPORT_FILES = (
     "interaction_matrix.csv",
     "interaction_report_meta.json",
 )
+_MODEL_NAME_KEYS = ("model_name", "sm_model_name", "s_sm_model_name")
+_MOL_IDX_KEYS = (
+    "source_mol_idx",
+    "mol_idx",
+    "sm_mol_idx",
+    "s_sm_mol_idx",
+    "name",
+    "_Name",
+)
+_INPUT_SMILES_KEYS = ("input_smiles", "source_smiles")
 
 
 def _project_root() -> Path:
@@ -66,17 +76,22 @@ def _resolve_existing_path(base: Path, path: str | Path) -> Path:
     return (base / p).resolve()
 
 
-def _get_first_prop_value(mol: Chem.Mol, canonical_names: set[str]) -> str | None:
+def _get_first_prop_value(
+    mol: Chem.Mol, canonical_names: set[str] | tuple[str, ...] | list[str]
+) -> str | None:
     """Return the first SDF property value whose (normalized) key matches any canonical name."""
+    ordered_names = tuple(canonical_names)
+    canonical_lookup = set(ordered_names)
+
     # Fast path: exact keys
-    for name in canonical_names:
+    for name in ordered_names:
         if mol.HasProp(name):
             return mol.GetProp(name)
 
     # Some toolchains escape underscores in SDF property names (e.g. "s_sm_model\\_name").
     for prop in mol.GetPropNames():
         normalized = prop.replace("\\", "")
-        if normalized in canonical_names:
+        if normalized in canonical_lookup:
             return mol.GetProp(prop)
     return None
 
@@ -646,19 +661,18 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     # Extract identifiers (best-effort) from SDF properties
     model_names: list[str] = []
     mol_idxs: list[str] = []
+    input_smiles: list[str] = []
     gnina_min_aff: list[float | None] = []
     gnina_cnn_score: list[float | None] = []
     gnina_cnn_aff: list[float | None] = []
 
     for mol in mols:
-        model_name = _get_first_prop_value(
-            mol, {"model_name", "sm_model_name", "s_sm_model_name"}
-        )
-        mol_idx = _get_first_prop_value(
-            mol, {"mol_idx", "sm_mol_idx", "s_sm_mol_idx", "name", "_Name"}
-        )
+        model_name = _get_first_prop_value(mol, _MODEL_NAME_KEYS)
+        mol_idx = _get_first_prop_value(mol, _MOL_IDX_KEYS)
+        input_smi = _get_first_prop_value(mol, _INPUT_SMILES_KEYS)
         model_names.append(model_name or "")
         mol_idxs.append(mol_idx or "")
+        input_smiles.append(input_smi or "")
 
         gnina_min_aff.append(_get_prop_as_float(mol, "minimizedAffinity"))
         gnina_cnn_score.append(_get_prop_as_float(mol, "CNNscore"))
@@ -694,7 +708,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                     # Try to get name from molecule if mol_idx is missing
                     mol_name = None
                     if not mol_idx:
-                        mol_name = _get_first_prop_value(mol, {"name", "_Name"})
+                        mol_name = _get_first_prop_value(mol, ("name", "_Name"))
 
                     # Fill model_name if missing
                     if not model_name:
@@ -716,6 +730,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             "mol_idx": range(len(mols)),
             "model_name": model_names,
             "source_mol_idx": mol_idxs,
+            "input_smiles": input_smiles,
             "gnina_minimizedAffinity": gnina_min_aff,
             "gnina_CNNscore": gnina_cnn_score,
             "gnina_CNNaffinity": gnina_cnn_aff,
@@ -948,25 +963,39 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         pose_indices = filtered_df["mol_idx"].tolist()
 
         # Use original SMILES from ligands.csv (preserves 2D stereochemistry)
-        # instead of generating from 3D poses which can resolve stereo differently.
+        # and fail fast if identity was lost instead of regenerating from 3D poses.
         ligands_path = docking_dir / "ligands.csv"
         smiles_lookup: dict[str, str] = {}
         if ligands_path.exists():
             lig_df = pd.read_csv(ligands_path)
             smiles_lookup = dict(zip(lig_df["mol_idx"].astype(str), lig_df["smiles"]))
 
-        fallback_smiles = pd.Series(
-            [
-                Chem.MolToSmiles(mols[i]) if 0 <= i < len(mols) and mols[i] else ""
-                for i in pose_indices
-            ],
-            index=filtered_df.index,
+        resolved_smiles = (
+            filtered_df["source_mol_idx"].astype(str).map(smiles_lookup).fillna("")
         )
-        filtered_df["smiles"] = (
-            filtered_df["source_mol_idx"]
-            .astype(str)
-            .map(smiles_lookup)
-            .fillna(fallback_smiles)
+        unresolved_mask = resolved_smiles.eq("")
+        if "input_smiles" in filtered_df.columns:
+            resolved_smiles.loc[unresolved_mask] = (
+                filtered_df.loc[unresolved_mask, "input_smiles"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+
+        unresolved_ids = filtered_df.loc[
+            resolved_smiles.eq(""), "source_mol_idx"
+        ].astype(str)
+        if not unresolved_ids.empty:
+            missing_preview = ", ".join(unresolved_ids.head(5).tolist())
+            raise RuntimeError(
+                "Could not resolve original SMILES for filtered docking poses. "
+                f"Missing source_mol_idx values: {missing_preview}"
+            )
+
+        filtered_df["smiles"] = resolved_smiles
+        filtered_df = filtered_df.drop(
+            columns=["input_smiles"],
+            errors="ignore",
         )
 
         # For downstream pipeline stages, mol_idx should refer to the original molecule id

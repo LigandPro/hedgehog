@@ -1,6 +1,9 @@
+import re
 from pathlib import Path
 
 from hedgehog.configs.logger import logger
+
+_PER_MOLECULE_RESULT_RE = re.compile(r"^\d{6}_(.+)_out$")
 
 
 def _load_rdkit():
@@ -49,6 +52,30 @@ def _aggregate_sdf_files(
                 best_affinity = affinity_sort
         return best_mol
 
+    def _restore_per_molecule_source_id(mol, result_file: Path) -> None:
+        """Restore stable source molecule identity from per-molecule result filename.
+
+        Per-molecule docking writes files as:
+          <6-digit-split-prefix>_<source-mol-id>_out.sdf
+        Example:
+          000123_t-42_out.sdf -> source id "t-42"
+
+        We persist this id into canonical SDF fields so downstream stages can
+        reliably map back to original input rows even if docking tools mutate
+        or drop name-like properties.
+        """
+        match = _PER_MOLECULE_RESULT_RE.match(result_file.stem)
+        if not match:
+            return
+
+        source_mol_idx = match.group(1).strip()
+        if not source_mol_idx:
+            return
+
+        mol.SetProp("_Name", source_mol_idx)
+        mol.SetProp("mol_idx", source_mol_idx)
+        mol.SetProp("source_mol_idx", source_mol_idx)
+
     writer = Chem.SDWriter(str(output_sdf))
     count = 0
 
@@ -60,6 +87,7 @@ def _aggregate_sdf_files(
                 supplier = Chem.SDMolSupplier(str(result_file), removeHs=False)
                 output_mol = next((mol for mol in supplier if mol is not None), None)
             if output_mol is not None:
+                _restore_per_molecule_source_id(output_mol, result_file)
                 if name_from_filename:
                     output_mol.SetProp("_Name", result_file.stem)
                     if not output_mol.HasProp("mol_idx"):
