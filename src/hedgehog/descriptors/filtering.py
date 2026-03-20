@@ -8,7 +8,10 @@ from pathlib import Path
 import pandas as pd
 
 from hedgehog.configs.logger import logger
-from hedgehog.descriptors.constants import _DESCRIPTOR_KEY_MAP
+from hedgehog.descriptors.constants import (
+    _DESCRIPTOR_KEY_MAP,
+    STRUCTURAL_ELEMENT_LIMIT_MAP,
+)
 from hedgehog.descriptors.io import (
     order_identity_columns,
     process_path,
@@ -214,7 +217,75 @@ def _apply_column_filter(df, col, borders):
     return (df[col] >= min_border) & (df[col] <= max_border)
 
 
-def filter_molecules(df, borders, folder_to_save):
+def _extract_borders_and_constraints(borders, structural_constraints):
+    """Normalize descriptors config into plain borders + structural constraints."""
+    if not isinstance(borders, dict):
+        if isinstance(structural_constraints, dict):
+            return {}, structural_constraints
+        return {}, {}
+
+    normalized_borders = borders
+    constraints = structural_constraints
+
+    if "borders" in borders and isinstance(borders.get("borders"), dict):
+        normalized_borders = borders.get("borders", {}) or {}
+        if constraints is None:
+            constraints = borders.get("structural_constraints")
+    elif constraints is None:
+        constraints = borders.get("structural_constraints")
+
+    normalized_borders = {
+        key: value
+        for key, value in normalized_borders.items()
+        if key != "structural_constraints"
+    }
+    if not isinstance(constraints, dict):
+        constraints = {}
+    return normalized_borders, constraints
+
+
+def _build_structural_constraint_borders(structural_constraints):
+    """Convert structural constraints block to regular *_max border entries."""
+    if not structural_constraints.get("enabled", False):
+        return {}
+
+    translated = {}
+
+    type_limits = structural_constraints.get("type_limits") or {}
+    if isinstance(type_limits, dict):
+        for alias, max_value in type_limits.items():
+            if max_value is None:
+                continue
+            alias_key = str(alias)
+            canonical_alias = _DESCRIPTOR_KEY_MAP.get(alias_key.lower(), alias_key)
+            translated[f"{canonical_alias}_max"] = max_value
+
+    element_limits = structural_constraints.get("element_limits") or {}
+    if isinstance(element_limits, dict):
+        for key, max_value in element_limits.items():
+            if max_value is None:
+                continue
+            key_str = str(key)
+            element_col = STRUCTURAL_ELEMENT_LIMIT_MAP.get(
+                key_str, STRUCTURAL_ELEMENT_LIMIT_MAP.get(key_str.lower())
+            )
+            if element_col is not None:
+                translated[f"{element_col}_max"] = max_value
+
+    direct_limits = {
+        "max_n_or_o_atoms": "n_NO_atoms",
+        "max_small_rings_3_4": "n_small_rings_3_4",
+        "max_acyclic_chain_length": "max_acyclic_chain_length",
+    }
+    for config_key, column in direct_limits.items():
+        max_value = structural_constraints.get(config_key)
+        if max_value is not None:
+            translated[f"{column}_max"] = max_value
+
+    return translated
+
+
+def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
     """Filter molecules based on descriptor thresholds.
 
     Args:
@@ -224,9 +295,14 @@ def filter_molecules(df, borders, folder_to_save):
     """
     folder_to_save = Path(process_path(folder_to_save))
     id_cols = ["smiles", "model_name", "mol_idx"]
+    normalized_borders, constraints = _extract_borders_and_constraints(
+        borders, structural_constraints
+    )
+    effective_borders = dict(normalized_borders)
+    effective_borders.update(_build_structural_constraint_borders(constraints))
 
     logger.info("[#B29EEE]Applied Descriptor Filters:[/#B29EEE]")
-    for line in json.dumps(borders, indent=2, ensure_ascii=False).split("\n"):
+    for line in json.dumps(effective_borders, indent=2, ensure_ascii=False).split("\n"):
         logger.info("  %s", line)
 
     # Build filtered data with pass flags
@@ -236,16 +312,23 @@ def filter_molecules(df, borders, folder_to_save):
             filtered_data[col] = df[col]
             continue
 
-        col_in_borders = any(v is not None for v in _get_border_values(col, borders))
+        col_in_borders = any(
+            v is not None for v in _get_border_values(col, effective_borders)
+        )
         # Some filters are configured without *_min/*_max keys.
         # Treat them as "in borders" if their controlling keys exist.
-        if col == "chars" and "allowed_chars" in borders:
+        if col == "chars" and "allowed_chars" in effective_borders:
             col_in_borders = True
-        if col in ("charged_mol", "is_neutral") and "charged_mol_allowed" in borders:
+        if (
+            col in ("charged_mol", "is_neutral")
+            and "charged_mol_allowed" in effective_borders
+        ):
             col_in_borders = True
         if col_in_borders:
             filtered_data[col] = df[col]
-            filtered_data[f"{col}_pass"] = _apply_column_filter(df, col, borders)
+            filtered_data[f"{col}_pass"] = _apply_column_filter(
+                df, col, effective_borders
+            )
 
     filtered_data_df = pd.DataFrame(filtered_data)
     filtered_data_df = order_identity_columns(filtered_data_df)
@@ -253,7 +336,7 @@ def filter_molecules(df, borders, folder_to_save):
         folder_to_save / "pass_flags.csv", index_label="SMILES", index=False
     )
 
-    pass_filters = drop_false_rows(filtered_data_df, borders)
+    pass_filters = drop_false_rows(filtered_data_df, effective_borders)
 
     # Save passed molecules
     if len(pass_filters) > 0:

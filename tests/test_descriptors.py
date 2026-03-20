@@ -84,6 +84,9 @@ class TestComputeSingleMoleculeDescriptors:
             "n_heavy_atoms",
             "n_het_atoms",
             "n_N_atoms",
+            "n_O_atoms",
+            "n_S_atoms",
+            "n_NO_atoms",
             "fN_atoms",
             "fNS_atoms",
             "charged_mol",
@@ -93,6 +96,8 @@ class TestComputeSingleMoleculeDescriptors:
             "sw",
             "ring_size",
             "n_rings",
+            "n_small_rings_3_4",
+            "max_acyclic_chain_length",
             "n_aroma_rings",
             "n_fused_aromatic_rings",
             "n_rigid_bonds",
@@ -102,6 +107,21 @@ class TestComputeSingleMoleculeDescriptors:
             "fsp3",
             "tpsa",
             "qed",
+            ".=O",
+            "C2r",
+            "C3r",
+            "Car",
+            "Cs2",
+            "Cs3",
+            "Csp",
+            "Nac",
+            "Nd+",
+            "Nd0",
+            "O_a",
+            "O_d",
+            "SO2",
+            "Sul",
+            "Hal",
         ]
         for key in expected_keys:
             assert key in result, f"Missing key: {key}"
@@ -115,6 +135,54 @@ class TestComputeSingleMoleculeDescriptors:
         assert result["n_N_atoms"] == 1
         assert result["fN_atoms"] == 0.5
         assert result["fNS_atoms"] == 1.0
+
+    def test_structural_count_descriptors(self):
+        """Structural count descriptors should be computed."""
+        mol = Chem.MolFromSmiles("CC(=O)N")
+        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "sc-0")
+
+        assert result["n_N_atoms"] == 1
+        assert result["n_O_atoms"] == 1
+        assert result["n_NO_atoms"] == 2
+        assert result["n_small_rings_3_4"] == 0
+
+    def test_max_acyclic_chain_length(self):
+        """Maximum acyclic chain length should be computed from non-ring chains."""
+        linear = Chem.MolFromSmiles("CCCC")
+        ring = Chem.MolFromSmiles("c1ccccc1")
+
+        linear_result = _compute_single_molecule_descriptors(linear, MODEL_TEST, "l-0")
+        ring_result = _compute_single_molecule_descriptors(ring, MODEL_TEST, "r-0")
+
+        assert linear_result["max_acyclic_chain_length"] == 4
+        assert ring_result["max_acyclic_chain_length"] == 0
+
+    def test_type_alias_counts(self):
+        """Configured type aliases should have expected positive counts."""
+        cases = [
+            ("CC(=O)C", ".=O"),
+            ("C1=CCCCC1", "C2r"),
+            ("C1CCCCC1", "C3r"),
+            (SMILES_BENZENE, "Car"),
+            ("C=C", "Cs2"),
+            ("CCC", "Cs3"),
+            ("C#C", "Csp"),
+            ("n1ccccc1", "Nac"),
+            ("C[NH3+]", "Nd+"),
+            ("CN", "Nd0"),
+            ("COC", "O_a"),
+            (SMILES_ETHANOL, "O_d"),
+            ("CS(=O)(=O)C", "SO2"),
+            ("CSC", "Sul"),
+            ("CCCl", "Hal"),
+        ]
+
+        for smiles, alias in cases:
+            mol = Chem.MolFromSmiles(smiles)
+            result = _compute_single_molecule_descriptors(mol, MODEL_TEST, f"{alias}-0")
+            assert result[alias] >= 1, (
+                f"Expected positive count for {alias} in {smiles}"
+            )
 
 
 class TestOrderIdentityColumns:
@@ -393,6 +461,72 @@ class TestFilterMolecules:
 
         flags = pd.read_csv(tmp_path / "pass_flags.csv")
         assert "charged_mol_pass" in flags.columns
+
+    def test_structural_constraints_nested_block(self, tmp_path):
+        """Nested structural_constraints should be applied via generic pass flags."""
+        mol_pass = Chem.MolFromSmiles(SMILES_ETHANOL)  # O_d=1, no SO2
+        mol_fail = Chem.MolFromSmiles("CS(=O)(=O)C")  # SO2=1, n_O_atoms=2
+
+        row_pass = _compute_single_molecule_descriptors(mol_pass, "m", "p-0")
+        row_pass[COL_SMILES] = SMILES_ETHANOL
+        row_fail = _compute_single_molecule_descriptors(mol_fail, "m", "f-0")
+        row_fail[COL_SMILES] = "CS(=O)(=O)C"
+
+        df = pd.DataFrame([row_pass, row_fail])
+
+        config_block = {
+            "borders": {"molWt_min": 0},
+            "structural_constraints": {
+                "enabled": True,
+                "type_limits": {
+                    "SO2": 0,
+                    "O_d": 1,
+                },
+                "element_limits": {
+                    "O": 1,
+                    "S": 0,
+                },
+                "max_n_or_o_atoms": 1,
+                "max_small_rings_3_4": 0,
+                "max_acyclic_chain_length": 3,
+            },
+        }
+        filter_molecules(df, config_block, str(tmp_path))
+
+        passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
+        assert len(passed) == 1
+        assert passed.iloc[0][COL_SMILES] == SMILES_ETHANOL
+
+        flags = pd.read_csv(tmp_path / "pass_flags.csv")
+        assert "SO2_pass" in flags.columns
+        assert "n_O_atoms_pass" in flags.columns
+        assert "n_NO_atoms_pass" in flags.columns
+        assert "max_acyclic_chain_length_pass" in flags.columns
+
+    def test_structural_constraints_disabled(self, tmp_path):
+        """Disabled structural_constraints should not affect filtering."""
+        mol_a = Chem.MolFromSmiles(SMILES_ETHANOL)
+        mol_b = Chem.MolFromSmiles("CS(=O)(=O)C")
+
+        row_a = _compute_single_molecule_descriptors(mol_a, "m", "a-0")
+        row_a[COL_SMILES] = SMILES_ETHANOL
+        row_b = _compute_single_molecule_descriptors(mol_b, "m", "b-0")
+        row_b[COL_SMILES] = "CS(=O)(=O)C"
+
+        df = pd.DataFrame([row_a, row_b])
+
+        config_block = {
+            "borders": {},
+            "structural_constraints": {
+                "enabled": False,
+                "type_limits": {"SO2": 0},
+                "max_n_or_o_atoms": 0,
+            },
+        }
+        filter_molecules(df, config_block, str(tmp_path))
+
+        passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
+        assert len(passed) == 2
 
 
 class TestDescriptorValues:

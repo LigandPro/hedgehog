@@ -60,11 +60,79 @@ class ConfigValidator:
     @staticmethod
     def _validate_descriptors(data: dict[str, Any], result: dict[str, Any]) -> None:
         """Validate descriptors configuration."""
-        borders = data.get("borders", {})
+        borders = data.get("borders", {}) or {}
+        if not isinstance(borders, dict):
+            result["errors"].append("borders must be a mapping")
+            return
+
         numeric_keys = ["molWt_min", "molWt_max", "logP_min", "logP_max"]
         for key in numeric_keys:
             if key in borders and not isinstance(borders[key], (int, float)):
                 result["errors"].append(f"{key} must be a number")
+
+        structural_constraints = data.get("structural_constraints")
+        if structural_constraints is None:
+            return
+
+        if not isinstance(structural_constraints, dict):
+            result["errors"].append("structural_constraints must be a mapping")
+            return
+
+        ConfigValidator._validate_integer_limit_map(
+            structural_constraints=structural_constraints,
+            map_key="type_limits",
+            result=result,
+        )
+        ConfigValidator._validate_integer_limit_map(
+            structural_constraints=structural_constraints,
+            map_key="element_limits",
+            result=result,
+        )
+
+        for scalar_key in [
+            "max_n_or_o_atoms",
+            "max_small_rings_3_4",
+            "max_acyclic_chain_length",
+        ]:
+            if scalar_key not in structural_constraints:
+                continue
+            value = structural_constraints[scalar_key]
+            if not ConfigValidator._is_non_negative_int(value):
+                result["errors"].append(
+                    f"structural_constraints.{scalar_key} must be a non-negative integer"
+                )
+
+    @staticmethod
+    def _validate_integer_limit_map(
+        structural_constraints: dict[str, Any],
+        map_key: str,
+        result: dict[str, Any],
+    ) -> None:
+        limit_map = structural_constraints.get(map_key)
+        if limit_map is None:
+            return
+
+        if not isinstance(limit_map, dict):
+            result["errors"].append(
+                f"structural_constraints.{map_key} must be a mapping"
+            )
+            return
+
+        for limit_key, limit_value in limit_map.items():
+            if not isinstance(limit_key, str) or not limit_key.strip():
+                result["errors"].append(
+                    f"structural_constraints.{map_key} keys must be non-empty strings"
+                )
+                continue
+
+            if not ConfigValidator._is_non_negative_int(limit_value):
+                result["errors"].append(
+                    f"structural_constraints.{map_key}.{limit_key} must be a non-negative integer"
+                )
+
+    @staticmethod
+    def _is_non_negative_int(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
     @staticmethod
     def _validate_mol_prep(data: dict[str, Any], result: dict[str, Any]) -> None:

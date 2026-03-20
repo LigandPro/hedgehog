@@ -11,6 +11,8 @@ from hedgehog._constants import CFG_DESCRIPTORS
 from hedgehog.configs.logger import load_config
 from hedgehog.descriptors.constants import _DESCRIPTOR_KEY_MAP
 from hedgehog.descriptors.filtering import (
+    _build_structural_constraint_borders,
+    _extract_borders_and_constraints,
     _get_border_values,
     _parse_chars_in_mol_column,
     _parse_ring_size_column,
@@ -405,7 +407,12 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     folder_to_save = Path(process_path(folder_to_save))
 
     descriptors_config = load_config(config[CFG_DESCRIPTORS])
-    borders = descriptors_config["borders"]
+    normalized_borders, constraints = _extract_borders_and_constraints(
+        descriptors_config.get("borders", {}),
+        descriptors_config.get("structural_constraints"),
+    )
+    borders = dict(normalized_borders)
+    borders.update(_build_structural_constraint_borders(constraints))
     if "charged_mol_allowed" in borders:
         borders["charged_mol_allowed"] = int(borders["charged_mol_allowed"])
     else:

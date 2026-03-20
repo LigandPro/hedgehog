@@ -8,6 +8,18 @@ The descriptors stage computes physicochemical descriptors for each molecule usi
 
 This stage runs twice in the pipeline: once early (initial filtering) and once at the end (recompute descriptors on the surviving molecule set). Filtering behavior is controlled by `filter_data` in `config_descriptors.yml` and applies to both runs unless you disable it.
 
+In addition to the generic descriptor borders, the stage can also enforce
+structural constraints such as typed atom class limits,
+element count limits, maximum 3/4-membered rings, and maximum acyclic chain
+length.
+
+Use generic borders when you want to shape broad physicochemical space
+(`molWt`, `logP`, `TPSA`, `hbd`, `hba`, `fsp3`, and related ranges). Use
+`structural_constraints` when you need direct control over concrete structural
+motifs that can be underconstrained by broad descriptors alone, such as aromatic
+carbon load, neutral donor nitrogens, sulfonyl sulfur motifs, strained small
+rings, or long non-ring appendages.
+
 ## Descriptor Reference
 
 ### Molecular Properties
@@ -39,6 +51,8 @@ This stage runs twice in the pipeline: once early (initial filtering) and once a
 | Ring Size | `ring_size` | List of all ring sizes (each must fall within min--max) | 3 | 12 |
 | Number of Rings | `n_rings` | Total ring count | 0 | 6 |
 | Aromatic Rings | `n_aroma_rings` | Count of aromatic rings | 0 | 5 |
+| Small 3/4-Membered Rings | `n_small_rings_3_4` | Count of 3- or 4-membered rings | 0 | via `structural_constraints.max_small_rings_3_4` |
+| Max Acyclic Chain Length | `max_acyclic_chain_length` | Length of the longest acyclic chain | 0 | via `structural_constraints.max_acyclic_chain_length` |
 | Fused Aromatic Rings | `n_fused_aromatic_rings` | Count of fused aromatic ring systems | 0 | 2 |
 | Rigid Bonds | `n_rigid_bonds` | Non-rotatable bonds | 0 | 30 |
 | Rotatable Bonds | `n_rot_bonds` | Freely rotatable bonds | 0 | 8 |
@@ -53,6 +67,75 @@ This stage runs twice in the pipeline: once early (initial filtering) and once a
 |-----------|------------|-------------|-------------|-------------|
 | QED | `qed` | Quantitative Estimation of Drug-likeness (0--1) | 0.3 | 1 |
 | MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 20 | 140 |
+
+### Structural Constraints
+
+| Constraint | Config Key | Description | Default |
+|-----------|------------|-------------|---------|
+| Typed Atom Class Limits | `structural_constraints.type_limits` | Maximum allowed counts for configured aliases such as `.=O`, `Car`, `Nd+`, `O_a`, `SO2`, `Hal` | See YAML |
+| Element Limits | `structural_constraints.element_limits` | Maximum allowed counts for `N`, `O`, and `S` | `N=6`, `O=4`, `S=1` |
+| Max N or O Atoms | `structural_constraints.max_n_or_o_atoms` | Maximum combined count of nitrogen and oxygen atoms | `10` |
+| Max 3/4-Atom Rings | `structural_constraints.max_small_rings_3_4` | Maximum allowed count of 3- and 4-membered rings | `0` |
+| Max Acyclic Chain Length | `structural_constraints.max_acyclic_chain_length` | Maximum allowed longest acyclic chain length | `4` |
+
+All structural constraints behave as upper bounds. A molecule passes a
+constraint only if the computed count is less than or equal to the configured
+value.
+
+### Why These Constraints Exist
+
+- `type_limits` control specific atom-level motifs that can remain hidden behind
+  acceptable global descriptors. For example, two molecules can have similar
+  `TPSA` and `hba`, but very different counts of aromatic carbons, sulfonyl
+  sulfur atoms, or protonated donor nitrogens.
+- `element_limits` and `max_n_or_o_atoms` put a direct cap on heteroatom load.
+  This is useful when you want to constrain polarity and heteroatom density with
+  a hard ceiling instead of relying only on aggregate properties.
+- `max_small_rings_3_4` controls strained ring systems. A value of `0`
+  disallows all 3- and 4-membered rings; higher values allow a limited number
+  of such motifs.
+- `max_acyclic_chain_length` controls the longest simple chain in the non-ring
+  heavy-atom graph. It is useful for reducing long linear appendages and
+  excessive flexibility.
+
+### Typed Atom Alias Glossary
+
+The `type_limits` map works on the following aliases:
+
+| Alias | Meaning | Typical reason to cap it |
+|-------|---------|--------------------------|
+| `.=O` | `sp2` acceptor oxygen, typically carbonyl-like | Reduce dense carbonyl chemistry |
+| `C2r` | Non-aromatic ring carbon with `sp2` hybridization | Limit unsaturated non-aromatic ring content |
+| `C3r` | Ring carbon with `sp3` hybridization | Limit saturated ring carbon load |
+| `Car` | Aromatic carbon atom | Control aromatic density directly |
+| `Cs2` | Non-ring, non-aromatic `sp2` carbon | Limit non-ring unsaturation |
+| `Cs3` | Non-ring `sp3` carbon | Limit long aliphatic appendages |
+| `Csp` | Carbon with `sp` hybridization | Limit linear or triple-bond motifs |
+| `Nac` | Neutral acceptor nitrogen | Control neutral acceptor-type nitrogens |
+| `Nd+` | Positively charged donor nitrogen with at least one hydrogen | Limit protonated donor nitrogens |
+| `Nd0` | Neutral donor nitrogen with at least one hydrogen | Control neutral donor nitrogen abundance |
+| `O_a` | `sp3` acceptor oxygen with no hydrogen | Control ether-like oxygen load |
+| `O_d` | `sp3` donor oxygen with at least one hydrogen | Control hydroxyl-like donor oxygen load |
+| `SO2` | Sulfur atom with at least two double-bonded oxygens | Limit sulfonyl-like sulfur motifs |
+| `Sul` | Sulfur atom with total valence 2 | Limit low-valence sulfur motifs |
+| `Hal` | Halogen atom (`F`, `Cl`, `Br`, `I`) | Cap halogenation level |
+
+### How Structural Constraints Combine with Borders
+
+`structural_constraints` do not replace `borders`; they add another filtering
+layer.
+
+- `borders` apply range-based filtering to descriptor columns such as
+  `molWt`, `logP`, `TPSA`, `hbd`, `hba`, and `n_rings`.
+- `structural_constraints` are translated internally into additional `*_max`
+  checks on derived columns such as `n_O_atoms`, `n_NO_atoms`, `Car`,
+  `n_small_rings_3_4`, and `max_acyclic_chain_length`.
+- `element_limits.N`, `element_limits.O`, and `element_limits.S` map directly to
+  `n_N_atoms`, `n_O_atoms`, and `n_S_atoms`.
+- `max_n_or_o_atoms` is a separate cap on `n_NO_atoms`, so it complements
+  per-element limits rather than replacing them.
+- `type_limits` are orthogonal to aggregate atom counts: they constrain
+  subtypes, not just total `N`, `O`, `S`, or carbon counts.
 
 ## How Threshold Filtering Works
 
@@ -69,6 +152,20 @@ borders:
 
 Molecules that fail any single descriptor threshold are written to `failed_molecules.csv` with detailed per-descriptor pass/fail flags in `pass_flags.csv`.
 
+Structural constraints are evaluated alongside the border filters. They write
+their own count columns and pass flags, so failures can be traced in the same
+`pass_flags.csv` and `descriptors_failed.csv` outputs.
+
+Pass flags are emitted per checked column. In practice this means you can trace
+why a molecule failed by inspecting:
+
+- the computed value columns in `descriptors_failed.csv`
+- the corresponding boolean flags in `pass_flags.csv`
+
+For example, a molecule can pass `n_O_atoms_pass` but fail `n_NO_atoms_pass`, or
+pass `hba_pass` but fail `Car_pass`. This is useful when generic descriptors are
+acceptable but a structural cap is intentionally stricter.
+
 ## Configuration
 
 The full configuration lives in `config_descriptors.yml`:
@@ -82,11 +179,57 @@ preprocess:
   remove_charges: false
   remove_radicals: false
   remove_stereochemistry: false
+structural_constraints:
+  enabled: true
+  # See the configuration reference for the full nested schema and defaults
 borders:
   # ... threshold values for each descriptor
 ```
 
 Set `filter_data: false` to compute descriptors without filtering, which is useful for analysis-only runs.
+
+### Starter Profiles
+
+These example snippets are not presets in the codebase; they are starting
+points for tuning the `structural_constraints` block.
+
+```yaml
+# Conservative: tighter aromaticity, no small strained rings, short non-ring tails
+structural_constraints:
+  enabled: true
+  type_limits:
+    Car: 10
+    Cs3: 6
+    Hal: 2
+    Nd+: 0
+    SO2: 0
+  element_limits:
+    N: 5
+    O: 4
+    S: 1
+  max_n_or_o_atoms: 8
+  max_small_rings_3_4: 0
+  max_acyclic_chain_length: 3
+```
+
+```yaml
+# Exploration: allow broader chemistry while still bounding extremes
+structural_constraints:
+  enabled: true
+  type_limits:
+    Car: 14
+    Cs3: 10
+    Hal: 4
+    Nd+: 1
+    SO2: 1
+  element_limits:
+    N: 7
+    O: 5
+    S: 2
+  max_n_or_o_atoms: 11
+  max_small_rings_3_4: 1
+  max_acyclic_chain_length: 5
+```
 
 ## Output Files
 

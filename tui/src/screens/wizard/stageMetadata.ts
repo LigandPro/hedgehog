@@ -57,6 +57,9 @@ export const STAGE_METADATA: Record<WizardStageName, StageMetadata> = {
       molWt_max: 'MolWt max',
       logP_min: 'logP min',
       logP_max: 'logP max',
+      max_n_or_o_atoms: 'Max N/O atoms',
+      max_small_rings_3_4: 'Max 3/4-rings',
+      max_acyclic_chain_length: 'Max chain length',
     },
     configScreen: 'wizardConfigDescriptors',
   },
@@ -146,7 +149,15 @@ export function getStageSummary(
       return 'Datamol standardization';
     case 'descriptors': {
       const batch = formatValue(quickParams.batch_size);
-      return preset ? `Batch: ${batch} | Preset: ${preset}` : `Batch: ${batch}`;
+      const nOrO = formatValue(quickParams.max_n_or_o_atoms);
+      const smallRings = formatValue(quickParams.max_small_rings_3_4);
+      const chain = formatValue(quickParams.max_acyclic_chain_length);
+      const base = preset ? `Batch: ${batch} | Preset: ${preset}` : `Batch: ${batch}`;
+      const extras: string[] = [];
+      if (quickParams.max_n_or_o_atoms !== undefined) extras.push(`N/O<=${nOrO}`);
+      if (quickParams.max_small_rings_3_4 !== undefined) extras.push(`3/4-rings<=${smallRings}`);
+      if (quickParams.max_acyclic_chain_length !== undefined) extras.push(`Chain<=${chain}`);
+      return extras.length > 0 ? `${base} | ${extras.join(' | ')}` : base;
     }
     case 'struct_filters':
       return `NIBR: ${formatValue(quickParams.calculate_NIBR)} | Lilly: ${formatValue(quickParams.calculate_lilly)}`;
