@@ -255,6 +255,8 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
             except Exception:
                 pass
             mol.SetProp("_Name", name)
+            mol.SetProp("input_smiles", smi)
+            mol.SetProp("smiles", smi)
 
             # Preserve model_name and mol_idx as SDF properties
             if has_model_name and model_name_series is not None:

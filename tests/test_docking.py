@@ -608,6 +608,54 @@ class TestPerMoleculeArchitecture:
         names = [m.GetProp("_Name") for m in suppl if m is not None]
         assert names == ["mol-1", "mol-2"]
 
+    def test_aggregate_docking_results_restores_mol_idx_from_result_filename(
+        self, tmp_path
+    ):
+        """Per-molecule aggregation should restore original mol_idx from result filenames."""
+        from rdkit import Chem
+
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+
+        cases = [
+            ("000000_LP-0001-00001_out.sdf", "unexpected_pose_name", "LP-0001-00001"),
+            ("000001_LP-0002-00005_out.sdf", "other_pose_name", "LP-0002-00005"),
+        ]
+        for filename, pose_name, _ in cases:
+            mol = Chem.MolFromSmiles("CCO")
+            mol.SetProp("_Name", pose_name)
+            mol.SetProp("minimizedAffinity", "-7.1")
+            writer = Chem.SDWriter(str(results_dir / filename))
+            writer.write(mol)
+            writer.close()
+
+        output_sdf = tmp_path / "aggregated.sdf"
+        count = _aggregate_docking_results(results_dir, output_sdf)
+        assert count == 2
+
+        suppl = Chem.SDMolSupplier(str(output_sdf))
+        mols = [m for m in suppl if m is not None]
+        assert len(mols) == 2
+
+        restored = sorted(
+            (
+                m.GetProp("mol_idx"),
+                m.GetProp("_Name"),
+                m.GetProp("source_mol_idx"),
+            )
+            for m in mols
+            if m.HasProp("mol_idx")
+            and m.HasProp("_Name")
+            and m.HasProp("source_mol_idx")
+        )
+        expected = sorted(
+            [
+                (expected_mol_idx, expected_mol_idx, expected_mol_idx)
+                for _, _, expected_mol_idx in cases
+            ]
+        )
+        assert restored == expected
+
 
 class TestGninaNoGpuFlag:
     """Tests for no_gpu command/config behavior."""

@@ -21,17 +21,22 @@ def load_molecules_from_sdf(sdf_path: str | Path) -> list[Chem.Mol]:
     return mols
 
 
-def _get_first_prop_value(mol: Chem.Mol, canonical_names: set[str]) -> str | None:
+def _get_first_prop_value(
+    mol: Chem.Mol, canonical_names: set[str] | tuple[str, ...] | list[str]
+) -> str | None:
     """Return the first SDF property value whose (normalized) key matches any canonical name."""
+    ordered_names = tuple(canonical_names)
+    canonical_lookup = set(ordered_names)
+
     # Fast path: exact keys
-    for name in canonical_names:
+    for name in ordered_names:
         if mol.HasProp(name):
             return mol.GetProp(name)
 
     # Some toolchains escape underscores in SDF property names (e.g. "s_sm_model\\_name").
     for prop in mol.GetPropNames():
         normalized = prop.replace("\\", "")
-        if normalized in canonical_names:
+        if normalized in canonical_lookup:
             return mol.GetProp(prop)
     return None
 
