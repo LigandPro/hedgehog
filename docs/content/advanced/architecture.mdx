@@ -12,13 +12,14 @@ HEDGEHOG is a sequential molecular analysis pipeline that filters drug candidate
 
 ```
 Input CSV
-  → Descriptors (physicochemical properties)
-    → Structural Filters (PAINS, Lilly, NIBR, medchem)
-      → Synthesis (retrosynthesis feasibility)
-        → Docking (binding affinity scoring)
-          → Docking Filters (pose quality)
-            → Final Descriptors (recalculation on survivors)
-              → HTML Report
+  → Mol Prep (standardization and strict cleanup)
+    → Descriptors (physicochemical properties)
+      → Structural Filters (PAINS, Lilly, NIBR, medchem)
+        → Synthesis (retrosynthesis feasibility)
+          → Docking (binding affinity scoring)
+            → Docking Filters (pose quality)
+              → Final Descriptors (recalculation on survivors)
+                → HTML Report
 ```
 
 Each stage reads molecules from the previous stage's output CSV, applies its filters, and writes a `filtered_molecules.csv` containing molecules that passed. Stages can be independently enabled or disabled via YAML configuration files.

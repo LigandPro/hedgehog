@@ -55,6 +55,8 @@ The `--out` option cannot be used together with `--reuse` or `--force-new`.
 
 The progress bar is disabled by default in CLI runs. Use `--progress` when you want live stage progress rendering.
 
+When you request any stage other than `mol_prep`, the pipeline may still run `mol_prep` first if the Mol Prep stage is enabled in `config_mol_prep.yml`. This is intentional: downstream stages operate on standardized molecules when that preprocessing stage is active.
+
 ### Available Stages
 
 Each `--stage` occurrence accepts one of the following values:
@@ -89,6 +91,19 @@ The output folder strategy depends on what you are running:
 - **Single stage with new molecules** (`--stage` + `--mols`) — a new folder is created since the input changed.
 - **`--reuse`** — always reuses the configured folder, regardless of what exists.
 - **`--force-new`** — always creates a new numbered folder, regardless of context.
+
+Every run also writes a transient `.RUN_INCOMPLETE` marker in the results folder. The marker is removed on successful completion. If it remains present, the run was interrupted or failed and the run log should be checked.
+
+### Stage Failure and Skip Semantics
+
+Stage completion is not binary "success or crash" across the whole pipeline. Some stages end the run early, while others can be skipped and let the pipeline continue.
+
+- **Early exit with a completed upstream pipeline state**: if `mol_prep` finishes but leaves zero molecules, the pipeline stops immediately.
+- **Hard failure / early stop**: structural filters stop the run if they do not complete successfully.
+- **Conditional continuation**: synthesis can continue the pipeline when the stage failed but still produced usable output, or when no output file was created and downstream stages can continue without synthesis results.
+- **Soft skip**: docking, docking filters, and final descriptors can be skipped when their required upstream data does not exist or contains no molecules.
+
+This matters when interpreting stage counts in the log and the final report: a missing stage output does not always mean the whole run failed in the same way.
 
 ### Examples
 
@@ -239,9 +254,27 @@ uv run hedgehog setup shepherd-worker --yes
 uv run hedgehog setup shepherd-worker --python python3.11 --yes
 ```
 
+## Environment Variables
+
+The CLI supports a few environment variables that are useful in automation and CI:
+
+| Variable | Effect |
+|----------|--------|
+| `HEDGEHOG_AUTO_INSTALL=1` | Auto-accept optional dependency downloads and setup prompts. |
+| `HEDGEHOG_NON_INTERACTIVE=1` | Auto-decline download/setup prompts instead of waiting for interactive input. |
+| `HEDGEHOG_PLAIN_OUTPUT=1` | Disable Rich formatting and emit plain console output without the banner styling. |
+
+`HEDGEHOG_AUTO_INSTALL` is what the `--auto-install` flag sets internally for a pipeline run. The setup commands also use it when their `--yes` flag is enabled.
+
 ## `hedgehog tui`
 
-Launches the interactive Terminal User Interface for visual pipeline configuration and management. Requires Node.js to be installed. If the TUI has not been built yet, it will automatically run `npm install` and `npm run build` on first launch.
+Launches the interactive Terminal User Interface for visual pipeline configuration and management.
+
+Requirements and behavior:
+
+- Requires Node.js to be installed.
+- Requires a source checkout that contains the repository `tui/` directory.
+- If the TUI bundle does not exist yet, HEDGEHOG automatically runs `npm install` and `npm run build` inside `tui/` before launching.
 
 ```bash
 uv run hedgehog tui
@@ -259,9 +292,11 @@ Examples:
 # Start TUI normally
 uv run hedgehog tui
 
-# Resume a specific job in TUI
-uv run hedgehog tui -s job_123
+# Resume directly into an existing job
+uv run hedgehog tui --session 1a2b3c4d
 ```
+
+For TUI-specific behavior such as editable config copies, job history storage, preflight checks, and keyboard shortcuts, see the [TUI documentation](/tui).
 
 The TUI can also be launched directly from the TUI package:
 

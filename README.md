@@ -90,6 +90,7 @@ For full details, use the documentation instead of this README:
 - [Introduction](docs/content/index.mdx)
 - [Getting Started](docs/content/getting-started.mdx)
 - [CLI Reference](docs/content/cli.mdx)
+- [TUI](docs/content/tui.mdx)
 - [Pipeline Stages](docs/content/pipeline/index.mdx)
 - [Configuration](docs/content/configuration/index.mdx)
 - [Reporting](docs/content/reporting/index.mdx)
