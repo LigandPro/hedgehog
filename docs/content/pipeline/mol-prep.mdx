@@ -1,0 +1,73 @@
+---
+title: Mol Prep
+---
+
+# Mol Prep
+
+Mol Prep is the first stage of the HEDGEHOG pipeline. It standardizes input molecules and removes entries that are unsuitable for downstream descriptor, synthesis, and docking analysis.
+
+## What Mol Prep Does
+
+The stage combines normalization and strict filtering:
+
+- converts input SMILES into RDKit molecules
+- removes salts and solvents
+- keeps the largest fragment
+- disconnects metals
+- normalizes and reionizes molecules
+- neutralizes charges
+- canonicalizes tautomers
+- removes stereochemistry
+- filters out radicals, isotopes, charged molecules, and multi-fragment inputs when configured
+
+This stage is intentionally conservative because it defines the clean molecular population that later stages see.
+
+## Why It Matters for Partial Runs
+
+Even when you request another stage through `--stage`, HEDGEHOG may still run Mol Prep first if Mol Prep is enabled in its config. This ensures downstream stages operate on standardized molecules rather than raw input.
+
+## Key Configuration Areas
+
+Mol Prep is controlled by `config_mol_prep.yml`.
+
+Important sections:
+
+- `steps.*` controls normalization and cleanup operations
+- `filters.*` controls hard rejection rules
+- `output.write_duplicates_removed` controls whether duplicate removals are written to disk
+
+Example:
+
+```yaml
+run: true
+steps:
+  standardize_mol:
+    enabled: true
+    disconnect_metals: true
+    normalize: true
+    reionize: true
+    uncharge: true
+  remove_stereochemistry: true
+filters:
+  allowed_atoms: [C, N, O, S, F, Cl, Br, I, P, H]
+  reject_radicals: true
+  require_neutral: true
+  reject_isotopes: true
+  require_single_fragment: true
+```
+
+## Output
+
+Mol Prep writes its output under:
+
+```text
+stages/00_mol_prep/
+```
+
+Typical artifacts include:
+
+- `filtered_molecules.csv`
+- `failed_molecules.csv`
+- `duplicates_removed.csv` when duplicate-output writing is enabled
+
+If Mol Prep finishes successfully but produces zero molecules, the pipeline exits early instead of running later stages on an empty set.

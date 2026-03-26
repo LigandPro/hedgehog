@@ -1,0 +1,149 @@
+---
+title: TUI
+---
+
+# TUI
+
+HEDGEHOG ships with an interactive terminal UI for configuring runs, validating inputs, launching the pipeline, and reviewing job history and results.
+
+## Launching the TUI
+
+```bash
+uv run hedgehog tui
+```
+
+Important runtime requirements:
+
+- Node.js must be installed.
+- The command must be run from a source checkout that contains the repository `tui/` directory.
+- On first launch, if `tui/dist/` does not exist yet, HEDGEHOG automatically runs `npm install` and `npm run build` inside `tui/`.
+
+You can also resume directly into a known job:
+
+```bash
+uv run hedgehog tui --session 1a2b3c4d
+```
+
+## What the TUI Covers
+
+The TUI exposes these user-facing areas:
+
+- **Welcome screen** for quick actions and recent jobs
+- **Configuration editors** for main config, descriptors, filters, synthesis, retrosynthesis, and docking
+- **Guided wizard** for a new run
+- **Preflight review** before starting the pipeline
+- **Pipeline runner** with progress and log view
+- **History** and **results** screens for completed jobs
+
+The TUI currently focuses on these runtime stages:
+
+- `mol_prep`
+- `descriptors`
+- `struct_filters`
+- `synthesis`
+- `docking`
+- `docking_filters`
+
+`final_descriptors` is available in the CLI pipeline and report flow, but it is not exposed as a separately selectable TUI stage.
+
+## Config Storage Model
+
+The TUI does not edit the repository YAML files in place during normal operation.
+
+Instead, on first access it creates editable per-project copies under:
+
+```text
+~/.hedgehog/tui/configs/<workspace>-<hash>/
+```
+
+Behavior:
+
+- The first time a config is opened, the TUI copies it from the repository checkout into that user-specific directory.
+- Subsequent edits are saved to the copied file, not the repository source file.
+- Before saving, the TUI writes a `.yml.bak` backup of the previous file.
+
+This makes TUI edits stable across runs and avoids mutating the checked-in defaults by accident.
+
+## Job History Storage
+
+The TUI stores job history in:
+
+```text
+~/.hedgehog/job_history.json
+```
+
+History entries include:
+
+- job id
+- name
+- start/end time
+- status
+- selected stages
+- input/output paths
+- final results or error text
+
+For deterministic demos and UI testing, the backend also supports a seeded history mode through:
+
+```bash
+HEDGEHOG_TUI_HISTORY_SEED=1
+```
+
+## Preflight Checks
+
+Before starting a wizard-driven run, the TUI performs a preflight pass that:
+
+- validates the main config
+- validates selected stage configs
+- validates key input paths such as the molecules file, receptor PDB, and docking-filter inputs
+- estimates runtime as `short`, `medium`, `long`, or `unknown`
+- aggregates errors and warnings into a per-stage review
+
+If preflight reports blocking errors, the run does not start until they are fixed.
+
+## Pipeline Control Behavior
+
+The pipeline runner supports background-friendly navigation:
+
+- `c` cancels the running job after confirmation
+- `l` shows or hides the live log panel
+- `Esc` or `←` goes back without stopping the running pipeline
+- `p` from the welcome screen returns to the currently running pipeline
+
+This means you can leave the runner view, inspect history or configuration, and then jump back to the in-flight job.
+
+## Key Shortcuts
+
+Global and common shortcuts:
+
+| Key | Action |
+|-----|--------|
+| `↑/↓` | Navigate lists |
+| `Enter` | Confirm / continue |
+| `Space` | Toggle or edit in selection-heavy screens |
+| `Ctrl+F` | Search/filter in list-style screens |
+| `/` | Open command palette |
+| `?` | Toggle help overlay |
+| `Esc` / `←` | Go back |
+
+Important screen-specific shortcuts:
+
+| Screen | Shortcut | Action |
+|--------|----------|--------|
+| Welcome | `p` | Jump to currently running pipeline |
+| Welcome / History | `d` | Delete selected job |
+| Pipeline Runner | `c` | Cancel pipeline |
+| Pipeline Runner | `l` | Show/hide pipeline log |
+| Wizard Review | `r` | Refresh preflight |
+| Wizard Review | `Tab` | Switch summary / detailed review |
+| Docking config | `PgUp/PgDn` | Page through longer forms |
+
+## When to Use CLI Instead
+
+Prefer the CLI when you need:
+
+- fully scripted or reproducible automation
+- direct control over `--stage`, `--reuse`, `--force-new`, and other run flags
+- headless CI-friendly execution
+- access to pipeline stages not explicitly surfaced in the TUI
+
+The TUI is best for exploration, iterative tuning, and reviewing validation results before launch.

@@ -59,7 +59,7 @@ The pipeline is designed as a funnel: cheap, fast filters run first (descriptors
 Key design decisions:
 
 - **Early exit**: if a stage produces zero passing molecules, the pipeline terminates early rather than running subsequent stages on an empty set.
-- **Single-stage mode**: any stage can be run independently with `--stage <name>`, which is useful for debugging or re-running a single step.
+- **Single-stage mode**: any stage can be requested with `--stage <name>`, which is useful for debugging or re-running a single step. When you request any stage other than `mol_prep`, HEDGEHOG may still run `mol_prep` first if it is enabled in `config_mol_prep.yml`, so downstream stages operate on standardized molecules.
 - **Provenance**: all configuration files are snapshotted into a `configs/` directory at the start of each run, and a `RUN_INFO.md` is generated at completion.
 
 ## Stage Configuration
@@ -102,7 +102,10 @@ results/run_N/
 +-- report_data.json
 +-- stage_filter_audit.ipynb
 +-- RUN_INFO.md
++-- .RUN_INCOMPLETE
 +-- run_YYYYMMDD_HHMMSS.log
 ```
 
 `output/final_molecules.csv` is the canonical final artifact. It preserves all columns from the latest filtered dataset and includes aggregated docking score columns (`gnina_affinity`, `gnina_cnnscore`, `gnina_cnnaffinity`, `gnina_cnn_vs`, `smina_affinity`, `matcha_affinity`) when docking outputs are available.
+
+`.RUN_INCOMPLETE` is a transient marker file written at the start of a run. It is removed on successful completion. If it remains in the run folder, the pipeline was interrupted or failed and the run log should be reviewed.

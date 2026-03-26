@@ -1,0 +1,46 @@
+---
+title: Final Descriptors
+---
+
+# Final Descriptors
+
+The final descriptors stage recomputes descriptor values on the surviving molecule set near the end of the pipeline.
+
+## Purpose
+
+This stage is primarily a reporting and comparison stage:
+
+- it recalculates descriptors after all enabled filtering stages have narrowed the molecule set
+- it gives the final report a clean "survivor profile"
+- it supports side-by-side comparison between early and final descriptor distributions
+
+Unlike the early descriptors stage, this step is usually interpreted as report enrichment rather than a primary screening gate.
+
+## Relationship to the Earlier Descriptors Stage
+
+HEDGEHOG computes descriptors twice:
+
+1. **Initial descriptors** to filter molecules early in the pipeline
+2. **Final descriptors** to summarize the final survivors
+
+Both runs use `config_descriptors.yml`, but they operate on different molecule populations.
+
+## Runtime Behavior
+
+If no upstream data source exists for the final stage, or if no molecules remain, HEDGEHOG skips final descriptors rather than failing the whole run.
+
+This is why the stage may be absent from a run that terminated early upstream.
+
+## Output
+
+Final descriptor artifacts are written under:
+
+```text
+stages/07_descriptors_final/
+```
+
+They feed directly into:
+
+- `report.html`
+- `report_data.json`
+- final descriptor comparison plots in the report

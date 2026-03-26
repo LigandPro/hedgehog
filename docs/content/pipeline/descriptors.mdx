@@ -120,6 +120,48 @@ The `type_limits` map works on the following aliases:
 | `Sul` | Sulfur atom with total valence 2 | Limit low-valence sulfur motifs |
 | `Hal` | Halogen atom (`F`, `Cl`, `Br`, `I`) | Cap halogenation level |
 
+### How to Choose `type_limits`
+
+If you are unsure which typed limits to enable or tighten, use this practical sequence:
+
+1. Start from the shipped defaults in `config_descriptors.yml`. They already cover the full supported alias set and give you a balanced baseline for drug-like chemistry.
+2. Tighten only the motifs that matter for your project goals. Typical first candidates are:
+   - `Car` when you want to reduce aromatic density
+   - `Cs3` when you want to limit long aliphatic appendages
+   - `Hal` when halogenation is getting too aggressive
+   - `Nd+` and `Nd0` when donor/basic nitrogens are overrepresented
+   - `SO2` when sulfonyl chemistry should stay rare
+3. Inspect `filtered/descriptors_failed.csv` and `filtered/pass_flags.csv` after a run. If many otherwise acceptable molecules fail on one alias, that alias is a good candidate to relax. If broad descriptors still allow chemotypes you do not want, tighten the relevant alias instead of globally narrowing `molWt`, `TPSA`, or `hba`.
+
+As a rule of thumb:
+
+- Use `borders` for broad property space.
+- Use `type_limits` for concrete motif selection.
+- Avoid tightening many aliases at once unless you are intentionally creating a strict medicinal-chemistry profile.
+
+The shipped defaults are:
+
+```yaml
+structural_constraints:
+  enabled: true
+  type_limits:
+    ".=O": 4
+    C2r: 6
+    C3r: 6
+    Car: 12
+    Cs2: 6
+    Cs3: 8
+    Csp: 2
+    Nac: 3
+    Nd+: 1
+    Nd0: 2
+    O_a: 4
+    O_d: 2
+    SO2: 1
+    Sul: 1
+    Hal: 3
+```
+
 ### How Structural Constraints Combine with Borders
 
 `structural_constraints` do not replace `borders`; they add another filtering
