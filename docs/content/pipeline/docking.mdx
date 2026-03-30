@@ -132,7 +132,7 @@ smina_config:
   cpu: 32
   seed: 42
   exhaustiveness: 8                       # Search thoroughness
-  num_modes: 9                            # Max poses per molecule
+  num_modes: 1                            # Max poses per molecule in the default config
 
 gnina_config:
   bin: gnina
@@ -141,6 +141,7 @@ gnina_config:
   cpu: 8
   seed: 42
   no_gpu: false                          # Use GPU when available
+  num_modes: 1                           # Max poses per molecule in the default config
 
 matcha_config:
   checkout_dir: modules/matcha_remote    # Managed git checkout created from GitHub PR head

@@ -69,8 +69,9 @@ cd docs && CI=1 pnpm install --frozen-lockfile --prefer-offline --reporter=appen
 ```
 
 `pnpm build` runs a prebuild step that generates `docs/content/api/index.mdx`
-from runtime introspection (`scripts/generate_api_docs.py`). Do not edit the
-generated API page manually.
+from runtime introspection (`scripts/generate_api_docs.py`). That file may be
+absent in a fresh checkout until the docs build runs. Do not edit the generated
+API page manually.
 
 4. If CLI behavior changed, refresh `docs/content/cli.mdx` from:
    - `uv run hedgehog --help`

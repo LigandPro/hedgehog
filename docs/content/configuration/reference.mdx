@@ -785,7 +785,7 @@ Controls molecular docking using SMINA, GNINA, Matcha, or any explicit combinati
 | `cpu` | int | `32` | Number of CPU threads for docking |
 | `seed` | int | `42` | Random seed for reproducibility |
 | `exhaustiveness` | int | `8` | Search exhaustiveness (higher = more thorough, slower) |
-| `num_modes` | int | `9` | Maximum number of binding modes to generate per ligand |
+| `num_modes` | int | `1` | Maximum number of binding modes to generate per ligand |
 
 ### GNINA Configuration (`gnina_config`)
 
@@ -797,6 +797,7 @@ Controls molecular docking using SMINA, GNINA, Matcha, or any explicit combinati
 | `cpu` | int | `8` | Number of CPU threads for docking |
 | `seed` | int | `42` | Random seed for reproducibility |
 | `no_gpu` | bool | `false` | Disable GPU acceleration (`false` keeps GPU enabled when available) |
+| `num_modes` | int | `1` | Maximum number of binding modes to generate per ligand |
 
 ### Matcha Configuration (`matcha_config`)
 
@@ -831,7 +832,7 @@ smina_config:
   cpu: 32
   seed: 42
   exhaustiveness: 8
-  num_modes: 9
+  num_modes: 1
 gnina_config:
   bin: gnina
   autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
@@ -839,6 +840,7 @@ gnina_config:
   cpu: 8
   seed: 42
   no_gpu: false
+  num_modes: 1
 matcha_config:
   checkout_dir: modules/matcha_remote
   uv_bin: uv
