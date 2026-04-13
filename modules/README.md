@@ -78,7 +78,7 @@ If you prefer to install manually:
     ```
 3. **Continue environment setup** following main [README.md](../README.md)
 
-**Configure** in `configs/config_synthesis.yml`:
+**Configure** in `src/hedgehog/configs/config_synthesis.yml`:
     - Set `run: True` to enable the stage
     - Adjust `nproc` for parallel processing if needed
 
