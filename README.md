@@ -20,14 +20,7 @@
 HEDGEHOG is a benchmark pipeline for evaluating generated molecules.
 It applies a staged filtering workflow (standardization, descriptors, structural filters, synthesis checks, docking, and post-docking validation) and generates an interactive HTML report.
 
-### Install from PyPI
-
-```bash
-pip install hedgehog
-hedgehog --help
-```
-
-### Install from source
+### Recommended install: source checkout
 
 ```bash
 git clone https://github.com/LigandPro/hedgehog.git
@@ -35,7 +28,18 @@ cd hedgehog
 uv sync
 ```
 
-### First run
+This is the recommended way to run HEDGEHOG end to end. The repository checkout contains the editable configs, bundled examples, TUI sources, and the `modules/` workspace used by setup commands.
+
+### PyPI install
+
+```bash
+python -m pip install hedgehog
+hedgehog --help
+```
+
+Use the PyPI package only if you already manage your own config files and input paths. The default quick start, `hedgehog setup ...` workflows, and TUI usage are designed around a source checkout.
+
+### First run (from a source checkout)
 
 ```bash
 uv run hedgehog
