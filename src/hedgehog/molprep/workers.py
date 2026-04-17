@@ -10,7 +10,6 @@ from hedgehog.molprep.filters import (
     _allowed_atoms_ok,
     _has_isotopes,
     _has_radicals,
-    _is_neutral,
     _is_single_fragment,
 )
 from hedgehog.molprep.orchestrator import _get_cfg
@@ -169,11 +168,6 @@ def _molprep_one(
 
     if bool(_get_cfg(cfg, ["filters", "reject_isotopes"], True)) and _has_isotopes(mol):
         return None, "isotopes", "filters"
-
-    if bool(_get_cfg(cfg, ["filters", "require_neutral"], True)) and not _is_neutral(
-        mol
-    ):
-        return None, "charged", "filters"
 
     if bool(_get_cfg(cfg, ["filters", "require_single_fragment"], True)) and (
         not _is_single_fragment(mol)
