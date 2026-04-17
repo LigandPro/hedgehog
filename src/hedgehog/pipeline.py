@@ -732,6 +732,19 @@ class PipelineStageRunner:
                 logger.info("Docking filters disabled in config")
                 return False
 
+            input_sdf_cfg = config_filters.get("input_sdf")
+            if input_sdf_cfg:
+                input_sdf_path = Path(str(input_sdf_cfg))
+                if not input_sdf_path.is_absolute():
+                    input_sdf_path = self.data_checker.base_path.resolve() / input_sdf_path
+                if _file_exists_and_not_empty(input_sdf_path):
+                    logger.info(
+                        "Using docking_filters.input_sdf: %s (skipping docking results presence guard)",
+                        input_sdf_path,
+                    )
+                    result = docking_filters_main(self.config, reporter=reporter)
+                    return result is not None and len(result) > 0
+
             # Check if docking results exist before running filters
             if not self.docking_results_present():
                 logger.warning(
