@@ -6,7 +6,6 @@ from rdkit import RDLogger, rdBase
 # Used to prevent confusion between similar names like logP and clogP
 _DESCRIPTOR_KEY_MAP = {
     "logp": "logP",
-    "clogp": "clogP",
     "molwt": "molWt",
     "tpsa": "tpsa",
     "hbd": "hbd",

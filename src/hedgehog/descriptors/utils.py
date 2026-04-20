@@ -13,7 +13,6 @@ from rdkit import Chem, RDConfig, RDLogger, rdBase
 from rdkit.Chem import (
     QED,
     ChemicalFeatures,
-    Crippen,
     Descriptors,
     Lipinski,
     rdMolDescriptors,
@@ -215,30 +214,9 @@ def drop_false_rows(df, borders):
     Returns:
         pd.DataFrame: Filtered dataframe with only passed molecules
     """
-    passed_cols = []
-    filter_charged_mol = borders.get("filter_charged_mol", False)
-    charged_mol_col = None
-
-    for col in df.columns:
-        if col.endswith("_pass") or col == "pass":
-            if "charged_mol" in col:
-                if filter_charged_mol:
-                    passed_cols.append(col)
-                else:
-                    charged_mol_col = col
-            else:
-                passed_cols.append(col)
-
+    passed_cols = [col for col in df.columns if col.endswith("_pass") or col == "pass"]
     mask = df[passed_cols].all(axis=1)
-    df_masked = df[mask].copy()
-
-    if (
-        not filter_charged_mol
-        and charged_mol_col is not None
-        and charged_mol_col not in df_masked.columns
-    ):
-        df_masked[charged_mol_col] = df.loc[mask, charged_mol_col]
-    return df_masked
+    return df[mask].copy()
 
 
 def _parse_literal_list(value, label):
@@ -309,10 +287,6 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
     has_formal_charge = any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
     is_neutral = not has_formal_charge
-    # DEPRECATED: charged_mol has inverted semantics (True = neutral molecule).
-    # Kept for backwards compatibility. Use is_neutral or has_formal_charge instead.
-    charged_mol = is_neutral
-
     ring_info = mol.GetRingInfo()
     rings = [len(x) for x in ring_info.AtomRings()]
 
@@ -323,7 +297,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         1 for a in mol_n.GetAtoms() if a.GetIsAromatic() and a.GetAtomicNum() > 1
     )
     mol_wt = Descriptors.ExactMolWt(mol_n)
-    clogp = Crippen.MolLogP(mol_n)
+    log_p = Descriptors.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
     n_O_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 8)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
@@ -351,12 +325,10 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         else 0,
         "is_neutral": is_neutral,
         "has_formal_charge": has_formal_charge,
-        "charged_mol": charged_mol,  # DEPRECATED: use is_neutral instead
         "molWt": mol_wt,
-        "logP": Descriptors.MolLogP(mol_n),
-        "clogP": clogp,
+        "logP": log_p,
         "sw": 0.16
-        - 0.63 * clogp
+        - 0.63 * log_p
         - 0.0062 * mol_wt
         + 0.066 * n_rot_bonds
         - 0.74 * n_aromatic_atoms,
@@ -646,14 +618,6 @@ def _apply_column_filter(df, col, borders):
             )
         )
 
-    if col in ("charged_mol", "is_neutral"):
-        # Both charged_mol and is_neutral have the same semantics:
-        # True = neutral molecule, False = charged molecule
-        charged_allowed = borders.get("charged_mol_allowed", True)
-        if charged_allowed:
-            return pd.Series(True, index=df.index)
-        return df[col] == True  # noqa: E712
-
     # Generic numeric range filter.
     #
     # Allow one-sided bounds:
@@ -855,11 +819,6 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
         # Some filters are configured without *_min/*_max keys.
         # Treat them as "in borders" if their controlling keys exist.
         if col == "chars" and "allowed_chars" in effective_borders:
-            col_in_borders = True
-        if (
-            col in ("charged_mol", "is_neutral")
-            and "charged_mol_allowed" in effective_borders
-        ):
             col_in_borders = True
         if col_in_borders:
             filtered_data[col] = df[col]
@@ -1328,11 +1287,6 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     )
     borders = dict(normalized_borders)
     borders.update(_build_structural_constraint_borders(constraints))
-    if "charged_mol_allowed" in borders:
-        borders["charged_mol_allowed"] = int(borders["charged_mol_allowed"])
-    else:
-        borders["charged_mol_allowed"] = False
-
     cols_to_plot = descriptors_config["filtered_cols_to_plot"]
     discrete_feats = descriptors_config["discrete_features_to_plot"]
     renamer = descriptors_config["renamer"]

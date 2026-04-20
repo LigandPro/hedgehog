@@ -413,10 +413,6 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     )
     borders = dict(normalized_borders)
     borders.update(_build_structural_constraint_borders(constraints))
-    if "charged_mol_allowed" in borders:
-        borders["charged_mol_allowed"] = int(borders["charged_mol_allowed"])
-    else:
-        borders["charged_mol_allowed"] = False
 
     cols_to_plot = descriptors_config["filtered_cols_to_plot"]
     discrete_feats = descriptors_config["discrete_features_to_plot"]

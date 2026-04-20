@@ -9,7 +9,6 @@ from rdkit import Chem, RDConfig
 from rdkit.Chem import (
     QED,
     ChemicalFeatures,
-    Crippen,
     Descriptors,
     Lipinski,
     rdMolDescriptors,
@@ -199,10 +198,6 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
     has_formal_charge = any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
     is_neutral = not has_formal_charge
-    # DEPRECATED: charged_mol has inverted semantics (True = neutral molecule).
-    # Kept for backwards compatibility. Use is_neutral or has_formal_charge instead.
-    charged_mol = is_neutral
-
     ring_info = mol.GetRingInfo()
     rings = [len(x) for x in ring_info.AtomRings()]
 
@@ -213,7 +208,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         1 for a in mol_n.GetAtoms() if a.GetIsAromatic() and a.GetAtomicNum() > 1
     )
     mol_wt = Descriptors.ExactMolWt(mol_n)
-    clogp = Crippen.MolLogP(mol_n)
+    log_p = Descriptors.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
     n_O_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 8)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
@@ -241,12 +236,10 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         else 0,
         "is_neutral": is_neutral,
         "has_formal_charge": has_formal_charge,
-        "charged_mol": charged_mol,  # DEPRECATED: use is_neutral instead
         "molWt": mol_wt,
-        "logP": Descriptors.MolLogP(mol_n),
-        "clogP": clogp,
+        "logP": log_p,
         "sw": 0.16
-        - 0.63 * clogp
+        - 0.63 * log_p
         - 0.0062 * mol_wt
         + 0.066 * n_rot_bonds
         - 0.74 * n_aromatic_atoms,

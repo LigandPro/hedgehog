@@ -81,30 +81,9 @@ def drop_false_rows(df, borders):
     Returns:
         pd.DataFrame: Filtered dataframe with only passed molecules
     """
-    passed_cols = []
-    filter_charged_mol = borders.get("filter_charged_mol", False)
-    charged_mol_col = None
-
-    for col in df.columns:
-        if col.endswith("_pass") or col == "pass":
-            if "charged_mol" in col:
-                if filter_charged_mol:
-                    passed_cols.append(col)
-                else:
-                    charged_mol_col = col
-            else:
-                passed_cols.append(col)
-
+    passed_cols = [col for col in df.columns if col.endswith("_pass") or col == "pass"]
     mask = df[passed_cols].all(axis=1)
-    df_masked = df[mask].copy()
-
-    if (
-        not filter_charged_mol
-        and charged_mol_col is not None
-        and charged_mol_col not in df_masked.columns
-    ):
-        df_masked[charged_mol_col] = df.loc[mask, charged_mol_col]
-    return df_masked
+    return df[mask].copy()
 
 
 def _get_border_values(col, borders):
@@ -194,14 +173,6 @@ def _apply_column_filter(df, col, borders):
                 for ring_size in _parse_literal_list(x, "ring sizes")
             )
         )
-
-    if col in ("charged_mol", "is_neutral"):
-        # Both charged_mol and is_neutral have the same semantics:
-        # True = neutral molecule, False = charged molecule
-        charged_allowed = borders.get("charged_mol_allowed", True)
-        if charged_allowed:
-            return pd.Series(True, index=df.index)
-        return df[col] == True  # noqa: E712
 
     # Generic numeric range filter.
     #
@@ -318,11 +289,6 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
         # Some filters are configured without *_min/*_max keys.
         # Treat them as "in borders" if their controlling keys exist.
         if col == "chars" and "allowed_chars" in effective_borders:
-            col_in_borders = True
-        if (
-            col in ("charged_mol", "is_neutral")
-            and "charged_mol_allowed" in effective_borders
-        ):
             col_in_borders = True
         if col_in_borders:
             filtered_data[col] = df[col]
