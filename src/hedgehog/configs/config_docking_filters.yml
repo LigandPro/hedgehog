@@ -37,8 +37,8 @@ interactions:
   enabled: true
   reference_ligand: null  # Path to reference SDF for similarity comparison
   min_hbonds: 0  # Minimum H-bonds required (0 = no requirement)
-  required_residues: []  # e.g., ["ASP:123", "SER:45"] - must have interaction
-  forbidden_residues: []  # e.g., ["CYS:200"] - must NOT have interaction
+  required_residues: ['ASP12']  # e.g., ["ASP123", "SER45"] - must have interaction
+  forbidden_residues: []  # e.g., ["CYS200"] - must NOT have interaction
   interaction_types:  # Which types to check
     - HBDonor
     - HBAcceptor
