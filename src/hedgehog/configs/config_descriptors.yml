@@ -62,14 +62,10 @@ borders:
 
   fNS_atoms_min: 0
   fNS_atoms_max: 0.3
-  charged_mol_allowed: true
-  filter_charged_mol: false
   molWt_min: 200
   molWt_max: 550
   logP_min: -0.4
   logP_max: 5.6
-  clogP_min: 0
-  clogP_max: 8
 
   sw_min: -20
   sw_max: 1
@@ -91,8 +87,8 @@ borders:
   hba_max: 9
   fsp3_min: 0.15
   fsp3_max: 0.8
-  mce18_min: 20
-  mce18_max: 140
+  mce18_min: 45
+  mce18_max: 100
   tpsa_min: 20
   tpsa_max: 140
   qed_min: 0.3
@@ -125,10 +121,8 @@ filtered_cols_to_plot:
 - SO2
 - Sul
 - Hal
-- charged_mol
 - molWt
 - logP
-- clogP
 - sw
 - ring_size
 - n_rings
@@ -149,7 +143,6 @@ discrete_features_to_plot:
 - n_O_atoms
 - n_S_atoms
 - n_NO_atoms
-- charged_mol
 - ring_size
 - n_rings
 - n_aroma_rings
@@ -195,10 +188,8 @@ renamer:
   n_NO_atoms: Number of Nitrogen or Oxygen Atoms
   fN_atoms: Fraction of Nitrogen Atoms
   fNS_atoms: Fraction of Nitrogen and Sulfur Atoms
-  charged_mol: Charged Molecule
   molWt: Molecular Weight
   logP: logP
-  clogP: clogP
   sw: Water Solubility (Sw)
   ring_size: Size of rings
   n_rings: Number of rings
