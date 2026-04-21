@@ -13,7 +13,7 @@ def _is_single_fragment(mol: Chem.Mol) -> bool:
 
 def _has_radicals(mol: Chem.Mol) -> bool:
     return any(a.GetNumRadicalElectrons() > 0 for a in mol.GetAtoms())
-    
+
 
 def _has_isotopes(mol: Chem.Mol) -> bool:
     return any(a.GetIsotope() != 0 for a in mol.GetAtoms())

@@ -9,6 +9,7 @@ from rdkit import Chem, RDConfig
 from rdkit.Chem import (
     QED,
     ChemicalFeatures,
+    Crippen,
     Descriptors,
     Lipinski,
     rdMolDescriptors,
@@ -198,6 +199,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
     has_formal_charge = any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
     is_neutral = not has_formal_charge
+    charged_mol = is_neutral
     ring_info = mol.GetRingInfo()
     rings = [len(x) for x in ring_info.AtomRings()]
 
@@ -209,6 +211,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     )
     mol_wt = Descriptors.ExactMolWt(mol_n)
     log_p = Descriptors.MolLogP(mol_n)
+    clog_p = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
     n_O_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 8)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
@@ -236,8 +239,10 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         else 0,
         "is_neutral": is_neutral,
         "has_formal_charge": has_formal_charge,
+        "charged_mol": charged_mol,
         "molWt": mol_wt,
         "logP": log_p,
+        "clogP": clog_p,
         "sw": 0.16
         - 0.63 * log_p
         - 0.0062 * mol_wt
