@@ -5,7 +5,7 @@ from pathlib import Path
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.molprep.orchestrator import run_mol_prep
-from hedgehog.struct_filters.utils import process_path
+from hedgehog.utils.paths import process_path
 
 
 def run(data, config: dict, subfolder: str | None = None, reporter=None):

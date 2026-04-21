@@ -17,8 +17,20 @@
 
 ## Quick Start
 
-HEDGEHOG is a benchmark pipeline for evaluating generated molecules.
-It applies a staged filtering workflow (standardization, descriptors, structural filters, synthesis checks, docking, and post-docking validation) and generates an interactive HTML report.
+HEDGEHOG is a stage-based molecular design evaluation pipeline for:
+
+- molecule preparation
+- descriptor calculation
+- structural filtering
+- retrosynthesis filtering
+- docking
+- docking pose filtering
+- final reports
+
+The full pipeline can require optional external tools and receptor inputs. Start
+with the safe smoke run below to verify the Python environment, bundled example
+molecules, descriptor calculation, and structural filters before enabling
+retrosynthesis or docking.
 
 ### Recommended install: source checkout
 
@@ -30,6 +42,14 @@ uv sync
 
 This is the recommended way to run HEDGEHOG end to end. The repository checkout contains the editable configs, bundled examples, TUI sources, and the `modules/` workspace used by setup commands.
 
+Requirements:
+
+- Python 3.10+
+- `uv`
+- optional: Node.js >= 18 and npm for the TUI
+- optional: AiZynthFinder for retrosynthesis
+- optional: GNINA, SMINA, or Matcha for docking
+
 ### PyPI install
 
 ```bash
@@ -39,21 +59,57 @@ hedgehog --help
 
 Use the PyPI package only if you already manage your own config files and input paths. The default quick start, `hedgehog setup ...` workflows, and TUI usage are designed around a source checkout.
 
-### First run (from a source checkout)
+### First safe run
 
 ```bash
-uv run hedgehog
+uv run hedgehog --stage descriptors --stage struct_filters --force-new
+```
 
-# Optional: auto-install missing optional tools without prompts
+This avoids docking and retrosynthesis. Use it as the first validation that the
+local environment, bundled examples, descriptor calculation, and structural
+filters are working.
+
+### Full pipeline
+
+```bash
+uv run hedgehog setup aizynthfinder
 uv run hedgehog --auto-install
 ```
 
+Full pipeline execution may require AiZynthFinder, GNINA/SMINA/Matcha, valid
+receptor structures, reference ligands, and enough CPU/GPU resources.
+
+## Input Format
+
+Recommended molecule input is CSV/TSV with a `smiles` header:
+
+```csv
+smiles,model_name
+CCO,demo
+CCN,demo
+c1ccccc1,demo
+```
+
+Required:
+
+- `smiles`
+
+Optional:
+
+- `model_name` or `name`
+- `mol_idx`
+
+If `mol_idx` is missing, HEDGEHOG assigns a stable ID and uses it to join stage
+outputs, docking scores, and report data.
+
 ## Common Commands
 
-
 ```bash
-# Full pipeline
-uv run hedgehog
+# Safe smoke run
+uv run hedgehog --stage descriptors --stage struct_filters --force-new
+
+# Full pipeline after optional tools are available
+uv run hedgehog --auto-install
 
 # Run with your own molecules
 uv run hedgehog --mols input/my_molecules.csv
@@ -84,6 +140,18 @@ uv run hedgehog tui
 Progress bar behavior in CLI runs:
 - Enabled: add `--progress`
 - Disabled: omit `--progress` (default)
+
+## Results
+
+Results are written under the configured output directory, usually as an
+auto-numbered run folder:
+
+```text
+results/run_N/
+├── stages/
+├── output/
+└── report.html
+```
 
 ## Documentation
 

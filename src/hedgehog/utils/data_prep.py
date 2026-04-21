@@ -15,6 +15,7 @@ MOL_IDX_COLUMN = "mol_idx"
 DEFAULT_MODEL_NAME = "single"
 
 SUPPORTED_EXTENSIONS = ["csv", "tsv", "txt"]
+SMI_EXTENSIONS = {"smi", "ismi", "cmi", "smiles"}
 MODE_SINGLE = "single_comparison"
 MODE_MULTI = "multi_comparison"
 
@@ -183,6 +184,58 @@ def _read_csv_with_fallback(path: str) -> pd.DataFrame:
         return df
 
 
+def _read_smi(path: str) -> pd.DataFrame:
+    """Read a headerless SMILES file with optional molecule names."""
+    rows = []
+    path_obj = Path(path)
+    for line in path_obj.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        parts = stripped.split()
+        if parts[0].lower() == SMILES_COLUMN:
+            continue
+
+        rows.append(
+            {
+                SMILES_COLUMN: parts[0],
+                MODEL_NAME_COLUMN: parts[1] if len(parts) > 1 else path_obj.stem,
+            }
+        )
+
+    return pd.DataFrame(rows, columns=[SMILES_COLUMN, MODEL_NAME_COLUMN])
+
+
+def _txt_looks_like_headerless_smi(path: str) -> bool:
+    """Return True when a .txt input looks like one-SMILES-per-line data."""
+    try:
+        with Path(path).open(encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                first = stripped.split()[0].lower()
+                return (
+                    first != SMILES_COLUMN
+                    and "," not in stripped
+                    and "\t" not in stripped
+                )
+    except OSError:
+        return False
+    return False
+
+
+def _read_input_file(path: str) -> pd.DataFrame:
+    """Read a supported molecule input file."""
+    suffix = Path(path).suffix.lower().lstrip(".")
+    if suffix in SMI_EXTENSIONS or (
+        suffix == "txt" and _txt_looks_like_headerless_smi(path)
+    ):
+        return _read_smi(path)
+    return _read_csv_with_fallback(path)
+
+
 def _detect_mode_and_paths(
     generated_mols_path: str,
 ) -> tuple[str, list[str]]:
@@ -200,7 +253,7 @@ def _detect_mode_and_paths(
             matched = [generated_mols_path]
         elif path_obj.exists() and path_obj.is_dir():
             # Handle directory: find all supported files in the directory
-            all_extensions = SUPPORTED_EXTENSIONS + ["smi"]  # Include .smi files
+            all_extensions = [*SUPPORTED_EXTENSIONS, *SMI_EXTENSIONS]
             matched = [
                 str(p)
                 for p in path_obj.iterdir()
@@ -231,7 +284,7 @@ def _detect_mode_and_paths(
 def _file_has_multiple_models(path: str) -> bool:
     """Check if a file contains multiple distinct models."""
     try:
-        df = pd.read_csv(path)
+        df = _read_input_file(path)
         candidate_col = _find_column_case_insensitive(
             df, MODEL_NAME_COLUMN
         ) or _find_column_case_insensitive(df, NAME_COLUMN)
@@ -246,7 +299,7 @@ def _file_has_multiple_models(path: str) -> bool:
 
 def _extract_model_name_from_path(path: str) -> str:
     """Extract model name from file path."""
-    return path.split("/")[-1].split(".")[0]
+    return Path(path).stem
 
 
 def _load_multi_comparison_data(
@@ -257,7 +310,7 @@ def _load_multi_comparison_data(
     sampling_warnings = []
 
     for path in paths:
-        df = _read_csv_with_fallback(path)
+        df = _read_input_file(path)
         df = _normalize_columns(df, path)
         df = _finalize_identity_columns(df, path)
 
@@ -279,7 +332,7 @@ def _load_single_comparison_data(
     single_path: str, sample_size: int | None, logger: logging.Logger
 ) -> pd.DataFrame:
     """Load data from a single file (single model comparison)."""
-    data = _read_csv_with_fallback(single_path)
+    data = _read_input_file(single_path)
     data = _normalize_columns(data, single_path)
     data = _finalize_identity_columns(data, single_path)
     data = _remove_duplicates(data, logger)
@@ -295,7 +348,7 @@ def _load_multi_file_with_model_column(
     single_path: str, sample_size: int | None, logger: logging.Logger
 ) -> pd.DataFrame:
     """Load a single file containing multiple models (must have model_name column)."""
-    df = pd.read_csv(single_path)
+    df = _read_input_file(single_path)
     df = _normalize_smiles_column(df)
 
     if not (
@@ -360,10 +413,7 @@ def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     """
     generated_mols_path = config["generated_mols_path"]
     folder_to_save = Path(config[KEY_FOLDER_TO_SAVE])
-    save_sampled_mols = config.get("save_sampled_mols", False)
-    sample_size: int | None = (
-        cast(int | None, config.get("sample_size")) if save_sampled_mols else None
-    )
+    sample_size = cast(int | None, config.get("sample_size"))
 
     detected_mode, matched_paths = _detect_mode_and_paths(generated_mols_path)
 

@@ -4,19 +4,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from hedgehog.utils.paths import process_path as _shared_process_path
+
 
 def process_path(folder_to_save, key_word=None):
-    """Ensure path ends with '/' and create directory if needed."""
-    # Accept both str and Path-like inputs.
-    folder_to_save = str(folder_to_save)
-    if not folder_to_save.endswith("/"):
-        folder_to_save += "/"
-
-    if key_word:
-        folder_to_save += f"{key_word}/"
-
-    Path(folder_to_save).mkdir(parents=True, exist_ok=True)
-    return folder_to_save
+    """Backward-compatible wrapper around shared process_path helper."""
+    return _shared_process_path(folder_to_save, key_word)
 
 
 def inject_identity_columns_to_all_csvs(config, stage_dir):

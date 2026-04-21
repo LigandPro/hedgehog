@@ -22,17 +22,23 @@ Verifies that the docked pose lies within the configured docking search box. Thi
 
 The search box is resolved from the docking configuration: either explicit `center`/`size` coordinates, or computed from `autobox_ligand` + `autobox_add` (the same reference ligand used for docking).
 
-### Filter 1: Pose Quality (PoseCheck)
+### Filter 1: Pose Quality
 
-Uses [PoseCheck](https://github.com/cch1999/posecheck) to detect steric clashes between the ligand and protein, and to measure ligand strain energy.
+The shipped default backend is `posebusters_fast`, a fast pose-quality check for
+protein-ligand clashes, volume overlap, and protein distance. The legacy
+optional backend is `posecheck`, which exposes strain-energy parameters.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `enabled` | `true` | Enable/disable this filter |
-| `max_clashes` | `2` | Maximum allowed steric clashes (0 = strict) |
-| `max_strain_energy` | `50.0` | Maximum ligand strain energy in kcal/mol |
-| `strain_forcefield` | `UFF` | Force field for strain calculation (UFF, MMFF94s, or MMFF94s_noEstat) |
-| `clash_tolerance` | `0.5` | Angstrom tolerance for VdW overlap detection |
+| `backend` | `posebusters_fast` | Backend: `posebusters_fast` or legacy `posecheck` |
+| `clash_cutoff` | `0.75` | Relative VDW distance cutoff for fast clash detection |
+| `volume_clash_cutoff` | `0.075` | ShapeTverskyIndex overlap threshold for volume clash detection |
+| `max_distance` | `5.0` | Maximum minimum ligand-protein distance in Angstroms |
+| `max_clashes` | `2` | Legacy PoseCheck maximum allowed steric clashes |
+| `max_strain_energy` | `50.0` | Legacy PoseCheck maximum ligand strain energy in kcal/mol |
+| `strain_forcefield` | `UFF` | Legacy PoseCheck force field for strain calculation |
+| `clash_tolerance` | `0.5` | Legacy PoseCheck VDW overlap tolerance |
 
 Clashes indicate that the ligand overlaps with protein atoms in a physically impossible way. High strain energy means the ligand is in an energetically unfavorable conformation.
 
@@ -44,12 +50,18 @@ Uses [ProLIF](https://prolif.readthedocs.io/) to compute a protein-ligand intera
 |-----------|---------|-------------|
 | `enabled` | `true` | Enable/disable this filter |
 | `min_hbonds` | `0` | Minimum hydrogen bonds required |
-| `required_residues` | `[]` | Residues that must have at least one interaction (e.g., `["ASP:123"]`) |
+| `required_residues` | `['ASP12']` | Residue identifiers that must have at least one interaction |
 | `forbidden_residues` | `[]` | Residues that must NOT have any interaction |
 | `interaction_types` | `[HBDonor, HBAcceptor, Hydrophobic, VdWContact]` | Interaction types to detect |
+| `reporting.enabled` | `true` | Generate interaction reporting artifacts |
 | `similarity_threshold` | `0.0` | Tanimoto similarity to reference interaction fingerprint (0 = disabled) |
 
 This filter is especially useful when you know the binding mode should involve specific residues (e.g., a catalytic aspartate) or should avoid certain contacts (e.g., a cysteine that causes covalent binding).
+
+Residue identifiers are matched against ProLIF interaction column labels. The
+bundled demo configuration uses `ASP12`. Depending on your prepared receptor and
+ProLIF naming, identifiers may look different, so inspect the generated
+interaction report before finalizing `required_residues`.
 
 ### Filter 3: Shepherd-Score (3D Shape Similarity)
 
@@ -86,6 +98,10 @@ Checks if the docked pose is geometrically plausible by generating multiple low-
 | `conformer_method` | `ETKDGv3` | Conformer generation method (ETKDG, ETKDGv2, ETKDGv3) |
 | `max_rmsd_to_conformer` | `3.0` | Maximum RMSD in Angstroms to closest conformer |
 | `random_seed` | `42` | Seed for reproducible conformer generation |
+| `include_hydrogens` | `false` | Include hydrogens in RMSD matching |
+| `max_matches` | `10000` | Cap symmetry matching complexity |
+| `early_stop_on_pass` | `true` | Stop comparison once any conformer passes |
+| `optimize_conformers` | `false` | UFF optimization of generated conformers |
 
 A high minimum RMSD indicates that the docking engine placed the ligand in a conformation that is energetically unlikely for the molecule to adopt in solution. This catches docking artifacts where the scoring function found a favorable protein-ligand interaction at the cost of internal strain.
 For isolated setup of optional nvMolKit dependencies:
@@ -137,6 +153,10 @@ search_box:
 
 pose_quality:
   enabled: true
+  backend: "posebusters_fast"
+  clash_cutoff: 0.75
+  volume_clash_cutoff: 0.075
+  max_distance: 5.0
   max_clashes: 2
   max_strain_energy: 50.0
   strain_forcefield: "UFF"
@@ -145,13 +165,15 @@ pose_quality:
 interactions:
   enabled: true
   min_hbonds: 0
-  required_residues: []
+  required_residues: ['ASP12']
   forbidden_residues: []
   interaction_types:
     - HBDonor
     - HBAcceptor
     - Hydrophobic
     - VdWContact
+  reporting:
+    enabled: true
 
 shepherd_score:
   enabled: false
@@ -169,6 +191,10 @@ conformer_deviation:
   conformer_method: "ETKDGv3"
   max_rmsd_to_conformer: 3.0
   random_seed: 42
+  include_hydrogens: false
+  max_matches: 10000
+  early_stop_on_pass: true
+  optimize_conformers: false
 
 aggregation:
   mode: "all"
@@ -192,6 +218,7 @@ The pipeline-level output file `output/final_molecules.csv` now keeps all upstre
 - `gnina_cnnaffinity`
 - `gnina_cnn_vs`
 - `smina_affinity`
+- `matcha_affinity`
 
 For each tool, values are taken from the best pose per molecule (minimum affinity).
 

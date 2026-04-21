@@ -7,6 +7,7 @@ import logging
 import statistics
 from collections.abc import Callable
 from datetime import datetime
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,15 @@ from hedgehog.reporting.stage_audit_notebook import write_stage_audit_notebook
 from hedgehog.utils.parallel import resolve_n_jobs
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_hedgehog_version() -> str:
+    """Resolve installed HEDGEHOG package version for report metadata."""
+    try:
+        return metadata.version("hedgehog")
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
 
 # Stage directory names
 STAGE_DIRS = {
@@ -323,7 +333,7 @@ class ReportGenerator:
         """Get report metadata."""
         return {
             "generated_at": datetime.now().isoformat(),
-            "hedgehog_version": "1.1.0",
+            "hedgehog_version": _resolve_hedgehog_version(),
             "run_path": str(self.base_path),
         }
 

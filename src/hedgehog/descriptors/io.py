@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from hedgehog.struct_filters.utils import process_path  # noqa: F401 – re-export
+from hedgehog.utils.paths import process_path  # noqa: F401 – re-export
 
 
 def order_identity_columns(df):

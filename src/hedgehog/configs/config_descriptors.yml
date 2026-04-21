@@ -95,8 +95,8 @@ borders:
   has_spider_side_chains_max: 0
   fraction_ring_system_min: 0.25
   fraction_ring_system_max: 1
-  mce18_min: 45
-  mce18_max: 100
+  mce18_min: 20
+  mce18_max: 140
   tpsa_min: 20
   tpsa_max: 140
   qed_min: 0.3

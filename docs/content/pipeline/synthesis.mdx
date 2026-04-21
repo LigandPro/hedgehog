@@ -13,7 +13,7 @@ The synthesis stage evaluates whether generated molecules can be practically syn
 - **Range**: 1--10 (lower is better)
 - **Method**: RDKit Contrib SA Score calculator (`RDConfig.RDContribDir/SA_Score`)
 - **How it works**: Combines fragment contributions (from a frequency analysis of molecules in PubChem) with a complexity penalty. Molecules built from common fragments score low; molecules requiring unusual substructures score high.
-- **Default threshold**: 0--4.5
+- **Default threshold**: 1--4.5
 
 ### SYBA Score (SYnthetic Bayesian Accessibility)
 
@@ -53,7 +53,7 @@ run_retrosynthesis: true     # Run AiZynthFinder route search
 filter_solved_only: true     # Keep only molecules with found routes
 
 # Score thresholds
-sa_score_min: 0
+sa_score_min: 1
 sa_score_max: 4.5
 syba_score_min: 0
 syba_score_max: inf

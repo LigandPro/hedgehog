@@ -1,0 +1,42 @@
+---
+title: Known Limitations
+---
+
+# Known Limitations
+
+These are current operational constraints to account for when planning runs.
+
+## Optional Tools
+
+Full pipeline runs can require AiZynthFinder, GNINA/SMINA/Matcha, receptor
+structures, reference ligands, and CPU/GPU capacity. Use the descriptor +
+structural-filter smoke run for environment validation before enabling those
+stages.
+
+## Headerless SMI Inputs
+
+Simple headerless `.smi`-style files are supported, but CSV/TSV with a `smiles`
+header is still the recommended production input format because it makes
+`model_name` and `mol_idx` explicit.
+
+## Matcha Reproducibility
+
+Matcha setup may resolve a development checkout dynamically. For production
+runs, use a controlled local checkout or an explicitly pinned setup path.
+
+## TUI Cancellation
+
+The TUI cancellation command requests cancellation. Long-running external tools
+may continue until the current subprocess or stage reaches a safe stopping point.
+
+## Config Ownership
+
+Do not edit bundled configs inside an installed package in `site-packages`. Copy
+configs into your project or run directory and pass the copied master config with
+`--config`.
+
+## Package vs Source Checkout
+
+The source checkout includes editable configs, examples, TUI sources, and the
+`modules/` workspace used by setup commands. PyPI installs are best for users who
+already manage their own configs and input paths.

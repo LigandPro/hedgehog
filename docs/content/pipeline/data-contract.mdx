@@ -1,0 +1,94 @@
+---
+title: Data Contract
+---
+
+# Data Contract
+
+This page documents the stable molecule-table contract used across pipeline
+stages.
+
+## Input Molecule Table
+
+Recommended input is CSV or TSV with a `smiles` header:
+
+```csv
+smiles,model_name
+CCO,model_a
+CCN,model_a
+c1ccccc1,model_b
+```
+
+Required:
+
+- `smiles`
+
+Optional:
+
+- `model_name` or `name`
+- `mol_idx`
+
+Generated:
+
+- `mol_idx` is assigned automatically if missing.
+
+## Stable Molecule Identity
+
+`mol_idx` is the stable molecule identifier. HEDGEHOG uses it to join stage
+outputs, descriptor tables, docking scores, docking-filter results, and report
+data.
+
+If you provide `mol_idx`, keep it unique within the input set. If you omit it,
+HEDGEHOG creates IDs in the form `LP-0001-00001`, scoped by `model_name`.
+
+## Multi-Model Inputs
+
+For model comparisons, use one row per generated molecule and model:
+
+```csv
+smiles,model_name
+CCO,model_a
+CCO,model_b
+CCN,model_a
+CCN,model_b
+```
+
+Deduplication is model-aware: the same SMILES can appear under different
+`model_name` values.
+
+## Headerless SMI Files
+
+Simple `.smi`, `.ismi`, `.cmi`, and `.smiles` files are parsed by extension:
+
+```text
+CCO
+CCN ligand_2
+```
+
+The first whitespace token is `smiles`; the optional second token becomes
+`model_name`. CSV/TSV with a `smiles` header remains the clearest production
+format because it makes identity and model labels explicit.
+
+## Stage Outputs
+
+Most filtering stages write a stable `filtered_molecules.csv`:
+
+```csv
+smiles,model_name,mol_idx
+CCO,model_a,LP-0001-00001
+```
+
+Stages may also write richer detail files such as descriptor metrics, pass
+flags, synthesis scores, docking SDFs, and per-pose docking-filter metrics.
+
+## Zero-Row Outputs
+
+A stage can complete successfully with zero surviving molecules. In that case it
+should still write a header-only CSV with the expected columns. This lets
+downstream reporting distinguish a valid empty result from a missing or failed
+stage output.
+
+## Sampling
+
+`sample_size` controls how many molecules are sampled before the pipeline starts.
+`save_sampled_mols` controls whether the sampled input table is written to
+`input/sampled_molecules.csv`; it does not disable sampling.

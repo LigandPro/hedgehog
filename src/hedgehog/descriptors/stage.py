@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pandas as pd
+
 from hedgehog._constants import CFG_DESCRIPTORS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.compute import compute_metrics
@@ -9,6 +11,38 @@ from hedgehog.descriptors.filtering import filter_molecules
 from hedgehog.descriptors.io import process_path
 from hedgehog.descriptors.plotting import draw_filtered_mols
 from hedgehog.descriptors.waves.registry import run_waves
+from hedgehog.utils.mol_index import assign_mol_idx
+
+
+def _prepare_identity_columns(data, run_base):
+    """Ensure descriptor stage input always contains model_name and mol_idx."""
+    prepared = data.copy()
+    default_model = "single"
+
+    if "model_name" not in prepared.columns:
+        prepared["model_name"] = default_model
+    else:
+        model_series = prepared["model_name"].astype("string").str.strip()
+        prepared["model_name"] = model_series.mask(model_series.eq(""), pd.NA).fillna(
+            default_model
+        )
+
+    needs_mol_idx = "mol_idx" not in prepared.columns
+    if not needs_mol_idx:
+        mol_idx_series = prepared["mol_idx"].astype("string").str.strip()
+        missing_mask = mol_idx_series.isna() | mol_idx_series.eq("")
+        needs_mol_idx = bool(missing_mask.any())
+        if needs_mol_idx:
+            prepared["mol_idx"] = mol_idx_series.mask(missing_mask, pd.NA)
+
+    if needs_mol_idx:
+        assigned = assign_mol_idx(prepared, run_base=run_base, logger=logger)
+        if "mol_idx" not in prepared.columns:
+            prepared = assigned
+        else:
+            prepared["mol_idx"] = prepared["mol_idx"].fillna(assigned["mol_idx"])
+
+    return prepared
 
 
 def run(data, config, subfolder=None, reporter=None):
@@ -32,6 +66,7 @@ def run(data, config, subfolder=None, reporter=None):
     folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     subfolder = subfolder or str(Path("stages") / "01_descriptors_initial")
     descriptors_folder = folder_to_save / subfolder
+    data = _prepare_identity_columns(data, run_base=folder_to_save)
 
     metrics_folder = descriptors_folder / "metrics"
     filtered_folder = descriptors_folder / "filtered"

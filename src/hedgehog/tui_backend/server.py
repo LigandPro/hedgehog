@@ -1,6 +1,7 @@
 """JSON-RPC server for TUI backend communication."""
 
 import json
+import logging
 import sys
 import threading
 from typing import Any
@@ -10,6 +11,8 @@ from .handlers.files import FilesHandler
 from .handlers.history import HistoryHandler
 from .handlers.pipeline import PipelineHandler
 from .handlers.validation import ValidationHandler
+
+logger = logging.getLogger(__name__)
 
 
 class JsonRpcServer:
@@ -122,6 +125,7 @@ class JsonRpcServer:
         except ValueError as e:
             self.send_response(request_id, error={"code": -32602, "message": str(e)})
         except Exception as e:
+            logger.exception("Unhandled JSON-RPC error in method '%s'", method)
             self.send_response(request_id, error={"code": -32000, "message": str(e)})
 
     def run(self):
@@ -147,6 +151,7 @@ class JsonRpcServer:
                     target=self.handle_request, args=(request,), daemon=True
                 ).start()
             except json.JSONDecodeError as e:
+                logger.exception("Invalid JSON-RPC request payload")
                 # Send parse error
                 self.send_response(
                     None, error={"code": -32700, "message": f"Parse error: {e}"}
@@ -166,6 +171,7 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     except Exception as e:
+        logger.exception("TUI backend server crashed")
         sys.stderr.write(f"Server error: {e}\n")
         return 1
 

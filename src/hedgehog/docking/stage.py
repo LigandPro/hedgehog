@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -20,6 +21,25 @@ from hedgehog.docking.monitoring import _create_progress_tracker  # noqa: F401
 from hedgehog.docking.paths import _warn_if_autobox_far_from_receptor
 from hedgehog.docking.receptor_prep import _execute_protein_preparation
 from hedgehog.docking.scripts import _emit_manual_mode_warnings, _setup_docking_tools
+
+DOCKING_COMPLETED_EMPTY_MARKER = "completed_empty.marker"
+
+
+def _mark_docking_completed_empty(
+    ligands_dir: Path, source: Path, ligands_stats: dict, tools_list: list[str]
+) -> Path:
+    """Persist a marker for successful docking run with zero valid ligands."""
+    ligands_dir.mkdir(parents=True, exist_ok=True)
+    marker = ligands_dir / DOCKING_COMPLETED_EMPTY_MARKER
+    payload = {
+        "status": "completed_empty",
+        "reason": "no_valid_ligands",
+        "source_file": str(source),
+        "tools": list(tools_list),
+        "ligands_counts": dict(ligands_stats),
+    }
+    marker.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return marker
 
 
 def run(config, reporter=None):
@@ -46,6 +66,12 @@ def run(config, reporter=None):
 
     ligands_dir = base_folder / "stages" / "05_docking"
     ligands_csv = ligands_dir / "ligands.csv"
+    empty_marker = ligands_dir / DOCKING_COMPLETED_EMPTY_MARKER
+    if empty_marker.exists():
+        try:
+            empty_marker.unlink()
+        except OSError:
+            pass
 
     try:
         ligands_stats = _prepare_ligands_dataframe(df, ligands_csv)
@@ -62,6 +88,18 @@ def run(config, reporter=None):
     tools_list = _parse_tools_config(cfg)
     logger.info("Docking tools configured: %s", tools_list)
 
+    if int(ligands_stats.get("written", 0)) == 0:
+        marker = _mark_docking_completed_empty(
+            ligands_dir, source, ligands_stats, tools_list
+        )
+        logger.info(
+            "No valid ligands for docking (%d/%d written). Marked run as completed-empty: %s",
+            int(ligands_stats.get("written", 0)),
+            int(ligands_stats.get("total", 0)),
+            marker,
+        )
+        return True
+
     for tool in tools_list:
         _warn_if_autobox_far_from_receptor(cfg, tool)
 
@@ -71,8 +109,15 @@ def run(config, reporter=None):
             return False
 
     # 3. Tool setup
+    config_dir = Path(config[CFG_DOCKING]).resolve().parent
     scripts_prepared, job_ids = _setup_docking_tools(
-        cfg, tools_list, base_folder, ligands_dir, ligands_csv, ligand_preparation_tool
+        cfg,
+        tools_list,
+        base_folder,
+        ligands_dir,
+        ligands_csv,
+        ligand_preparation_tool,
+        config_dir=config_dir,
     )
     if not scripts_prepared:
         logger.error("No docking tools were successfully configured")

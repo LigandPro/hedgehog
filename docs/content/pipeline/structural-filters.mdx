@@ -57,11 +57,19 @@ common_alerts_large_input_n_jobs: 12
 include_rulesets:
   - Dundee
   - BMS
+  - Inpharmatica
+  - LD50-Oral
   - Glaxo
   - PAINS
-  - Toxicophore
+  - AlphaScreen-Hitters
+  - Frequent-Hitter
+  - Chelator
   - SureChEMBL
-  # ... up to 20+ rule sets
+  - MLSMR
+  - LINT
+  - GST-Hitters
+  - HIS-Hitters
+  - LuciferaseInhibitor
 
 exclude_descriptions:
   Dundee:
@@ -84,6 +92,11 @@ Set `common_alerts_auto_n_jobs: false` to use regular stage/global `n_jobs` reso
 
 The `exclude_descriptions` section lets you whitelist specific alerts within a rule set. For example, if your target requires an imidazole moiety, you can exclude the Toxicophore imidazole alert while keeping all other toxicophore rules active.
 
+The shipped config also contains several commented-out optional rulesets
+(`Toxicophore`, `Skin`, `Reactive-Unstable-Toxic`, `Electrophilic`,
+`Genotoxic-Carcinogenicity`, and `Non-Genotoxic-Carcinogenicity`). They are
+examples you can enable deliberately; they are not active by default.
+
 ## Configuration
 
 Full configuration in `config_structFilters.yml`:
@@ -91,12 +104,19 @@ Full configuration in `config_structFilters.yml`:
 ```yaml
 run: true
 filter_data: true
+parse_input_n_jobs: -1
+write_per_filter_outputs: true
+generate_plots: true
+generate_failure_analysis: true
+combine_in_memory: true
+parallel_scheduler: processes
 
 # Database-based filters
 calculate_common_alerts: true
 calculate_NIBR: true
 calculate_lilly: true
-nibr_scheduler: threads
+molgraph_scheduler: processes
+nibr_scheduler: processes
 lilly_scheduler: threads
 
 # Rule-based filters

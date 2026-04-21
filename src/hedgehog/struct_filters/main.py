@@ -21,6 +21,7 @@ from hedgehog.struct_filters.utils import (
     process_prepared_payload,
 )
 from hedgehog.utils.input_paths import find_sampled_molecules
+from hedgehog.utils.mol_index import assign_mol_idx
 from hedgehog.utils.parallel import resolve_n_jobs
 
 IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
@@ -132,11 +133,12 @@ def _get_input_path(config, stage_dir, folder_to_save):
     return config["generated_mols_path"]
 
 
-def _load_input_data(input_path):
+def _load_input_data(input_path, run_base=None):
     """Load and prepare input data with required columns.
 
     Args:
         input_path: Path to input CSV file
+        run_base: Base path for assign_mol_idx mapping persistence
 
     Returns:
         Tuple of (input_df, model_name) where model_name is a single name or list
@@ -150,9 +152,34 @@ def _load_input_data(input_path):
         inferred_model = Path(input_path).stem
         input_df["model_name"] = inferred_model
         logger.info("model_name column missing; using '%s'", inferred_model)
+    else:
+        model_series = input_df["model_name"].astype("string").str.strip()
+        missing_models = model_series.isna() | model_series.eq("")
+        if missing_models.any():
+            inferred_model = Path(input_path).stem
+            input_df["model_name"] = model_series.mask(
+                missing_models, inferred_model
+            ).astype(object)
+            logger.info(
+                "model_name had %d empty value(s); using '%s' for those rows",
+                int(missing_models.sum()),
+                inferred_model,
+            )
 
-    if "mol_idx" not in input_df.columns:
-        input_df["mol_idx"] = range(len(input_df))
+    run_base_path = Path(run_base) if run_base is not None else Path(input_path).parent
+    needs_assignment = "mol_idx" not in input_df.columns
+    if not needs_assignment:
+        mol_idx_series = input_df["mol_idx"].astype("string").str.strip()
+        missing_mask = mol_idx_series.isna() | mol_idx_series.eq("")
+        needs_assignment = bool(missing_mask.any())
+        if needs_assignment:
+            input_df["mol_idx"] = mol_idx_series.mask(missing_mask, pd.NA)
+    if needs_assignment:
+        assigned = assign_mol_idx(input_df, run_base=run_base_path, logger=logger)
+        if "mol_idx" not in input_df.columns:
+            input_df = assigned
+        else:
+            input_df["mol_idx"] = input_df["mol_idx"].fillna(assigned["mol_idx"])
 
     model_names = sorted(input_df["model_name"].dropna().unique().tolist())
     model_name = model_names[0] if len(model_names) == 1 else model_names
@@ -471,7 +498,7 @@ def main(config, stage_dir, reporter=None):
     input_path = _get_input_path(config, stage_dir, folder_to_save)
 
     try:
-        input_df, model_name = _load_input_data(input_path)
+        input_df, model_name = _load_input_data(input_path, run_base=folder_to_save)
     except Exception as e:
         logger.error("Could not load input data from %s: %s", input_path, e)
         raise

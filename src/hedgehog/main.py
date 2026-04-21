@@ -3,6 +3,7 @@ import subprocess
 import time
 import warnings
 from enum import Enum
+from importlib import metadata
 from pathlib import Path
 
 import matplotlib as mpl
@@ -42,6 +43,22 @@ PLAIN_OUTPUT_ENV = "HEDGEHOG_PLAIN_OUTPUT"
 
 # Supported SMI-like file extensions for ligand preparation tool
 SMI_EXTENSIONS = {"smi", "ismi", "cmi", "txt"}
+CONFIG_PATH_KEYS = {
+    "generated_mols_path",
+    "target_mols_path",
+    "pains_file_path",
+    "mcf_file_path",
+    "ligand_preparation_tool",
+    "protein_preparation_tool",
+}
+
+
+def _get_hedgehog_version() -> str:
+    """Resolve installed package version for CLI display."""
+    try:
+        return metadata.version("hedgehog")
+    except metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def _plain_output_enabled() -> bool:
@@ -375,6 +392,56 @@ def _apply_cli_overrides(
         "[bold]Override:[/bold] Running only stages: [bold]%s[/bold]",
         _format_stage_selection(selected_stages),
     )
+
+
+def _path_key_should_resolve(key: str) -> bool:
+    """Return True for config values that should be resolved as filesystem paths."""
+    return key.startswith("config_") or key in CONFIG_PATH_KEYS
+
+
+def _path_exists_for_resolution(path: Path) -> bool:
+    """Check existence for regular paths and glob-like paths."""
+    if "*" in str(path) or "?" in str(path):
+        return path.parent.exists()
+    return path.exists()
+
+
+def _resolve_config_path_value(
+    value: str, config_file: Path, package_root: Path
+) -> str:
+    """Resolve a relative path from config file, project root, package root, or cwd."""
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return str(path)
+
+    package_dir = Path(__file__).resolve().parent
+    candidates = [
+        config_file.parent / path,
+        package_root / path,
+    ]
+
+    parts = path.parts
+    if len(parts) >= 2 and parts[0] == "src" and parts[1] == "hedgehog":
+        candidates.append(package_dir.joinpath(*parts[2:]))
+
+    candidates.append(Path.cwd() / path)
+
+    for candidate in candidates:
+        if _path_exists_for_resolution(candidate):
+            return str(candidate.resolve())
+
+    return str((Path.cwd() / path).resolve())
+
+
+def _resolve_config_paths(config_dict: dict, config_path: str) -> None:
+    """Resolve relative file paths in a loaded master config in place."""
+    config_file = Path(config_path).expanduser().resolve()
+    package_root = Path(__file__).resolve().parents[2]
+
+    for key, value in list(config_dict.items()):
+        if not _path_key_should_resolve(key) or not isinstance(value, str) or not value:
+            continue
+        config_dict[key] = _resolve_config_path_value(value, config_file, package_root)
 
 
 def _resolve_output_folder(
@@ -864,6 +931,7 @@ def _run_pipeline_command(
         raise typer.Exit(code=1)
 
     config_dict = load_config(config_path)
+    _resolve_config_paths(config_dict, config_path)
     _apply_cli_overrides(config_dict, generated_mols_path, stage)
 
     if out_dir:
@@ -1204,10 +1272,13 @@ def info() -> None:
 @app.command()
 def version() -> None:
     """Display version information."""
+    hedgehog_version = _get_hedgehog_version()
     if _plain_output_enabled():
-        console.print("HEDGEHOG version 1.1.25")
+        console.print(f"HEDGEHOG version {hedgehog_version}")
     else:
-        console.print("[bold]🦔 HEDGEHOG[/bold] version [bold]1.1.25[/bold]")
+        console.print(
+            f"[bold]🦔 HEDGEHOG[/bold] version [bold]{hedgehog_version}[/bold]"
+        )
     console.print(
         "[dim]Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration[/dim]"
     )

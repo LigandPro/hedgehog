@@ -39,10 +39,20 @@ You can also override the output directory (`folder_to_save`) with `--out/-o`:
 uv run hedgehog --out results/my_run
 ```
 
-Each stage config path in `config.yml` is treated as a **relative path from the working directory** (the directory you run the command from) or as an **absolute path**. For example:
+Filesystem paths in the master config are resolved in this order:
+
+1. absolute paths are used as-is
+2. relative to the master config file location
+3. relative to the source/package root for bundled `src/hedgehog/...` paths
+4. relative to the current working directory as a final fallback
+
+For example:
 
 ```yaml
-# Relative — resolved from cwd
+# Relative to the master config file when that file lives beside configs/
+config_descriptors: config_descriptors.yml
+
+# Bundled source-checkout path
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
 
 # Absolute — used as-is
@@ -64,7 +74,7 @@ There are three common ways to customise the pipeline:
    - `--mols/-m` to override `generated_mols_path`
    - `--out/-o` to override `folder_to_save`
 
-3. **Edit the YAML files directly in place.** In a source checkout, edit `src/hedgehog/configs/*.yml`. In an installed package, edit the installed `hedgehog/configs/*.yml` (or reinstall after updating the source).
+3. **For quick experiments in a source checkout, edit copied config files.** Do not edit configs inside an installed package in `site-packages`; copy them into your project directory and pass the copied master config with `--config`.
 
 For example, to run only descriptors and skip all other stages:
 
@@ -84,9 +94,11 @@ config_docking_filters: configs/config_docking_filters.yml
 config_moleval: configs/config_moleval.yml
 ```
 
-To use a custom configuration today:
+To use a custom configuration today, pass it explicitly with `--config`:
 
-- Pass it explicitly with `--config`, or edit the defaults in a source checkout / installed package as described above.
+```bash
+uv run hedgehog --config my_config.yml
+```
 
 Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. The same `run` flag is available in every stage config.
 
@@ -111,7 +123,7 @@ Below is the full default `config.yml`:
 generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
 target_mols_path: src/hedgehog/configs/examples/target_mols.csv
 folder_to_save: results/run
-n_jobs: 62
+n_jobs: -1
 sample_size: 10000
 batch_size: 512
 save_sampled_mols: true
@@ -127,5 +139,8 @@ config_docking: src/hedgehog/configs/config_docking.yml
 config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
 config_moleval: src/hedgehog/configs/config_moleval.yml
 ```
+
+`n_jobs: -1` means use all available cores. For laptops, shared servers, CI, or
+notebooks, set an explicit smaller value such as `4` or `8`.
 
 For a complete description of every parameter, see the [Parameter Reference](/configuration/reference).

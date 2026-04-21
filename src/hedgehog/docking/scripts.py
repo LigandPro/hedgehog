@@ -30,6 +30,11 @@ from hedgehog.docking.receptor_prep import (
 from hedgehog.setup import ensure_matcha_checkout
 
 
+def _shell_quote(value: str | Path) -> str:
+    """Shell-quote a path/argument for generated bash scripts."""
+    return shlex.quote(str(value))
+
+
 def _extract_pdb_output_from_cmd(cmd, ligands_dir):
     """Extract PDB output file paths from a protein preparation command.
 
@@ -66,7 +71,7 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         ligands_dir: Directory for docking files
         tool_name: 'smina' or 'gnina' for log messages
     """
-    f.write(f"cd {ligands_dir}\n")
+    f.write(f"cd {_shell_quote(ligands_dir)}\n")
 
     if isinstance(protein_prep_cmd, (list, tuple)):
         protein_prep_cmd_str = " ".join(shlex.quote(str(p)) for p in protein_prep_cmd)
@@ -78,8 +83,9 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
     )
 
     if protein_output_abs_path:
-        f.write(f'mkdir -p "$(dirname "{protein_output_abs_path}")"\n')
-        f.write(f'touch "{protein_output_abs_path}" 2>/dev/null || true\n')
+        protein_output_abs_q = _shell_quote(protein_output_abs_path)
+        f.write(f"mkdir -p $(dirname {protein_output_abs_q})\n")
+        f.write(f"touch {protein_output_abs_q} 2>/dev/null || true\n")
 
     tool_label = f" for {tool_name.upper()}" if tool_name == TOOL_GNINA else ""
     f.write(f'echo "Running protein preparation{tool_label}..."\n')
@@ -91,15 +97,17 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
     f.write("fi\n")
 
     if protein_output_abs_path:
+        protein_output_file_q = _shell_quote(protein_output_file)
+        protein_output_abs_q = _shell_quote(protein_output_abs_path)
         f.write("# If file exists in current dir but not at absolute path, move it\n")
         f.write(
-            f'if [ -f "{protein_output_file}" ] && [ ! -f "{protein_output_abs_path}" ]; then\n'
+            f"if [ -f {protein_output_file_q} ] && [ ! -f {protein_output_abs_q} ]; then\n"
         )
-        f.write(f'  mv "{protein_output_file}" "{protein_output_abs_path}"\n')
+        f.write(f"  mv {protein_output_file_q} {protein_output_abs_q}\n")
         f.write("fi\n")
         f.write("# Check if prepared file exists and is valid (not empty)\n")
         f.write(
-            f'if [ ! -f "{protein_output_abs_path}" ] && [ ! -f "{protein_output_file}" ]; then\n'
+            f"if [ ! -f {protein_output_abs_q} ] && [ ! -f {protein_output_file_q} ]; then\n"
         )
         f.write(
             f'  echo "ERROR: Protein preparation failed - output file not found at {protein_output_abs_path}"\n'
@@ -109,14 +117,14 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         f.write("  ls -la\n")
         f.write("  exit 1\n")
         f.write(
-            f'elif [ -f "{protein_output_abs_path}" ] && [ ! -s "{protein_output_abs_path}" ]; then\n'
+            f"elif [ -f {protein_output_abs_q} ] && [ ! -s {protein_output_abs_q} ]; then\n"
         )
         f.write(
             f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_abs_path}"\n'
         )
         f.write("  exit 1\n")
         f.write(
-            f'elif [ -f "{protein_output_file}" ] && [ ! -s "{protein_output_file}" ]; then\n'
+            f"elif [ -f {protein_output_file_q} ] && [ ! -s {protein_output_file_q} ]; then\n"
         )
         f.write(
             f'  echo "ERROR: Protein preparation failed - output file is empty: {protein_output_file}"\n'
@@ -129,7 +137,7 @@ def _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, tool_name):
         f.write(f'  echo "{success_msg}"\n')
         if tool_name == TOOL_GNINA:
             f.write(
-                f'  ls -lh "{protein_output_abs_path}" 2>/dev/null || ls -lh "{protein_output_file}" 2>/dev/null || true\n'
+                f"  ls -lh {protein_output_abs_q} 2>/dev/null || ls -lh {protein_output_file_q} 2>/dev/null || true\n"
             )
         f.write("fi\n")
 
@@ -142,7 +150,8 @@ def _write_ligand_prep_bash(f, preparation_cmd, prepared_output_relative):
         )
     else:
         preparation_cmd_str = str(preparation_cmd)
-    f.write(f'mkdir -p "$(dirname "{prepared_output_relative}")"\n')
+    prepared_output_q = _shell_quote(prepared_output_relative)
+    f.write(f"mkdir -p $(dirname {prepared_output_q})\n")
     f.write('echo "Running ligand preparation..."\n')
     f.write(f"{preparation_cmd_str}\n")
     f.write("PREP_EXIT_CODE=$?\n")
@@ -162,42 +171,43 @@ def _write_ligand_prep_bash(f, preparation_cmd, prepared_output_relative):
 
 def _write_receptor_check_bash(f, receptor):
     """Write receptor file check bash code for GNINA script."""
+    receptor_q = _shell_quote(receptor)
     f.write('echo "Checking receptor file before GNINA docking..."\n')
     f.write(
         "# Final check - wait a moment and verify file still exists and is readable\n"
     )
     f.write("sleep 1\n")
-    f.write(f'if [ ! -f "{receptor}" ]; then\n')
+    f.write(f"if [ ! -f {receptor_q} ]; then\n")
     f.write(f'  echo "ERROR: Receptor file not found: {receptor}"\n')
     f.write('  echo "Current directory: $(pwd)"\n')
     f.write('  echo "Listing files in current directory:"\n')
     f.write("  ls -la\n")
-    f.write(f'  if [ -d "$(dirname "{receptor}")" ]; then\n')
+    f.write(f"  if [ -d $(dirname {receptor_q}) ]; then\n")
     f.write('    echo "Listing files in receptor directory:"\n')
-    f.write(f'    ls -la "$(dirname "{receptor}")"\n')
+    f.write(f"    ls -la $(dirname {receptor_q})\n")
     f.write("  fi\n")
     f.write("  exit 1\n")
-    f.write(f'elif [ ! -s "{receptor}" ]; then\n')
+    f.write(f"elif [ ! -s {receptor_q} ]; then\n")
     f.write(f'  echo "ERROR: Receptor file is empty: {receptor}"\n')
     f.write("  exit 1\n")
-    f.write(f'elif [ ! -r "{receptor}" ]; then\n')
+    f.write(f"elif [ ! -r {receptor_q} ]; then\n")
     f.write(f'  echo "ERROR: Receptor file is not readable: {receptor}"\n')
     f.write("  exit 1\n")
     f.write("else\n")
     f.write(f'  echo "Receptor file verified: {receptor}"\n')
-    f.write(f'  ls -lh "{receptor}"\n')
+    f.write(f"  ls -lh {receptor_q}\n")
     f.write("fi\n")
 
 
 def _write_docking_command_bash(f, ligands_dir, docking_bin, config_file, tool_name):
     """Write docking command bash code to script file."""
-    f.write(f"cd {ligands_dir}\n")
+    f.write(f"cd {_shell_quote(ligands_dir)}\n")
     try:
         config_rel = config_file.relative_to(ligands_dir)
     except ValueError:
         config_rel = config_file.name
     f.write(f'echo "Starting {tool_name.upper()} docking with config: {config_rel}"\n')
-    f.write(f"{docking_bin} --config {config_rel}\n")
+    f.write(f"{_shell_quote(docking_bin)} --config {_shell_quote(str(config_rel))}\n")
     f.write("if [ $? -eq 0 ]; then\n")
     f.write(f'  echo "{tool_name.upper()} docking completed successfully"\n')
     f.write("else\n")
@@ -218,13 +228,14 @@ def _write_file_wait_check(f, output_file, error_msg, prep_type="preparation"):
         error_msg: Error message to display if file not found
         prep_type: Label for log messages (e.g., 'preparation', 'ligand preparation')
     """
+    output_file_q = _shell_quote(output_file)
     f.write(f"# Check for {prep_type} output\n")
     f.write(f'echo "Checking for {prep_type} output: {output_file}"\n')
     f.write("# Wait for file to appear (preparation may take time)\n")
     f.write("max_wait=300  # 5 minutes max wait\n")
     f.write("wait_interval=2  # Check every 2 seconds\n")
     f.write("waited=0\n")
-    f.write(f'while [ ! -f "{output_file}" ] && [ $waited -lt $max_wait ]; do\n')
+    f.write(f"while [ ! -f {output_file_q} ] && [ $waited -lt $max_wait ]; do\n")
     f.write("  sleep $wait_interval\n")
     f.write("  waited=$((waited + wait_interval))\n")
     f.write("  if [ $((waited % 10)) -eq 0 ]; then\n")
@@ -232,14 +243,14 @@ def _write_file_wait_check(f, output_file, error_msg, prep_type="preparation"):
     f.write("  fi\n")
     f.write("done\n")
     f.write('echo ""\n')
-    f.write(f'if [ ! -f "{output_file}" ]; then\n')
+    f.write(f"if [ ! -f {output_file_q} ]; then\n")
     f.write(f'  echo "{error_msg}"\n')
     f.write('  echo "Current directory: $(pwd)"\n')
     f.write('  echo "Listing files in current directory:"\n')
     f.write("  ls -la\n")
-    f.write(f'  if [ -d "$(dirname "{output_file}")" ]; then\n')
+    f.write(f"  if [ -d $(dirname {output_file_q}) ]; then\n")
     f.write('    echo "Listing files in output directory:"\n')
-    f.write(f'    ls -la "$(dirname "{output_file}")"\n')
+    f.write(f"    ls -la $(dirname {output_file_q})\n")
     f.write("  fi\n")
     f.write("  exit 1\n")
     f.write("fi\n")
@@ -492,7 +503,7 @@ def _create_matcha_script(
     with open(script_path, "w") as f:
         f.write("#!/usr/bin/env bash\n")
         f.write("set -eo pipefail\n")
-        f.write(f"cd {ligands_dir}\n")
+        f.write(f"cd {_shell_quote(ligands_dir)}\n")
 
         if preparation_cmd and prepared_output_relative:
             _write_ligand_prep_bash(f, preparation_cmd, prepared_output_relative)
@@ -563,22 +574,24 @@ def _create_smina_per_molecule_script(
         if protein_prep_cmd:
             _write_protein_prep_bash(f, protein_prep_cmd, ligands_dir, "smina")
 
-        f.write(f"cd {ligands_dir}\n")
-        f.write(f'mkdir -p "{logs_dir}"\n\n')
+        f.write(f"cd {_shell_quote(ligands_dir)}\n")
+        f.write(f"LOGS_DIR={_shell_quote(logs_dir)}\n")
+        f.write(f"CONFIGS_DIR={_shell_quote(configs_dir)}\n")
+        f.write('mkdir -p "${LOGS_DIR}"\n\n')
 
         f.write("# Per-molecule docking with error handling\n")
         f.write("FAILED=()\n")
         f.write("SUCCESS=0\n")
         f.write("TOTAL=0\n\n")
 
-        f.write(f'for config in "{configs_dir}"/smina_*.ini; do\n')
+        f.write('for config in "${CONFIGS_DIR}"/smina_*.ini; do\n')
         f.write('    [ -e "$config" ] || continue\n')
         f.write("    mol_id=$(basename \"$config\" .ini | sed 's/smina_//')\n")
         f.write("    TOTAL=$((TOTAL + 1))\n")
         f.write('    echo "[$TOTAL] Processing $mol_id..."\n\n')
 
         f.write(
-            f'    if {smina_bin} --config "$config" 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
+            f'    if {_shell_quote(smina_bin)} --config "$config" 2>> "${{LOGS_DIR}}/${{mol_id}}.log"; then\n'
         )
         f.write('        echo "  $mol_id: SUCCESS"\n')
         f.write("        SUCCESS=$((SUCCESS + 1))\n")
@@ -608,7 +621,7 @@ def _create_smina_per_molecule_script(
         f.write('    echo "Failed molecules:"\n')
         f.write('    printf "  %s\\n" "${FAILED[@]}"\n')
         f.write(
-            f'    printf "%s\\n" "${{FAILED[@]}}" > "{ligands_dir}/smina/failed_molecules.txt"\n'
+            f'    printf "%s\\n" "${{FAILED[@]}}" > {_shell_quote(ligands_dir / "smina" / "failed_molecules.txt")}\n'
         )
         f.write("fi\n\n")
 
@@ -663,7 +676,7 @@ def _create_gnina_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {ligands_dir}\n")
+        f.write(f"cd {_shell_quote(ligands_dir)}\n")
         try:
             config_rel = config_file.relative_to(ligands_dir)
         except ValueError:
@@ -724,19 +737,23 @@ def _create_gnina_per_molecule_script(
         if receptor:
             _write_receptor_check_bash(f, receptor)
 
-        f.write(f"cd {ligands_dir}\n")
-        f.write(f'mkdir -p "{logs_dir}"\n\n')
+        f.write(f"cd {_shell_quote(ligands_dir)}\n")
+        f.write(f"LOGS_DIR={_shell_quote(logs_dir)}\n")
+        f.write(f"CONFIGS_DIR={_shell_quote(configs_dir)}\n")
+        f.write(
+            f"STATUS_DIR={_shell_quote(ligands_dir / '_workdir' / 'gnina' / 'status')}\n"
+        )
+        f.write('mkdir -p "${LOGS_DIR}"\n\n')
 
         f.write("# Per-molecule docking with bounded parallelism\n")
         f.write(f"MAX_JOBS={max(1, int(parallel_jobs))}\n")
         f.write('echo "Running GNINA per-molecule with MAX_JOBS=${MAX_JOBS}"\n')
-        f.write(f'STATUS_DIR="{ligands_dir}/_workdir/gnina/status"\n')
         f.write('rm -rf "${STATUS_DIR}"\n')
         f.write('mkdir -p "${STATUS_DIR}"\n\n')
 
         per_mol_cmd = gnina_command_template.replace("__GNINA_CONFIG__", '"${config}"')
         f.write("TOTAL=0\n")
-        f.write(f'for config in "{configs_dir}"/gnina_*.ini; do\n')
+        f.write('for config in "${CONFIGS_DIR}"/gnina_*.ini; do\n')
         f.write('  [ -e "${config}" ] || continue\n')
         f.write('  while [ "$(jobs -rp | wc -l)" -ge "${MAX_JOBS}" ]; do\n')
         f.write("    sleep 0.2\n")
@@ -745,7 +762,7 @@ def _create_gnina_per_molecule_script(
         f.write("  (\n")
         f.write('    mol_id=$(basename "${config}" .ini | sed "s/gnina_//")\n')
         f.write('    echo "[${TOTAL}] Processing ${mol_id}..."\n')
-        f.write(f'    if {per_mol_cmd} 2>> "{logs_dir}/${{mol_id}}.log"; then\n')
+        f.write(f'    if {per_mol_cmd} 2>> "${{LOGS_DIR}}/${{mol_id}}.log"; then\n')
         f.write('      echo "${mol_id}" >> "${STATUS_DIR}/success.txt"\n')
         f.write("    else\n")
         f.write("      exit_code=$?\n")
@@ -783,7 +800,7 @@ def _create_gnina_per_molecule_script(
 
         f.write('if [ "${FAILED}" -gt 0 ] && [ -f "${STATUS_DIR}/failed.txt" ]; then\n')
         f.write(
-            f'  cp "${{STATUS_DIR}}/failed.txt" "{ligands_dir}/gnina/failed_molecules.txt"\n'
+            f'  cp "${{STATUS_DIR}}/failed.txt" {_shell_quote(ligands_dir / "gnina" / "failed_molecules.txt")}\n'
         )
         f.write('  echo "Failed molecules were saved to failed_molecules.txt"\n')
         f.write("fi\n\n")
@@ -819,7 +836,7 @@ def _resolve_gnina_activate(cfg, env_path):
         return gnina_activate
 
     conda_sh = cfg.get("conda_sh") or _detect_conda_sh()
-    return f"source {conda_sh} && conda activate {env_path}"
+    return f"source {_shell_quote(conda_sh)} && conda activate {_shell_quote(env_path)}"
 
 
 def _resolve_env_library_paths(env_path):
@@ -980,6 +997,7 @@ def _setup_smina(
     protein_preparation_tool,
     base_folder=None,
     ligand_preparation_tool=None,
+    config_dir: Path | None = None,
 ):
     """Setup SMINA docking configuration and script with per-molecule processing."""
     try:
@@ -993,8 +1011,10 @@ def _setup_smina(
             return None
 
         smina_config = cfg.get("smina_config", {})
-        smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin", TOOL_SMINA)
-        smina_bin = _resolve_docking_binary(smina_bin_cfg, TOOL_SMINA)
+        smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin")
+        smina_bin = _resolve_docking_binary(
+            smina_bin_cfg, TOOL_SMINA, config_dir=config_dir
+        )
 
         ligands_path, prep_cmd = _prepare_ligands_for_docking(
             ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name=TOOL_SMINA
@@ -1164,6 +1184,7 @@ def _setup_gnina(
     ligands_csv,
     ligand_preparation_tool,
     protein_preparation_tool,
+    config_dir: Path | None = None,
 ):
     """Setup GNINA docking configuration and script with per-molecule processing."""
     try:
@@ -1186,8 +1207,10 @@ def _setup_gnina(
         output_sdf = gnina_dir / "gnina_out.sdf"
 
         gnina_config = cfg.get("gnina_config", {})
-        gnina_bin_cfg = gnina_config.get("bin") or cfg.get("gnina_bin", TOOL_GNINA)
-        gnina_bin = _resolve_docking_binary(gnina_bin_cfg, TOOL_GNINA)
+        gnina_bin_cfg = gnina_config.get("bin") or cfg.get("gnina_bin")
+        gnina_bin = _resolve_docking_binary(
+            gnina_bin_cfg, TOOL_GNINA, config_dir=config_dir
+        )
         gnina_command_template = _build_gnina_command_template(
             cfg, gnina_bin, ligands_dir
         )
@@ -1233,7 +1256,13 @@ def _setup_gnina(
 
 
 def _setup_docking_tools(
-    cfg, tools_list, base_folder, ligands_dir, ligands_csv, ligand_preparation_tool
+    cfg,
+    tools_list,
+    base_folder,
+    ligands_dir,
+    ligands_csv,
+    ligand_preparation_tool,
+    config_dir: Path | None = None,
 ):
     """Configure docking tools and return (scripts_prepared, job_ids, tools_list).
 
@@ -1250,6 +1279,7 @@ def _setup_docking_tools(
             None,
             base_folder,
             ligand_preparation_tool=ligand_preparation_tool,
+            config_dir=config_dir,
         )
         if script:
             scripts_prepared.append(str(script))
@@ -1264,6 +1294,7 @@ def _setup_docking_tools(
                 ligands_csv,
                 ligand_preparation_tool,
                 None,
+                config_dir=config_dir,
             )
             if script:
                 scripts_prepared.append(str(script))

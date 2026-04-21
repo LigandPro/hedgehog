@@ -44,12 +44,53 @@ def _is_real_binary(path: str) -> bool:
         return False
 
 
-def _resolve_docking_binary(config_path: str, tool_name: str) -> str:
+def _is_path_like(path_value: str) -> bool:
+    """Return True when value should be treated as a filesystem path."""
+    return (
+        os.path.isabs(path_value)
+        or path_value.startswith(".")
+        or path_value.startswith("~")
+        or "/" in path_value
+        or "\\" in path_value
+    )
+
+
+def _resolve_configured_binary_path(
+    binary_value: str, tool_name: str, config_dir: Path | None = None
+) -> str:
+    """Resolve and validate configured binary path."""
+    candidate = Path(binary_value).expanduser()
+    if not candidate.is_absolute() and config_dir is not None:
+        candidate = config_dir / candidate
+    candidate = candidate.resolve()
+
+    if not candidate.exists():
+        raise FileNotFoundError(
+            f"Configured {tool_name} binary does not exist: {candidate}"
+        )
+    if not candidate.is_file():
+        raise FileNotFoundError(
+            f"Configured {tool_name} binary is not a file: {candidate}"
+        )
+    if not os.access(candidate, os.X_OK):
+        raise PermissionError(
+            f"Configured {tool_name} binary is not executable: {candidate}"
+        )
+    return str(candidate)
+
+
+def _resolve_docking_binary(
+    config_path: str | None,
+    tool_name: str,
+    *,
+    config_dir: str | Path | None = None,
+) -> str:
     """Resolve a docking binary path from config or PATH.
 
     Args:
-        config_path: Path from config (absolute path or bare tool name).
+        config_path: Optional value from config (path or command name).
         tool_name: Tool name for PATH lookup (e.g. 'smina', 'gnina').
+        config_dir: Directory of docking config file (for relative paths).
 
     Returns:
         Resolved absolute path to the binary.
@@ -57,8 +98,25 @@ def _resolve_docking_binary(config_path: str, tool_name: str) -> str:
     Raises:
         FileNotFoundError: If the binary cannot be found.
     """
-    if os.path.isabs(config_path) and os.path.isfile(config_path):
-        return config_path
+    resolved_config_dir: Path | None = None
+    if config_dir is not None:
+        resolved_config_dir = Path(config_dir).expanduser().resolve()
+
+    configured_value = str(config_path).strip() if config_path is not None else ""
+    configured_override = bool(configured_value and configured_value != tool_name)
+
+    if configured_override:
+        if _is_path_like(configured_value):
+            return _resolve_configured_binary_path(
+                configured_value, tool_name, resolved_config_dir
+            )
+
+        resolved = shutil.which(configured_value)
+        if resolved:
+            return resolved
+        raise FileNotFoundError(
+            f"Configured {tool_name} binary '{configured_value}' was not found on PATH."
+        )
 
     found = shutil.which(tool_name)
     if found and _is_real_binary(found):

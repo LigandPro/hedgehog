@@ -22,16 +22,19 @@ HEDGEHOG is a comprehensive benchmark pipeline for evaluating generative models 
 ## Quick Example
 
 ```bash
-# Clone the repository
 git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
-
-# Install the package
 uv sync
 
-# Install AiZynthFinder (required for synthesis stage)
-uv run hedgehog setup aizynthfinder
+# First safe run: descriptors + structural filters only
+uv run hedgehog --stage descriptors --stage struct_filters --force-new
+```
 
-# Run the full pipeline on test data
-uv run hedgehog
+This smoke run avoids docking and retrosynthesis. For the full pipeline, install
+AiZynthFinder and make sure the selected docking tools, receptor, and reference
+ligand paths are valid:
+
+```bash
+uv run hedgehog setup aizynthfinder
+uv run hedgehog --auto-install
 ```

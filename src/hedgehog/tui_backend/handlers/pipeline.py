@@ -1,6 +1,7 @@
 """Pipeline execution handler for TUI backend."""
 
 import copy
+import logging
 import os
 import tempfile
 import threading
@@ -17,6 +18,8 @@ from .validation import ValidationHandler
 
 if TYPE_CHECKING:
     from ..server import JsonRpcServer
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineJob:
@@ -245,7 +248,8 @@ class PipelineJob:
     def _run(self):
         """Execute the pipeline."""
         try:
-            from hedgehog.configs.logger import load_config, logger
+            from hedgehog.configs.logger import load_config
+            from hedgehog.configs.logger import logger as hedgehog_logger
             from hedgehog.pipeline import calculate_metrics
             from hedgehog.utils.data_prep import prepare_input_data
             from hedgehog.utils.mol_index import assign_mol_idx
@@ -273,16 +277,24 @@ class PipelineJob:
             self._disable_unrequested_stages(config_dict)
 
             self._log("info", "Preparing input data...")
-            data = prepare_input_data(config_dict, logger)
+            data = prepare_input_data(config_dict, hedgehog_logger)
 
             if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
                 folder_to_save = Path(config_dict.get("folder_to_save", "results"))
-                data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
+                data = assign_mol_idx(
+                    data,
+                    run_base=folder_to_save,
+                    logger=hedgehog_logger,
+                )
 
             self._log("info", f"Loaded {len(data)} molecules")
             self._log("info", "Starting pipeline execution...")
 
-            success = calculate_metrics(data, config_dict, self._progress_callback)
+            def progress_callback(event: dict) -> None:
+                self._progress_callback(event)
+
+            progress_callback.is_cancelled = lambda: self.cancelled  # type: ignore[attr-defined]
+            success = calculate_metrics(data, config_dict, progress_callback)
 
             if self.current_stage and not self.cancelled:
                 self._notify("stage_complete", {"stage": self.current_stage})
@@ -300,6 +312,7 @@ class PipelineJob:
         except InterruptedError:
             self._log("warn", "Pipeline was cancelled")
         except Exception as e:
+            logger.exception("Pipeline job %s failed", self.job_id)
             self._notify("error", {"message": str(e)})
             self._log("error", f"Pipeline error: {e}")
         finally:

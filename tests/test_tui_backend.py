@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -236,6 +237,65 @@ class TestPipelineHandlerThreadSafety:
 
         assert job_id in handler.jobs
         assert handler.jobs[job_id].config_overrides == overrides
+
+
+class TestPipelineJobCancellationBridge:
+    """Tests for cancellation signal propagation from TUI job to pipeline."""
+
+    def test_run_exposes_cancel_probe_to_pipeline_callback(self, monkeypatch, tmp_path):
+        server = _mock_server()
+        main_override = {
+            "generated_mols_path": str(tmp_path / "input.csv"),
+            "folder_to_save": str(tmp_path / "results"),
+        }
+        job = PipelineJob(
+            "test-id",
+            ["descriptors"],
+            server,
+            config_overrides={"main": main_override},
+        )
+        monkeypatch.setattr(
+            "hedgehog.tui_backend.handlers.pipeline.ConfigHandler.get_runtime_config_overrides",
+            lambda _self: {},
+        )
+
+        monkeypatch.setattr(
+            "hedgehog.utils.data_prep.prepare_input_data",
+            lambda *_args, **_kwargs: pd.DataFrame(
+                {"smiles": ["CCO"], "model_name": ["m1"], "mol_idx": [1]}
+            ),
+        )
+        monkeypatch.setattr(
+            "hedgehog.utils.mol_index.assign_mol_idx",
+            lambda data, **_kwargs: data,
+        )
+
+        observed: dict[str, bool] = {}
+
+        def _fake_calculate_metrics(_data, _config, progress_callback):
+            probe = getattr(progress_callback, "is_cancelled", None)
+            observed["has_probe"] = callable(probe)
+            observed["before_cancel"] = bool(probe())
+            job.cancel()
+            observed["after_cancel"] = bool(probe())
+            raise InterruptedError("Pipeline cancelled")
+
+        monkeypatch.setattr(
+            "hedgehog.pipeline.calculate_metrics",
+            _fake_calculate_metrics,
+        )
+
+        warnings: list[str] = []
+        job._log = lambda level, message: warnings.append(f"{level}:{message}")
+
+        job._run()
+
+        assert observed == {
+            "has_probe": True,
+            "before_cancel": False,
+            "after_cancel": True,
+        }
+        assert "warn:Pipeline was cancelled" in warnings
 
 
 # =====================================================================
@@ -680,6 +740,24 @@ class TestErrorCodeMapping:
 
         assert len(responses) == 1
         assert responses[0]["error"]["code"] == -32000
+
+    def test_generic_exception_logs_traceback(self, caplog):
+        server = JsonRpcServer()
+        server._send_message = lambda _msg: None
+        server.handlers["test_gen"] = lambda: (_ for _ in ()).throw(
+            RuntimeError("oops")
+        )
+
+        with caplog.at_level("ERROR"):
+            server.handle_request({"id": 6, "method": "test_gen", "params": {}})
+
+        matching = [
+            record
+            for record in caplog.records
+            if "Unhandled JSON-RPC error in method 'test_gen'" in record.getMessage()
+        ]
+        assert matching
+        assert matching[-1].exc_info is not None
 
 
 # =====================================================================
