@@ -1,4 +1,5 @@
 import csv
+import inspect
 import multiprocessing
 import shutil
 import time
@@ -9,7 +10,7 @@ import pandas as pd
 import yaml
 
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.descriptors.main import main as descriptors_main
+from hedgehog.descriptors.stage import run as descriptors_main
 from hedgehog.docking.main import main as docking_main
 from hedgehog.docking_filters.main import docking_filters_main
 from hedgehog.molprep.main import main as mol_prep_main
@@ -48,6 +49,7 @@ FILE_MASTER_CONFIG = "master_config_resolved.yml"
 FILE_GNINA_OUTPUT = "gnina_out.sdf"
 FILE_SMINA_OUTPUT = "smina_out.sdf"
 FILE_MATCHA_OUTPUT = "matcha_out.sdf"
+FILE_DOCKING_COMPLETED_EMPTY = "completed_empty.marker"
 
 DOCKING_SCORE_COLUMNS = [
     "gnina_affinity",
@@ -263,6 +265,15 @@ def _build_stage_complete_message(
     )
 
 
+def _accepts_reporter(runner_func) -> bool:
+    """Return whether a stage runner accepts the reporter keyword."""
+    signature = inspect.signature(runner_func)
+    return "reporter" in signature.parameters or any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    )
+
+
 def _file_exists_and_not_empty(file_path: Path) -> bool:
     """Check if a file exists and is not empty."""
     try:
@@ -310,19 +321,47 @@ def _extract_float_prop(mol, prop_names: list[str]) -> float | None:
     return None
 
 
-def _find_docking_sdf(base_path: Path, tool_name: str) -> Path | None:
+def _resolve_gnina_output_sdf(base_path: Path, docking_cfg: dict | None = None) -> Path:
+    """Resolve GNINA output SDF path from docking config."""
+    cfg = docking_cfg or {}
+    gnina_cfg = cfg.get("gnina_config", {}) or {}
+    cfg_out_dir = gnina_cfg.get("output_dir") or cfg.get("gnina_output_dir")
+    if cfg_out_dir:
+        out_dir = Path(str(cfg_out_dir))
+        if not out_dir.is_absolute():
+            out_dir = base_path / out_dir
+        return out_dir / FILE_GNINA_OUTPUT
+    return (
+        base_path / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_GNINA] / FILE_GNINA_OUTPUT
+    )
+
+
+def _find_docking_sdf(
+    base_path: Path, tool_name: str, docking_cfg: dict | None = None
+) -> Path | None:
     """Find docking output SDF for a docking tool."""
     docking_dir = base_path / DIR_DOCKING
-    output_names = {
-        DOCKING_TOOL_GNINA: FILE_GNINA_OUTPUT,
-        DOCKING_TOOL_SMINA: FILE_SMINA_OUTPUT,
-        DOCKING_TOOL_MATCHA: FILE_MATCHA_OUTPUT,
-    }
-    output_name = output_names.get(tool_name, f"{tool_name}_out.sdf")
-    candidates = [
-        docking_dir / tool_name / output_name,
-        docking_dir / f"{tool_name}_out.sdf",
-    ]
+    if tool_name == DOCKING_TOOL_GNINA:
+        candidates = [
+            _resolve_gnina_output_sdf(base_path, docking_cfg),
+            docking_dir / f"{tool_name}_out.sdf",
+        ]
+    elif tool_name == DOCKING_TOOL_SMINA:
+        candidates = [
+            docking_dir / tool_name / FILE_SMINA_OUTPUT,
+            docking_dir / f"{tool_name}_out.sdf",
+        ]
+    elif tool_name == DOCKING_TOOL_MATCHA:
+        candidates = [
+            docking_dir / tool_name / FILE_MATCHA_OUTPUT,
+            docking_dir / f"{tool_name}_out.sdf",
+        ]
+    else:
+        candidates = [
+            docking_dir / tool_name / f"{tool_name}_out.sdf",
+            docking_dir / f"{tool_name}_out.sdf",
+        ]
+
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -383,12 +422,14 @@ def _extract_best_tool_scores(sdf_path: Path, tool_name: str) -> dict[str, dict]
     return best_by_mol_idx
 
 
-def _collect_docking_scores(base_path: Path) -> pd.DataFrame:
+def _collect_docking_scores(
+    base_path: Path, docking_cfg: dict | None = None
+) -> pd.DataFrame:
     """Collect best docking scores per molecule across configured tools."""
     merged: dict[str, dict] = {}
 
     for tool in (DOCKING_TOOL_GNINA, DOCKING_TOOL_SMINA, DOCKING_TOOL_MATCHA):
-        sdf_path = _find_docking_sdf(base_path, tool)
+        sdf_path = _find_docking_sdf(base_path, tool, docking_cfg=docking_cfg)
         if not sdf_path:
             continue
 
@@ -530,6 +571,8 @@ class PipelineStageRunner:
 
             mol_prep_main(data, self.config, subfolder=subfolder, reporter=reporter)
             return True
+        except InterruptedError:
+            raise
         except Exception as exc:
             logger.error("Error running Mol Prep: %s", exc)
             return False
@@ -548,6 +591,8 @@ class PipelineStageRunner:
                 return False
             descriptors_main(data, self.config, subfolder=subfolder, reporter=reporter)
             return True
+        except InterruptedError:
+            raise
         except Exception as e:
             logger.error("Error running descriptors: %s", e)
             return False
@@ -564,6 +609,8 @@ class PipelineStageRunner:
 
             structural_filters_main(self.config, stage_dir, reporter=reporter)
             return True
+        except InterruptedError:
+            raise
         except Exception as e:
             logger.error("Error running structural filters: %s", e)
             return False
@@ -588,6 +635,8 @@ class PipelineStageRunner:
                 logger.error("Synthesis finished but no output file detected")
                 return False
             return True
+        except InterruptedError:
+            raise
         except Exception as e:
             logger.error("Error running synthesis: %s", e)
             return False
@@ -669,12 +718,14 @@ class PipelineStageRunner:
                     return True
                 logger.debug("GNINA results not found at %s", gnina_sdf)
             elif tool == DOCKING_TOOL_SMINA:
-                smina_dir = (
-                    base_folder / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_SMINA]
+                smina_sdf = (
+                    base_folder
+                    / DOCKING_RESULTS_DIR_TEMPLATE[DOCKING_TOOL_SMINA]
+                    / FILE_SMINA_OUTPUT
                 )
-                if _directory_has_files(smina_dir):
+                if _file_exists_and_not_empty(smina_sdf):
                     return True
-                logger.debug("SMINA results not found in %s", smina_dir)
+                logger.debug("SMINA results not found at %s", smina_sdf)
             elif tool == DOCKING_TOOL_MATCHA:
                 matcha_sdf = (
                     base_folder
@@ -707,11 +758,24 @@ class PipelineStageRunner:
                 return False
 
             if not self.docking_results_present():
+                completed_empty = (
+                    self.data_checker.base_path
+                    / DIR_DOCKING
+                    / FILE_DOCKING_COMPLETED_EMPTY
+                )
+                if _file_exists_and_not_empty(completed_empty):
+                    logger.info(
+                        "Docking completed with no valid ligands (%s)",
+                        completed_empty,
+                    )
+                    return True
                 logger.error(
                     "Docking finished but no results detected in output directories"
                 )
                 return False
             return True
+        except InterruptedError:
+            raise
         except Exception as e:
             logger.error("Error running docking: %s", e)
             return False
@@ -758,6 +822,8 @@ class PipelineStageRunner:
             # Run docking filters
             result = docking_filters_main(self.config, reporter=reporter)
             return result is not None and len(result) > 0
+        except InterruptedError:
+            raise
         except Exception as e:
             logger.error("Error running docking filters: %s", e)
             return False
@@ -1008,7 +1074,20 @@ class PipelineReporter:
 
         output_df = final_data.copy()
         if "mol_idx" in output_df.columns:
-            docking_scores = _collect_docking_scores(self.base_path)
+            docking_cfg = None
+            docking_cfg_path = self.config.get(CONFIG_DOCKING)
+            if docking_cfg_path:
+                try:
+                    docking_cfg = load_config(docking_cfg_path)
+                except Exception as exc:
+                    logger.warning(
+                        "Could not load docking config for score collection (%s): %s",
+                        docking_cfg_path,
+                        exc,
+                    )
+            docking_scores = _collect_docking_scores(
+                self.base_path, docking_cfg=docking_cfg
+            )
             if not docking_scores.empty:
                 output_df["_join_mol_idx"] = output_df["mol_idx"].astype(str)
                 docking_scores = docking_scores.rename(
@@ -1217,6 +1296,29 @@ class MolecularAnalysisPipeline:
                 except Exception:
                     pass
 
+    def _cancel_requested(self) -> bool:
+        """Return True when the progress callback exposes a cancellation signal."""
+        if not self.progress_callback:
+            return False
+
+        cancel_probe = getattr(self.progress_callback, "is_cancelled", None)
+        if cancel_probe is None:
+            return False
+
+        if callable(cancel_probe):
+            try:
+                return bool(cancel_probe())
+            except Exception:
+                return False
+
+        return bool(cancel_probe)
+
+    def _raise_if_cancel_requested(self, boundary: str) -> None:
+        """Stop pipeline execution when cancellation is requested."""
+        if self._cancel_requested():
+            logger.info("Pipeline cancellation requested at %s", boundary)
+            raise InterruptedError("Pipeline cancelled")
+
     def _emit_progress_event(self, event: dict) -> None:
         """Emit a structured progress event to the configured callback.
 
@@ -1349,30 +1451,38 @@ class MolecularAnalysisPipeline:
         self.current_data = data
         success_count = 0
         total_enabled = sum(1 for s in self.stages if s.enabled)
+        last_completed_stage: str | None = None
 
-        # Execute each stage
-        stage_results = [
-            self._run_mol_prep(data),
-            self._run_descriptors(data),
-            self._run_post_descriptors_filters(),
-            self._run_synthesis(),
-            self._run_docking(),
-            self._run_docking_filters(),
-            self._run_final_descriptors(),
+        steps = [
+            (STAGE_MOL_PREP, lambda: self._run_mol_prep(data)),
+            (STAGE_DESCRIPTORS, lambda: self._run_descriptors(data)),
+            (STAGE_STRUCT_FILTERS, self._run_post_descriptors_filters),
+            (STAGE_SYNTHESIS, self._run_synthesis),
+            (STAGE_DOCKING, self._run_docking),
+            (STAGE_DOCKING_FILTERS, self._run_docking_filters),
+            (STAGE_FINAL_DESCRIPTORS, self._run_final_descriptors),
         ]
 
-        # Check for early exit conditions
-        stage_names = [defn[0] for defn in self._STAGE_DEFINITIONS]
-        for name, (completed, early_exit) in zip(stage_names, stage_results):
+        for name, run_step in steps:
+            self._raise_if_cancel_requested(f"stage boundary before '{name}'")
+            completed, early_exit = run_step()
+            self._raise_if_cancel_requested(f"stage boundary after '{name}'")
             if completed:
                 self._stage_by_name[name].completed = True
                 success_count += 1
+                last_completed_stage = name
             if early_exit:
-                return self._finalize_pipeline(data, success_count, total_enabled)
+                return self._finalize_pipeline(
+                    data,
+                    success_count,
+                    total_enabled,
+                    final_stage_name=last_completed_stage,
+                )
 
         logger.info(
             "Pipeline completed: %d/%d stages successful", success_count, total_enabled
         )
+        self._raise_if_cancel_requested("pipeline finalization")
         return self._finalize_pipeline(data, success_count, total_enabled)
 
     def _run_stage(
@@ -1409,9 +1519,9 @@ class MolecularAnalysisPipeline:
         logger.info(start_message)
         start_time = time.perf_counter()
         cpu_start = time.process_time()
-        try:
+        if _accepts_reporter(runner_func):
             completed = runner_func(*args, reporter=reporter)
-        except TypeError:
+        else:
             completed = runner_func(*args)
         elapsed = time.perf_counter() - start_time
         cpu_elapsed = max(0.0, time.process_time() - cpu_start)
@@ -1598,14 +1708,22 @@ class MolecularAnalysisPipeline:
 
     # -- finalization (delegates to reporter) ------------------------------
 
-    def _finalize_pipeline(self, data, success_count: int, total_enabled: int) -> bool:
+    def _finalize_pipeline(
+        self,
+        data,
+        success_count: int,
+        total_enabled: int,
+        final_stage_name: str | None = None,
+    ) -> bool:
         """Finalize pipeline execution with summary and output."""
         self.reporter.log_summary()
 
         initial_count = len(data)
-        final_data = self.get_latest_data(
-            skip_descriptors=True, fallback_on_empty=False
-        )
+        final_data = self._load_stage_output(final_stage_name)
+        if final_data is None:
+            final_data = self.get_latest_data(
+                skip_descriptors=True, fallback_on_empty=False
+            )
         final_count = len(final_data) if final_data is not None else 0
 
         self.reporter.log_molecule_summary(initial_count, final_count)
@@ -1643,6 +1761,25 @@ class MolecularAnalysisPipeline:
             )
 
         return not any(self.reporter.stage_is_failed(s) for s in self.stages)
+
+    def _load_stage_output(self, stage_name: str | None):
+        """Load the explicit output for a completed stage, if one exists."""
+        if not stage_name:
+            return None
+
+        stage = self._stage_by_name.get(stage_name)
+        if stage is None:
+            return None
+
+        path = self.data_checker._get_stage_output_path(stage.directory)
+        if path is None or not path.exists():
+            return None
+
+        try:
+            return pd.read_csv(path)
+        except Exception as e:
+            logger.warning("Could not load %s output (%s): %s", stage.name, path, e)
+            return None
 
     # -- backwards compatibility delegates --------------------------------
     # Tests call these methods directly on the pipeline instance.
@@ -2152,8 +2289,11 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
         incomplete_marker.unlink(missing_ok=True)
 
         return success
-    except Exception as e:
-        logger.error("Pipeline execution failed: %s", e)
+    except InterruptedError:
+        logger.info("Pipeline execution cancelled")
+        raise
+    except Exception:
+        logger.exception("Pipeline execution failed")
         success = False
     finally:
         _cleanup_lingering_processes()

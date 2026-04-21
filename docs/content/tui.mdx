@@ -14,7 +14,7 @@ uv run hedgehog tui
 
 Important runtime requirements:
 
-- Node.js must be installed.
+- Node.js >= 18 and npm must be installed.
 - The command must be run from a source checkout that contains the repository `tui/` directory.
 - On first launch, if `tui/dist/` does not exist yet, HEDGEHOG automatically runs `npm install` and `npm run build` inside `tui/`.
 
@@ -100,16 +100,22 @@ Before starting a wizard-driven run, the TUI performs a preflight pass that:
 
 If preflight reports blocking errors, the run does not start until they are fixed.
 
+For molecule inputs, the same data contract as the CLI applies: prefer CSV/TSV
+with a `smiles` header, optional `model_name`/`name`, and optional `mol_idx`.
+
 ## Pipeline Control Behavior
 
 The pipeline runner supports background-friendly navigation:
 
-- `c` cancels the running job after confirmation
+- `c` requests cancellation of the running job after confirmation
 - `l` shows or hides the live log panel
 - `Esc` or `←` goes back without stopping the running pipeline
 - `p` from the welcome screen returns to the currently running pipeline
 
 This means you can leave the runner view, inspect history or configuration, and then jump back to the in-flight job.
+
+Cancellation is cooperative. HEDGEHOG stops at the next safe checkpoint; external
+docking or synthesis subprocesses may not terminate immediately.
 
 ## Key Shortcuts
 

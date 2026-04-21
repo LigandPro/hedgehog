@@ -85,7 +85,10 @@ def drop_false_rows(df, borders):
     filter_charged_mol = borders.get("filter_charged_mol", False)
     for col in df.columns:
         if col.endswith("_pass") or col == "pass":
-            if "charged_mol" in col and not filter_charged_mol:
+            if (
+                col in {"charged_mol_pass", "is_neutral_pass"}
+                and not filter_charged_mol
+            ):
                 continue
             passed_cols.append(col)
     mask = df[passed_cols].all(axis=1)
@@ -342,6 +345,21 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
         )
     else:
         logger.warning("No molecules pass Descriptors Filters")
+        descriptor_cols = [
+            col
+            for col in filtered_data_df.columns
+            if col not in id_cols and not col.endswith("_pass")
+        ]
+        pd.DataFrame(
+            columns=[
+                col
+                for col in id_cols + sorted(descriptor_cols)
+                if col in filtered_data_df.columns or col in id_cols
+            ]
+        ).to_csv(folder_to_save / "descriptors_passed.csv", index=False)
+        pd.DataFrame(columns=id_cols).to_csv(
+            folder_to_save / "filtered_molecules.csv", index=False
+        )
 
     # Save failed molecules
     all_computed_path = folder_to_save / "descriptors_all.csv"
@@ -352,6 +370,7 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
         if sibling_metrics.exists():
             all_computed_path = sibling_metrics
     flags_path = folder_to_save / "pass_flags.csv"
+    all_computed = None
 
     if all_computed_path.exists():
         all_computed = pd.read_csv(all_computed_path)
@@ -372,9 +391,8 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
 
     # Re-order existing CSV files
     if (folder_to_save / "filtered_molecules.csv").exists():
-        if all_computed_path.exists():
-            per = pd.read_csv(all_computed_path)
-            order_identity_columns(per).to_csv(all_computed_path, index=False)
+        if all_computed is not None:
+            order_identity_columns(all_computed).to_csv(all_computed_path, index=False)
 
         if flags_path.exists():
             flags = pd.read_csv(flags_path)

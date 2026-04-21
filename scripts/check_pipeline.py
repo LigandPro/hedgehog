@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pty
+import re
 import select
 import signal
 import subprocess
@@ -13,6 +15,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+import tomllib
 
 
 def run_cmd(cmd: list[str], cwd: Path) -> None:
@@ -26,15 +30,63 @@ def run_cli_smoke(repo_root: Path) -> None:
     """Run required CLI smoke checks."""
     run_cmd(["uv", "run", "hedgehog", "--help"], repo_root)
     run_cmd(["uv", "run", "hedge", "--help"], repo_root)
+    run_cmd(["uv", "run", "hedgehog", "run", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "setup", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "setup", "aizynthfinder", "--help"], repo_root)
     run_cmd(["uv", "run", "hedgehog", "version"], repo_root)
 
 
+def run_regression_smoke(repo_root: Path) -> None:
+    """Run deterministic regression checks for critical pipeline edge cases."""
+    regression_nodes = [
+        "tests/test_pipeline.py::TestStageLoggingCanonicalFormat::test_run_pipeline_stops_immediately_on_early_exit",
+        "tests/test_pipeline.py::TestStageLoggingCanonicalFormat::test_early_exit_final_output_ignores_stale_downstream_files",
+        "tests/test_pipeline.py::TestDataChecker::test_stage_has_molecules_header_only_csv",
+        "tests/test_data_prep.py::test_prepare_input_data_accepts_headerless_smi",
+        "tests/test_data_prep.py::test_prepare_input_data_samples_even_when_not_saving_sampled_mols",
+        "tests/test_descriptors_entrypoint.py::test_descriptors_main_delegates_to_stage_run",
+    ]
+    run_cmd(["uv", "run", "--with", "pytest", "pytest", *regression_nodes], repo_root)
+
+
+def run_docs_config_sync(repo_root: Path) -> None:
+    """Check docs for known stale config defaults."""
+    run_cmd(["uv", "run", "python", "scripts/check_docs_config_sync.py"], repo_root)
+
+
+def check_version_sync(repo_root: Path) -> None:
+    """Ensure Python package and TUI version constants stay in sync."""
+    pyproject_path = repo_root / "pyproject.toml"
+    pyproject_data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    package_version = pyproject_data["project"]["version"]
+
+    tui_package_json_path = repo_root / "tui" / "package.json"
+    tui_package_data = json.loads(tui_package_json_path.read_text(encoding="utf-8"))
+    tui_package_version = tui_package_data["version"]
+    if tui_package_version != package_version:
+        raise RuntimeError(
+            f"Version mismatch: pyproject={package_version}, tui/package.json={tui_package_version}"
+        )
+
+    tui_version_path = repo_root / "tui" / "src" / "constants" / "version.ts"
+    tui_text = tui_version_path.read_text(encoding="utf-8")
+    match = re.search(r"APP_VERSION\s*=\s*['\"]([^'\"]+)['\"]", tui_text)
+    if not match:
+        raise RuntimeError(f"Could not parse APP_VERSION from {tui_version_path}")
+
+    tui_version = match.group(1)
+    if tui_version != package_version:
+        raise RuntimeError(
+            f"Version mismatch: pyproject={package_version}, tui/constants={tui_version}"
+        )
+
+    print(f"[check] Version sync passed: {package_version}", flush=True)
+
+
 def build_tui(repo_root: Path) -> None:
     """Install and build TUI."""
     tui_dir = repo_root / "tui"
-    run_cmd(["npm", "ci"], tui_dir)
+    run_cmd(["npm", "ci", "--include=dev"], tui_dir)
     run_cmd(["npm", "run", "build"], tui_dir)
 
 
@@ -173,6 +225,15 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
 
     run_cli_smoke(repo_root)
+    run_docs_config_sync(repo_root)
+    check_version_sync(repo_root)
+    if args.mode in {"ci", "full"}:
+        run_regression_smoke(repo_root)
+    else:
+        print(
+            f"[check] Deterministic regression smoke skipped in '{args.mode}' mode.",
+            flush=True,
+        )
     build_tui(repo_root)
     run_tui_smoke(repo_root)
 

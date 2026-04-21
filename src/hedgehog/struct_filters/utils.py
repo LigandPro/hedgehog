@@ -207,6 +207,7 @@ from hedgehog._constants import CFG_STRUCT_FILTERS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
+from hedgehog.utils.paths import process_path as _shared_process_path
 
 dm = import_datamol_quietly()
 
@@ -291,17 +292,8 @@ def build_identity_map_from_descriptors(config):
 
 
 def process_path(folder_to_save, key_word=None):
-    """Ensure path ends with '/' and create directory if needed."""
-    # Accept both str and Path-like inputs.
-    folder_to_save = str(folder_to_save)
-    if not folder_to_save.endswith("/"):
-        folder_to_save += "/"
-
-    if key_word:
-        folder_to_save += f"{key_word}/"
-
-    Path(folder_to_save).mkdir(parents=True, exist_ok=True)
-    return folder_to_save
+    """Backward-compatible wrapper around shared process_path helper."""
+    return _shared_process_path(folder_to_save, key_word)
 
 
 def sdf_to_mols(sdf_file, subsample):

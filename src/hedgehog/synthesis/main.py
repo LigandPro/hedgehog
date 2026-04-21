@@ -198,6 +198,10 @@ def main(config: dict, reporter=None) -> None:
     retrosynth_df = parse_retrosynthesis_results(output_json)
     if len(retrosynth_df) == 0:
         logger.warning("No retrosynthesis results found in JSON file")
+        empty = score_filtered_df.iloc[0:0].copy()
+        _save_ordered_csv(empty, output_folder / "synthesis_extended.csv")
+        _save_ordered_csv(empty, filtered_output)
+        logger.info("Saved 0 molecules to %s", filtered_output)
         return
 
     merged_df = merge_retrosynthesis_results(score_filtered_df, retrosynth_df)

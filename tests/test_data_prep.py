@@ -16,6 +16,7 @@ from hedgehog.utils.data_prep import (
     _normalize_model_name_column,
     _normalize_smiles_column,
     _read_csv_with_fallback,
+    _read_smi,
     _remove_duplicates,
     prepare_input_data,
 )
@@ -276,7 +277,7 @@ class TestExtractModelNameFromPath:
     def test_multiple_dots(self):
         """Handle filename with multiple dots."""
         result = _extract_model_name_from_path("/path/to/my.model.csv")
-        assert result == "my"
+        assert result == "my.model"
 
 
 class TestReadCsvWithFallback:
@@ -304,6 +305,70 @@ class TestReadCsvWithFallback:
         # First row 'CCO' becomes column name
         assert "CCO" in result.columns
         assert len(result) == 2  # CC and CCC are data rows
+
+
+class TestReadSmi:
+    """Tests for SMI-like input parsing."""
+
+    def test_headerless_smi_without_names(self, tmp_path):
+        """Headerless SMI files should treat every non-empty line as a molecule."""
+        test_file = tmp_path / "mols.smi"
+        test_file.write_text("CCO\nCCN\n", encoding="utf-8")
+
+        result = _read_smi(str(test_file))
+
+        pd.testing.assert_frame_equal(
+            result,
+            pd.DataFrame({"smiles": ["CCO", "CCN"], "model_name": ["mols", "mols"]}),
+        )
+
+    def test_headerless_smi_with_names(self, tmp_path):
+        """Second whitespace token in SMI files should become model_name."""
+        test_file = tmp_path / "mols.smi"
+        test_file.write_text("CCO mol_1\nCCN mol_2\n", encoding="utf-8")
+
+        result = _read_smi(str(test_file))
+
+        pd.testing.assert_frame_equal(
+            result,
+            pd.DataFrame({"smiles": ["CCO", "CCN"], "model_name": ["mol_1", "mol_2"]}),
+        )
+
+
+def test_prepare_input_data_samples_even_when_not_saving_sampled_mols(tmp_path):
+    input_csv = tmp_path / "mols.csv"
+    input_csv.write_text("smiles\nCCO\nCCN\nCCC\n", encoding="utf-8")
+
+    config = {
+        "generated_mols_path": str(input_csv),
+        "folder_to_save": str(tmp_path / "results"),
+        "sample_size": 1,
+        "save_sampled_mols": False,
+    }
+
+    prepared = prepare_input_data(config, logging.getLogger("test"))
+
+    assert len(prepared) == 1
+
+
+def test_prepare_input_data_accepts_headerless_smi(tmp_path):
+    input_smi = tmp_path / "mols.smi"
+    input_smi.write_text("CCO\nCCN\n", encoding="utf-8")
+
+    config = {
+        "generated_mols_path": str(input_smi),
+        "folder_to_save": str(tmp_path / "results"),
+        "save_sampled_mols": False,
+    }
+
+    prepared = prepare_input_data(config, logging.getLogger("test"))
+
+    pd.testing.assert_frame_equal(
+        prepared,
+        pd.DataFrame({"smiles": ["CCO", "CCN"], "model_name": ["mols", "mols"]}).astype(
+            "string"
+        ),
+    )
 
 
 def test_prepare_input_data_rejects_empty_smiles_rows(tmp_path):

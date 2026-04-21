@@ -416,6 +416,58 @@ class TestRunDockingProteinPrepFallback:
         assert run_docking(run_config) is True
 
 
+class TestRunDockingNoValidLigands:
+    """Tests for completed-empty docking behavior when all ligands are invalid."""
+
+    def test_no_valid_ligands_skips_external_tool_setup(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        receptor = tmp_path / "receptor.pdb"
+        receptor.write_text("ATOM\n", encoding="utf-8")
+        input_csv = tmp_path / "input.csv"
+        pd.DataFrame(
+            {
+                COL_SMILES: [SMILES_ETHANOL],
+                COL_MODEL_NAME: ["m1"],
+                COL_MOL_IDX: ["m1-1"],
+            }
+        ).to_csv(input_csv, index=False)
+
+        docking_cfg = tmp_path / "config_docking.yml"
+        docking_cfg.write_text(
+            f"run: true\ntools: smina\nauto_run: true\nreceptor_pdb: {receptor}\n",
+            encoding="utf-8",
+        )
+
+        run_config = {
+            "config_docking": str(docking_cfg),
+            "folder_to_save": str(tmp_path),
+            "protein_preparation_tool": None,
+            "ligand_preparation_tool": None,
+        }
+
+        monkeypatch.setattr(
+            "hedgehog.docking.stage._find_latest_input_source",
+            lambda *_: input_csv,
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking.stage._prepare_ligands_dataframe",
+            lambda *_args, **_kwargs: {"total": 1, "written": 0, "skipped": 1},
+        )
+
+        def _unexpected(*_args, **_kwargs):
+            raise AssertionError(
+                "external docking setup should not run for empty input"
+            )
+
+        monkeypatch.setattr("hedgehog.docking.stage._setup_docking_tools", _unexpected)
+
+        assert run_docking(run_config) is True
+        marker = tmp_path / "stages" / "05_docking" / "completed_empty.marker"
+        assert marker.exists()
+        assert "completed_empty" in marker.read_text(encoding="utf-8")
+
+
 class TestPerMoleculeArchitecture:
     """Tests for per-molecule SDF splitting and aggregation."""
 

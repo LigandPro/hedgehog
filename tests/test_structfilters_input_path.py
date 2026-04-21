@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -58,3 +59,32 @@ def test_struct_filters_raises_when_descriptors_enabled_and_output_missing(tmp_p
             "stages/03_structural_filters_post",
             tmp_path,
         )
+
+
+def test_load_input_data_assigns_lp_mol_idx_when_missing(tmp_path):
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame({"smiles": ["CCO"], "model_name": ["m1"]}).to_csv(
+        input_csv, index=False
+    )
+
+    input_df, model_name = structfilters_main._load_input_data(
+        str(input_csv), run_base=tmp_path
+    )
+
+    assert model_name == "m1"
+    assert input_df["mol_idx"].astype(str).str.startswith("LP-").all()
+
+
+def test_load_input_data_keeps_existing_mol_idx_values(tmp_path):
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCC"],
+            "model_name": ["m1", "m1"],
+            "mol_idx": ["keep-1", "keep-2"],
+        }
+    ).to_csv(input_csv, index=False)
+
+    input_df, _ = structfilters_main._load_input_data(str(input_csv), run_base=tmp_path)
+
+    assert input_df["mol_idx"].tolist() == ["keep-1", "keep-2"]

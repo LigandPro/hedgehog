@@ -13,6 +13,7 @@ from hedgehog.pipeline import (
     DOCKING_SCORE_COLUMNS,
     STAGE_DESCRIPTORS,
     STAGE_DOCKING,
+    STAGE_MOL_PREP,
     STAGE_SYNTHESIS,
     DataChecker,
     MolecularAnalysisPipeline,
@@ -21,6 +22,10 @@ from hedgehog.pipeline import (
     _cleanup_lingering_processes,
     _directory_has_files,
     _file_exists_and_not_empty,
+    calculate_metrics,
+)
+from hedgehog.pipeline import (
+    FILE_FILTERED_MOLECULES as PIPELINE_FILTERED_MOLECULES,
 )
 from tests.constants import (
     COL_MODEL_NAME,
@@ -345,6 +350,52 @@ class TestPipelineStageRunner:
 
         assert runner.docking_results_present() is True
 
+    def test_docking_results_present_for_smina_requires_smina_out_file(self, tmp_path):
+        """SMINA detection should require concrete smina_out.sdf."""
+        docking_cfg = tmp_path / "config_docking.yml"
+        docking_cfg.write_text(
+            "run: true\ntools: smina\nreceptor_pdb: receptor.pdb\n",
+            encoding="utf-8",
+        )
+        smina_dir = tmp_path / "stages" / "05_docking" / "smina"
+        smina_dir.mkdir(parents=True, exist_ok=True)
+        (smina_dir / "failed_molecules.txt").write_text("mol-1\n", encoding="utf-8")
+
+        config = {
+            "folder_to_save": str(tmp_path),
+            "config_docking": str(docking_cfg),
+        }
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        assert runner.docking_results_present() is False
+
+        (smina_dir / "smina_out.sdf").write_text("dummy\n", encoding="utf-8")
+        assert runner.docking_results_present() is True
+
+    def test_run_docking_accepts_completed_empty_marker(self, tmp_path, monkeypatch):
+        """Docking stage should pass when completed-empty marker exists."""
+        docking_cfg = tmp_path / "config_docking.yml"
+        docking_cfg.write_text(
+            "run: true\ntools: smina\nreceptor_pdb: receptor.pdb\n",
+            encoding="utf-8",
+        )
+        marker = tmp_path / "stages" / "05_docking" / "completed_empty.marker"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"status":"completed_empty"}\n', encoding="utf-8")
+
+        config = {
+            "folder_to_save": str(tmp_path),
+            "config_docking": str(docking_cfg),
+        }
+        checker = DataChecker(config)
+        runner = PipelineStageRunner(config, checker)
+
+        monkeypatch.setattr(
+            "hedgehog.pipeline.docking_main", lambda *_args, **_kwargs: True
+        )
+        assert runner.run_docking() is True
+
 
 class TestPipelineStage:
     """Tests for PipelineStage class."""
@@ -411,6 +462,126 @@ def _build_enabled_pipeline(tmp_path: Path, stage_name: str, progress_callback=N
 
 class TestStageLoggingCanonicalFormat:
     """Tests for canonical stage-level in/out logging format."""
+
+    def test_run_pipeline_stops_immediately_on_early_exit(self, tmp_path, monkeypatch):
+        """An early-exiting stage must prevent downstream stage calls."""
+        pipeline = _build_enabled_pipeline(tmp_path, STAGE_MOL_PREP)
+        for stage in pipeline.stages:
+            stage.enabled = True
+
+        calls = []
+        monkeypatch.setattr(
+            pipeline,
+            "_run_mol_prep",
+            lambda data: calls.append(STAGE_MOL_PREP) or (True, True),
+        )
+
+        def _unexpected_stage(*args, **kwargs):
+            raise AssertionError("downstream stage should not run after early exit")
+
+        monkeypatch.setattr(pipeline, "_run_descriptors", _unexpected_stage)
+        monkeypatch.setattr(
+            pipeline, "_run_post_descriptors_filters", _unexpected_stage
+        )
+        monkeypatch.setattr(pipeline, "_run_synthesis", _unexpected_stage)
+        monkeypatch.setattr(pipeline, "_run_docking", _unexpected_stage)
+        monkeypatch.setattr(pipeline, "_run_docking_filters", _unexpected_stage)
+        monkeypatch.setattr(pipeline, "_run_final_descriptors", _unexpected_stage)
+        monkeypatch.setattr(
+            pipeline, "_finalize_pipeline", lambda *args, **kwargs: True
+        )
+
+        assert pipeline.run_pipeline(pd.DataFrame({COL_SMILES: ["CCO"]})) is True
+        assert calls == [STAGE_MOL_PREP]
+
+    def test_run_pipeline_stops_on_cancel_between_stages(self, tmp_path, monkeypatch):
+        """Cancellation should be observed at stage boundaries."""
+        cancel_state = {"requested": False}
+
+        def _progress_callback(_event):
+            return None
+
+        _progress_callback.is_cancelled = lambda: cancel_state["requested"]  # type: ignore[attr-defined]
+
+        pipeline = _build_enabled_pipeline(
+            tmp_path,
+            STAGE_MOL_PREP,
+            progress_callback=_progress_callback,
+        )
+        for stage in pipeline.stages:
+            stage.enabled = True
+
+        calls: list[str] = []
+
+        def _run_mol_prep(_data):
+            calls.append(STAGE_MOL_PREP)
+            cancel_state["requested"] = True
+            return True, False
+
+        def _unexpected_stage(*_args, **_kwargs):
+            raise AssertionError("downstream stage should not run after cancellation")
+
+        monkeypatch.setattr(pipeline, "_run_mol_prep", _run_mol_prep)
+        monkeypatch.setattr(pipeline, "_run_descriptors", _unexpected_stage)
+
+        with pytest.raises(InterruptedError, match="Pipeline cancelled"):
+            pipeline.run_pipeline(pd.DataFrame({COL_SMILES: ["CCO"]}))
+
+        assert calls == [STAGE_MOL_PREP]
+
+    def test_early_exit_final_output_ignores_stale_downstream_files(
+        self, tmp_path, monkeypatch
+    ):
+        """Early-exit finalization should use the stopping stage output."""
+        pipeline = _build_enabled_pipeline(tmp_path, STAGE_MOL_PREP)
+        mol_prep_path = tmp_path / DIR_MOL_PREP / PIPELINE_FILTERED_MOLECULES
+        mol_prep_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=[COL_SMILES, COL_MODEL_NAME, COL_MOL_IDX]).to_csv(
+            mol_prep_path, index=False
+        )
+        stale_synthesis_path = tmp_path / DIR_SYNTHESIS / PIPELINE_FILTERED_MOLECULES
+        stale_synthesis_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            {
+                COL_SMILES: ["CCC"],
+                COL_MODEL_NAME: ["stale"],
+                COL_MOL_IDX: ["LP-9999-00001"],
+            }
+        ).to_csv(stale_synthesis_path, index=False)
+
+        captured = {}
+        monkeypatch.setattr(pipeline.reporter, "log_summary", lambda: None)
+        monkeypatch.setattr(
+            pipeline.reporter, "log_molecule_summary", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(
+            pipeline.reporter,
+            "save_final_output",
+            lambda final_data, final_count: captured.update(
+                {"final_data": final_data, "final_count": final_count}
+            ),
+        )
+        monkeypatch.setattr(
+            pipeline.reporter, "generate_html_report", lambda *args, **kwargs: (True, 0)
+        )
+        monkeypatch.setattr(
+            "hedgehog.pipeline._generate_structure_readme",
+            lambda *args, **kwargs: None,
+        )
+
+        pipeline._finalize_pipeline(
+            pd.DataFrame({COL_SMILES: ["CCO"]}),
+            success_count=1,
+            total_enabled=1,
+            final_stage_name=STAGE_MOL_PREP,
+        )
+
+        assert captured["final_count"] == 0
+        assert list(captured["final_data"].columns) == [
+            COL_SMILES,
+            COL_MODEL_NAME,
+            COL_MOL_IDX,
+        ]
 
     def test_stage_success_logs_canonical_counts(self, tmp_path, caplog):
         events: list[dict] = []
@@ -500,6 +671,28 @@ class TestStageLoggingCanonicalFormat:
         assert (
             "Stage synthesis failed: 3 in -> 1 out (delta -2, retained 33.33%,"
         ) in str(complete_events[-1].get("message", ""))
+
+    def test_runner_type_error_is_not_retried_without_reporter(self, tmp_path):
+        """Real TypeError from inside a runner should propagate instead of rerunning."""
+        pipeline = _build_enabled_pipeline(tmp_path, STAGE_DESCRIPTORS)
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["CCO"],
+                COL_MODEL_NAME: ["m1"],
+                COL_MOL_IDX: [0],
+            }
+        )
+        calls = 0
+
+        def _runner(data, reporter=None):
+            nonlocal calls
+            calls += 1
+            raise TypeError("internal stage bug")
+
+        with pytest.raises(TypeError, match="internal stage bug"):
+            pipeline._run_stage(STAGE_DESCRIPTORS, _runner, input_df)
+
+        assert calls == 1
 
     def test_docking_stage_marks_estimated_out(self, tmp_path, caplog):
         pipeline = _build_enabled_pipeline(tmp_path, STAGE_DOCKING)
@@ -699,6 +892,53 @@ class TestFinalOutputWithDockingScores:
         assert rows.loc["mol-2", "matcha_affinity"] == pytest.approx(-6.4)
         assert pd.isna(rows.loc["mol-3", "matcha_affinity"])
 
+    def test_respects_custom_gnina_output_directory_from_docking_config(self, tmp_path):
+        """GNINA score collection should use configured gnina output_dir."""
+        docking_cfg = tmp_path / "config_docking.yml"
+        docking_cfg.write_text(
+            "\n".join(
+                [
+                    "run: true",
+                    "tools: gnina",
+                    "gnina_config:",
+                    "  output_dir: custom/gnina_results",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        pipeline = MolecularAnalysisPipeline(
+            {
+                "folder_to_save": str(tmp_path),
+                "config_docking": str(docking_cfg),
+            }
+        )
+        _write_test_docking_sdf(
+            tmp_path / "custom" / "gnina_results" / "gnina_out.sdf",
+            [
+                {
+                    "name": "mol-1",
+                    "minimizedAffinity": -8.1,
+                    "CNNscore": 0.71,
+                    "CNNaffinity": -6.7,
+                    "CNN_VS": 0.35,
+                }
+            ],
+        )
+
+        final_data = pd.DataFrame(
+            {
+                COL_SMILES: [SMILES_ETHANOL],
+                COL_MODEL_NAME: ["model_a"],
+                COL_MOL_IDX: ["mol-1"],
+            }
+        )
+        pipeline._save_final_output(final_data, len(final_data))
+
+        out = pd.read_csv(tmp_path / "output" / "final_molecules.csv")
+        assert out.loc[0, "gnina_affinity"] == pytest.approx(-8.1)
+        assert out.loc[0, "gnina_cnnscore"] == pytest.approx(0.71)
+
     def test_empty_final_output_has_stable_header(self, tmp_path):
         """Empty final output should still expose a stable score schema."""
         pipeline = self._pipeline(tmp_path)
@@ -796,3 +1036,55 @@ def test_cleanup_lingering_processes_cancels_pool_finalizers(monkeypatch):
 
     assert pool_finalizer.cancel_calls == 1
     assert other_finalizer.cancel_calls == 0
+
+
+def test_calculate_metrics_logs_traceback_on_failure(tmp_path, monkeypatch, caplog):
+    """Top-level pipeline failures should keep traceback in logs."""
+
+    class _FailingPipeline:
+        def __init__(self, config, progress_callback=None):
+            self.config = config
+            self.progress_callback = progress_callback
+
+        def run_pipeline(self, data):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr("hedgehog.pipeline.MolecularAnalysisPipeline", _FailingPipeline)
+
+    with caplog.at_level("ERROR"):
+        success = calculate_metrics(
+            pd.DataFrame({COL_SMILES: ["CCO"]}),
+            {"folder_to_save": str(tmp_path)},
+        )
+
+    assert success is False
+    matching = [
+        r for r in caplog.records if r.getMessage() == "Pipeline execution failed"
+    ]
+    assert matching
+    assert matching[-1].exc_info is not None
+
+
+def test_calculate_metrics_propagates_cancellation(tmp_path, monkeypatch, caplog):
+    """Cancellation should not be converted into a generic failed pipeline result."""
+
+    class _CancellingPipeline:
+        def __init__(self, config, progress_callback=None):
+            self.config = config
+            self.progress_callback = progress_callback
+
+        def run_pipeline(self, data):
+            raise InterruptedError("Pipeline cancelled")
+
+    monkeypatch.setattr(
+        "hedgehog.pipeline.MolecularAnalysisPipeline", _CancellingPipeline
+    )
+
+    with caplog.at_level("INFO"):
+        with pytest.raises(InterruptedError, match="Pipeline cancelled"):
+            calculate_metrics(
+                pd.DataFrame({COL_SMILES: ["CCO"]}),
+                {"folder_to_save": str(tmp_path)},
+            )
+
+    assert "Pipeline execution cancelled" in caplog.text

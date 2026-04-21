@@ -23,11 +23,8 @@ Recommended: install from a source checkout.
 git clone https://github.com/LigandPro/hedgehog.git
 cd hedgehog
 
-# Install HEDGEHOG and all dependencies
+# Install HEDGEHOG and Python dependencies
 uv sync
-
-# Install AiZynthFinder for retrosynthesis analysis
-uv run hedgehog setup aizynthfinder
 ```
 
 This is the supported path for the default sample configs, the setup helpers, and the TUI. The repository checkout includes the editable config files, bundled examples, and the `modules/` workspace used by optional tool installers.
@@ -39,7 +36,15 @@ python -m pip install hedgehog
 hedgehog --help
 ```
 
-If you prefer on-demand installation during a pipeline run, use:
+For full retrosynthesis runs, install AiZynthFinder after the base environment is
+working:
+
+```bash
+uv run hedgehog setup aizynthfinder
+```
+
+If you prefer on-demand installation of optional tools during a full pipeline
+run, use:
 
 ```bash
 uv run hedgehog --auto-install
@@ -51,25 +56,76 @@ Legacy/manual fallback:
 ./modules/install_aizynthfinder.sh
 ```
 
-## First Run
+## First Safe Run
 
-From a source checkout, run the full pipeline on the included test data:
+From a source checkout, start with the descriptor/filter-only smoke run:
 
 ```bash
-uv run hedgehog
+uv run hedgehog --stage descriptors --stage struct_filters --force-new
 ```
 
 Or using the short alias:
 
 ```bash
-uv run hedge
+uv run hedge --stage descriptors --stage struct_filters --force-new
 ```
 
-This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `src/hedgehog/configs/examples/`. Each stage runs in sequence, filtering molecules that fail its criteria.
+This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `src/hedgehog/configs/examples/`, but it avoids docking and retrosynthesis. Use this run to verify that the Python environment, bundled examples, descriptor calculation, and structural filters work.
+
+## Full Pipeline Run
+
+After the smoke run passes and optional tools are configured, run the full
+pipeline:
+
+```bash
+uv run hedgehog setup aizynthfinder
+uv run hedgehog --auto-install
+```
+
+Full pipeline execution may require AiZynthFinder, GNINA/SMINA/Matcha, valid
+receptor structures, reference ligands, and enough CPU/GPU resources.
 
 If you installed from PyPI instead of cloning the repository, do not rely on this default sample workflow. Pass your own `--config` and input paths, or use a source checkout.
 
 Note: the default `config.yml` contains absolute paths for optional external preparation tools. If you do not have these tools, set `ligand_preparation_tool` / `protein_preparation_tool` to empty values (or disable the affected stages) before your first run.
+
+## Input Data Contract
+
+The recommended input format is a CSV or TSV file with a `smiles` header:
+
+```csv
+smiles,model_name
+CCO,baseline
+CCN,baseline
+c1ccccc1,baseline
+```
+
+For multi-model comparisons, keep one row per molecule/model pair:
+
+```csv
+smiles,model_name
+CCO,model_a
+CCO,model_b
+CCN,model_a
+CCN,model_b
+```
+
+Required:
+
+- `smiles`
+
+Optional:
+
+- `model_name` or `name`
+- `mol_idx`
+
+Generated:
+
+- `mol_idx` is assigned automatically if missing.
+
+Headerless `.smi` files are supported by extension for simple one-SMILES-per-line
+inputs, with an optional second whitespace token used as `model_name`. CSV/TSV
+with a `smiles` header remains the most explicit format for production runs.
 
 ## Expected Output
 

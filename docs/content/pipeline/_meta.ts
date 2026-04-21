@@ -2,6 +2,7 @@ import type { MetaRecord } from 'nextra'
 
 const meta: MetaRecord = {
   index: 'Overview',
+  'data-contract': 'Data Contract',
   'mol-prep': 'Mol Prep',
   descriptors: 'Descriptors',
   'structural-filters': 'Structural Filters',

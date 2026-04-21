@@ -41,7 +41,7 @@ uv run hedgehog run [OPTIONS]
 | Option | Short | Type | Default | Description |
 |--------|-------|------|---------|-------------|
 | `--config` | `-c` | `TEXT` | `src/hedgehog/configs/config.yml` | Master YAML config path. |
-| `--mols` | `-m` | `TEXT` | `None` | Input SMILES path or glob. Overrides config input. |
+| `--mols` | `-m` | `TEXT` | `None` | Input molecule table path or glob. Overrides config input. Prefer CSV/TSV with a `smiles` header. |
 | `--out` | `-o` | `TEXT` | `None` | Output directory override (`folder_to_save`). |
 | `--stage` | `-s` | `STAGE` | `None` | Run one or more stages only. Repeat `--stage` to select multiple stages. Uses config molecules unless `--mols` is provided. See `hedgehog info` for stage descriptions. |
 | `--reuse` | | `FLAG` | `False` | Reuse existing results folder. |
@@ -75,6 +75,29 @@ When running `--stage struct_filters`, input resolution is:
 1. Existing descriptors output (if present in the run folder)
 2. MolPrep output
 3. Sampled molecules input
+
+### Input File Contract
+
+Recommended input is CSV/TSV with a `smiles` header:
+
+```csv
+smiles,model_name
+CCO,demo
+CCN,demo
+```
+
+Required:
+
+- `smiles`
+
+Optional:
+
+- `model_name` or `name`
+- `mol_idx`
+
+If `mol_idx` is missing, HEDGEHOG assigns it automatically. Headerless
+`.smi`-style files are supported for simple one-SMILES-per-line inputs, but
+CSV/TSV is the clearest format for production runs.
 
 To run multiple stages in a single invocation, repeat `--stage`:
 
@@ -272,7 +295,7 @@ Launches the interactive Terminal User Interface for visual pipeline configurati
 
 Requirements and behavior:
 
-- Requires Node.js to be installed.
+- Requires Node.js >= 18 and npm.
 - Requires a source checkout that contains the repository `tui/` directory.
 - If the TUI bundle does not exist yet, HEDGEHOG automatically runs `npm install` and `npm run build` inside `tui/` before launching.
 

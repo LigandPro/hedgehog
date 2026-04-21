@@ -54,7 +54,7 @@ MolEval metrics are configured via `config_moleval.yml`, referenced from the mai
 ```yaml
 # config_moleval.yml
 run: true
-n_jobs: 4
+n_jobs: -1
 device: cpu            # cpu or cuda:0
 max_molecules: 2000    # subsample for O(N^2) metrics
 
@@ -75,20 +75,20 @@ mce18: true              # Mean MCE-18 molecular complexity
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `run` | bool | `true` | Enable/disable all MolEval metrics |
-| `n_jobs` | int | `4` | Parallel workers for metric computation |
+| `n_jobs` | int | `-1` | Parallel workers for metric computation (`-1` = all available cores) |
 | `device` | str | `cpu` | Compute device (`cpu` or `cuda:0`) |
 | `max_molecules` | int | `2000` | Subsample threshold for O(N^2) pairwise metrics |
-| `seed` | int | `42` | Random seed for deterministic subsampling |
 | `mce18` | bool | `true` | Enable mean MCE-18 molecular complexity reporting |
 
 ## Deterministic Computation
 
-The intrinsic metric computation uses a `seed` parameter and a local `random.Random(seed)` instance
-for subsampling. This ensures:
+Large sets are capped by `max_molecules` before O(N^2) metrics are computed.
+The shipped `config_moleval.yml` does not expose a `seed` key; do not rely on a
+documented seed parameter for reproducible subsampling unless you add one in code
+and config.
 
-- **Reproducible results** across runs with the same input data.
-- **Thread safety** -- no global random state is mutated.
-- The default seed is `42`, configurable via the `seed` key in `config_moleval.yml`.
+For reproducibility, keep the input table, sampling step, config snapshot, and
+`max_molecules` value fixed.
 
 ## Output
 

@@ -30,9 +30,9 @@ from hedgehog.descriptors.constants import (
     STRUCTURAL_ELEMENT_LIMIT_MAP,
     TYPE_ALIAS_COLUMNS,
 )
-from hedgehog.struct_filters.utils import process_path
 from hedgehog.utils.mce18 import compute_mce18
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
+from hedgehog.utils.paths import process_path
 
 # Disable RDKit warnings
 RDLogger.DisableLog("rdApp.*")

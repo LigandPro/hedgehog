@@ -618,6 +618,41 @@ class TestResolveDockingBinaryGninaFallback:
         with pytest.raises(FileNotFoundError, match="smina"):
             _resolve_docking_binary("smina", "smina")
 
+    def test_relative_configured_path_resolves_from_config_dir(self, tmp_path):
+        """Relative configured path should resolve against docking config directory."""
+        bin_dir = tmp_path / "tools"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        smina_bin = bin_dir / "smina"
+        smina_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        smina_bin.chmod(0o755)
+
+        from hedgehog.docking.binaries import _resolve_docking_binary
+
+        resolved = _resolve_docking_binary("tools/smina", "smina", config_dir=tmp_path)
+        assert resolved == str(smina_bin.resolve())
+
+    def test_configured_path_must_exist_without_which_fallback(
+        self, monkeypatch, tmp_path
+    ):
+        """Missing configured path should fail even if tool exists on PATH."""
+        monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/smina")
+
+        from hedgehog.docking.binaries import _resolve_docking_binary
+
+        with pytest.raises(FileNotFoundError, match="Configured smina binary"):
+            _resolve_docking_binary("./missing/smina", "smina", config_dir=tmp_path)
+
+    def test_configured_path_must_be_executable(self, tmp_path):
+        """Configured path must point to an executable file."""
+        bad_bin = tmp_path / "bad_smina"
+        bad_bin.write_text("echo no\n", encoding="utf-8")
+        bad_bin.chmod(0o644)
+
+        from hedgehog.docking.binaries import _resolve_docking_binary
+
+        with pytest.raises(PermissionError, match="not executable"):
+            _resolve_docking_binary(str(bad_bin), "smina", config_dir=tmp_path)
+
 
 class TestGninaVariantDefaults:
     """Tests for default/invalid GNINA variant resolution."""

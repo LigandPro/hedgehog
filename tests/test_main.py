@@ -12,6 +12,7 @@ from hedgehog.main import (
     _folder_is_empty,
     _get_input_format_flag,
     _get_unique_results_folder,
+    _resolve_config_paths,
     _save_sampled_molecules,
     _validate_input_path,
     preprocess_input_with_rdkit,
@@ -43,6 +44,29 @@ class _FakeProgress:
 
     def update(self, task_id: int, **kwargs) -> None:
         self.update_calls.append({"task_id": task_id, **kwargs})
+
+
+def test_resolve_config_paths_relative_to_config_file(tmp_path):
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    input_file = config_dir / "mols.csv"
+    input_file.write_text("smiles\nCCO\n", encoding="utf-8")
+    sub_config = config_dir / "config_descriptors.yml"
+    sub_config.write_text("run: true\n", encoding="utf-8")
+    config_file = config_dir / "config.yml"
+    config_file.write_text("", encoding="utf-8")
+
+    config = {
+        "generated_mols_path": "mols.csv",
+        "config_descriptors": "config_descriptors.yml",
+        "folder_to_save": "results/run",
+    }
+
+    _resolve_config_paths(config, str(config_file))
+
+    assert config["generated_mols_path"] == str(input_file.resolve())
+    assert config["config_descriptors"] == str(sub_config.resolve())
+    assert config["folder_to_save"] == "results/run"
 
 
 class TestCanonicalizeSmiles:

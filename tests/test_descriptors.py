@@ -91,6 +91,7 @@ class TestComputeSingleMoleculeDescriptors:
             "n_NO_atoms",
             "fN_atoms",
             "fNS_atoms",
+            "is_neutral",
             "charged_mol",
             "molWt",
             "logP",
@@ -556,6 +557,7 @@ class TestFilterMolecules:
 
         flags = pd.read_csv(tmp_path / "pass_flags.csv")
         assert "charged_mol_pass" in flags.columns
+        assert "is_neutral_pass" in flags.columns
 
     def test_structural_constraints_nested_block(self, tmp_path):
         """Nested structural_constraints should be applied via generic pass flags."""
@@ -698,12 +700,14 @@ class TestDescriptorValues:
         # Uncharged benzene
         mol = Chem.MolFromSmiles("c1ccccc1")
         result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
-        assert result["charged_mol"] is True  # No formal charges
+        assert result["is_neutral"] is True
+        assert result["charged_mol"] is True  # Deprecated alias: neutral=True
 
         # Carboxylate ion (charged)
         mol = Chem.MolFromSmiles("CC(=O)[O-]")
         result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
-        assert result["charged_mol"] is False  # Has formal charge
+        assert result["is_neutral"] is False
+        assert result["charged_mol"] is False  # Deprecated alias: neutral=False
 
     def test_qed_drug_like(self):
         """Drug-like molecules should have QED > 0.3."""
@@ -743,3 +747,17 @@ class TestDropFalseRowsAdvanced:
         result = drop_false_rows(df, borders)
 
         assert len(result) == 3  # All pass because charged_mol not considered
+
+    def test_is_neutral_filtering_disabled(self):
+        """When filter_charged_mol is False, should also ignore is_neutral_pass."""
+        df = pd.DataFrame(
+            {
+                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
+                "molWt_pass": [True, True, True],
+                "is_neutral_pass": [True, False, True],
+            }
+        )
+        borders = {"filter_charged_mol": False}
+        result = drop_false_rows(df, borders)
+
+        assert len(result) == 3

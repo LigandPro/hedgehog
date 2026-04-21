@@ -203,6 +203,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
     has_formal_charge = any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
     is_neutral = not has_formal_charge
+    # Backward-compatible alias. Prefer ``is_neutral`` in new code.
     charged_mol = is_neutral
     ring_info = mol.GetRingInfo()
     rings = [len(x) for x in ring_info.AtomRings()]
