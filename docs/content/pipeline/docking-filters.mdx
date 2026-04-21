@@ -110,7 +110,7 @@ aggregation:
 
 ## Deduplication
 
-Docking typically produces multiple poses per molecule (e.g., `num_modes: 9`). After filtering, the pipeline deduplicates to unique molecules:
+Docking can produce multiple poses per molecule when `num_modes` is greater than `1` (the default config uses `num_modes: 1`). After filtering, the pipeline deduplicates to unique molecules:
 
 1. All passing poses are saved to `filtered_poses.csv` (full pose-level detail)
 2. Poses are sorted by `minimizedAffinity` (best affinity first)
