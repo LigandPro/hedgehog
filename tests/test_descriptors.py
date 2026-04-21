@@ -1,8 +1,10 @@
 """Tests for descriptors stage modules."""
 
 import pandas as pd
+import yaml
 from rdkit import Chem
 
+import hedgehog.descriptors.stage as descriptors_stage
 from hedgehog.descriptors.compute import (
     _compute_single_molecule_descriptors,
     compute_metrics,
@@ -447,6 +449,62 @@ class TestComputeMetrics:
         compute_metrics(df, str(tmp_path) + "/")
 
         assert (tmp_path / "descriptors_all.csv").exists()
+
+
+class TestDescriptorsStage:
+    """Tests for descriptors stage integration behavior."""
+
+    def test_stage_applies_top_level_structural_constraints(
+        self, tmp_path, monkeypatch
+    ):
+        """Stage should pass top-level structural_constraints into filtering."""
+        config_descriptors_path = tmp_path / "config_descriptors.yml"
+        config_descriptors_path.write_text(
+            yaml.safe_dump(
+                {
+                    "filter_data": True,
+                    "n_jobs": 1,
+                    "batch_size": 1000,
+                    "preprocess": {
+                        "remove_charges": False,
+                        "remove_radicals": False,
+                        "remove_stereochemistry": False,
+                    },
+                    "borders": {"molWt_min": 0},
+                    "structural_constraints": {
+                        "enabled": True,
+                        "type_limits": {"SO2": 0},
+                    },
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        config = {
+            "folder_to_save": str(tmp_path),
+            "config_descriptors": str(config_descriptors_path),
+        }
+        data = pd.DataFrame(
+            {
+                COL_SMILES: [SMILES_ETHANOL, "CS(=O)(=O)C"],
+                COL_MODEL_NAME: [MODEL_TEST, MODEL_TEST],
+                COL_MOL_IDX: ["p-0", "f-0"],
+            }
+        )
+        monkeypatch.setattr(
+            descriptors_stage, "draw_filtered_mols", lambda *a, **k: None
+        )
+
+        descriptors_stage.run(data, config)
+
+        passed = pd.read_csv(
+            tmp_path
+            / "stages"
+            / "01_descriptors_initial"
+            / "filtered"
+            / FILE_FILTERED_MOLECULES
+        )
+        assert passed[COL_SMILES].tolist() == [SMILES_ETHANOL]
 
 
 class TestFilterMolecules:
