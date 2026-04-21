@@ -57,6 +57,8 @@ export const STAGE_METADATA: Record<WizardStageName, StageMetadata> = {
       molWt_max: 'MolWt max',
       logP_min: 'logP min',
       logP_max: 'logP max',
+      fraction_ring_system_min: 'Ring system min',
+      has_spider_side_chains_max: 'Spider chains max',
       max_n_or_o_atoms: 'Max N/O atoms',
       max_small_rings_3_4: 'Max 3/4-rings',
       max_acyclic_chain_length: 'Max chain length',
@@ -152,8 +154,12 @@ export function getStageSummary(
       const nOrO = formatValue(quickParams.max_n_or_o_atoms);
       const smallRings = formatValue(quickParams.max_small_rings_3_4);
       const chain = formatValue(quickParams.max_acyclic_chain_length);
+      const ringSystem = formatValue(quickParams.fraction_ring_system_min);
+      const spider = formatValue(quickParams.has_spider_side_chains_max);
       const base = preset ? `Batch: ${batch} | Preset: ${preset}` : `Batch: ${batch}`;
       const extras: string[] = [];
+      if (quickParams.fraction_ring_system_min !== undefined) extras.push(`RingFrac>=${ringSystem}`);
+      if (quickParams.has_spider_side_chains_max !== undefined) extras.push(`Spider<=${spider}`);
       if (quickParams.max_n_or_o_atoms !== undefined) extras.push(`N/O<=${nOrO}`);
       if (quickParams.max_small_rings_3_4 !== undefined) extras.push(`3/4-rings<=${smallRings}`);
       if (quickParams.max_acyclic_chain_length !== undefined) extras.push(`Chain<=${chain}`);

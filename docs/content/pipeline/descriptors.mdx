@@ -59,6 +59,8 @@ rings, or long non-ring appendages.
 | H-Bond Donors | `hbd` | Hydrogen bond donor count | 0 | 4 |
 | H-Bond Acceptors | `hba` | Hydrogen bond acceptor count | 1 | 9 |
 | Fraction sp3 | `fsp3` | Fraction of sp3-hybridized carbons | 0.15 | 0.8 |
+| Spider Side Chains | `has_spider_side_chains` | `1` when a molecule has at least two long scaffold appendages | 0 | 0 |
+| Fraction Ring System | `fraction_ring_system` | Fraction of heavy atoms in the Murcko scaffold | 0.25 | 1 |
 | TPSA | `tpsa` | Topological Polar Surface Area (A^2) | 20 | 140 |
 
 ### Drug-likeness
@@ -66,7 +68,7 @@ rings, or long non-ring appendages.
 | Descriptor | Config Key | Description | Default Min | Default Max |
 |-----------|------------|-------------|-------------|-------------|
 | QED | `qed` | Quantitative Estimation of Drug-likeness (0--1) | 0.3 | 1 |
-| MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 20 | 140 |
+| MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 45 | 100 |
 
 ### Structural Constraints
 
@@ -205,8 +207,10 @@ why a molecule failed by inspecting:
 - the corresponding boolean flags in `pass_flags.csv`
 
 For example, a molecule can pass `n_O_atoms_pass` but fail `n_NO_atoms_pass`, or
-pass `hba_pass` but fail `Car_pass`. This is useful when generic descriptors are
-acceptable but a structural cap is intentionally stricter.
+pass `hba_pass` but fail `Car_pass`. The strict generative-design checks also
+emit `fraction_ring_system_pass` and `has_spider_side_chains_pass`. This is
+useful when generic descriptors are acceptable but a structural cap is
+intentionally stricter.
 
 ## Configuration
 

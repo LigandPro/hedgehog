@@ -87,6 +87,10 @@ borders:
   hba_max: 9
   fsp3_min: 0.15
   fsp3_max: 0.8
+  has_spider_side_chains_min: 0
+  has_spider_side_chains_max: 0
+  fraction_ring_system_min: 0.25
+  fraction_ring_system_max: 1
   mce18_min: 45
   mce18_max: 100
   tpsa_min: 20
@@ -106,6 +110,8 @@ filtered_cols_to_plot:
 - fNS_atoms
 - n_small_rings_3_4
 - max_acyclic_chain_length
+- has_spider_side_chains
+- fraction_ring_system
 - ".=O"
 - C2r
 - C3r
@@ -148,6 +154,7 @@ discrete_features_to_plot:
 - n_aroma_rings
 - n_small_rings_3_4
 - max_acyclic_chain_length
+- has_spider_side_chains
 - ".=O"
 - C2r
 - C3r
@@ -175,6 +182,7 @@ not_to_smooth_plot_by_sides:
 - fNS_atoms
 - molWt
 - fsp3
+- fraction_ring_system
 - tpsa
 - qed
 renamer:
@@ -196,6 +204,8 @@ renamer:
   n_aroma_rings: Number of aromatic rings
   n_small_rings_3_4: Number of 3/4-membered rings
   max_acyclic_chain_length: Longest acyclic chain length
+  has_spider_side_chains: Has spider side chains
+  fraction_ring_system: Fraction of ring system atoms
   n_fused_aromatic_rings: Number of fused aromatic rings
   n_rigid_bonds: Number of rigid bonds
   n_rot_bonds: Number of rotatable bonds

@@ -98,6 +98,8 @@ class TestComputeSingleMoleculeDescriptors:
             "n_rings",
             "n_small_rings_3_4",
             "max_acyclic_chain_length",
+            "has_spider_side_chains",
+            "fraction_ring_system",
             "n_aroma_rings",
             "n_fused_aromatic_rings",
             "n_rigid_bonds",
@@ -156,6 +158,41 @@ class TestComputeSingleMoleculeDescriptors:
 
         assert linear_result["max_acyclic_chain_length"] == 4
         assert ring_result["max_acyclic_chain_length"] == 0
+
+    def test_fraction_ring_system(self):
+        """Fraction ring system should use Murcko scaffold heavy atoms."""
+        benzene = Chem.MolFromSmiles(SMILES_BENZENE)
+        butylbenzene = Chem.MolFromSmiles("CCCCC1=CC=CC=C1")
+        hexane = Chem.MolFromSmiles("CCCCCC")
+
+        benzene_result = _compute_single_molecule_descriptors(
+            benzene, MODEL_TEST, "benzene-0"
+        )
+        butylbenzene_result = _compute_single_molecule_descriptors(
+            butylbenzene, MODEL_TEST, "butylbenzene-0"
+        )
+        hexane_result = _compute_single_molecule_descriptors(
+            hexane, MODEL_TEST, "hexane-0"
+        )
+
+        assert benzene_result["fraction_ring_system"] == 1.0
+        assert butylbenzene_result["fraction_ring_system"] == 0.6
+        assert hexane_result["fraction_ring_system"] == 0
+
+    def test_has_spider_side_chains(self):
+        """Spider side chains should require at least two long scaffold appendages."""
+        one_appendage = Chem.MolFromSmiles("CCCCC1=CC=CC=C1")
+        two_appendages = Chem.MolFromSmiles("CCCCC1=CC=C(CCCCC)C=C1")
+
+        one_result = _compute_single_molecule_descriptors(
+            one_appendage, MODEL_TEST, "one-0"
+        )
+        two_result = _compute_single_molecule_descriptors(
+            two_appendages, MODEL_TEST, "two-0"
+        )
+
+        assert one_result["has_spider_side_chains"] == 0
+        assert two_result["has_spider_side_chains"] == 1
 
     def test_type_alias_counts(self):
         """Configured type aliases should have expected positive counts."""
@@ -527,6 +564,37 @@ class TestFilterMolecules:
 
         passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
         assert len(passed) == 2
+
+    def test_strict_generative_design_filters(self, tmp_path):
+        """Strict generative design descriptors should reject acyclic and spider molecules."""
+        ring_pass = Chem.MolFromSmiles("CCCCC1=CC=CC=C1")
+        acyclic_fail = Chem.MolFromSmiles("CCCCCC")
+        spider_fail = Chem.MolFromSmiles("CCCCC1=CC=C(CCCCC)C=C1")
+
+        rows = []
+        for smiles, mol_idx, mol in [
+            ("CCCCC1=CC=CC=C1", "pass-0", ring_pass),
+            ("CCCCCC", "acyclic-0", acyclic_fail),
+            ("CCCCC1=CC=C(CCCCC)C=C1", "spider-0", spider_fail),
+        ]:
+            row = _compute_single_molecule_descriptors(mol, "m", mol_idx)
+            row[COL_SMILES] = smiles
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        borders = {
+            "fraction_ring_system_min": 0.25,
+            "has_spider_side_chains_max": 0,
+        }
+        filter_molecules(df, borders, str(tmp_path))
+
+        passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
+        assert len(passed) == 1
+        assert passed.iloc[0][COL_MOL_IDX] == "pass-0"
+
+        flags = pd.read_csv(tmp_path / "pass_flags.csv")
+        assert "fraction_ring_system_pass" in flags.columns
+        assert "has_spider_side_chains_pass" in flags.columns
 
 
 class TestDescriptorValues:

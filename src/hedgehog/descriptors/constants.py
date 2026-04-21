@@ -25,6 +25,8 @@ _DESCRIPTOR_KEY_MAP = {
     "n_no_atoms": "n_NO_atoms",
     "n_small_rings_3_4": "n_small_rings_3_4",
     "max_acyclic_chain_length": "max_acyclic_chain_length",
+    "has_spider_side_chains": "has_spider_side_chains",
+    "fraction_ring_system": "fraction_ring_system",
     ".=o": ".=O",
     "c2r": "C2r",
     "c3r": "C3r",

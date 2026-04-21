@@ -4,7 +4,11 @@ from collections import deque
 from pathlib import Path
 
 import pandas as pd
-from medchem.rules._utils import n_fused_aromatic_rings
+from medchem.rules._utils import (
+    fraction_atom_in_scaff,
+    has_spider_chains,
+    n_fused_aromatic_rings,
+)
 from rdkit import Chem, RDConfig
 from rdkit.Chem import (
     QED,
@@ -252,6 +256,8 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         "n_rings": mol_n.GetRingInfo().NumRings(),
         "n_small_rings_3_4": n_small_rings_3_4,
         "max_acyclic_chain_length": max_acyclic_chain_length,
+        "has_spider_side_chains": int(has_spider_chains(mol_n)),
+        "fraction_ring_system": fraction_atom_in_scaff(mol_n),
         "n_aroma_rings": rdMolDescriptors.CalcNumAromaticRings(mol_n),
         "n_fused_aromatic_rings": n_fused_aromatic_rings(mol_n),
         "n_rigid_bonds": n_rigid_bonds,

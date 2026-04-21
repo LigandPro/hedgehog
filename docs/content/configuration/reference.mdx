@@ -300,7 +300,9 @@ These define the acceptable range for each molecular descriptor. Molecules outsi
 | `hbd_min` / `hbd_max` | int | `0` / `4` | Hydrogen bond donor count range |
 | `hba_min` / `hba_max` | int | `1` / `9` | Hydrogen bond acceptor count range |
 | `fsp3_min` / `fsp3_max` | float | `0.15` / `0.8` | Fraction of sp3 carbons range |
-| `mce18_min` / `mce18_max` | float | `20` / `140` | MCE-18 complexity score range |
+| `has_spider_side_chains_min` / `has_spider_side_chains_max` | int | `0` / `0` | Spider side-chain flag range (`0` rejects molecules with two or more long scaffold appendages) |
+| `fraction_ring_system_min` / `fraction_ring_system_max` | float | `0.25` / `1` | Fraction of heavy atoms in the Murcko scaffold |
+| `mce18_min` / `mce18_max` | float | `45` / `100` | MCE-18 complexity score range |
 | `tpsa_min` / `tpsa_max` | float | `20` / `140` | Topological polar surface area range (A^2) |
 | `qed_min` / `qed_max` | float | `0.3` / `1` | Quantitative estimate of drug-likeness range |
 
@@ -401,8 +403,12 @@ borders:
   hba_max: 9
   fsp3_min: 0.15
   fsp3_max: 0.8
-  mce18_min: 20
-  mce18_max: 140
+  has_spider_side_chains_min: 0
+  has_spider_side_chains_max: 0
+  fraction_ring_system_min: 0.25
+  fraction_ring_system_max: 1
+  mce18_min: 45
+  mce18_max: 100
   tpsa_min: 20
   tpsa_max: 140
   qed_min: 0.3
@@ -420,6 +426,8 @@ filtered_cols_to_plot:
 - fNS_atoms
 - n_small_rings_3_4
 - max_acyclic_chain_length
+- has_spider_side_chains
+- fraction_ring_system
 - ".=O"
 - C2r
 - C3r
@@ -465,6 +473,7 @@ discrete_features_to_plot:
 - n_aroma_rings
 - n_small_rings_3_4
 - max_acyclic_chain_length
+- has_spider_side_chains
 - ".=O"
 - C2r
 - C3r
@@ -492,6 +501,7 @@ not_to_smooth_plot_by_sides:
 - fNS_atoms
 - molWt
 - fsp3
+- fraction_ring_system
 - tpsa
 - qed
 renamer:
@@ -515,6 +525,8 @@ renamer:
   n_aroma_rings: Number of aromatic rings
   n_small_rings_3_4: Number of 3/4-membered rings
   max_acyclic_chain_length: Longest acyclic chain length
+  has_spider_side_chains: Has spider side chains
+  fraction_ring_system: Fraction of ring system atoms
   n_fused_aromatic_rings: Number of fused aromatic rings
   n_rigid_bonds: Number of rigid bonds
   n_rot_bonds: Number of rotatable bonds
