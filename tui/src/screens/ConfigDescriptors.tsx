@@ -61,6 +61,8 @@ const DESCRIPTOR_NAMES: Record<string, string> = {
   'hbd': 'H-Bond Donors',
   'hba': 'H-Bond Acceptors',
   'fsp3': 'Fraction SP3',
+  'has_spider_side_chains': 'Spider Side Chains',
+  'fraction_ring_system': 'Fraction Ring System',
   'tpsa': 'TPSA',
   'qed': 'QED',
 };
