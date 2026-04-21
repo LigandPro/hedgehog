@@ -1,6 +1,8 @@
 run: true
 n_jobs: -1
 batch_size: 1000
+# Enables the descriptor filtering step. If false, molecules are not filtered by
+# either borders or structural_constraints.
 filter_data: true
 
 preprocess:
@@ -12,7 +14,9 @@ preprocess:
   remove_stereochemistry: false
 
 structural_constraints:
-  enabled: true
+  # Adds these structural caps to descriptor filtering when filter_data is true.
+  # If false, the full structural_constraints block is ignored.
+  enabled: false
   type_limits:
     ".=O": 4
     C2r: 6
