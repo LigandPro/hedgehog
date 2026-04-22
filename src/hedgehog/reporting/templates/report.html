@@ -1180,6 +1180,109 @@
         <section>
             <h2>Descriptor Analysis</h2>
 
+            {% set descriptor_filter_summary = data.descriptors_detailed.filter_summary or {} %}
+            {% if descriptor_filter_summary.by_filter %}
+            <h3 style="margin-bottom: 16px;">Descriptor Filter Failures</h3>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">{{ descriptor_filter_summary.total_molecules }}</div>
+                    <div class="metric-label">Checked</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ descriptor_filter_summary.failed_molecules }}</div>
+                    <div class="metric-label">Rejected</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ descriptor_filter_summary.passed_molecules }}</div>
+                    <div class="metric-label">Passed</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ "%.1f"|format(descriptor_filter_summary.failure_rate) }}%</div>
+                    <div class="metric-label">Rejected</div>
+                </div>
+            </div>
+
+            <div id="descriptor-filter-failures-container" class="plot-container"></div>
+            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px;">
+                Counts are non-exclusive: one molecule can fail multiple descriptor filters.
+            </p>
+            <table style="margin-bottom: 24px;">
+                <thead>
+                    <tr>
+                        <th>Descriptor</th>
+                        <th>Rejected</th>
+                        <th>% of Checked</th>
+                        <th>Threshold</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in descriptor_filter_summary.by_filter %}
+                    <tr>
+                        <td>{{ item.descriptor }}</td>
+                        <td>{{ item.failed }}</td>
+                        <td>{{ "%.1f"|format(item.failed_pct) }}%</td>
+                        <td>{{ item.threshold or "Not configured" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if descriptor_filter_summary.top_combinations %}
+            <h4 style="margin-bottom: 12px;">Top Failure Combinations</h4>
+            <table style="margin-bottom: 24px;">
+                <thead>
+                    <tr>
+                        <th>Failed Filters</th>
+                        <th>Molecules</th>
+                        <th>% of Checked</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in descriptor_filter_summary.top_combinations[:5] %}
+                    <tr>
+                        <td>{{ item.filters }}</td>
+                        <td>{{ item.failed }}</td>
+                        <td>{{ "%.1f"|format(item.failed_pct) }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+
+            <script>
+                (function() {
+                    var filterSummary = {{ descriptor_filter_summary | tojson }};
+                    var rows = filterSummary.by_filter || [];
+                    var container = document.getElementById('descriptor-filter-failures-container');
+                    if (!container || !rows.length) return;
+
+                    var labels = rows.map(function(row) { return row.descriptor; }).reverse();
+                    var failed = rows.map(function(row) { return row.failed; }).reverse();
+                    var pct = rows.map(function(row) { return row.failed_pct; }).reverse();
+                    var thresholds = rows.map(function(row) { return row.threshold || 'Not configured'; }).reverse();
+
+                    Plotly.newPlot(container, [{
+                        type: 'bar',
+                        orientation: 'h',
+                        y: labels,
+                        x: failed,
+                        text: pct.map(function(value) { return value.toFixed(1) + '%'; }),
+                        textposition: 'auto',
+                        customdata: thresholds,
+                        hovertemplate: '<b>%{y}</b><br>Rejected: %{x}<br>Rejected share: %{text}<br>Threshold: %{customdata}<extra></extra>',
+                        marker: { color: 'rgba(168, 85, 247, 0.75)', line: { color: 'rgba(126, 34, 206, 1)', width: 1 } }
+                    }], {
+                        height: Math.max(280, 30 * labels.length + 90),
+                        margin: { l: 140, r: 40, t: 24, b: 50 },
+                        xaxis: { title: 'Rejected molecules' },
+                        paper_bgcolor: 'white',
+                        plot_bgcolor: 'white',
+                        font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
+                    }, {displayModeBar: true});
+                })();
+            </script>
+            {% endif %}
+
             <!-- View Toggle for model comparison -->
             {% if data.available_models and plots.descriptors_data %}
             <div class="view-toggle" id="descriptor-model-toggle">
