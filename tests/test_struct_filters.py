@@ -652,6 +652,31 @@ class TestCommonAlertsContract:
         assert hit["matched_atom_ids"] == [2]
         assert hit["matched_bond_ids"] == []
         assert hit["n_matches_for_rule"] == 1
+        assert hit["match_smiles"] == "CCN"
+
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
+    def test_alert_hits_json_preserves_match_atom_order_smiles(
+        self, mock_load_config, mock_filter_alerts
+    ):
+        """Highlighting should use the same atom order as matched_atom_ids."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {"RulesetA": [("[#7]", "nitrogen atom")]}
+        )
+
+        mol = Chem.MolFromSmiles("NCC")
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        result = apply_structural_alerts(
+            config,
+            [mol],
+            smiles_model_name_mols=[("CCN", "model_a", mol, 0)],
+        )
+
+        hit = json.loads(result["alert_hits_json"].iloc[0])[0]
+        assert result["smiles"].iloc[0] == "CCN"
+        assert hit["matched_atom_ids"] == [0]
+        assert hit["match_smiles"] == "NCC"
 
     def test_common_alert_diagnostic_artifacts_are_written(self, tmp_path):
         """The common_alerts output folder should receive long and summary CSVs."""
@@ -718,6 +743,65 @@ class TestCommonAlertsContract:
         assert set(hits_long["ruleset"]) == {"RulesetA", "RulesetB"}
         assert hits_long["would_pass_if_disable_ruleset"].all()
         assert set(ruleset_summary["unique_rescue"]) == {1}
+
+    def test_common_alert_unique_rescue_counts_molecules_once(self):
+        """Multi-match alerts should not overcount rescue impact."""
+        from hedgehog.struct_filters.common_alert_diagnostics import (
+            build_description_summary,
+            build_ruleset_summary,
+        )
+
+        hits_long = pd.DataFrame(
+            {
+                "mol_idx": [0, 0],
+                "ruleset": ["RulesetA", "RulesetA"],
+                "description": ["nitrogen atom", "nitrogen atom"],
+                "would_pass_if_disable_ruleset": [True, True],
+                "would_pass_if_disable_description": [True, True],
+            }
+        )
+
+        ruleset_summary = build_ruleset_summary(hits_long)
+        description_summary = build_description_summary(hits_long)
+
+        assert ruleset_summary.loc[0, "total_hits"] == 1
+        assert ruleset_summary.loc[0, "unique_rescue"] == 1
+        assert description_summary.loc[0, "total_hits"] == 1
+        assert description_summary.loc[0, "unique_rescue"] == 1
+
+    def test_common_alert_summaries_keep_model_identities_separate(self):
+        """Different models with the same mol_idx should count as separate molecules."""
+        from hedgehog.struct_filters.common_alert_diagnostics import (
+            _cooccurrence,
+            build_description_summary,
+            build_ruleset_summary,
+        )
+
+        hits_long = pd.DataFrame(
+            {
+                "mol_idx": [0, 0],
+                "model_name": ["model_a", "model_b"],
+                "smiles": ["CCN", "CCN"],
+                "ruleset": ["RulesetA", "RulesetA"],
+                "description": ["nitrogen atom", "nitrogen atom"],
+                "would_pass_if_disable_ruleset": [True, True],
+                "would_pass_if_disable_description": [True, True],
+            }
+        )
+
+        ruleset_summary = build_ruleset_summary(hits_long)
+        description_summary = build_description_summary(hits_long)
+
+        assert ruleset_summary.loc[0, "total_hits"] == 2
+        assert ruleset_summary.loc[0, "unique_rescue"] == 2
+        assert description_summary.loc[0, "total_hits"] == 2
+        assert description_summary.loc[0, "unique_rescue"] == 2
+
+        overlap_hits = hits_long.copy()
+        overlap_hits.loc[1, "ruleset"] = "RulesetB"
+        cooccurrence = _cooccurrence(overlap_hits, ["ruleset"])
+        assert cooccurrence.loc[0, "intersection"] == 0
+        assert cooccurrence.loc[0, "jaccard"] == 0.0
 
     @patch("hedgehog.struct_filters.utils.filter_alerts")
     @patch("hedgehog.struct_filters.utils.load_config")

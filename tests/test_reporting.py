@@ -814,6 +814,29 @@ class TestCommonAlertDiagnosticsReport:
         assert len(result["examples"]) == 2
         assert "<svg" in result["examples"][0]["svg"]
 
+    def test_description_whatif_keeps_model_identities_separate(self, report_gen):
+        """Description what-if counts same mol_idx from different models separately."""
+        hits_long = pd.DataFrame(
+            {
+                "mol_idx": [0, 0],
+                "model_name": ["model_a", "model_b"],
+                "smiles": ["CCN", "CCO"],
+                "ruleset": ["RulesetA", "RulesetB"],
+                "description": ["nitrogen atom", "oxygen atom"],
+            }
+        )
+        description_rows = [
+            {"ruleset": "RulesetA", "description": "nitrogen atom"},
+            {"ruleset": "RulesetB", "description": "oxygen atom"},
+        ]
+
+        cumulative = report_gen._build_common_alert_cumulative_descriptions(
+            hits_long, description_rows
+        )
+
+        assert cumulative[0]["rescued"] == 1
+        assert cumulative[1]["rescued"] == 2
+
     def test_full_report_renders_common_alert_section(self, report_gen, base_path):
         """Full HTML report should include the compact diagnostics section."""
         alerts_dir = (

@@ -1683,6 +1683,17 @@ class ReportGenerator:
         return f"{item.get('ruleset', '')}\t{item.get('description', '')}"
 
     @staticmethod
+    def _common_alert_molecule_key(item: Any) -> tuple[Any, Any]:
+        """Build a molecule identity that stays unique across generator models."""
+        model_name = item.get("model_name", "")
+        if pd.isna(model_name):
+            model_name = ""
+        mol_idx = item.get("mol_idx")
+        if pd.notna(mol_idx):
+            return (model_name, mol_idx)
+        return (model_name, item.get("smiles", ""))
+
+    @staticmethod
     def _common_alert_pass_columns(df: pd.DataFrame) -> list[str]:
         """Return per-ruleset pass columns from common_alerts extended data."""
         return [
@@ -1757,6 +1768,12 @@ class ReportGenerator:
             atom_ids = self._parse_json_list(row.get("matched_atom_ids"))
             bond_ids = self._parse_json_list(row.get("matched_bond_ids"))
             smiles = str(row.get("smiles", ""))
+            match_smiles_value = row.get("match_smiles")
+            match_smiles = (
+                smiles
+                if pd.isna(match_smiles_value) or not str(match_smiles_value).strip()
+                else str(match_smiles_value)
+            )
             examples.append(
                 {
                     "mol_idx": row.get("mol_idx"),
@@ -1773,7 +1790,9 @@ class ReportGenerator:
                     "would_rescue": bool(
                         self._coerce_bool(row.get("would_pass_if_disable_description"))
                     ),
-                    "svg": self._render_common_alert_svg(smiles, atom_ids, bond_ids),
+                    "svg": self._render_common_alert_svg(
+                        match_smiles, atom_ids, bond_ids
+                    ),
                 }
             )
         return examples
@@ -1784,7 +1803,7 @@ class ReportGenerator:
         """Compute exact cumulative rescue when disabling top rulesets in order."""
         if extended_df.empty or not pass_cols or not rulesets:
             return []
-        pass_bool = extended_df[pass_cols].apply(lambda col: col.map(self._coerce_bool))
+        pass_bool = self._coerce_pass_frame(extended_df, pass_cols)
         failed_sets = [
             {col.removeprefix("pass_") for col in pass_cols if not bool(row[col])}
             for _, row in pass_bool.iterrows()
@@ -1806,7 +1825,8 @@ class ReportGenerator:
         mol_to_keys: dict[Any, set[str]] = {}
         for _, row in hits_long.iterrows():
             key = self._common_alert_description_key(row)
-            mol_to_keys.setdefault(row.get("mol_idx"), set()).add(key)
+            mol_key = self._common_alert_molecule_key(row)
+            mol_to_keys.setdefault(mol_key, set()).add(key)
 
         out: list[dict[str, int]] = []
         disabled: set[str] = set()
@@ -1850,7 +1870,14 @@ class ReportGenerator:
         if len(extended_df):
             total = int(len(extended_df))
         elif "mol_idx" in hits_long.columns:
-            total = int(hits_long["mol_idx"].nunique())
+            total = int(
+                len(
+                    {
+                        self._common_alert_molecule_key(row)
+                        for _, row in hits_long.iterrows()
+                    }
+                )
+            )
         else:
             total = 0
         passed = int((failed_counts == 0).sum()) if pass_cols else 0

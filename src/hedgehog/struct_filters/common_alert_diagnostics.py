@@ -17,6 +17,7 @@ HITS_LONG_COLUMNS = [
     "mol_idx",
     "model_name",
     "smiles",
+    "match_smiles",
     "ruleset",
     "rule_id",
     "description",
@@ -113,6 +114,7 @@ def make_hit_record(
         "priority": rule.get("priority"),
         "source": rule.get("source"),
         "catalog_description": rule.get("catalog_description"),
+        "match_smiles": Chem.MolToSmiles(mol, canonical=False),
         "match_id": match_id,
         "matched_atom_ids": atom_id_list,
         "matched_bond_ids": bond_ids_between_atoms(mol, atom_id_list),
@@ -162,6 +164,7 @@ def build_hits_long(extended_df: pd.DataFrame) -> pd.DataFrame:
                     "mol_idx": mol_row.get("mol_idx"),
                     "model_name": mol_row.get("model_name"),
                     "smiles": mol_row.get("smiles"),
+                    "match_smiles": hit.get("match_smiles", mol_row.get("smiles")),
                     "ruleset": ruleset,
                     "rule_id": hit.get("rule_id"),
                     "description": hit.get("description", ""),
@@ -189,18 +192,53 @@ def _nunique(series: pd.Series) -> int:
     return int(series.nunique(dropna=False))
 
 
+def _molecule_identity_values(df: pd.DataFrame) -> pd.Series:
+    """Build stable molecule identities for analytics across multiple models."""
+    values = []
+    for idx, row in df.iterrows():
+        model_name = row.get("model_name", "")
+        if pd.isna(model_name):
+            model_name = ""
+        mol_idx = row.get("mol_idx")
+        if pd.notna(mol_idx):
+            values.append((model_name, mol_idx))
+            continue
+        values.append((model_name, row.get("smiles", idx)))
+    return pd.Series(values, index=df.index)
+
+
+def _with_molecule_identity(hits_long: pd.DataFrame) -> pd.DataFrame:
+    hits = hits_long.copy()
+    hits["_molecule_identity"] = _molecule_identity_values(hits)
+    return hits
+
+
+def _unique_rescue_counts(
+    hits_long: pd.DataFrame, group_cols: str | list[str], flag_col: str
+) -> pd.Series:
+    """Count rescued molecules once per group, even with multiple alert matches."""
+    rescue_hits = hits_long[hits_long[flag_col].astype(bool)]
+    if rescue_hits.empty:
+        return pd.Series(dtype=int)
+    rescue_hits = _with_molecule_identity(rescue_hits)
+    return rescue_hits.groupby(group_cols, dropna=False)["_molecule_identity"].nunique()
+
+
 def build_ruleset_summary(hits_long: pd.DataFrame) -> pd.DataFrame:
     """Summarize total and unique rescue impact by ruleset."""
     if hits_long.empty:
         return pd.DataFrame(
             columns=["ruleset", "total_hits", "unique_rescue", "overlap_hits"]
         )
-    grouped = hits_long.groupby("ruleset", dropna=False)
-    summary = grouped.agg(
-        total_hits=("mol_idx", _nunique),
-        unique_rescue=("would_pass_if_disable_ruleset", "sum"),
-    ).reset_index()
-    summary["unique_rescue"] = summary["unique_rescue"].astype(int)
+    hits_with_id = _with_molecule_identity(hits_long)
+    grouped = hits_with_id.groupby("ruleset", dropna=False)
+    summary = grouped.agg(total_hits=("_molecule_identity", _nunique))
+    unique_rescue = _unique_rescue_counts(
+        hits_long, "ruleset", "would_pass_if_disable_ruleset"
+    )
+    summary["unique_rescue"] = unique_rescue
+    summary["unique_rescue"] = summary["unique_rescue"].fillna(0).astype(int)
+    summary = summary.reset_index()
     summary["overlap_hits"] = summary["total_hits"] - summary["unique_rescue"]
     return summary.sort_values(
         ["unique_rescue", "total_hits", "ruleset"], ascending=[False, False, True]
@@ -219,12 +257,17 @@ def build_description_summary(hits_long: pd.DataFrame) -> pd.DataFrame:
                 "overlap_hits",
             ]
         )
-    grouped = hits_long.groupby(["ruleset", "description"], dropna=False)
-    summary = grouped.agg(
-        total_hits=("mol_idx", _nunique),
-        unique_rescue=("would_pass_if_disable_description", "sum"),
-    ).reset_index()
-    summary["unique_rescue"] = summary["unique_rescue"].astype(int)
+    hits_with_id = _with_molecule_identity(hits_long)
+    grouped = hits_with_id.groupby(["ruleset", "description"], dropna=False)
+    summary = grouped.agg(total_hits=("_molecule_identity", _nunique))
+    unique_rescue = _unique_rescue_counts(
+        hits_long,
+        ["ruleset", "description"],
+        "would_pass_if_disable_description",
+    )
+    summary["unique_rescue"] = unique_rescue
+    summary["unique_rescue"] = summary["unique_rescue"].fillna(0).astype(int)
+    summary = summary.reset_index()
     summary["overlap_hits"] = summary["total_hits"] - summary["unique_rescue"]
     return summary.sort_values(
         ["unique_rescue", "total_hits", "ruleset", "description"],
@@ -246,9 +289,10 @@ def _cooccurrence(hits_long: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
             ]
         )
 
+    hits_with_id = _with_molecule_identity(hits_long)
     mol_sets = {
-        key: set(group["mol_idx"].dropna().tolist())
-        for key, group in hits_long.groupby(keys, dropna=False)
+        key: set(group["_molecule_identity"].tolist())
+        for key, group in hits_with_id.groupby(keys, dropna=False)
     }
     normalized_sets = {
         "\t".join(str(part) for part in key)
