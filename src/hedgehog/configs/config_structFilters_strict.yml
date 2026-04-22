@@ -1,0 +1,207 @@
+# ============================================================
+# Structural filters config - strict profile
+#
+# Goal:
+# - maximize chemical hygiene;
+# - remove broad assay-interference and toxicity-risk motifs early;
+# - keep the funnel conservative before downstream expensive steps.
+#
+# Use when:
+# - you want a smaller, cleaner surviving set;
+# - precision matters more than recall;
+# - you are okay losing some medicinal chemistry diversity.
+# ============================================================
+
+run: true
+filter_data: true
+
+# Parse input with all available CPUs
+parse_input_n_jobs: -1
+
+# Keep per-filter outputs for auditability and debugging
+write_per_filter_outputs: true
+
+# Generate plots and failure breakdowns
+generate_plots: true
+generate_failure_analysis: true
+
+# Faster on moderate inputs if enough RAM is available
+combine_in_memory: true
+
+# Process-based execution is usually safer for RDKit-heavy workloads
+parallel_scheduler: processes
+
+# ============================================================
+# Common alerts
+# ============================================================
+
+alerts_data_path: src/hedgehog/struct_filters/data/common_alerts_collection.csv
+calculate_common_alerts: true
+
+# Auto-select worker count depending on input size
+common_alerts_auto_n_jobs: true
+common_alerts_small_input_threshold: 1000
+common_alerts_small_input_n_jobs: 1
+common_alerts_large_input_n_jobs: 12
+
+# ------------------------------------------------------------
+# Active rulesets
+# ------------------------------------------------------------
+# Strict mode keeps:
+# - core hygiene rulesets
+# - broad toxicology / sensitization / reactivity sets
+# - library-style conservative rulesets
+# ------------------------------------------------------------
+include_rulesets:
+  - Dundee
+  - BMS
+  - Inpharmatica
+  - LD50-Oral
+  - Glaxo
+  - PAINS
+  - AlphaScreen-Hitters
+  - Frequent-Hitter
+  - Chelator
+  - Toxicophore
+  - Skin
+  - Reactive-Unstable-Toxic
+  - SureChEMBL
+  - Electrophilic
+  - Genotoxic-Carcinogenicity
+  - MLSMR
+  - LINT
+  - GST-Hitters
+  - Non-Genotoxic-Carcinogenicity
+  - HIS-Hitters
+  - LuciferaseInhibitor
+
+# ------------------------------------------------------------
+# Point exclusions
+# ------------------------------------------------------------
+# Even in strict mode, some alerts are so broad that they remove
+# too much otherwise useful chemistry. These are disabled here.
+exclude_descriptions:
+  Dundee:
+    - Aliphatic long chain
+    - isolated alkene
+    - triple bond
+
+  Toxicophore:
+    - acetylene_alkyne
+    - acyclic_alkyne
+    - alkynes
+    - masked_aniline
+    - adamantane
+    - imidazole
+    - michael_acceptors_double
+    - michael_acceptors_triple
+    - n_acylated_azoles
+    - pyrrole
+
+  Skin:
+    - Activated alkine
+    - Tertiary alkyl amines
+    - Aromatic primary and secondary amines
+    - Aromatic amines
+    - Esters of aromatic alcohols and their thio and aza analogues
+    - Haloethyl-substituted aromatic compounds
+    - Ortho-disubstituted benzenes
+
+  Reactive-Unstable-Toxic:
+    - Aldimines and ketimines
+    - Alkyl Halides
+    - Glutarimides
+    - Activated Halides
+    - Activated halides (o-nitro substituted haloaromatics)
+    - Activated halides (p-nitro substituted haloaromatics)
+    - Activated halides (α-halogen substituted N-heterocycles)
+    - Activated halides (γ-halogen substituted N-heterocycles)
+    - Activated haloaromatics
+    - Aminals
+    - Enamines
+    - Halomethyl amines
+    - Halomethyl ethers
+    - Other undesirable policyclic (adamantane derivatives)
+    - Oxetanes
+    - Oxetanes, thietanes
+    - Polycyclic 4 fused rings and more
+    - Simple anilines and phenols
+
+  SureChEMBL:
+    - aminothiazole
+
+  Electrophilic:
+    - Acetates
+    - Alkyl halides
+    - Ethanolamines
+    - Morpholines
+    - Poly aromatic hydrocarbons
+
+  Genotoxic-Carcinogenicity:
+    - Aromatic N-acyl amine
+    - Aromatic amines
+    - Derivatives of urethane (carbamates)
+    - Halogenated methanes
+    - Polycyclic aromatic hydrocarbons
+    - Polycyclic aromatic system (general)
+    - Polycyclic aromatic system (specific)
+    - Secondary aromatic acetamides and formamides
+    - Tertiary aromatic amines
+    - Aromatic amines
+
+  Inpharmatica:
+    - Filter82_pyridinium
+
+  LD50-Oral:
+    - phenylpiperazine
+
+  LINT:
+    - high halogen content (>3)
+
+  Non-Genotoxic-Carcinogenicity:
+    - Halogenated benzene
+    - Heterocyclic Polycyclic Aromatic Hydrocarbons
+    - Polycyclic Aromatic Hydrocarbons
+
+  HIS-Hitters:
+    - Picolylamines_A
+
+# ============================================================
+# Graph / complexity / medicinal chemistry helpers
+# ============================================================
+
+calculate_molgraph_stats: true
+calculate_molcomplexity: true
+calculate_NIBR: true
+
+molgraph_scheduler: processes
+nibr_scheduler: processes
+
+# ============================================================
+# Additional structural checks
+# ============================================================
+
+calculate_bredt: true
+
+# Lilly rules are useful as an additional medicinal chemistry screen
+calculate_lilly: true
+lilly_scheduler: threads
+
+calculate_protecting_groups: true
+
+calculate_ring_infraction: true
+ring_infraction_hetcycle_min_size: 4
+
+calculate_stereo_center: true
+stereo_max_centers: 4
+stereo_max_undefined: 2
+
+# Keep halogen-heavy chemistry under control
+calculate_halogenicity: true
+halogenicity_thresh_F: 6
+halogenicity_thresh_Br: 3
+halogenicity_thresh_Cl: 3
+
+# Symmetry is not used as a hard filter here
+calculate_symmetry: false
+symmetry_threshold: 0.8

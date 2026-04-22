@@ -48,6 +48,14 @@ Structural filters run after the descriptor stage and write results to `03_struc
 
 The common alerts filter is the most configurable. It uses a curated CSV database of SMARTS patterns organized by rule set:
 
+HEDGEHOG ships three structural alert profiles:
+
+- `config_structFilters_strict.yml` - conservative, for high-confidence hygiene screening
+- `config_structFilters_balanced.yml` - practical mid-conservatism profile
+- `config_structFilters_exploration.yml` - least conservative, keeps more chemistry diversity
+
+The default `config_structFilters.yml` uses the exploration profile.
+
 ```yaml
 calculate_common_alerts: true
 common_alerts_auto_n_jobs: true
@@ -65,8 +73,6 @@ include_rulesets:
   - Frequent-Hitter
   - Chelator
   - SureChEMBL
-  - MLSMR
-  - LINT
   - GST-Hitters
   - HIS-Hitters
   - LuciferaseInhibitor
@@ -76,10 +82,14 @@ exclude_descriptions:
     - Aliphatic long chain
     - isolated alkene
     - triple bond
-  Toxicophore:
-    - acetylene_alkyne
-    - imidazole
-    # ... fine-grained exclusions per rule set
+  Inpharmatica:
+    - Filter82_pyridinium
+  LD50-Oral:
+    - phenylpiperazine
+  SureChEMBL:
+    - aminothiazole
+  HIS-Hitters:
+    - Picolylamines_A
 ```
 
 When `common_alerts_auto_n_jobs: true`, worker selection is size-aware:
@@ -92,10 +102,9 @@ Set `common_alerts_auto_n_jobs: false` to use regular stage/global `n_jobs` reso
 
 The `exclude_descriptions` section lets you whitelist specific alerts within a rule set. For example, if your target requires an imidazole moiety, you can exclude the Toxicophore imidazole alert while keeping all other toxicophore rules active.
 
-The shipped config also contains several commented-out optional rulesets
-(`Toxicophore`, `Skin`, `Reactive-Unstable-Toxic`, `Electrophilic`,
-`Genotoxic-Carcinogenicity`, and `Non-Genotoxic-Carcinogenicity`). They are
-examples you can enable deliberately; they are not active by default.
+Use the strict profile when broad toxicology, sensitization, and reactivity
+rulesets should be active. Use the exploration profile when retaining chemical
+diversity matters more than conservative early rejection.
 
 ## Configuration
 
