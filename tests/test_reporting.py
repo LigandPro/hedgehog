@@ -413,6 +413,118 @@ class TestParametrizedDescriptors:
         # If no CSV found, returns {}
         assert result == {} or result.get("raw_data") == []
 
+    def test_get_descriptors_detailed_includes_filter_summary(
+        self, report_gen, base_path
+    ):
+        """Should summarize descriptor threshold failures from pass_flags.csv."""
+        desc_dir = base_path / "stages" / "01_descriptors_initial"
+        metrics_dir = desc_dir / "metrics"
+        filtered_dir = desc_dir / "filtered"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        filtered_dir.mkdir(parents=True, exist_ok=True)
+
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN", "CCC"],
+                "model_name": ["ModelA", "ModelA", "ModelB"],
+                "mce18": [15.0, 12.0, 35.0],
+                "fsp3": [0.20, 0.05, 0.40],
+                "molWt": [250.0, 260.0, 270.0],
+            }
+        ).to_csv(metrics_dir / "descriptors_all.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN", "CCC"],
+                "model_name": ["ModelA", "ModelA", "ModelB"],
+                "mce18_pass": [False, False, True],
+                "fsp3_pass": [True, False, True],
+                "molWt_pass": [True, True, True],
+            }
+        ).to_csv(filtered_dir / "pass_flags.csv", index=False)
+
+        config_path = base_path / "config_descriptors.yml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "borders:",
+                    "  mce18_min: 20",
+                    "  mce18_max: 140",
+                    "  fsp3_min: 0.15",
+                    "  fsp3_max: 0.8",
+                    "  molWt_max: 500",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        report_gen.config["config_descriptors"] = str(config_path)
+
+        result = report_gen._get_descriptors_detailed("descriptors_initial")
+
+        summary = result["filter_summary"]
+        assert summary["total_molecules"] == 3
+        assert summary["failed_molecules"] == 2
+        assert summary["passed_molecules"] == 1
+        assert summary["failure_rate"] == pytest.approx(66.6667)
+        assert summary["by_filter"][0]["descriptor"] == "mce18"
+        assert summary["by_filter"][0]["failed"] == 2
+        assert summary["by_filter"][0]["threshold"] == "20 <= mce18 <= 140"
+        assert summary["by_filter"][1]["descriptor"] == "Fsp3"
+        assert summary["by_filter"][1]["failed"] == 1
+        assert summary["top_combinations"][0]["failed"] == 1
+
+    def test_generated_report_shows_descriptor_filter_failures(
+        self, report_gen, base_path
+    ):
+        """Rendered report should show why molecules were rejected by descriptors."""
+        desc_dir = base_path / "stages" / "01_descriptors_initial"
+        metrics_dir = desc_dir / "metrics"
+        filtered_dir = desc_dir / "filtered"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        filtered_dir.mkdir(parents=True, exist_ok=True)
+
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN"],
+                "model_name": ["ModelA", "ModelA"],
+                "mce18": [15.0, 35.0],
+                "fsp3": [0.20, 0.40],
+                "MolWt": [250.0, 270.0],
+                "LogP": [1.0, 2.0],
+                "TPSA": [20.0, 30.0],
+                "QED": [0.4, 0.5],
+            }
+        ).to_csv(metrics_dir / "descriptors_all.csv", index=False)
+
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN"],
+                "model_name": ["ModelA", "ModelA"],
+                "mce18_pass": [False, True],
+                "fsp3_pass": [True, True],
+            }
+        ).to_csv(filtered_dir / "pass_flags.csv", index=False)
+
+        config_path = base_path / "config_descriptors.yml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "borders:",
+                    "  mce18_min: 20",
+                    "  mce18_max: 140",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        report_gen.config["config_descriptors"] = str(config_path)
+
+        report_path = report_gen.generate()
+        html = report_path.read_text(encoding="utf-8")
+
+        assert "Descriptor Filter Failures" in html
+        assert "20 &lt;= mce18 &lt;= 140" in html
+        assert "Counts are non-exclusive" in html
+
 
 class TestBuildDescriptorComparisonData:
     """Tests for _build_descriptor_comparison_data."""

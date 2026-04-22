@@ -75,6 +75,7 @@ DESCRIPTOR_ALIASES = {
     "hba": "NumHAcceptors",
     "qed": "QED",
     "fsp3": "Fsp3",
+    "mce18": "mce18",
     "n_atoms": "n_atoms",
     "n_heavy_atoms": "n_heavy_atoms",
     "n_het_atoms": "n_het_atoms",
@@ -1079,6 +1080,7 @@ class ReportGenerator:
             "raw_data": [],
             "summary_by_model": {},
             "key_descriptors": ["MolWt", "LogP", "TPSA", "QED"],
+            "filter_summary": self._get_descriptor_filter_summary(stage_key),
         }
 
         # Build column name normalization map (actual_col -> display_name)
@@ -1133,6 +1135,120 @@ class ReportGenerator:
                     result["summary_by_model"][model] = model_summary
 
         return result
+
+    def _get_descriptor_filter_summary(
+        self, stage_key: str = "descriptors_initial"
+    ) -> dict[str, Any]:
+        """Summarize per-descriptor threshold failures from pass_flags.csv."""
+        desc_dir = self.base_path / STAGE_DIRS[stage_key]
+        flags_path = desc_dir / "filtered" / "pass_flags.csv"
+        if not flags_path.exists():
+            return {}
+
+        try:
+            flags = pd.read_csv(flags_path)
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
+            return {}
+
+        pass_cols = [col for col in flags.columns if col.endswith("_pass")]
+        if flags.empty or not pass_cols:
+            return {}
+
+        thresholds = self._get_descriptor_thresholds()
+        total = int(len(flags))
+        by_filter = []
+        failed_any = 0
+        combinations: dict[str, int] = {}
+
+        for _, row in flags.iterrows():
+            failed = []
+            for col in pass_cols:
+                if not self._is_pass_flag_true(row.get(col)):
+                    failed.append(col[: -len("_pass")])
+            if failed:
+                failed_any += 1
+                key = ", ".join(self._descriptor_display_name(name) for name in failed)
+                combinations[key] = combinations.get(key, 0) + 1
+
+        for col in pass_cols:
+            raw_name = col[: -len("_pass")]
+            failed_count = int(
+                sum(not self._is_pass_flag_true(value) for value in flags[col])
+            )
+            if failed_count == 0:
+                continue
+            display_name = self._descriptor_display_name(raw_name)
+            by_filter.append(
+                {
+                    "descriptor": display_name,
+                    "raw_descriptor": raw_name,
+                    "failed": failed_count,
+                    "failed_pct": failed_count / total * 100 if total else 0.0,
+                    "threshold": thresholds.get(
+                        raw_name, thresholds.get(display_name, "")
+                    ),
+                }
+            )
+
+        by_filter.sort(key=lambda item: item["failed"], reverse=True)
+        top_combinations = [
+            {"filters": filters, "failed": count, "failed_pct": count / total * 100}
+            for filters, count in sorted(
+                combinations.items(), key=lambda item: item[1], reverse=True
+            )[:10]
+        ]
+
+        return {
+            "total_molecules": total,
+            "passed_molecules": total - failed_any,
+            "failed_molecules": failed_any,
+            "failure_rate": failed_any / total * 100 if total else 0.0,
+            "by_filter": by_filter,
+            "top_combinations": top_combinations,
+        }
+
+    @staticmethod
+    def _is_pass_flag_true(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if pd.isna(value):
+            return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return str(value).strip().lower() in {"true", "1", "yes", "y"}
+
+    @staticmethod
+    def _descriptor_display_name(raw_name: str) -> str:
+        return DESCRIPTOR_ALIASES.get(raw_name.lower(), raw_name)
+
+    def _get_descriptor_thresholds(self) -> dict[str, str]:
+        """Return human-readable descriptor threshold labels from config."""
+        config = self._load_stage_config("config_descriptors")
+        borders = config.get("borders", {}) if isinstance(config, dict) else {}
+        if not isinstance(borders, dict):
+            return {}
+
+        bounds: dict[str, dict[str, Any]] = {}
+        for key, value in borders.items():
+            if key.endswith("_min"):
+                bounds.setdefault(key[: -len("_min")], {})["min"] = value
+            elif key.endswith("_max"):
+                bounds.setdefault(key[: -len("_max")], {})["max"] = value
+
+        thresholds = {}
+        for raw_name, vals in bounds.items():
+            display_name = self._descriptor_display_name(raw_name)
+            if "min" in vals and "max" in vals:
+                label = f"{vals['min']} <= {display_name} <= {vals['max']}"
+            elif "min" in vals:
+                label = f"{display_name} >= {vals['min']}"
+            elif "max" in vals:
+                label = f"{display_name} <= {vals['max']}"
+            else:
+                continue
+            thresholds[raw_name] = label
+            thresholds[display_name] = label
+        return thresholds
 
     def _build_descriptors_js_data(
         self, desc_detailed: dict[str, Any], available_models: list[str]
