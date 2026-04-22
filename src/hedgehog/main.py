@@ -1190,6 +1190,7 @@ def report(
         CFG_DOCKING,
         "config_docking_filters",
         "config_moleval",
+        "config_weighted_score",
     ]
     configs_dir = results_path / "configs"
     for key in sub_config_keys:

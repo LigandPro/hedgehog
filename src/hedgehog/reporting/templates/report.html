@@ -304,6 +304,77 @@
             font-weight: 500;
         }
 
+        .weighted-score-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .weighted-score-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px;
+            background: white;
+        }
+
+        .weighted-score-card h3 {
+            margin-bottom: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        .weighted-score-card .meta-list {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin: 10px 0 14px;
+            line-height: 1.35;
+            white-space: normal;
+        }
+
+        .weighted-score-stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .weighted-score-stat-value {
+            color: var(--primary);
+            font-size: 1.25rem;
+            font-weight: 600;
+            overflow-wrap: anywhere;
+        }
+
+        .weighted-score-stat-label {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .weighted-evidence-table {
+            font-size: 0.78rem;
+            margin-top: 12px;
+        }
+
+        .weighted-evidence-table th,
+        .weighted-evidence-table td {
+            padding: 8px 10px;
+        }
+
+        .weighted-evidence-table td:not(:first-child),
+        .weighted-evidence-table th:not(:first-child) {
+            text-align: right;
+        }
+
+        .weighted-score-card .evidence-empty {
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+            margin-top: 12px;
+        }
+
         /* Section headers */
         section h3 {
             font-size: 0.95rem;
@@ -391,6 +462,104 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </section>
+        {% endif %}
+
+        {% if data.weighted_scores.models %}
+        <section>
+            <h2>Generator Reality Assessment</h2>
+
+            {% if plots.weighted_score_components %}
+            <div class="plot-container">{{ plots.weighted_score_components | safe }}</div>
+            {% else %}
+            <div class="plot-container empty-state"><p>No generator reality component data available</p></div>
+            {% endif %}
+
+            <div class="weighted-score-grid">
+                {% for model_name, model in data.weighted_scores.models.items() %}
+                {% set overall = (model.overall | default(0)) | float %}
+                {% set grade = model.grade | default("N/A") %}
+                {% set confidence = model.confidence | default("N/A") %}
+                {% set candidate_pool = model.candidate_pool_quality | default({}) %}
+                {% set candidate_pool_overall = candidate_pool.overall | default(none) %}
+                <article class="weighted-score-card">
+                    <h3>{{ model_name }}</h3>
+
+                    <div class="weighted-score-stats">
+                        <div>
+                            <div class="weighted-score-stat-value">{{ "%.1f"|format(overall) }}</div>
+                            <div class="weighted-score-stat-label">Generator Reality /100</div>
+                        </div>
+                        {% if candidate_pool_overall is not none %}
+                        <div>
+                            <div class="weighted-score-stat-value">{{ "%.1f"|format((candidate_pool_overall | default(0)) | float) }}</div>
+                            <div class="weighted-score-stat-label">Final Candidate Pool Quality</div>
+                        </div>
+                        {% endif %}
+                        <div>
+                            <div class="weighted-score-stat-value">{{ grade }}</div>
+                            <div class="weighted-score-stat-label">Grade</div>
+                        </div>
+                        <div>
+                            <div class="weighted-score-stat-value">{{ confidence }}</div>
+                            <div class="weighted-score-stat-label">Confidence</div>
+                        </div>
+                    </div>
+
+                    <p class="meta-list">
+                        <strong>Bottlenecks:</strong>
+                        {% if model.bottlenecks %}
+                        {% for bottleneck in model.bottlenecks %}
+                        {{ bottleneck }}{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                        {% else %}
+                        None
+                        {% endif %}
+                    </p>
+
+                    {% if model.warnings %}
+                    <p class="meta-list">
+                        <strong>Warnings:</strong>
+                        {% for warning in model.warnings %}
+                        {{ warning }}{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </p>
+                    {% endif %}
+
+                    <h4>Generator Component Evidence</h4>
+                    {% if model.components %}
+                    <table class="weighted-evidence-table">
+                        <thead>
+                            <tr>
+                                <th>Component</th>
+                                <th>Score</th>
+                                <th>Weight</th>
+                                <th>Evidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for component_name, component in model.components.items() %}
+                            <tr>
+                                <td>{{ component_name }}</td>
+                                <td>
+                                    {% if component.available and component.score is not none %}
+                                    {{ "%.1f"|format((component.score | default(0)) | float) }}
+                                    {% else %}
+                                    &mdash;
+                                    {% endif %}
+                                </td>
+                                <td>{{ "%.0f"|format(((component.weight | default(0)) | float) * 100) }}%</td>
+                                <td>{{ component.evidence_text | default("-") }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="evidence-empty">No component evidence available.</p>
+                    {% endif %}
+                </article>
+                {% endfor %}
+            </div>
         </section>
         {% endif %}
 

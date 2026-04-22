@@ -538,6 +538,190 @@ def plot_model_comparison(model_stats: list[dict[str, Any]]) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
+def plot_weighted_score_components(weighted_scores: dict[str, Any]) -> str:
+    """Create a grouped bar chart of generator reality score components.
+
+    Args:
+        weighted_scores: Dictionary with component score configuration and model metrics.
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not weighted_scores:
+        return _empty_plot("No generator reality score data available")
+
+    models_data = weighted_scores.get("models")
+    if not isinstance(models_data, dict) or not models_data:
+        return _empty_plot("No generator reality model data available")
+
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    ranking = weighted_scores.get("ranking")
+    model_items: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(ranking, list):
+        ranked_lookup = {
+            str(name): payload
+            for name, payload in models_data.items()
+            if isinstance(payload, dict)
+        }
+        for ranking_item in ranking:
+            model_name = (
+                ranking_item.get("model_name")
+                if isinstance(ranking_item, dict)
+                else ranking_item
+            )
+            model_key = str(model_name)
+            payload = ranked_lookup.get(model_key)
+            if payload is not None:
+                model_items.append((model_key, payload))
+        for model_key, payload in models_data.items():
+            if model_key not in {name for name, _ in model_items} and isinstance(
+                payload, dict
+            ):
+                model_items.append((str(model_key), payload))
+    else:
+        model_items = [
+            (str(name), payload)
+            for name, payload in models_data.items()
+            if isinstance(payload, dict)
+        ]
+
+    # Keep only model entries with component information.
+    model_items = [
+        (name, payload)
+        for name, payload in model_items
+        if isinstance(payload.get("components"), dict) and payload["components"]
+    ]
+    if not model_items:
+        return _empty_plot("No generator reality component data available")
+
+    # Build full component order from all models.
+    component_names: list[str] = sorted(
+        {
+            str(component_name)
+            for _, payload in model_items
+            for component_name in payload.get("components", {})
+            if isinstance(payload.get("components"), dict)
+        }
+    )
+    if not component_names:
+        return _empty_plot("No generator reality component data available")
+
+    def _component_payload(payload: dict[str, Any], component: str) -> dict[str, Any]:
+        components = payload.get("components", {})
+        if isinstance(components, dict):
+            raw_component = components.get(component)
+            if isinstance(raw_component, dict):
+                return raw_component
+        return {}
+
+    if len(model_items) == 1:
+        model_name, model_payload = model_items[0]
+        scores = []
+        custom_data = []
+        for component in component_names:
+            component_payload = _component_payload(model_payload, component)
+            score = _to_float(component_payload.get("score"))
+            weight = _to_float(component_payload.get("weight"))
+            available = component_payload.get("available", True)
+            evidence = component_payload.get("evidence_text", "")
+            scores.append(score)
+            custom_data.append([weight, available, evidence])
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Bar(
+                name=model_name,
+                x=component_names,
+                y=scores,
+                marker_color=PURPLE_PALETTE[0],
+                text=[f"{score:.1f}" for score in scores],
+                textposition="outside",
+                customdata=custom_data,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Score: %{y:.1f}<br>"
+                    "Weight: %{customdata[0]:.0%}<br>"
+                    "Available: %{customdata[1]}<br>"
+                    "Evidence: %{customdata[2]}<extra></extra>"
+                ),
+            )
+        )
+        fig.update_layout(
+            title=f"Generator Reality Components ({model_name})",
+            xaxis_title="Component",
+            yaxis_title="Score",
+            yaxis={"range": [0, 105]},
+            height=360,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font={
+                "family": "-apple-system, BlinkMacSystemFont, sans-serif",
+                "size": 11,
+            },
+        )
+        return fig.to_html(full_html=False, include_plotlyjs=False)
+
+    fig = go.Figure()
+    for idx, (model_name, model_payload) in enumerate(model_items):
+        scores = []
+        custom_data = []
+        for component in component_names:
+            component_payload = _component_payload(model_payload, component)
+            score = _to_float(component_payload.get("score"))
+            weight = _to_float(component_payload.get("weight"))
+            available = component_payload.get("available", True)
+            evidence = component_payload.get("evidence_text", "")
+            scores.append(score)
+            custom_data.append([weight, available, evidence])
+
+        fig.add_trace(
+            go.Bar(
+                name=model_name,
+                x=component_names,
+                y=scores,
+                marker_color=MODEL_COLORS[idx % len(MODEL_COLORS)],
+                customdata=custom_data,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Model: " + model_name + "<br>"
+                    "Score: %{y:.1f}<br>"
+                    "Weight: %{customdata[0]:.0%}<br>"
+                    "Available: %{customdata[1]}<br>"
+                    "Evidence: %{customdata[2]}<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title="Generator Reality Components by Model",
+        barmode="group",
+        height=420,
+        xaxis_title="Component",
+        yaxis_title="Score",
+        xaxis={"tickangle": -20},
+        yaxis={"range": [0, 105]},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
 def plot_model_stacked_losses(model_stats: list[dict[str, Any]]) -> str:
     """Create stacked bar chart showing where molecules were lost per model.
 
