@@ -17,6 +17,7 @@ from jinja2 import Environment, PackageLoader
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
 from hedgehog.reporting.stage_audit_notebook import write_stage_audit_notebook
+from hedgehog.reporting.weighted_score import compute_weighted_scores, first_existing
 from hedgehog.utils.parallel import resolve_n_jobs
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,11 @@ class ReportGenerator:
             Dictionary with all collected data
         """
         funnel_data = self._get_all_funnel_data()
+        moleval = self._get_moleval_metrics()
+        weighted_scores = self._get_weighted_scores(
+            available_models=funnel_data["models"],
+            moleval=moleval,
+        )
         return {
             "metadata": self._get_metadata(),
             "summary": self._get_summary(),
@@ -251,7 +257,8 @@ class ReportGenerator:
                 "descriptors_final"
             ),
             "existing_plots": self._get_existing_plots(),
-            "moleval": self._get_moleval_metrics(),
+            "moleval": moleval,
+            "weighted_scores": weighted_scores,
             "config": self._get_config_summary(),
         }
 
@@ -267,46 +274,41 @@ class ReportGenerator:
         """
         try:
             run_info_path = self.base_path / "RUN_INFO.md"
+            sections = []
+
             moleval = data.get("moleval", {})
             by_stage = moleval.get("by_stage", {})
             stages = moleval.get("stages", [])
             metrics = moleval.get("metrics", [])
 
-            if not by_stage or not stages or not metrics:
+            if by_stage and stages and metrics:
+                # Build markdown table
+                header = "| Metric | " + " | ".join(stages) + " |"
+                separator = "|--------|" + "|".join("--------" for _ in stages) + "|"
+                rows = []
+                for metric in metrics:
+                    cells = []
+                    for stage in stages:
+                        val = by_stage.get(stage, {}).get(metric)
+                        cells.append(f"{val:.4f}" if val is not None else "—")
+                    rows.append(f"| {metric} | " + " | ".join(cells) + " |")
+
+                table_md = "\n".join([header, separator, *rows])
+                sections.append(
+                    ("## MolEval Metrics", f"## MolEval Metrics\n\n{table_md}\n")
+                )
+
+            weighted_section = self._format_weighted_score_run_info(
+                data.get("weighted_scores", {})
+            )
+            if weighted_section:
+                sections.append(("## Generator Reality Assessment", weighted_section))
+
+            if not sections:
                 return
 
-            # Build markdown table
-            header = "| Metric | " + " | ".join(stages) + " |"
-            separator = "|--------|" + "|".join("--------" for _ in stages) + "|"
-            rows = []
-            for metric in metrics:
-                cells = []
-                for stage in stages:
-                    val = by_stage.get(stage, {}).get(metric)
-                    cells.append(f"{val:.4f}" if val is not None else "—")
-                rows.append(f"| {metric} | " + " | ".join(cells) + " |")
-
-            table_md = "\n".join([header, separator, *rows])
-
-            section = f"\n\n## MolEval Metrics\n\n{table_md}\n"
-
             if run_info_path.exists():
-                existing = run_info_path.read_text()
-                # Replace existing section if present, otherwise append
-                marker = "## MolEval Metrics"
-                if marker in existing:
-                    # Remove old section (everything from marker to next ## or EOF)
-                    before = existing[: existing.index(marker)]
-                    rest = existing[existing.index(marker) + len(marker) :]
-                    # Find next section header
-                    next_section = rest.find("\n## ")
-                    if next_section != -1:
-                        after = rest[next_section:]
-                    else:
-                        after = ""
-                    content = before.rstrip() + section + after
-                else:
-                    content = existing.rstrip() + section
+                content = run_info_path.read_text()
             else:
                 # Create minimal RUN_INFO.md
                 retention = (
@@ -321,14 +323,88 @@ class ReportGenerator:
                     f"- Initial molecules: {self.initial_count}\n"
                     f"- Final molecules: {self.final_count}\n"
                     f"- Retention rate: {retention}\n"
-                    f"{section}"
+                )
+
+            if weighted_section and "## Weighted Model Assessment" in content:
+                if "## Generator Reality Assessment" in content:
+                    content = self._remove_run_info_section(
+                        content, "## Weighted Model Assessment"
+                    )
+                else:
+                    content = self._replace_or_append_run_info_section(
+                        content,
+                        "## Weighted Model Assessment",
+                        weighted_section,
+                    )
+
+            for marker, section in sections:
+                content = self._replace_or_append_run_info_section(
+                    content, marker, section
                 )
 
             with open(run_info_path, "w") as f:
                 f.write(content)
-            logger.info("Updated run info with MolEval metrics: %s", run_info_path)
+            logger.info("Updated run info with report metrics: %s", run_info_path)
         except Exception as e:
-            logger.debug("Failed to update RUN_INFO.md with MolEval metrics: %s", e)
+            logger.debug("Failed to update RUN_INFO.md with report metrics: %s", e)
+
+    def _format_weighted_score_run_info(self, weighted_scores: dict[str, Any]) -> str:
+        """Format the Generator Reality Assessment RUN_INFO section."""
+        models = weighted_scores.get("models", {})
+        if not models:
+            return ""
+
+        rows = [
+            (
+                "| Model | Generator Reality Score | Final Candidate Pool Quality | "
+                "Grade | Confidence | Main Bottleneck |"
+            ),
+            "|---|---:|---:|---|---|---|",
+        ]
+        for model_name, score in models.items():
+            overall = score.get("overall")
+            overall_text = f"{overall:.1f}" if overall is not None else "—"
+            pool_quality = score.get("candidate_pool_quality", {}).get("overall")
+            pool_quality_text = (
+                f"{pool_quality:.1f}" if pool_quality is not None else "—"
+            )
+            bottlenecks = score.get("bottlenecks") or []
+            main_bottleneck = bottlenecks[0] if bottlenecks else "None"
+            rows.append(
+                "| "
+                f"{model_name} | {overall_text} | {pool_quality_text} | "
+                f"{score.get('grade', '—')} | "
+                f"{score.get('confidence', '—')} | {main_bottleneck} |"
+            )
+        return "## Generator Reality Assessment\n\n" + "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _replace_or_append_run_info_section(
+        content: str,
+        marker: str,
+        section: str,
+    ) -> str:
+        """Replace a RUN_INFO section if present, otherwise append it."""
+        normalized_section = "\n\n" + section.strip() + "\n"
+        if marker not in content:
+            return content.rstrip() + normalized_section
+
+        before = content[: content.index(marker)]
+        rest = content[content.index(marker) + len(marker) :]
+        next_section = rest.find("\n## ")
+        after = rest[next_section:] if next_section != -1 else ""
+        return before.rstrip() + normalized_section + after
+
+    @staticmethod
+    def _remove_run_info_section(content: str, marker: str) -> str:
+        """Remove a RUN_INFO section when migrating section headings."""
+        if marker not in content:
+            return content
+        before = content[: content.index(marker)]
+        rest = content[content.index(marker) + len(marker) :]
+        next_section = rest.find("\n## ")
+        after = rest[next_section:] if next_section != -1 else ""
+        return before.rstrip() + "\n\n" + after.lstrip()
 
     def _get_metadata(self) -> dict[str, Any]:
         """Get report metadata."""
@@ -475,9 +551,18 @@ class ReportGenerator:
             except Exception as e:
                 logger.debug("Could not read %s: %s", input_path, e)
 
-        # Try output file
-        output_path = self.output_dir / "final_molecules.csv"
-        if output_path.exists():
+        # Try final output files. Pipeline runs store final output under output/,
+        # while some older report paths used the run root.
+        output_path = first_existing(
+            self.base_path,
+            [
+                "output/final_molecules.csv",
+                "final_molecules.csv",
+                "stages/07_descriptors_final/filtered/filtered_molecules.csv",
+                "stages/06_docking_filters/filtered_molecules.csv",
+            ],
+        )
+        if output_path is not None:
             try:
                 df = pd.read_csv(output_path)
                 if "model_name" in df.columns:
@@ -603,8 +688,16 @@ class ReportGenerator:
     def _get_model_stats(self) -> list[dict[str, Any]]:
         """Get per-model statistics."""
         # Try to load final molecules to get model breakdown
-        final_path = self.output_dir / "final_molecules.csv"
-        if not final_path.exists():
+        final_path = first_existing(
+            self.base_path,
+            [
+                "final_molecules.csv",
+                "output/final_molecules.csv",
+                "stages/07_descriptors_final/filtered/filtered_molecules.csv",
+                "stages/06_docking_filters/filtered_molecules.csv",
+            ],
+        )
+        if final_path is None:
             return []
 
         try:
@@ -2628,6 +2721,32 @@ class ReportGenerator:
         """
         return self._load_stage_config("config_moleval")
 
+    def _load_weighted_score_config(self) -> dict[str, Any]:
+        """Load Generator Reality Assessment configuration."""
+        return self._load_stage_config("config_weighted_score")
+
+    def _get_weighted_scores(
+        self,
+        available_models: list[str],
+        moleval: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compute generator reality scores without failing report generation."""
+        config = self._load_weighted_score_config()
+        if not config:
+            return {}
+        try:
+            return compute_weighted_scores(
+                base_path=self.base_path,
+                available_models=available_models,
+                config=config,
+                moleval=moleval,
+                initial_count=self.initial_count,
+                final_count=self.final_count,
+            )
+        except Exception as e:
+            logger.debug("Weighted model score computation failed: %s", e)
+            return {}
+
     def _collect_stage_smiles(self) -> dict[str, list[str]]:
         """Collect SMILES from key pipeline stages for MolEval analysis.
 
@@ -2760,6 +2879,12 @@ class ReportGenerator:
         if model_stats:
             plot_htmls["model_comparison"] = plots.plot_model_comparison(model_stats)
             plot_htmls["model_losses"] = plots.plot_model_stacked_losses(model_stats)
+
+        weighted_scores = data.get("weighted_scores", {})
+        if weighted_scores.get("models"):
+            plot_htmls["weighted_score_components"] = (
+                plots.plot_weighted_score_components(weighted_scores)
+            )
 
         # Descriptor distributions (original)
         desc_data = data.get("descriptors", {})
