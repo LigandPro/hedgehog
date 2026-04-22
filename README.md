@@ -155,7 +155,7 @@ results/run_N/
 
 ## Documentation
 
-![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
+![HEDGEHOG Pipeline](docs/public/pipeline_structure_v2.png)
 
 For full details, use the documentation instead of this README:
 
