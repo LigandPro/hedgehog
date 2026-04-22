@@ -304,6 +304,75 @@
             font-weight: 500;
         }
 
+        .molecule-card-grid {
+            display: grid;
+            grid-template-columns: repeat(var(--molecule-card-columns, 3), minmax(0, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .molecule-card-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin: 16px 0 4px;
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+        }
+
+        .molecule-card-controls label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .molecule-card-controls select {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: white;
+            color: var(--text);
+            padding: 6px 8px;
+            font: inherit;
+        }
+
+        .molecule-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            background: white;
+            min-width: 0;
+        }
+
+        .molecule-card svg {
+            width: 100%;
+            height: auto;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .molecule-card dl {
+            display: grid;
+            grid-template-columns: 88px 1fr;
+            gap: 4px 8px;
+            font-size: 0.78rem;
+        }
+
+        .molecule-card dt {
+            color: var(--text-secondary);
+        }
+
+        .molecule-card dd {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        @media (max-width: 768px) {
+            .molecule-card-grid {
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            }
+        }
+
         /* Section headers */
         section h3 {
             font-size: 0.95rem;
@@ -1591,7 +1660,7 @@
         {% endif %}
 
         <!-- Structural Filters Analysis (Stage 02) -->
-        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter or plots.filters_data %}
+        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter or plots.filters_data or data.common_alert_diagnostics %}
         <section>
             <h2>Structural Filters Analysis</h2>
 
@@ -1857,6 +1926,296 @@
                     }
                 });
             </script>
+            {% endif %}
+
+            {% if data.common_alert_diagnostics %}
+            {% set ca = data.common_alert_diagnostics %}
+            <div style="margin-top: 32px; padding-top: 28px; border-top: 1px solid var(--border);">
+                <h3 style="margin-bottom: 16px;">Common Alert Diagnostics</h3>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.input_molecules }}</div>
+                        <div class="metric-label">Input Molecules</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.passed }}</div>
+                        <div class="metric-label">Passed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.failed }}</div>
+                        <div class="metric-label">Failed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.pass_rate }}%</div>
+                        <div class="metric-label">Pass Rate</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.mean_ruleset_alerts_failed }}</div>
+                        <div class="metric-label">Mean Rulesets / Failed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.max_ruleset_alerts }}</div>
+                        <div class="metric-label">Max Rulesets / Molecule</div>
+                    </div>
+                </div>
+
+                <div class="view-toggle" id="common-alert-toggle">
+                    <button class="active" onclick="selectCommonAlertView('overview', this)">Overview</button>
+                    <button onclick="selectCommonAlertView('rulesets', this)">Rulesets</button>
+                    <button onclick="selectCommonAlertView('descriptions', this)">Descriptions</button>
+                    <button onclick="selectCommonAlertView('overlap', this)">Overlap</button>
+                    <button onclick="selectCommonAlertView('whatif', this)">What-if</button>
+                    <button onclick="selectCommonAlertView('molecules', this)">Molecules</button>
+                </div>
+
+                <div id="common-alert-overview" class="plot-container"></div>
+                <div id="common-alert-rulesets" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-descriptions" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-overlap" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-whatif" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-molecules" style="display:none;">
+                    {% if ca.examples %}
+                    <div class="molecule-card-controls">
+                        <label>
+                            Show
+                            <select id="common-alert-card-count" onchange="updateCommonAlertMoleculeCards()">
+                                <option value="12">12 cards</option>
+                                <option value="18" selected>18 cards</option>
+                                <option value="36">36 cards</option>
+                                <option value="72">72 cards</option>
+                                <option value="all">All cards</option>
+                            </select>
+                        </label>
+                        <label>
+                            Columns
+                            <select id="common-alert-card-columns" onchange="updateCommonAlertMoleculeCards()">
+                                <option value="2">2</option>
+                                <option value="3" selected>3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                                <option value="6">6</option>
+                            </select>
+                        </label>
+                        <span id="common-alert-card-status"></span>
+                    </div>
+                    <div id="common-alert-card-grid" class="molecule-card-grid">
+                        {% for mol in ca.examples %}
+                        <div class="molecule-card" data-card-index="{{ loop.index }}">
+                            {{ mol.svg | safe }}
+                            <dl>
+                                <dt>mol_idx</dt><dd>{{ mol.mol_idx }}</dd>
+                                <dt>ruleset</dt><dd>{{ mol.ruleset }}</dd>
+                                <dt>description</dt><dd>{{ mol.description }}</dd>
+                                <dt>rule_id</dt><dd>{{ mol.rule_id }}</dd>
+                                <dt>SMARTS</dt><dd><code>{{ mol.smarts }}</code></dd>
+                                <dt>matches</dt><dd>{{ mol.n_matches }}</dd>
+                                <dt>rescue</dt><dd>{{ "yes" if mol.would_rescue else "no" }}</dd>
+                            </dl>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="empty-state">No atom-level hit examples available. Run Common Alerts with hits_long.csv diagnostics enabled.</p>
+                    {% endif %}
+                </div>
+
+                <script>
+                    var commonAlertData = {{ ca | tojson }};
+
+                    function selectCommonAlertView(view, btn) {
+                        var buttons = document.getElementById('common-alert-toggle').querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                        ['overview', 'rulesets', 'descriptions', 'overlap', 'whatif', 'molecules'].forEach(function(name) {
+                            var el = document.getElementById('common-alert-' + name);
+                            if (el) el.style.display = (name === view) ? 'block' : 'none';
+                        });
+                        renderCommonAlertView(view);
+                    }
+
+                    function renderCommonAlertView(view) {
+                        if (view === 'overview') renderCommonAlertOverview();
+                        if (view === 'rulesets') renderCommonAlertRulesets();
+                        if (view === 'descriptions') renderCommonAlertDescriptions();
+                        if (view === 'overlap') renderCommonAlertOverlap();
+                        if (view === 'whatif') renderCommonAlertWhatif();
+                        if (view === 'molecules') updateCommonAlertMoleculeCards();
+                    }
+
+                    function updateCommonAlertMoleculeCards() {
+                        var grid = document.getElementById('common-alert-card-grid');
+                        if (!grid) return;
+
+                        var countSelect = document.getElementById('common-alert-card-count');
+                        var columnsSelect = document.getElementById('common-alert-card-columns');
+                        var status = document.getElementById('common-alert-card-status');
+                        var cards = Array.prototype.slice.call(grid.querySelectorAll('.molecule-card'));
+                        var countValue = countSelect ? countSelect.value : '18';
+                        var visibleCount = countValue === 'all' ? cards.length : parseInt(countValue, 10);
+                        var columns = columnsSelect ? parseInt(columnsSelect.value, 10) : 3;
+
+                        grid.style.setProperty('--molecule-card-columns', columns);
+                        cards.forEach(function(card, index) {
+                            card.style.display = index < visibleCount ? 'block' : 'none';
+                        });
+                        if (status) {
+                            status.textContent = Math.min(visibleCount, cards.length) + ' of ' + cards.length + ' cards shown';
+                        }
+                    }
+
+                    function renderCommonAlertOverview() {
+                        var rows = commonAlertData.histogram || [];
+                        Plotly.react('common-alert-overview', [{
+                            type: 'bar',
+                            x: rows.map(function(r) { return r.failed_rulesets; }),
+                            y: rows.map(function(r) { return r.molecules; }),
+                            marker: { color: 'rgba(59, 130, 246, 0.75)' },
+                            hovertemplate: '%{y} molecules<br>%{x} failed rulesets<extra></extra>'
+                        }], {
+                            title: 'Distribution of Failed Common Alert Rulesets per Molecule',
+                            xaxis: { title: 'Failed rulesets' },
+                            yaxis: { title: 'Molecules' },
+                            height: 360,
+                            margin: { l: 70, r: 30, t: 50, b: 60 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertRulesets() {
+                        var rows = (commonAlertData.rulesets || []).slice().reverse();
+                        Plotly.react('common-alert-rulesets', [
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Total hits',
+                                y: rows.map(function(r) { return r.ruleset; }),
+                                x: rows.map(function(r) { return r.total_hits; }),
+                                marker: { color: 'rgba(139, 92, 246, 0.65)' }
+                            },
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Unique rescue',
+                                y: rows.map(function(r) { return r.ruleset; }),
+                                x: rows.map(function(r) { return r.unique_rescue; }),
+                                marker: { color: 'rgba(34, 197, 94, 0.75)' }
+                            }
+                        ], {
+                            title: 'Ruleset Impact: Total Hits vs Unique Rescue',
+                            barmode: 'group',
+                            height: Math.max(360, rows.length * 34 + 100),
+                            margin: { l: 180, r: 30, t: 50, b: 50 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertDescriptions() {
+                        var rows = (commonAlertData.descriptions || []).slice().reverse();
+                        var labels = rows.map(function(r) { return r.ruleset + ' / ' + r.description; });
+                        Plotly.react('common-alert-descriptions', [
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Total hits',
+                                y: labels,
+                                x: rows.map(function(r) { return r.total_hits; }),
+                                marker: { color: 'rgba(20, 184, 166, 0.65)' }
+                            },
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Unique rescue',
+                                y: labels,
+                                x: rows.map(function(r) { return r.unique_rescue; }),
+                                marker: { color: 'rgba(249, 115, 22, 0.75)' }
+                            }
+                        ], {
+                            title: 'Description-Level Pareto',
+                            barmode: 'group',
+                            height: Math.max(420, rows.length * 30 + 120),
+                            margin: { l: 260, r: 30, t: 50, b: 50 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertOverlap() {
+                        var rows = commonAlertData.cooccurrence || [];
+                        var labels = [];
+                        rows.forEach(function(r) {
+                            if (labels.indexOf(r.left) === -1) labels.push(r.left);
+                            if (labels.indexOf(r.right) === -1) labels.push(r.right);
+                        });
+                        labels = labels.slice(0, 12);
+                        var z = labels.map(function(left) {
+                            return labels.map(function(right) {
+                                if (left === right) return 1;
+                                var match = rows.find(function(r) {
+                                    return (r.left === left && r.right === right) || (r.left === right && r.right === left);
+                                });
+                                return match ? match.jaccard : 0;
+                            });
+                        });
+                        Plotly.react('common-alert-overlap', [{
+                            type: 'heatmap',
+                            x: labels,
+                            y: labels,
+                            z: z,
+                            colorscale: 'Blues',
+                            hovertemplate: '%{y} × %{x}<br>Jaccard: %{z:.2f}<extra></extra>'
+                        }], {
+                            title: 'Ruleset Co-occurrence Jaccard Overlap',
+                            height: Math.max(420, labels.length * 34 + 120),
+                            margin: { l: 170, r: 40, t: 50, b: 150 },
+                            xaxis: { tickangle: -45 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertWhatif() {
+                        var rules = commonAlertData.whatif_rulesets || [];
+                        var desc = commonAlertData.whatif_descriptions || [];
+                        Plotly.react('common-alert-whatif', [
+                            {
+                                type: 'scatter',
+                                mode: 'lines+markers',
+                                name: 'Rulesets',
+                                x: rules.map(function(r) { return r.step; }),
+                                y: rules.map(function(r) { return r.rescued; }),
+                                text: rules.map(function(r) { return r.disabled; }),
+                                hovertemplate: 'Top %{x}: %{text}<br>rescued: %{y}<extra></extra>'
+                            },
+                            {
+                                type: 'scatter',
+                                mode: 'lines+markers',
+                                name: 'Descriptions',
+                                x: desc.map(function(r) { return r.step; }),
+                                y: desc.map(function(r) { return r.rescued; }),
+                                text: desc.map(function(r) { return r.disabled; }),
+                                hovertemplate: 'Top %{x}: %{text}<br>rescued: %{y}<extra></extra>'
+                            }
+                        ], {
+                            title: 'Cumulative What-if Rescue',
+                            xaxis: { title: 'Top disabled alerts' },
+                            yaxis: { title: 'Molecules rescued' },
+                            height: 380,
+                            margin: { l: 70, r: 30, t: 50, b: 60 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    document.addEventListener('DOMContentLoaded', function() {
+                        if (document.getElementById('common-alert-overview')) {
+                            renderCommonAlertOverview();
+                            updateCommonAlertMoleculeCards();
+                        }
+                    });
+                </script>
+            </div>
             {% endif %}
         </section>
         {% endif %}

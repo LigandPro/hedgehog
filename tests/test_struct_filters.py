@@ -1,5 +1,6 @@
 """Tests for structFilters/utils.py."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -518,14 +519,26 @@ class TestCommonAlertsNJobsStrategy:
 def _build_alert_data(rulesets_smarts):
     """Build a mock alert DataFrame from a dict of {ruleset_name: [(smarts, description), ...]}.
 
-    Returns a DataFrame with columns: rule_set_name, smarts, description.
+    Returns a DataFrame with common_alerts_collection-like columns.
     """
     rows = []
+    rule_id = 0
     for ruleset, patterns in rulesets_smarts.items():
         for smarts, desc in patterns:
             rows.append(
-                {"rule_set_name": ruleset, "smarts": smarts, "description": desc}
+                {
+                    "rule_id": rule_id,
+                    "rule_set": 1,
+                    "rule_set_name": ruleset,
+                    "smarts": smarts,
+                    "description": desc,
+                    "priority": 1,
+                    "mincount": 1,
+                    "source": "test",
+                    "catalog_description": "test rules",
+                }
             )
+            rule_id += 1
     return pd.DataFrame(rows)
 
 
@@ -610,6 +623,101 @@ class TestCommonAlertsContract:
         assert row["pass_RulesetB"] == True  # noqa: E712
         assert row["pass"] == True  # noqa: E712
         assert row["pass_any"] == True  # noqa: E712
+
+    @patch("hedgehog.struct_filters.utils.filter_alerts")
+    @patch("hedgehog.struct_filters.utils.load_config")
+    def test_alert_hits_json_contains_rule_metadata_and_match_atoms(
+        self, mock_load_config, mock_filter_alerts
+    ):
+        """Common Alerts should preserve atom-level match diagnostics."""
+        mock_load_config.return_value = {}
+        mock_filter_alerts.return_value = _build_alert_data(
+            {
+                "RulesetA": [("[#7]", "nitrogen atom")],
+                "RulesetB": [("[#17]", "chlorine atom")],
+            }
+        )
+
+        mol = Chem.MolFromSmiles("CCN")
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        result = apply_structural_alerts(config, [mol])
+
+        hits = json.loads(result["alert_hits_json"].iloc[0])
+        assert len(hits) == 1
+        hit = hits[0]
+        assert hit["ruleset"] == "RulesetA"
+        assert hit["rule_id"] == 0
+        assert hit["smarts"] == "[#7]"
+        assert hit["description"] == "nitrogen atom"
+        assert hit["matched_atom_ids"] == [2]
+        assert hit["matched_bond_ids"] == []
+        assert hit["n_matches_for_rule"] == 1
+
+    def test_common_alert_diagnostic_artifacts_are_written(self, tmp_path):
+        """The common_alerts output folder should receive long and summary CSVs."""
+        from hedgehog.struct_filters.common_alert_diagnostics import (
+            hit_records_to_json,
+        )
+        from hedgehog.struct_filters.main import _save_filter_results
+
+        extended_df = pd.DataFrame(
+            {
+                "smiles": ["CCN", "CCCl", "CCO"],
+                "model_name": ["m1", "m1", "m1"],
+                "mol_idx": [0, 1, 2],
+                "mol": [Chem.MolFromSmiles("CCN")] * 3,
+                "pass_RulesetA": [False, True, True],
+                "pass_RulesetB": [True, False, True],
+                "reasons_RulesetA": ["nitrogen atom", "", ""],
+                "reasons_RulesetB": ["", "chlorine atom", ""],
+                "pass": [False, False, True],
+                "pass_any": [True, True, True],
+                "alert_hits_json": [
+                    hit_records_to_json(
+                        [
+                            {
+                                "ruleset": "RulesetA",
+                                "rule_id": 0,
+                                "description": "nitrogen atom",
+                                "smarts": "[#7]",
+                                "match_id": 0,
+                                "matched_atom_ids": [2],
+                                "matched_bond_ids": [],
+                                "n_matches_for_rule": 1,
+                            }
+                        ]
+                    ),
+                    hit_records_to_json(
+                        [
+                            {
+                                "ruleset": "RulesetB",
+                                "rule_id": 1,
+                                "description": "chlorine atom",
+                                "smarts": "[#17]",
+                                "match_id": 0,
+                                "matched_atom_ids": [2],
+                                "matched_bond_ids": [],
+                                "n_matches_for_rule": 1,
+                            }
+                        ]
+                    ),
+                    "[]",
+                ],
+            }
+        )
+        metrics_df = pd.DataFrame({"model_name": ["m1"], "num_mol": [3]})
+
+        _save_filter_results(tmp_path, "common_alerts", metrics_df, extended_df)
+
+        hits_long = pd.read_csv(tmp_path / "common_alerts" / "hits_long.csv")
+        ruleset_summary = pd.read_csv(
+            tmp_path / "common_alerts" / "ruleset_summary.csv"
+        )
+
+        assert len(hits_long) == 2
+        assert set(hits_long["ruleset"]) == {"RulesetA", "RulesetB"}
+        assert hits_long["would_pass_if_disable_ruleset"].all()
+        assert set(ruleset_summary["unique_rescue"]) == {1}
 
     @patch("hedgehog.struct_filters.utils.filter_alerts")
     @patch("hedgehog.struct_filters.utils.load_config")
