@@ -27,7 +27,7 @@ This directory contains structural alert definitions used by the **🦔 HEDGEHOG
 - **Inpharmatica**: Commercial filter collection
 - **And others**: MLSMR, LINT, GST-Hitters, etc.
 
-**Configuration**: Specific rule sets and descriptions can be included/excluded via the `include_rulesets` and `exclude_descriptions` sections in `config_structFilters.yml`
+**Configuration**: Specific rule sets and descriptions can be included/excluded via the `include_rulesets` and `exclude_descriptions` sections in `config_structFilters.yml`. Additional ready-to-use profiles are available in `config_structFilters_strict.yml`, `config_structFilters_balanced.yml`, and `config_structFilters_exploration.yml`.
 
 ```yaml
 # Enable/disable structural alerts filtering
@@ -48,5 +48,15 @@ exclude_descriptions:
   "Dundee":
     - "Aliphatic long chain"
     - "isolated alkene"
-    # ... etc
+    - "triple bond"
+  "Inpharmatica":
+    - "Filter82_pyridinium"
+  "LD50-Oral":
+    - "phenylpiperazine"
+  "SureChEMBL":
+    - "aminothiazole"
+  "LINT":
+    - "high halogen content (>3)"
+  "HIS-Hitters":
+    - "Picolylamines_A"
 ```

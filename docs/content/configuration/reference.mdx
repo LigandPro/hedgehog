@@ -608,9 +608,20 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 | `calculate_symmetry` | bool | `false` | Flag highly symmetric molecules (off by default — many drugs are symmetric) |
 | `symmetry_threshold` | float | `0.8` | Symmetry score threshold above which a molecule is flagged |
 
+### Structural Filter Profiles
+
+The default structural filter configuration is the exploration profile in
+`config_structFilters.yml`. Three named ready-to-use profile files are shipped
+alongside it:
+
+- `config_structFilters_strict.yml` - conservative profile for high-confidence hygiene screening
+- `config_structFilters_balanced.yml` - practical mid-conservatism profile
+- `config_structFilters_exploration.yml` - least conservative profile for retaining more chemistry diversity
+
 ### Default YAML
 
 ```yaml
+# Structural filters config - exploration profile (default)
 run: true
 filter_data: true
 parse_input_n_jobs: -1
@@ -636,8 +647,6 @@ include_rulesets:
 - Frequent-Hitter
 - Chelator
 - SureChEMBL
-- MLSMR
-- LINT
 - GST-Hitters
 - HIS-Hitters
 - LuciferaseInhibitor
@@ -646,69 +655,12 @@ exclude_descriptions:
   - Aliphatic long chain
   - isolated alkene
   - triple bond
-  Toxicophore:
-  - acetylene_alkyne
-  - acyclic_alkyne
-  - alkynes
-  - masked_aniline
-  - adamantane
-  - imidazole
-  - michael_acceptors_double
-  - michael_acceptors_triple
-  - n_acylated_azoles
-  - pyrrole
-  Skin:
-  - Activated alkine
-  - Tertiary alkyl
-  - Aromatic primary and secondary amines
-  - Aromatic amines
-  - Esters of aromatic alcohols and their thio and aza analogues
-  - Haloethyl-substituted aromatic compounds
-  - Ortho-disubstituted benzenes
-  Reactive-Unstable-Toxic:
-  - Aldimines and ketimines
-  - Alkyl Halides
-  - Glutarimides
-  - Activated Halides
-  - Activated halides (o-nitro substituted haloaromatics)
-  - Activated halides (p-nitro substituted haloaromatics)
-  - Activated halides (α-halogen substituted N-heterocycles)
-  - Activated halides (γ-halogen substituted N-heterocycles)
-  - Activated haloaromatics
-  - Aminals
-  - Enamines
-  - Halomethyl amines
-  - Halomethyl ethers
-  - Other undesirable policyclic (adamantane derivatives)
-  - Oxetanes
-  - Oxetanes, thietanes
-  - Polycyclic 4 fused rings and more
-  - Simple anilines and phenols
+  Inpharmatica:
+  - Filter82_pyridinium
+  LD50-Oral:
+  - phenylpiperazine
   SureChEMBL:
   - aminothiazole
-  Electrophilic:
-  - Acetates
-  - Alkyl halides
-  - Ethanolamines
-  - Morpholines
-  - Poly aromatic hydrocarbons
-  Genotoxic-Carcinogenicity:
-  - Aromatic N-acyl amine
-  - Aromatic amines
-  - Derivatives of urethane (carbamates)
-  - Halogenated methanes
-  - Polycyclic aromatic hydrocarbons
-  - Polycyclic aromatic system (general)
-  - Polycyclic aromatic system (specific)
-  - Secondary aromatic acetamides and formamides
-  - Tertiary aromatic amines
-  - Aromatic amines
-  LINT:
-  - high halogen content (>3)
-  Non-Genotoxic-Carcinogenicity:
-  - Halogenated benzene
-  - Heterocyclic Polycyclic Aromatic Hydrocarbons
-  - Polycyclic Aromatic Hydrocarbons
   HIS-Hitters:
   - Picolylamines_A
 calculate_molgraph_stats: true
