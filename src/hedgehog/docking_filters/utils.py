@@ -37,7 +37,7 @@ def _ensure_posecheck_fast_rdkit_compat() -> None:
     periodic_table_type = type(Chem.GetPeriodicTable())
     if hasattr(periodic_table_type, "GetMaxAtomicNumber"):
         return
-    setattr(periodic_table_type, "GetMaxAtomicNumber", lambda self: 118)
+    periodic_table_type.GetMaxAtomicNumber = lambda self: 118
 
 
 @contextmanager
