@@ -22,7 +22,7 @@ def test_resolve_retrosynthesis_config_uses_project_root_for_relative():
     result = synthesis_main._resolve_retrosynthesis_config(
         {"config_retrosynthesis": "configs/retro.yml"}
     )
-    expected_root = Path(synthesis_main.__file__).resolve().parents[3]
+    expected_root = synthesis_main._project_root()
     assert result == (expected_root / "configs/retro.yml").resolve(strict=False)
 
 
@@ -38,35 +38,28 @@ def test_main_raises_for_unsupported_python_autoinstall(monkeypatch, tmp_path: P
     )
     missing_retro_cfg = tmp_path / "missing-retro.yml"
 
-    monkeypatch.setattr(
-        synthesis_main,
-        "load_config",
-        lambda path: {"run_retrosynthesis": True, "filter_solved_only": True}
-        if Path(path) == synth_cfg
-        else {},
-    )
+    def _mock_load_config(path):
+        if Path(path) == synth_cfg:
+            return {"run_retrosynthesis": True, "filter_solved_only": True}
+        return {}
+
+    def _copy_df(input_df, *_args, **_kwargs):
+        return input_df.copy()
+
+    monkeypatch.setattr(synthesis_main, "load_config", _mock_load_config)
     monkeypatch.setattr(
         synthesis_main,
         "get_input_path",
         lambda config, folder_to_save: str(input_csv),
     )
-    monkeypatch.setattr(
-        synthesis_main,
-        "calculate_synthesis_scores",
-        lambda input_df, folder_to_save, config_synthesis, progress_cb=None: input_df.copy(),
-    )
-    monkeypatch.setattr(
-        synthesis_main,
-        "apply_synthesis_score_filters",
-        lambda scored_df, config_synthesis: scored_df.copy(),
-    )
+    monkeypatch.setattr(synthesis_main, "calculate_synthesis_scores", _copy_df)
+    monkeypatch.setattr(synthesis_main, "apply_synthesis_score_filters", _copy_df)
     setup_module = importlib.import_module("hedgehog.setup")
+    unsupported_error = "AiZynthFinder upstream supports Python 3.10-3.12"
     monkeypatch.setattr(
         setup_module,
         "ensure_aizynthfinder",
-        lambda project_root: (_ for _ in ()).throw(
-            RuntimeError("AiZynthFinder upstream supports Python 3.10-3.12")
-        ),
+        lambda project_root: (_ for _ in ()).throw(RuntimeError(unsupported_error)),
     )
 
     config = {

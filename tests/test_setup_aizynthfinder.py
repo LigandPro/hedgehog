@@ -9,6 +9,11 @@ import pytest
 
 from hedgehog.setup._aizynthfinder import ensure_aizynthfinder
 
+_AIZYNTHFINDER_PROBE = (
+    "import importlib.util, sys; "
+    "sys.exit(0 if importlib.util.find_spec('aizynthfinder') else 1)"
+)
+
 
 def _install_root(root: Path) -> Path:
     """Return the expected AiZynthFinder workspace root for a project root."""
@@ -28,6 +33,29 @@ def _make_config(root: Path) -> Path:
     return cfg
 
 
+def _cmd_as_list(cmd: list[str] | tuple[str, ...]) -> list[str]:
+    """Normalize subprocess command into a list of strings."""
+    return [str(part) for part in cmd]
+
+
+def _is_probe_command(cmd: list[str] | tuple[str, ...], uv_bin: str) -> bool:
+    """Return True when command is the import probe for aizynthfinder."""
+    cmd_list = _cmd_as_list(cmd)
+    return cmd_list[:4] == [uv_bin, "run", "python", "-c"]
+
+
+def _is_public_data_download(cmd: list[str] | tuple[str, ...]) -> bool:
+    """Return True when command triggers public data download."""
+    return any("download_public_data" in str(part) for part in cmd)
+
+
+def _write_logging_yaml(root: Path) -> None:
+    """Create synthesis/logging.yml source file for copy step."""
+    logging_src = root / "src" / "hedgehog" / "synthesis" / "logging.yml"
+    logging_src.parent.mkdir(parents=True, exist_ok=True)
+    logging_src.write_text("version: 1\n", encoding="utf-8")
+
+
 class TestEnsureAizynthfinder:
     """Tests for the ensure_aizynthfinder function."""
 
@@ -44,9 +72,7 @@ class TestEnsureAizynthfinder:
     def test_already_installed(self, tmp_path: Path, monkeypatch):
         """If config.yml and package exist, return immediately."""
         cfg = _make_config(tmp_path)
-        logging_src = tmp_path / "src" / "hedgehog" / "synthesis" / "logging.yml"
-        logging_src.parent.mkdir(parents=True, exist_ok=True)
-        logging_src.write_text("version: 1\n", encoding="utf-8")
+        _write_logging_yaml(tmp_path)
         monkeypatch.setattr(
             "hedgehog.setup._aizynthfinder.resolve_uv_binary",
             lambda: "/usr/bin/uv",
@@ -93,9 +119,9 @@ class TestEnsureAizynthfinder:
 
         def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
             del cwd, check, timeout
-            cmd_list = [str(part) for part in cmd]
+            cmd_list = _cmd_as_list(cmd)
             calls.append(cmd_list)
-            if cmd[:4] == ["/usr/bin/uv", "run", "python", "-c"]:
+            if _is_probe_command(cmd, "/usr/bin/uv"):
                 return subprocess.CompletedProcess(cmd, 1)
             return subprocess.CompletedProcess(cmd, 0)
 
@@ -105,7 +131,7 @@ class TestEnsureAizynthfinder:
 
         assert result == cfg
         assert calls == [
-            ["/usr/bin/uv", "run", "python", "-c", "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('aizynthfinder') else 1)"],
+            ["/usr/bin/uv", "run", "python", "-c", _AIZYNTHFINDER_PROBE],
             ["/usr/bin/uv", "sync", "--extra", "retrosynthesis"],
         ]
 
@@ -161,13 +187,11 @@ class TestEnsureAizynthfinder:
 
         def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
             del cwd, check, timeout
-            calls.append([str(x) for x in cmd])
-            if cmd[:4] == [str(uv_bin), "run", "python", "-c"]:
+            calls.append(_cmd_as_list(cmd))
+            if _is_probe_command(cmd, str(uv_bin)):
                 return subprocess.CompletedProcess(cmd, 1)
-            if any("download_public_data" in str(part) for part in cmd):
-                cfg = _config_path(tmp_path)
-                cfg.parent.mkdir(parents=True, exist_ok=True)
-                cfg.write_text("version: 1\n", encoding="utf-8")
+            if _is_public_data_download(cmd):
+                _make_config(tmp_path)
             return subprocess.CompletedProcess(cmd, 0)
 
         monkeypatch.setattr("hedgehog.setup._aizynthfinder.subprocess.run", _mock_run)
@@ -189,22 +213,18 @@ class TestEnsureAizynthfinder:
             lambda *_a, **_kw: True,
         )
 
-        logging_src = tmp_path / "src" / "hedgehog" / "synthesis" / "logging.yml"
-        logging_src.parent.mkdir(parents=True, exist_ok=True)
-        logging_src.write_text("version: 1\n", encoding="utf-8")
+        _write_logging_yaml(tmp_path)
 
         subprocess_calls: list[tuple[list[str], Path | None]] = []
 
         def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
             del check, timeout
-            cmd_list = [str(part) for part in cmd]
+            cmd_list = _cmd_as_list(cmd)
             subprocess_calls.append((cmd_list, cwd))
-            if cmd[:4] == ["/usr/bin/uv", "run", "python", "-c"]:
+            if _is_probe_command(cmd, "/usr/bin/uv"):
                 return subprocess.CompletedProcess(cmd, 1)
-            if any("download_public_data" in str(part) for part in cmd):
-                cfg = _config_path(tmp_path)
-                cfg.parent.mkdir(parents=True, exist_ok=True)
-                cfg.write_text("version: 1\n", encoding="utf-8")
+            if _is_public_data_download(cmd):
+                _make_config(tmp_path)
             return subprocess.CompletedProcess(cmd, 0)
 
         monkeypatch.setattr("hedgehog.setup._aizynthfinder.subprocess.run", _mock_run)
@@ -236,14 +256,12 @@ class TestEnsureAizynthfinder:
 
         def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
             del cwd, check, timeout
-            cmd_list = [str(part) for part in cmd]
+            cmd_list = _cmd_as_list(cmd)
             subprocess_calls.append(cmd_list)
-            if cmd[:4] == ["/usr/bin/uv", "run", "python", "-c"]:
+            if _is_probe_command(cmd, "/usr/bin/uv"):
                 return subprocess.CompletedProcess(cmd, 0)
-            if any("download_public_data" in str(part) for part in cmd):
-                cfg = _config_path(tmp_path)
-                cfg.parent.mkdir(parents=True, exist_ok=True)
-                cfg.write_text("version: 1\n", encoding="utf-8")
+            if _is_public_data_download(cmd):
+                _make_config(tmp_path)
             return subprocess.CompletedProcess(cmd, 0)
 
         monkeypatch.setattr("hedgehog.setup._aizynthfinder.subprocess.run", _mock_run)
@@ -272,7 +290,7 @@ class TestEnsureAizynthfinder:
 
         def _mock_run(cmd, *, cwd=None, check=False, timeout=None):
             del cwd, check, timeout
-            subprocess_calls.append([str(part) for part in cmd])
+            subprocess_calls.append(_cmd_as_list(cmd))
             return subprocess.CompletedProcess(cmd, 0)
 
         monkeypatch.setattr("hedgehog.setup._aizynthfinder.subprocess.run", _mock_run)
@@ -286,6 +304,6 @@ class TestEnsureAizynthfinder:
                 "run",
                 "python",
                 "-c",
-                "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('aizynthfinder') else 1)",
+                _AIZYNTHFINDER_PROBE,
             ]
         ]

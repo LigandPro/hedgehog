@@ -9,6 +9,11 @@ from hedgehog.synthesis.utils import *
 IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
 
 
+def _project_root() -> Path:
+    """Return project root path for this module."""
+    return Path(__file__).resolve().parents[3]
+
+
 def _order_identity_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Order dataframe columns with identity columns first."""
     existing_id_cols = [c for c in IDENTITY_COLUMNS if c in df.columns]
@@ -26,18 +31,16 @@ def _save_ordered_csv(df: pd.DataFrame, path: Path) -> None:
 
 def _get_aizynthfinder_config() -> Path:
     """Get default path to AiZynthFinder config file."""
-    project_root = Path(__file__).resolve().parents[3]
-    return project_root / "modules" / "aizynthfinder" / "public" / "config.yml"
+    return _project_root() / "modules" / "aizynthfinder" / "public" / "config.yml"
 
 
 def _resolve_retrosynthesis_config(config: dict) -> Path:
     """Resolve retrosynthesis config path from runtime config or default."""
     custom_path = config.get("config_retrosynthesis")
     if custom_path:
-        project_root = Path(__file__).resolve().parents[3]
         resolved = Path(custom_path).expanduser()
         if not resolved.is_absolute():
-            resolved = project_root / resolved
+            resolved = _project_root() / resolved
         return resolved.resolve(strict=False)
     return _get_aizynthfinder_config()
 
@@ -82,15 +85,16 @@ def main(config: dict, reporter=None) -> None:
 
     total_input_mols = max(len(input_df), 1)
 
+    def _report_progress(done: int, total: int, message: str) -> None:
+        if reporter is not None:
+            reporter.progress(done, total, message=message)
+
     def _progress_scores(phase: str, done: int, total: int) -> None:
-        if reporter is None:
-            return
         phase_total = total if total > 0 else total_input_mols
         phase_done = max(0, min(done, phase_total))
-        reporter.progress(phase_done, phase_total, message=f"Computing {phase}")
+        _report_progress(phase_done, phase_total, f"Computing {phase}")
 
-    if reporter is not None:
-        reporter.progress(0, total_input_mols, message="Computing synthesis scores")
+    _report_progress(0, total_input_mols, "Computing synthesis scores")
 
     scored_df = calculate_synthesis_scores(
         input_df,
@@ -98,23 +102,16 @@ def main(config: dict, reporter=None) -> None:
         config_synthesis,
         progress_cb=_progress_scores if reporter is not None else None,
     )
-    if reporter is not None:
-        reporter.progress(0, total_input_mols, message="Applying score filters")
+    _report_progress(0, total_input_mols, "Applying score filters")
     _save_ordered_csv(scored_df, output_folder / "synthesis_scores.csv")
     score_filtered_df = apply_synthesis_score_filters(scored_df, config_synthesis)
-    if reporter is not None:
-        reporter.progress(
-            total_input_mols, total_input_mols, message="Applying score filters"
-        )
+    _report_progress(total_input_mols, total_input_mols, "Applying score filters")
 
     if len(score_filtered_df) == 0:
         logger.warning("No molecules passed synthesis score filters")
         _save_ordered_csv(score_filtered_df, filtered_output)
         logger.info("Saved 0 molecules to %s", filtered_output)
-        if reporter is not None:
-            reporter.progress(
-                total_input_mols, total_input_mols, message="Synthesis complete"
-            )
+        _report_progress(total_input_mols, total_input_mols, "Synthesis complete")
         return
 
     # Check if retrosynthesis is enabled
@@ -127,28 +124,26 @@ def main(config: dict, reporter=None) -> None:
             len(score_filtered_df),
             filtered_output,
         )
-        if reporter is not None:
-            reporter.progress(
-                total_input_mols, total_input_mols, message="Synthesis complete"
-            )
+        _report_progress(total_input_mols, total_input_mols, "Synthesis complete")
         return
 
     aizynth_config = _resolve_retrosynthesis_config(config)
     if not aizynth_config.exists():
         from hedgehog.setup import ensure_aizynthfinder
 
-        project_root = Path(__file__).resolve().parents[3]
+        def _handle_setup_failure() -> None:
+            _log_aizynthfinder_setup_instructions(aizynth_config)
+            _save_ordered_csv(score_filtered_df, filtered_output)
+
+        project_root = _project_root()
         try:
             aizynth_config = ensure_aizynthfinder(project_root)
-        except RuntimeError as exc:
-            if "supports Python 3.10-3.12" in str(exc):
+        except Exception as exc:
+            if isinstance(exc, RuntimeError) and "supports Python 3.10-3.12" in str(
+                exc
+            ):
                 raise
-            _log_aizynthfinder_setup_instructions(aizynth_config)
-            _save_ordered_csv(score_filtered_df, filtered_output)
-            return
-        except Exception:
-            _log_aizynthfinder_setup_instructions(aizynth_config)
-            _save_ordered_csv(score_filtered_df, filtered_output)
+            _handle_setup_failure()
             return
 
     input_smiles_file = output_folder / "input_smiles.smi"
@@ -160,17 +155,14 @@ def main(config: dict, reporter=None) -> None:
     def _progress_retrosynthesis(
         done: int, total: int, detail: str | None = None
     ) -> None:
-        if reporter is None:
-            return
         phase_total = total if total > 0 else retrosynthesis_total
         phase_done = max(0, min(done, phase_total))
         message = "Running retrosynthesis (AiZynthFinder)"
         if detail:
             message = f"{message}: {detail}"
-        reporter.progress(phase_done, phase_total, message=message)
+        _report_progress(phase_done, phase_total, message)
 
-    if reporter is not None:
-        _progress_retrosynthesis(0, retrosynthesis_total, "starting")
+    _progress_retrosynthesis(0, retrosynthesis_total, "starting")
 
     if not run_aizynthfinder(
         input_smiles_file,
@@ -181,12 +173,11 @@ def main(config: dict, reporter=None) -> None:
     ):
         logger.error("Retrosynthesis analysis failed")
         raise RuntimeError("Retrosynthesis analysis failed")
-    if reporter is not None:
-        reporter.progress(
-            retrosynthesis_total,
-            retrosynthesis_total,
-            message="Retrosynthesis complete",
-        )
+    _report_progress(
+        retrosynthesis_total,
+        retrosynthesis_total,
+        "Retrosynthesis complete",
+    )
 
     retrosynth_df = parse_retrosynthesis_results(output_json)
     if len(retrosynth_df) == 0:
