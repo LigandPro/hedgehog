@@ -113,14 +113,7 @@ def test_cli_full_pipeline_for_single_molecule_single_core(tmp_path: Path):
     if shutil.which("gnina") is None:
         pytest.skip("gnina is not available in PATH")
 
-    aizynth_cfg = (
-        repo_root
-        / "modules"
-        / "retrosynthesis"
-        / "aizynthfinder"
-        / "public"
-        / "config.yml"
-    )
+    aizynth_cfg = repo_root / "modules" / "aizynthfinder" / "public" / "config.yml"
     if not aizynth_cfg.exists():
         pytest.skip(
             "AiZynthFinder is not configured; run `hedgehog setup aizynthfinder`"
