@@ -28,6 +28,7 @@ from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
 from hedgehog.setup._download import resolve_uv_binary
+from hedgehog.synthesis.sync import calculate_sync_scores_batch
 from hedgehog.utils.input_paths import get_all_input_candidates
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 from hedgehog.utils.paths import process_path
@@ -70,6 +71,7 @@ LEGACY_SCORE_FILTERS = {
     "sa_score": ("sa_score_min", "sa_score_max"),
     "syba_score": ("syba_score_min", "syba_score_max"),
     "ra_score": ("ra_score_min", "ra_score_max"),
+    "sync_score": ("sync_score_min", "sync_score_max"),
     "sc_score": ("sc_score_min", "sc_score_max"),
     "nonpher_complexity_score": (
         "nonpher_complexity_score_min",
@@ -2141,6 +2143,11 @@ SYNTHESIS_SCORERS = {
         column="ra_score",
         batch_calculator=_calculate_ra_scores_batch,
     ),
+    "sync": SynthesisScorer(
+        name="sync",
+        column="sync_score",
+        batch_calculator=calculate_sync_scores_batch,
+    ),
     "scscore": SynthesisScorer(
         name="scscore",
         column="sc_score",
@@ -2350,7 +2357,7 @@ def apply_synthesis_score_filters(
 ) -> pd.DataFrame:
     """Apply filters based on synthesis score thresholds.
 
-    Each molecule is checked independently against each criterion (SA, RA, SYBA).
+    Each molecule is checked independently against each criterion (SA, RA, SYBA, SYNC).
     A molecule must pass ALL filters for which it has valid scores.
     Molecules with NaN scores for a criterion are not filtered by that criterion.
     Only molecules that pass all applicable score filters are returned.

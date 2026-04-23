@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import hedgehog.synthesis.sync as sync_module
 import hedgehog.synthesis.utils as synthesis_utils
 from hedgehog.synthesis.utils import (
     _build_score_filter_mask,
@@ -161,6 +162,18 @@ class TestApplySynthesisScoreFilters:
         config = {"syba_score_min": 0, "syba_score_max": "inf"}
         result = apply_synthesis_score_filters(df, config)
         assert len(result) == 1  # only first passes
+
+    def test_filter_by_sync_score(self):
+        """Filter molecules by SYNC score threshold."""
+        df = pd.DataFrame(
+            {
+                "smiles": ["a", "b"],
+                "sync_score": [0.8, 0.2],
+            }
+        )
+        config = {"sync_score_min": 0.5, "sync_score_max": 1.0}
+        result = apply_synthesis_score_filters(df, config)
+        assert len(result) == 1
 
     def test_nan_scores_pass_filter(self):
         """Molecules with NaN scores should pass filter."""
@@ -1305,6 +1318,60 @@ class TestSynthesisScoreCalculations:
         # Score can be NaN if SYBA not available
         if not np.isnan(score):
             assert isinstance(score, (int, float))
+
+    def test_calculate_synthesis_scores_includes_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Score calculation should include SYNC when enabled."""
+        df = pd.DataFrame({"smiles": [SMILES_ETHANOL]})
+        monkeypatch.setitem(
+            synthesis_utils.SYNTHESIS_SCORERS,
+            "sync",
+            synthesis_utils.SynthesisScorer(
+                name="sync",
+                column="sync_score",
+                batch_calculator=lambda smiles, *_args, **_kwargs: [0.9] * len(smiles),
+            ),
+        )
+
+        result = synthesis_utils.calculate_synthesis_scores(
+            df, config={"enabled_scores": ["sync"], "n_jobs": 1}
+        )
+
+        assert result["sync_score"].tolist() == [0.9]
+
+    def test_calculate_synthesis_scores_can_skip_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """SYNC scoring should be optional."""
+        df = pd.DataFrame({"smiles": [SMILES_ETHANOL]})
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_sa_score_single", lambda _smiles: 2.0
+        )
+
+        result = synthesis_utils.calculate_synthesis_scores(
+            df, config={"enabled_scores": ["sa"], "n_jobs": 1}
+        )
+
+        assert "sync_score" not in result.columns
+
+    def test_sync_checkpoint_loader_rejects_unsafe_custom_pickle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Custom checkpoints must be safe state_dict payloads."""
+        checkpoint = tmp_path / "custom.ckpt"
+        checkpoint.write_bytes(b"not-a-safe-state-dict")
+
+        class _FakeTorch:
+            @staticmethod
+            def load(*_args, **kwargs):
+                assert kwargs.get("weights_only") is True
+                raise RuntimeError("unsafe pickle fallback needed")
+
+        monkeypatch.setattr(sync_module, "_load_torch", lambda: (_FakeTorch, object()))
+
+        with pytest.raises(RuntimeError, match="official checkpoint checksum"):
+            sync_module._load_checkpoint_state_dict(checkpoint)
 
 
 @pytest.mark.skipif(

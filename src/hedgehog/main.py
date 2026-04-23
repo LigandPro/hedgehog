@@ -1308,6 +1308,28 @@ def setup_aizynthfinder(
     console.print(f"[bold]AiZynthFinder installed.[/bold] Config: {config_path}")
 
 
+@setup_app.command("sync")
+def setup_sync(
+    yes: bool = typer.Option(
+        True,
+        "--yes/--no-yes",
+        "-y/-n",
+        help="Auto-accept downloads (default: yes). Use --no-yes to prompt.",
+    ),
+) -> None:
+    """Download the SYNC 3D synthesizability classifier checkpoint."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+    else:
+        os.environ.pop("HEDGEHOG_AUTO_INSTALL", None)
+
+    from hedgehog.setup import ensure_sync_model
+
+    project_root = Path(__file__).resolve().parents[2]
+    model_path = ensure_sync_model(project_root)
+    console.print(f"[bold]SYNC classifier installed.[/bold] Model: {model_path}")
+
+
 @setup_app.command("fsscore")
 def setup_fsscore(
     yes: bool = typer.Option(

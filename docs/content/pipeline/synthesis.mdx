@@ -29,6 +29,13 @@ The synthesis stage evaluates whether generated molecules can be practically syn
 - **How it works**: An XGBoost classifier trained on the output of a retrosynthesis tool. Predicts the probability that a retrosynthesis planner can find a valid route to the molecule. Faster than running actual retrosynthesis but less precise.
 - **Default threshold**: 0.5--1
 
+### SYNC Score (3D Synthesizability Classifier)
+
+- **Range**: 0--1 (higher is better)
+- **Method**: 3D EGNN classifier from SYNC, using an RDKit ETKDG conformer for each input SMILES
+- **How it works**: Predicts easy-vs-hard synthesizability from atom types, bonds, and 3D coordinates. The checkpoint is downloaded to `modules/sync/classifier_emb.ckpt` by `uv run hedgehog setup sync` or automatically when `sync_auto_install: true`.
+- **Default threshold**: 0.5--1 through `score_filters.sync_score`
+
 ### SCScore (Synthetic Complexity Score)
 
 - **Range**: 1--5 (lower is less complex)
@@ -100,6 +107,7 @@ enabled_scores:
   - sa
   - syba
   - rascore
+  - sync
   - scscore
   - nonpher
   - fsscore
@@ -114,6 +122,9 @@ syba_score_min: 0
 syba_score_max: inf
 ra_score_min: 0.5
 ra_score_max: 1
+sync_auto_install: true
+sync_device: cpu
+sync_conformer_seed: 61453
 
 # Optional FSScore isolated worker configuration.
 # fsscore_python: /abs/path/to/fsscore-env/bin/python
@@ -122,6 +133,9 @@ ra_score_max: 1
 
 # Optional score filters for new or experimental scorers.
 score_filters:
+  sync_score:
+    min: 0.5
+    max: 1
   sc_score:
     min:
     max:
@@ -148,7 +162,7 @@ A molecule passes the synthesis stage if **all** of the following hold:
 1. SA Score is within `[sa_score_min, sa_score_max]`
 2. SYBA Score is within `[syba_score_min, syba_score_max]`
 3. RA Score is within `[ra_score_min, ra_score_max]`
-4. Any enabled `score_filters` thresholds are satisfied
+4. Any enabled `score_filters` thresholds are satisfied, including `score_filters.sync_score` when `sync` is enabled
 5. If `filter_solved_only: true` and `run_retrosynthesis: true`: AiZynthFinder found at least one valid route
 
 ## Output Files

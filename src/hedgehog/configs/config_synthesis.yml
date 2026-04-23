@@ -4,6 +4,7 @@ enabled_scores:
   - sa
   - syba
   - rascore
+  - sync
   - scscore
   - nonpher
   - fsscore
@@ -30,10 +31,16 @@ ra_score_max: 1
 # fsscore_batch_size: 128
 # fsscore_num_workers:
 # HEDGEHOG_OPTIONAL_ENV_ROOT should point to a writable host-local directory.
+sync_auto_install: true
+sync_device: cpu
+sync_conformer_seed: 61453
 score_filters:
   sc_score:
     min:
     max:
+  sync_score:
+    min: 0.5
+    max: 1
   nonpher_complexity_score:
     min:
     max:
