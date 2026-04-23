@@ -169,11 +169,7 @@ class ConfigValidator:
 
         if "sync_score_min" in data:
             sync_min = data["sync_score_min"]
-            if (
-                not isinstance(sync_min, (int, float))
-                or sync_min < 0
-                or sync_min > 1
-            ):
+            if not isinstance(sync_min, (int, float)) or sync_min < 0 or sync_min > 1:
                 result["errors"].append("sync_score_min must be between 0 and 1")
 
     @staticmethod
