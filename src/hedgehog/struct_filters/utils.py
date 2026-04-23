@@ -1199,19 +1199,56 @@ def apply_ring_infraction(config, mols, smiles_model_name_mols=None):
     )
 
 
-def apply_stereo_center(config, mols, smiles_model_name_mols=None):
-    return _apply_simple_medchem_filter(
-        config,
-        mols,
-        smiles_model_name_mols,
-        "Stereo Center",
-        mc.functional.num_stereo_center_filter,
-        "stereo_center_scheduler",
-        extra_kwargs=lambda cfg: {
-            "max_stereo_centers": cfg.get("stereo_max_centers", 4),
-            "max_undefined_stereo_centers": cfg.get("stereo_max_undefined", 2),
-        },
+def _compute_stereo_center_row(args):
+    mol_idx, mol, max_stereo_centers, max_undefined_stereo_centers = args
+    if mol is None:
+        return {"_mol_idx": mol_idx, "pass": False}
+
+    prepared_mol = Chem.Mol(mol)
+    Chem.AssignStereochemistry(prepared_mol, cleanIt=True, force=True)
+    stereo_centers = Chem.FindMolChiralCenters(
+        prepared_mol,
+        includeUnassigned=True,
+        useLegacyImplementation=False,
     )
+    n_stereo_centers = len(stereo_centers)
+    n_undefined_stereo_centers = sum(1 for _, label in stereo_centers if label == "?")
+    return {
+        "_mol_idx": mol_idx,
+        "pass": (
+            n_stereo_centers < max_stereo_centers
+            and n_undefined_stereo_centers < max_undefined_stereo_centers
+        ),
+    }
+
+
+def apply_stereo_center(config, mols, smiles_model_name_mols=None):
+    logger.info("Calculating Stereo Center filter...")
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    logger.info("Stereo Center workers: %d", n_jobs)
+
+    max_stereo_centers = int(config_sf.get("stereo_max_centers", 4))
+    max_undefined_stereo_centers = int(config_sf.get("stereo_max_undefined", 2))
+    items = [
+        (
+            mol_idx,
+            mol,
+            max_stereo_centers,
+            max_undefined_stereo_centers,
+        )
+        for mol_idx, mol in enumerate(mols)
+    ]
+    rows = parallel_map(_compute_stereo_center_row, items, n_jobs)
+    result = pd.DataFrame(
+        {
+            "mol": [mols[row["_mol_idx"]] for row in rows],
+            "pass": [row["pass"] for row in rows],
+        }
+    )
+    if smiles_model_name_mols is not None:
+        result = add_model_name_col(result, smiles_model_name_mols)
+    return result
 
 
 def apply_halogenicity(config, mols, smiles_model_name_mols=None):

@@ -103,7 +103,9 @@ class TestEnsureAizynthfinder:
             _install_root(tmp_path) / "aizynthfinder" / "data" / "logging.yml"
         ).exists()
 
-    def test_existing_config_reinstalls_missing_package(self, tmp_path: Path, monkeypatch):
+    def test_existing_config_reinstalls_missing_package(
+        self, tmp_path: Path, monkeypatch
+    ):
         """Existing public data should still install the package if it is missing."""
         cfg = _make_config(tmp_path)
         monkeypatch.setattr(

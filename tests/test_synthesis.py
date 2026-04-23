@@ -378,10 +378,7 @@ class TestRunAizynthfinder:
         assert captured["cmd"][captured["cmd"].index("--nproc") + 1] == "9"
         assert "VIRTUAL_ENV" not in captured["kwargs"]["env"]
         assert (
-            _aizynth_install_root(tmp_path)
-            / "aizynthfinder"
-            / "data"
-            / "logging.yml"
+            _aizynth_install_root(tmp_path) / "aizynthfinder" / "data" / "logging.yml"
         ).exists()
 
     def test_returns_false_when_uv_unavailable(self, tmp_path, monkeypatch):
