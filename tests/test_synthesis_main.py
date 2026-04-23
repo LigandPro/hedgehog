@@ -15,7 +15,8 @@ def test_resolve_retrosynthesis_config_expands_tilde(monkeypatch):
     result = synthesis_main._resolve_retrosynthesis_config(
         {"config_retrosynthesis": "~/retro/config.yml"}
     )
-    assert result == Path("/tmp/fake-home/retro/config.yml")
+    expected = Path("/tmp/fake-home/retro/config.yml").resolve(strict=False)
+    assert result == expected
 
 
 def test_resolve_retrosynthesis_config_uses_project_root_for_relative():
