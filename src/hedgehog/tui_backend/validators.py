@@ -167,6 +167,15 @@ class ConfigValidator:
             if not isinstance(ra_min, (int, float)) or ra_min < 0 or ra_min > 1:
                 result["errors"].append("ra_score_min must be between 0 and 1")
 
+        if "sync_score_min" in data:
+            sync_min = data["sync_score_min"]
+            if (
+                not isinstance(sync_min, (int, float))
+                or sync_min < 0
+                or sync_min > 1
+            ):
+                result["errors"].append("sync_score_min must be between 0 and 1")
+
     @staticmethod
     def _validate_retrosynthesis(data: dict[str, Any], result: dict[str, Any]) -> None:
         """Validate retrosynthesis configuration.

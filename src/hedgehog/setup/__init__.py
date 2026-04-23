@@ -23,6 +23,10 @@ def __getattr__(name: str):
         from hedgehog.setup._rascore import ensure_rascore_model
 
         return ensure_rascore_model
+    if name == "ensure_sync_model":
+        from hedgehog.setup._sync import ensure_sync_model
+
+        return ensure_sync_model
     if name == "ensure_shepherd_worker":
         from hedgehog.setup._shepherd_worker import ensure_shepherd_worker
 
@@ -50,6 +54,7 @@ __all__ = [
     "ensure_gnina",
     "ensure_aizynthfinder",
     "ensure_rascore_model",
+    "ensure_sync_model",
     "ensure_shepherd_worker",
     "ensure_nvmolkit_worker",
     "ensure_matcha_checkout",

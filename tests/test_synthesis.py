@@ -144,6 +144,18 @@ class TestApplySynthesisScoreFilters:
         result = apply_synthesis_score_filters(df, config)
         assert len(result) == 1  # only first passes
 
+    def test_filter_by_sync_score(self):
+        """Filter molecules by SYNC score threshold."""
+        df = pd.DataFrame(
+            {
+                "smiles": ["a", "b"],
+                "sync_score": [0.8, 0.2],
+            }
+        )
+        config = {"sync_score_min": 0.5, "sync_score_max": 1.0}
+        result = apply_synthesis_score_filters(df, config)
+        assert len(result) == 1
+
     def test_nan_scores_pass_filter(self):
         """Molecules with NaN scores should pass filter."""
         df = pd.DataFrame(
@@ -649,6 +661,59 @@ class TestSynthesisScoreCalculations:
         # Score can be NaN if SYBA not available
         if not np.isnan(score):
             assert isinstance(score, (int, float))
+
+    def test_calculate_synthesis_scores_includes_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Score calculation should include SYNC when enabled."""
+        df = pd.DataFrame({"smiles": [SMILES_ETHANOL]})
+        monkeypatch.setattr(synthesis_utils, "_load_sascorer", lambda: True)
+        monkeypatch.setattr(synthesis_utils, "_load_syba_model", lambda: True)
+        monkeypatch.setattr(synthesis_utils, "_load_rascore", lambda: True)
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_sa_score_single", lambda _smiles: 2.0
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_syba_score_single", lambda _smiles: 10.0
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_ra_scores_batch", lambda smiles, *_args, **_kwargs: [0.7] * len(smiles)
+        )
+        monkeypatch.setattr(
+            synthesis_utils,
+            "calculate_sync_scores_batch",
+            lambda smiles, *_args, **_kwargs: [0.9] * len(smiles),
+        )
+
+        result = synthesis_utils.calculate_synthesis_scores(
+            df, config={"run_sync": True, "n_jobs": 1}
+        )
+
+        assert result["sync_score"].tolist() == [0.9]
+
+    def test_calculate_synthesis_scores_can_skip_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """SYNC scoring should be optional."""
+        df = pd.DataFrame({"smiles": [SMILES_ETHANOL]})
+        monkeypatch.setattr(synthesis_utils, "_load_sascorer", lambda: True)
+        monkeypatch.setattr(synthesis_utils, "_load_syba_model", lambda: True)
+        monkeypatch.setattr(synthesis_utils, "_load_rascore", lambda: True)
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_sa_score_single", lambda _smiles: 2.0
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_syba_score_single", lambda _smiles: 10.0
+        )
+        monkeypatch.setattr(
+            synthesis_utils, "_calculate_ra_scores_batch", lambda smiles, *_args, **_kwargs: [0.7] * len(smiles)
+        )
+
+        result = synthesis_utils.calculate_synthesis_scores(
+            df, config={"run_sync": False, "n_jobs": 1}
+        )
+
+        assert "sync_score" not in result.columns
 
 
 @pytest.mark.skipif(

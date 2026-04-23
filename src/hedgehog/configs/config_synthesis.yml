@@ -8,3 +8,9 @@ syba_score_min: 0
 syba_score_max: inf
 ra_score_min: 0.5
 ra_score_max: 1
+run_sync: true
+sync_auto_install: true
+sync_device: cpu
+sync_conformer_seed: 61453
+sync_score_min: 0.5
+sync_score_max: 1

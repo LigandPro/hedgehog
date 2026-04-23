@@ -79,6 +79,7 @@ modules/dockingTools/
 modules/MolScore/
 modules/pyscreener/
 modules/retrosynthesis/
+modules/sync/
 
 # Build artifacts in external modules
 modules/*/build/

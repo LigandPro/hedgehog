@@ -20,6 +20,7 @@ from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
 from hedgehog.setup._download import resolve_uv_binary
+from hedgehog.synthesis.sync import calculate_sync_scores_batch
 from hedgehog.utils.input_paths import get_all_input_candidates
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 from hedgehog.utils.paths import process_path
@@ -1017,7 +1018,7 @@ def _calculate_ra_scores_batch(
 
 
 def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb=None):
-    """Calculate SA, SYBA, and RA scores for all molecules in DataFrame.
+    """Calculate SA, SYBA, RA, and SYNC scores for all molecules in DataFrame.
 
     Args:
         df: DataFrame with 'smiles' column
@@ -1025,7 +1026,7 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
         config: Optional config dict
 
     Returns:
-        DataFrame with added columns: sa_score, syba_score, ra_score
+        DataFrame with added columns: sa_score, syba_score, ra_score, sync_score
     """
     logger.info("Calculating synthetic accessibility scores...")
     _load_sascorer()
@@ -1072,7 +1073,22 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
     ra_scores = _calculate_ra_scores_batch(smiles_list, config, progress_cb=ra_progress)
     result_df["ra_score"] = ra_scores
 
-    for score_name in ["sa_score", "syba_score", "ra_score"]:
+    if (config or {}).get("run_sync", True):
+        sync_progress = None
+        if progress_cb is not None:
+
+            def _sync_progress(done: int, total: int) -> None:
+                progress_cb("sync_score", done, total)
+
+            sync_progress = _sync_progress
+
+        result_df["sync_score"] = calculate_sync_scores_batch(
+            smiles_list, config, progress_cb=sync_progress
+        )
+
+    for score_name in ["sa_score", "syba_score", "ra_score", "sync_score"]:
+        if score_name not in result_df.columns:
+            continue
         valid_scores = result_df[score_name].dropna()
         if len(valid_scores) > 0:
             logger.info(
@@ -1130,7 +1146,7 @@ def apply_synthesis_score_filters(
 ) -> pd.DataFrame:
     """Apply filters based on synthesis score thresholds.
 
-    Each molecule is checked independently against each criterion (SA, RA, SYBA).
+    Each molecule is checked independently against each criterion (SA, RA, SYBA, SYNC).
     A molecule must pass ALL filters for which it has valid scores.
     Molecules with NaN scores for a criterion are not filtered by that criterion.
     Only molecules that pass all applicable score filters are returned.
@@ -1146,6 +1162,7 @@ def apply_synthesis_score_filters(
         ("sa_score", "sa_score_min", "sa_score_max"),
         ("ra_score", "ra_score_min", "ra_score_max"),
         ("syba_score", "syba_score_min", "syba_score_max"),
+        ("sync_score", "sync_score_min", "sync_score_max"),
     ]
 
     pass_mask = pd.Series(True, index=df.index)
