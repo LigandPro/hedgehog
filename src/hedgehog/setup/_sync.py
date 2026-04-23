@@ -11,9 +11,7 @@ SYNC_MODEL_URL = (
     "https://raw.githubusercontent.com/XYxiyang/SYNC/main/"
     "targetdiff/pretrained_models/classifier_emb.ckpt"
 )
-SYNC_MODEL_SHA256 = (
-    "dae9fc427ea1df0ba8f1d2cf3699bab526ea40a1126cb3d3bb7b3245b9b277dc"
-)
+SYNC_MODEL_SHA256 = "dae9fc427ea1df0ba8f1d2cf3699bab526ea40a1126cb3d3bb7b3245b9b277dc"
 SYNC_MODEL_RELATIVE_PATH = Path("modules") / "sync" / "classifier_emb.ckpt"
 
 

@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import hedgehog.synthesis.sync as sync_module
 import hedgehog.synthesis.utils as synthesis_utils
 from hedgehog.synthesis.utils import (
     _build_score_filter_mask,
@@ -677,7 +678,9 @@ class TestSynthesisScoreCalculations:
             synthesis_utils, "_calculate_syba_score_single", lambda _smiles: 10.0
         )
         monkeypatch.setattr(
-            synthesis_utils, "_calculate_ra_scores_batch", lambda smiles, *_args, **_kwargs: [0.7] * len(smiles)
+            synthesis_utils,
+            "_calculate_ra_scores_batch",
+            lambda smiles, *_args, **_kwargs: [0.7] * len(smiles),
         )
         monkeypatch.setattr(
             synthesis_utils,
@@ -706,7 +709,9 @@ class TestSynthesisScoreCalculations:
             synthesis_utils, "_calculate_syba_score_single", lambda _smiles: 10.0
         )
         monkeypatch.setattr(
-            synthesis_utils, "_calculate_ra_scores_batch", lambda smiles, *_args, **_kwargs: [0.7] * len(smiles)
+            synthesis_utils,
+            "_calculate_ra_scores_batch",
+            lambda smiles, *_args, **_kwargs: [0.7] * len(smiles),
         )
 
         result = synthesis_utils.calculate_synthesis_scores(
@@ -714,6 +719,24 @@ class TestSynthesisScoreCalculations:
         )
 
         assert "sync_score" not in result.columns
+
+    def test_sync_checkpoint_loader_rejects_unsafe_custom_pickle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Custom checkpoints must be safe state_dict payloads."""
+        checkpoint = tmp_path / "custom.ckpt"
+        checkpoint.write_bytes(b"not-a-safe-state-dict")
+
+        class _FakeTorch:
+            @staticmethod
+            def load(*_args, **kwargs):
+                assert kwargs.get("weights_only") is True
+                raise RuntimeError("unsafe pickle fallback needed")
+
+        monkeypatch.setattr(sync_module, "_load_torch", lambda: (_FakeTorch, object()))
+
+        with pytest.raises(RuntimeError, match="official checkpoint checksum"):
+            sync_module._load_checkpoint_state_dict(checkpoint)
 
 
 @pytest.mark.skipif(

@@ -20,9 +20,12 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
+from hedgehog.setup._sync import SYNC_MODEL_SHA256
 
-_SYNC_CACHE: dict[str, Any] = {"model": None, "torch": None, "load_failed": False}
-_VOCAB_PATH = Path(__file__).resolve().parent / "data" / "sync_smiles_vocab_with_aro.txt"
+_SYNC_CACHE: dict[str, Any] = {"model": None, "model_key": None, "torch": None}
+_VOCAB_PATH = (
+    Path(__file__).resolve().parent / "data" / "sync_smiles_vocab_with_aro.txt"
+)
 
 
 def _load_torch():
@@ -32,8 +35,9 @@ def _load_torch():
         import torch
         from torch import nn
     except Exception as exc:
-        logger.warning("SYNC score unavailable: PyTorch could not be imported (%s)", exc)
-        _SYNC_CACHE["load_failed"] = True
+        logger.warning(
+            "SYNC score unavailable: PyTorch could not be imported (%s)", exc
+        )
         return None
     _SYNC_CACHE["torch"] = (torch, nn)
     return _SYNC_CACHE["torch"]
@@ -58,7 +62,9 @@ def _tokenize_atom_symbols(mol: Chem.Mol) -> list[int]:
             atom_string += f"{atom.GetSymbol()}pi"
         else:
             atom_string += atom.GetSymbol()
-    return [_SYNC_TOKEN_TO_ID[token] for token in _SYNC_TOKEN_PATTERN.findall(atom_string)]
+    return [
+        _SYNC_TOKEN_TO_ID[token] for token in _SYNC_TOKEN_PATTERN.findall(atom_string)
+    ]
 
 
 def _bond_feature_simple(bond: Chem.rdchem.Bond) -> int:
@@ -311,9 +317,7 @@ def _model_classes():
             node = self.atom_encoder(batch["x"]).squeeze()
             edge = self.edge_encoder(batch["edge_attr"]).squeeze()
             node = node.reshape(-1, node.shape[-1])
-            node, _ = self.encoder(
-                node, batch["positions"], batch["edge_index"], edge
-            )
+            node, _ = self.encoder(node, batch["positions"], batch["edge_index"], edge)
             pooled = node.sum(0, keepdim=True) / node.shape[0]
             return self.head(pooled)
 
@@ -355,6 +359,16 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _resolve_sync_model_path(config: dict[str, Any] | None) -> Path | None:
     config = config or {}
     custom_path = config.get("sync_model_path")
@@ -390,7 +404,12 @@ def _load_checkpoint_state_dict(path: Path):
     torch, _ = loaded
     try:
         payload = torch.load(path, map_location="cpu", weights_only=True)
-    except Exception:
+    except Exception as exc:
+        if _sha256(path) != SYNC_MODEL_SHA256:
+            raise RuntimeError(
+                "SYNC checkpoint is not a safe state_dict and does not match the "
+                "official checkpoint checksum"
+            ) from exc
         with _sync_checkpoint_class_aliases():
             payload = torch.load(path, map_location="cpu", weights_only=False)
 
@@ -406,38 +425,38 @@ def _load_checkpoint_state_dict(path: Path):
 def _resolve_device(torch, config: dict[str, Any] | None):
     requested = str((config or {}).get("sync_device", "cpu"))
     if requested.startswith("cuda") and not torch.cuda.is_available():
-        logger.warning("SYNC requested %s but CUDA is unavailable; using CPU", requested)
+        logger.warning(
+            "SYNC requested %s but CUDA is unavailable; using CPU", requested
+        )
         requested = "cpu"
     return torch.device(requested)
 
 
 def _load_sync_model(config: dict[str, Any] | None = None):
-    if _SYNC_CACHE["model"] is not None:
-        return _SYNC_CACHE["model"]
-    if _SYNC_CACHE["load_failed"]:
-        return False
-
     classes = _model_classes()
     if classes is None:
         return False
     torch, _, _, _, sync_classifier = classes
     model_path = _resolve_sync_model_path(config)
     if model_path is None:
-        _SYNC_CACHE["load_failed"] = True
         return False
+    device = _resolve_device(torch, config)
+    model_key = (str(model_path), str(device))
+    if _SYNC_CACHE["model"] is not None and _SYNC_CACHE["model_key"] == model_key:
+        return _SYNC_CACHE["model"]
 
     try:
         state_dict = _load_checkpoint_state_dict(model_path)
         model = sync_classifier()
         model.load_state_dict(state_dict, strict=True)
-        model.to(_resolve_device(torch, config))
+        model.to(device)
         model.eval()
         _SYNC_CACHE["model"] = model
+        _SYNC_CACHE["model_key"] = model_key
         logger.info("SYNC model loaded from %s", model_path)
         return model
     except Exception as exc:
         logger.warning("Failed to load SYNC model from %s: %s", model_path, exc)
-        _SYNC_CACHE["load_failed"] = True
         return False
 
 
