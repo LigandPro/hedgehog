@@ -39,6 +39,16 @@ from tests.constants import (
 )
 
 
+def _aizynth_install_root(root: Path) -> Path:
+    """Return the project-local AiZynthFinder workspace root used in tests."""
+    return root / "modules" / "aizynthfinder"
+
+
+def _aizynth_config_path(root: Path) -> Path:
+    """Return the project-local AiZynthFinder config path used in tests."""
+    return _aizynth_install_root(root) / "public" / "config.yml"
+
+
 class _DummyRascoreClassifier:
     """Simple picklable classifier stub with scikit-like API."""
 
@@ -359,14 +369,7 @@ class TestRunAizynthfinder:
         monkeypatch.setenv("VIRTUAL_ENV", "/tmp/foreign-env")
         monkeypatch.setenv("SLURM_CPUS_PER_TASK", "9")
 
-        config = (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
-            / "public"
-            / "config.yml"
-        )
+        config = _aizynth_config_path(tmp_path)
         ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
 
         assert ok is True
@@ -375,10 +378,7 @@ class TestRunAizynthfinder:
         assert captured["cmd"][captured["cmd"].index("--nproc") + 1] == "9"
         assert "VIRTUAL_ENV" not in captured["kwargs"]["env"]
         assert (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
+            _aizynth_install_root(tmp_path)
             / "aizynthfinder"
             / "data"
             / "logging.yml"
@@ -400,14 +400,7 @@ class TestRunAizynthfinder:
         )
         monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
 
-        config = (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
-            / "public"
-            / "config.yml"
-        )
+        config = _aizynth_config_path(tmp_path)
         ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
 
         assert ok is False
@@ -427,14 +420,7 @@ class TestRunAizynthfinder:
         monkeypatch.delenv("MOLSCORE_NJOBS", raising=False)
         monkeypatch.setenv("SLURM_CPUS_PER_TASK", "12")
 
-        config = (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
-            / "public"
-            / "config.yml"
-        )
+        config = _aizynth_config_path(tmp_path)
         ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
 
         assert ok is True
@@ -455,14 +441,7 @@ class TestRunAizynthfinder:
         monkeypatch.setenv("AIZYNTH_NPROC", "0")
         monkeypatch.setenv("MOLSCORE_NJOBS", "20")
 
-        config = (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
-            / "public"
-            / "config.yml"
-        )
+        config = _aizynth_config_path(tmp_path)
         ok = run_aizynthfinder(tmp_path / "in.smi", tmp_path / "out.json", config)
 
         assert ok is True
@@ -482,14 +461,7 @@ class TestRunAizynthfinder:
         monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
         monkeypatch.setenv("AIZYNTH_NPROC", "not-a-number")
 
-        config = (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
-            / "public"
-            / "config.yml"
-        )
+        config = _aizynth_config_path(tmp_path)
         ok = run_aizynthfinder(
             tmp_path / "in.smi",
             tmp_path / "out.json",
@@ -516,14 +488,7 @@ class TestRunAizynthfinder:
         monkeypatch.delenv("MOLSCORE_NJOBS", raising=False)
         monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
 
-        config = (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
-            / "public"
-            / "config.yml"
-        )
+        config = _aizynth_config_path(tmp_path)
         ok = run_aizynthfinder(
             tmp_path / "in.smi",
             tmp_path / "out.json",
@@ -549,14 +514,7 @@ class TestRunAizynthfinder:
         uv_bin.write_text("#!/bin/sh\n")
         uv_bin.chmod(0o755)
 
-        config = (
-            tmp_path
-            / "modules"
-            / "retrosynthesis"
-            / "aizynthfinder"
-            / "public"
-            / "config.yml"
-        )
+        config = _aizynth_config_path(tmp_path)
         input_smi = tmp_path / "in.smi"
         input_smi.write_text("CC\nCCC\nCCCC\nCCN\n", encoding="utf-8")
 

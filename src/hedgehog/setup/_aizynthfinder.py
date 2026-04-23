@@ -4,67 +4,82 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from hedgehog.configs.logger import logger
 from hedgehog.setup._download import confirm_download, resolve_uv_binary
 
+_AIZYNTHFINDER_DIRNAME = "aizynthfinder"
+_RETROSYNTHESIS_EXTRA = "retrosynthesis"
 
-def _ensure_retro_repo(project_root: Path, retro_dir: Path) -> None:
-    """Clone or update the retrosynthesis repository."""
-    if retro_dir.exists() and not (retro_dir / ".git").exists():
-        logger.warning(
-            "Found incomplete retrosynthesis directory at %s; recreating it.",
-            retro_dir,
-        )
-        shutil.rmtree(retro_dir)
 
-    if not retro_dir.exists():
-        logger.info("Cloning retrosynthesis repository...")
-        modules_dir = project_root / "modules"
-        modules_dir.mkdir(
-            parents=True, exist_ok=True
-        )  # Standard perms; project data directory
-        subprocess.run(
-            ["git", "clone", "https://github.com/LigandPro/retrosynthesis.git"],
-            cwd=modules_dir,
-            check=True,
-            timeout=1800,
-        )
-        logger.info("Repository cloned successfully")
+def _get_aizynthfinder_root(project_root: Path) -> Path:
+    """Return the project-local AiZynthFinder workspace root."""
+    return project_root / "modules" / _AIZYNTHFINDER_DIRNAME
+
+
+def _get_config_path(project_root: Path) -> Path:
+    """Return the project-local AiZynthFinder config path."""
+    return _get_aizynthfinder_root(project_root) / "public" / "config.yml"
+
+
+def _ensure_supported_python() -> None:
+    """Fail fast when upstream AiZynthFinder does not support this interpreter."""
+    version = sys.version_info[:3]
+    if (3, 10) <= version < (3, 13):
         return
 
-    if (retro_dir / ".git").exists():
-        logger.info("Updating retrosynthesis repository...")
-        try:
-            subprocess.run(
-                ["git", "pull", "--ff-only"],
-                cwd=retro_dir,
-                check=True,
-                timeout=1800,
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "git pull timed out after 1800s; continuing with existing checkout."
-            )
-
-
-def _install_dependencies(uv_bin: str, aizynth_dir: Path) -> None:
-    """Install AiZynthFinder Python dependencies via uv sync."""
-    if (aizynth_dir / ".venv").exists():
-        return
-    logger.info("Installing AiZynthFinder dependencies (uv sync)...")
-    subprocess.run(
-        [uv_bin, "sync"],
-        cwd=aizynth_dir,
-        check=True,
-        timeout=600,
+    version_str = ".".join(str(part) for part in version)
+    raise RuntimeError(
+        "AiZynthFinder upstream supports Python 3.10-3.12; "
+        f"current interpreter is {version_str}."
     )
-    logger.info("Dependencies installed successfully")
+
+
+def _has_aizynthfinder_package(uv_bin: str, project_root: Path) -> bool:
+    """Check whether the project environment already provides aizynthfinder."""
+    probe = subprocess.run(
+        [
+            uv_bin,
+            "run",
+            "python",
+            "-c",
+            "import importlib.util, sys; "
+            "sys.exit(0 if importlib.util.find_spec('aizynthfinder') else 1)",
+        ],
+        cwd=project_root,
+        check=False,
+        timeout=120,
+    )
+    return probe.returncode == 0
+
+
+def _install_dependencies(
+    uv_bin: str, project_root: Path, package_available: bool | None = None
+) -> None:
+    """Install the optional AiZynthFinder dependency into the project env."""
+    if package_available is None:
+        package_available = _has_aizynthfinder_package(uv_bin, project_root)
+    if package_available:
+        return
+
+    logger.info(
+        "Installing AiZynthFinder dependency into project environment "
+        "(uv sync --extra %s)...",
+        _RETROSYNTHESIS_EXTRA,
+    )
+    subprocess.run(
+        [uv_bin, "sync", "--extra", _RETROSYNTHESIS_EXTRA],
+        cwd=project_root,
+        check=True,
+        timeout=1800,
+    )
+    logger.info("AiZynthFinder dependency installed successfully")
 
 
 def _ensure_public_data(
-    uv_bin: str, aizynth_dir: Path, public_dir: Path, config_yml: Path
+    uv_bin: str, project_root: Path, public_dir: Path, config_yml: Path
 ) -> None:
     """Download public data/models and ensure config.yml exists."""
     public_dir.mkdir(
@@ -82,7 +97,7 @@ def _ensure_public_data(
                 "aizynthfinder.tools.download_public_data",
                 str(public_dir),
             ],
-            cwd=aizynth_dir,
+            cwd=project_root,
             check=True,
             timeout=7200,
         )
@@ -122,15 +137,15 @@ def _copy_logging_yml(project_root: Path, aizynth_dir: Path) -> None:
 def ensure_aizynthfinder(project_root: Path) -> Path:
     """Ensure AiZynthFinder is installed and return the config path.
 
-    Replicates the logic of ``modules/install_aizynthfinder.sh`` as a
-    Python function so the synthesis stage can auto-install when needed.
+    Installs the upstream ``aizynthfinder`` package into the project
+    environment and downloads the public data into ``modules/aizynthfinder``.
 
     Steps:
       1. Return immediately if config already exists.
-      2. Verify ``git`` and ``uv`` are on PATH.
-      3. Prompt the user to confirm the download.
-      4. Clone the retrosynthesis repo if missing.
-      5. Install Python dependencies via ``uv sync`` if ``.venv`` is missing.
+      2. Verify the current Python version is supported upstream.
+      3. Verify ``uv`` is on PATH.
+      4. Prompt the user to confirm the download.
+      5. Install the optional ``retrosynthesis`` extra if needed.
       6. Download public data (models) if ``public/`` is empty.
       7. Copy ``logging.yml`` into the aizynthfinder data directory.
 
@@ -143,44 +158,36 @@ def ensure_aizynthfinder(project_root: Path) -> Path:
     Raises:
         RuntimeError: If prerequisites are missing or the user declines.
     """
-    retro_dir = project_root / "modules" / "retrosynthesis"
-    aizynth_dir = retro_dir / "aizynthfinder"
+    aizynth_dir = _get_aizynthfinder_root(project_root)
     public_dir = aizynth_dir / "public"
-    config_yml = public_dir / "config.yml"
+    config_yml = _get_config_path(project_root)
+    _ensure_supported_python()
+    uv_bin = resolve_uv_binary()
 
-    # 1. Already installed
+    # 1. Already installed data
     if config_yml.exists():
+        package_available = _has_aizynthfinder_package(uv_bin, project_root)
+        if not package_available:
+            if not confirm_download("AiZynthFinder", "package only"):
+                raise RuntimeError("AiZynthFinder download declined by user.")
+            _install_dependencies(uv_bin, project_root, package_available=False)
         _copy_logging_yml(project_root, aizynth_dir)
         logger.info("AiZynthFinder config found at %s", config_yml)
         return config_yml
 
-    # 2. Prerequisites
-    if not shutil.which("git"):
-        raise RuntimeError(
-            "git is not installed. Please install git to set up AiZynthFinder."
-        )
-    uv_bin = resolve_uv_binary()
-
-    # 3. User confirmation
-    if not confirm_download("AiZynthFinder", "~800 MB (repo + models)"):
+    # 2. User confirmation
+    if not confirm_download("AiZynthFinder", "800 MB (package + public data)"):
         raise RuntimeError("AiZynthFinder download declined by user.")
 
-    # 4. Ensure repository layout exists
-    if not aizynth_dir.exists():
-        _ensure_retro_repo(project_root, retro_dir)
+    aizynth_dir.mkdir(parents=True, exist_ok=True)
 
-    if not aizynth_dir.exists():
-        raise RuntimeError(
-            f"AiZynthFinder directory not found after setup: {aizynth_dir}"
-        )
+    # 3. Install dependencies
+    _install_dependencies(uv_bin, project_root)
 
-    # 5. Install dependencies
-    _install_dependencies(uv_bin, aizynth_dir)
+    # 4. Download public data
+    _ensure_public_data(uv_bin, project_root, public_dir, config_yml)
 
-    # 6. Download public data
-    _ensure_public_data(uv_bin, aizynth_dir, public_dir, config_yml)
-
-    # 7. Copy logging.yml
+    # 5. Copy logging.yml
     _copy_logging_yml(project_root, aizynth_dir)
 
     return config_yml

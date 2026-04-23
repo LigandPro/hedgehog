@@ -1294,7 +1294,7 @@ def setup_aizynthfinder(
         help="Auto-accept downloads (default: yes). Use --no-yes to prompt.",
     ),
 ) -> None:
-    """Install AiZynthFinder retrosynthesis tooling into modules/."""
+    """Install AiZynthFinder into the project env and modules/aizynthfinder/."""
     if yes:
         os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
     else:

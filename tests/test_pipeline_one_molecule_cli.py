@@ -116,7 +116,6 @@ def test_cli_full_pipeline_for_single_molecule_single_core(tmp_path: Path):
     aizynth_cfg = (
         repo_root
         / "modules"
-        / "retrosynthesis"
         / "aizynthfinder"
         / "public"
         / "config.yml"

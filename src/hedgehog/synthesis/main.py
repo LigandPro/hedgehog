@@ -27,38 +27,27 @@ def _save_ordered_csv(df: pd.DataFrame, path: Path) -> None:
 def _get_aizynthfinder_config() -> Path:
     """Get default path to AiZynthFinder config file."""
     project_root = Path(__file__).resolve().parents[3]
-    return (
-        project_root
-        / "modules"
-        / "retrosynthesis"
-        / "aizynthfinder"
-        / "public"
-        / "config.yml"
-    )
-
-
-def _get_aizynthfinder_root() -> Path:
-    """Get path to AiZynthFinder project directory."""
-    project_root = Path(__file__).resolve().parents[3]
-    return project_root / "modules" / "retrosynthesis" / "aizynthfinder"
+    return project_root / "modules" / "aizynthfinder" / "public" / "config.yml"
 
 
 def _resolve_retrosynthesis_config(config: dict) -> Path:
     """Resolve retrosynthesis config path from runtime config or default."""
     custom_path = config.get("config_retrosynthesis")
     if custom_path:
-        return Path(custom_path)
+        project_root = Path(__file__).resolve().parents[3]
+        resolved = Path(custom_path).expanduser()
+        if not resolved.is_absolute():
+            resolved = project_root / resolved
+        return resolved.resolve(strict=False)
     return _get_aizynthfinder_config()
 
 
 def _log_aizynthfinder_setup_instructions(config_path: Path) -> None:
     """Log instructions for setting up AiZynthFinder."""
-    module_dir = config_path.parent.parent
     logger.error("AiZynthFinder config file not found: %s", config_path)
     logger.error("To set up retrosynthesis, run:")
-    logger.error("  cd %s", module_dir)
-    logger.error("  mkdir -p public")
-    logger.error("  uv run python -m aizynthfinder.tools.download_public_data ./public")
+    logger.error("  uv sync --extra retrosynthesis")
+    logger.error("  uv run hedgehog setup aizynthfinder")
     logger.error(
         "Synthesis stage will be skipped - continuing pipeline without retrosynthesis"
     )
@@ -144,7 +133,6 @@ def main(config: dict, reporter=None) -> None:
             )
         return
 
-    aizynthfinder_root = _get_aizynthfinder_root()
     aizynth_config = _resolve_retrosynthesis_config(config)
     if not aizynth_config.exists():
         from hedgehog.setup import ensure_aizynthfinder
@@ -152,6 +140,12 @@ def main(config: dict, reporter=None) -> None:
         project_root = Path(__file__).resolve().parents[3]
         try:
             aizynth_config = ensure_aizynthfinder(project_root)
+        except RuntimeError as exc:
+            if "supports Python 3.10-3.12" in str(exc):
+                raise
+            _log_aizynthfinder_setup_instructions(aizynth_config)
+            _save_ordered_csv(score_filtered_df, filtered_output)
+            return
         except Exception:
             _log_aizynthfinder_setup_instructions(aizynth_config)
             _save_ordered_csv(score_filtered_df, filtered_output)
@@ -182,7 +176,6 @@ def main(config: dict, reporter=None) -> None:
         input_smiles_file,
         output_json,
         aizynth_config,
-        aizynthfinder_dir=aizynthfinder_root,
         synthesis_config=config_synthesis,
         progress_cb=_progress_retrosynthesis if reporter is not None else None,
     ):
