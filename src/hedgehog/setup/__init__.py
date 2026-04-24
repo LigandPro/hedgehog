@@ -23,10 +23,6 @@ def __getattr__(name: str):
         from hedgehog.setup._rascore import ensure_rascore_model
 
         return ensure_rascore_model
-    if name == "ensure_sync_model":
-        from hedgehog.setup._sync import ensure_sync_model
-
-        return ensure_sync_model
     if name == "ensure_shepherd_worker":
         from hedgehog.setup._shepherd_worker import ensure_shepherd_worker
 
@@ -41,6 +37,13 @@ def __getattr__(name: str):
 def __dir__() -> list[str]:
     """Expose lazy exports in module introspection without eager binding."""
     return sorted(set(globals()) | set(__all__))
+
+
+def ensure_sync_model(*args, **kwargs):
+    """Expose SYNC model setup as a real module attribute."""
+    from hedgehog.setup._sync import ensure_sync_model as _impl
+
+    return _impl(*args, **kwargs)
 
 
 def ensure_matcha_checkout(*args, **kwargs):
