@@ -5,14 +5,12 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from hedgehog.setup._nonpher import NONPHER_PYTHON_ENV_VAR
+
 if TYPE_CHECKING:
     from hedgehog.setup._fsscore import FSScoreRuntime
     from hedgehog.setup._gasa import GasaSetupResult
     from hedgehog.setup._nonpher import NonpherCheckResult, NonpherEnsureResult
-
-
-NONPHER_PYTHON_ENV_VAR = "HEDGEHOG_NONPHER_PYTHON"
-
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ensure_gnina": ("hedgehog.setup._gnina", "ensure_gnina"),
