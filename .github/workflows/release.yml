@@ -65,6 +65,7 @@ jobs:
           )"
 
           uv run python - <<PY
+          import json
           import re
           from pathlib import Path
 
@@ -100,6 +101,28 @@ jobs:
                   raise SystemExit("ERROR: Failed to update TUI version constant")
               tui_version.write_text(tui_text2, encoding="utf-8")
 
+          tui_package = Path("tui/package.json")
+          if tui_package.exists():
+              tui_data = json.loads(tui_package.read_text(encoding="utf-8"))
+              tui_data["version"] = new
+              tui_package.write_text(
+                  json.dumps(tui_data, indent=2, ensure_ascii=False) + "\n",
+                  encoding="utf-8",
+              )
+
+          tui_lock = Path("tui/package-lock.json")
+          if tui_lock.exists():
+              lock_data = json.loads(tui_lock.read_text(encoding="utf-8"))
+              lock_data["version"] = new
+              root_package = lock_data.get("packages", {}).get("")
+              if root_package is None:
+                  raise SystemExit("ERROR: Could not find root package in package-lock.json")
+              root_package["version"] = new
+              tui_lock.write_text(
+                  json.dumps(lock_data, indent=2, ensure_ascii=False) + "\n",
+                  encoding="utf-8",
+              )
+
           print(f"bumped {current} -> {new}")
           PY
 
@@ -125,7 +148,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add pyproject.toml tui/src/constants/version.ts
+          git add pyproject.toml tui/package.json tui/package-lock.json tui/src/constants/version.ts
           git commit -m "chore(release): v${{ steps.bump.outputs.version }}"
           git push origin HEAD:main
 
