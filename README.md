@@ -40,7 +40,7 @@ cd hedgehog
 uv sync
 ```
 
-This is the recommended way to run HEDGEHOG end to end. The repository checkout contains the editable configs, bundled examples, TUI sources, and the `modules/` workspace used by setup commands.
+This is the recommended way to run HEDGEHOG end to end. The repository checkout contains the editable configs, bundled examples, TUI sources, and the `modules/` workspace used to store optional tool assets such as AiZynthFinder public data.
 
 Requirements:
 
@@ -155,7 +155,7 @@ results/run_N/
 
 ## Documentation
 
-![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
+![HEDGEHOG Pipeline](docs/public/pipeline_structure_v2.png)
 
 For full details, use the documentation instead of this README:
 

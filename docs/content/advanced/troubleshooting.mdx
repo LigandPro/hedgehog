@@ -205,22 +205,19 @@ The retrosynthesis stage requires AiZynthFinder. Install it with the built-in se
 uv run hedgehog setup aizynthfinder
 ```
 
-This command clones the retrosynthesis repository into `modules/retrosynthesis/`, installs dependencies with `uv sync`, and downloads the required public data (model files and templates).
+This command installs the optional `retrosynthesis` extra into the project environment and downloads the required public data (model files and templates) into `modules/aizynthfinder/`.
 
 2. Verify the installation:
 
 ```bash
-# Check that the virtual environment exists
-ls modules/retrosynthesis/aizynthfinder/.venv/
-
 # Check that public data was downloaded
-ls modules/retrosynthesis/aizynthfinder/public/
+ls modules/aizynthfinder/public/
 
-# Check that model data files exist
-ls modules/retrosynthesis/aizynthfinder/aizynthfinder/data/
+# Check that logging config exists
+ls modules/aizynthfinder/aizynthfinder/data/
 ```
 
-3. If setup fails during clone, verify your outbound HTTPS access to GitHub and local `git`/`uv` availability.
+3. If setup fails during dependency sync, verify your local `uv` installation, Python version compatibility (AiZynthFinder currently supports Python 3.10-3.12), and outbound package-index access.
 
 ## Shepherd-Score on Python 3.13
 

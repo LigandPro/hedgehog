@@ -263,6 +263,14 @@
             color: var(--primary);
         }
 
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
         .descriptor-table {
             font-size: 0.95em;
         }
@@ -373,6 +381,77 @@
             }
         }
 
+        .weighted-score-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .weighted-score-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px;
+            background: white;
+        }
+
+        .weighted-score-card h3 {
+            margin-bottom: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        .weighted-score-card .meta-list {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin: 10px 0 14px;
+            line-height: 1.35;
+            white-space: normal;
+        }
+
+        .weighted-score-stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .weighted-score-stat-value {
+            color: var(--primary);
+            font-size: 1.25rem;
+            font-weight: 600;
+            overflow-wrap: anywhere;
+        }
+
+        .weighted-score-stat-label {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .weighted-evidence-table {
+            font-size: 0.78rem;
+            margin-top: 12px;
+        }
+
+        .weighted-evidence-table th,
+        .weighted-evidence-table td {
+            padding: 8px 10px;
+        }
+
+        .weighted-evidence-table td:not(:first-child),
+        .weighted-evidence-table th:not(:first-child) {
+            text-align: right;
+        }
+
+        .weighted-score-card .evidence-empty {
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+            margin-top: 12px;
+        }
+
         /* Section headers */
         section h3 {
             font-size: 0.95rem;
@@ -460,6 +539,104 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </section>
+        {% endif %}
+
+        {% if data.weighted_scores.models %}
+        <section>
+            <h2>Generator Reality Assessment</h2>
+
+            {% if plots.weighted_score_components %}
+            <div class="plot-container">{{ plots.weighted_score_components | safe }}</div>
+            {% else %}
+            <div class="plot-container empty-state"><p>No generator reality component data available</p></div>
+            {% endif %}
+
+            <div class="weighted-score-grid">
+                {% for model_name, model in data.weighted_scores.models.items() %}
+                {% set overall = (model.overall | default(0)) | float %}
+                {% set grade = model.grade | default("N/A") %}
+                {% set confidence = model.confidence | default("N/A") %}
+                {% set candidate_pool = model.candidate_pool_quality | default({}) %}
+                {% set candidate_pool_overall = candidate_pool.overall | default(none) %}
+                <article class="weighted-score-card">
+                    <h3>{{ model_name }}</h3>
+
+                    <div class="weighted-score-stats">
+                        <div>
+                            <div class="weighted-score-stat-value">{{ "%.1f"|format(overall) }}</div>
+                            <div class="weighted-score-stat-label">Generator Reality /100</div>
+                        </div>
+                        {% if candidate_pool_overall is not none %}
+                        <div>
+                            <div class="weighted-score-stat-value">{{ "%.1f"|format((candidate_pool_overall | default(0)) | float) }}</div>
+                            <div class="weighted-score-stat-label">Final Candidate Pool Quality</div>
+                        </div>
+                        {% endif %}
+                        <div>
+                            <div class="weighted-score-stat-value">{{ grade }}</div>
+                            <div class="weighted-score-stat-label">Grade</div>
+                        </div>
+                        <div>
+                            <div class="weighted-score-stat-value">{{ confidence }}</div>
+                            <div class="weighted-score-stat-label">Confidence</div>
+                        </div>
+                    </div>
+
+                    <p class="meta-list">
+                        <strong>Bottlenecks:</strong>
+                        {% if model.bottlenecks %}
+                        {% for bottleneck in model.bottlenecks %}
+                        {{ bottleneck }}{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                        {% else %}
+                        None
+                        {% endif %}
+                    </p>
+
+                    {% if model.warnings %}
+                    <p class="meta-list">
+                        <strong>Warnings:</strong>
+                        {% for warning in model.warnings %}
+                        {{ warning }}{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </p>
+                    {% endif %}
+
+                    <h4>Generator Component Evidence</h4>
+                    {% if model.components %}
+                    <table class="weighted-evidence-table">
+                        <thead>
+                            <tr>
+                                <th>Component</th>
+                                <th>Score</th>
+                                <th>Weight</th>
+                                <th>Evidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for component_name, component in model.components.items() %}
+                            <tr>
+                                <td>{{ component_name }}</td>
+                                <td>
+                                    {% if component.available and component.score is not none %}
+                                    {{ "%.1f"|format((component.score | default(0)) | float) }}
+                                    {% else %}
+                                    &mdash;
+                                    {% endif %}
+                                </td>
+                                <td>{{ "%.0f"|format(((component.weight | default(0)) | float) * 100) }}%</td>
+                                <td>{{ component.evidence_text | default("-") }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="evidence-empty">No component evidence available.</p>
+                    {% endif %}
+                </article>
+                {% endfor %}
+            </div>
         </section>
         {% endif %}
 
@@ -570,7 +747,26 @@
                 // Synthesis Analysis - Model Filtering
                 // =====================================================
                 var synthesisDataByModel = {{ (plots.synthesis_data or {}) | tojson }};
+                var synthesisScoreMeta = {{ (plots.synthesis_score_meta or []) | tojson }};
                 var currentSynthesisModel = 'all';
+
+                function selectSynthesisPanel(panel, btn) {
+                    var toggle = document.getElementById('synthesis-panel-toggle');
+                    if (toggle) {
+                        var buttons = toggle.querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                    }
+                    var panels = document.querySelectorAll('[data-synthesis-panel]');
+                    panels.forEach(function(item) {
+                        item.className = item.getAttribute('data-synthesis-panel') === panel ? 'tab-panel active' : 'tab-panel';
+                    });
+                    window.setTimeout(function() {
+                        document.querySelectorAll('[data-synthesis-panel=\"' + panel + '\"] .js-plotly-plot').forEach(function(plot) {
+                            Plotly.Plots.resize(plot);
+                        });
+                    }, 0);
+                }
 
                 function selectSynthesisModel(model, btn) {
                     currentSynthesisModel = model;
@@ -591,10 +787,53 @@
                     updateSynthesisMetrics(data);
 
                     // Update plots
-                    drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', '', 'sa_scores');
-                    drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', '', 'syba_scores');
-                    drawHistogram('synthesis-ra-hist', data.ra_scores || [], 'RA Score (higher = easier)', '', 'ra_scores');
+                    updateSynthesisScoreHistograms(data);
                     drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (document.getElementById('synthesis-score-grid')) {
+                        updateSynthesisPlots();
+                    }
+                });
+
+                function updateSynthesisScoreHistograms(data) {
+                    var grid = document.getElementById('synthesis-score-grid');
+                    if (!grid) return;
+                    grid.innerHTML = '';
+
+                    var meta = synthesisScoreMeta || [];
+                    if (!meta.length && data.score_distributions) {
+                        meta = Object.keys(data.score_distributions).map(function(column) {
+                            return {
+                                column: column,
+                                key: column.replace(/_score$/, '') + '_scores',
+                                label: column
+                            };
+                        });
+                    }
+
+                    meta.forEach(function(item) {
+                        var values = data[item.key] || (data.score_distributions && data.score_distributions[item.column]) || [];
+                        if (!values.length) return;
+                        var panel = document.createElement('div');
+                        var title = document.createElement('h4');
+                        var container = document.createElement('div');
+                        var containerId = 'synthesis-' + item.key.replace(/_/g, '-') + '-hist';
+
+                        title.style.marginBottom = '8px';
+                        title.textContent = item.label + ' Distribution';
+                        container.id = containerId;
+                        container.className = 'plot-container';
+                        panel.appendChild(title);
+                        panel.appendChild(container);
+                        grid.appendChild(panel);
+                        drawHistogram(containerId, values, item.label, '', item.key);
+                    });
+
+                    if (!grid.children.length) {
+                        showEmptyState(grid);
+                    }
                 }
 
                 function updateSynthesisMetrics(data) {
@@ -2221,7 +2460,7 @@
         {% endif %}
 
         <!-- Synthesis Analysis (Stage 04) -->
-        {% if data.synthesis.distributions or data.synthesis_detailed.sa_scores %}
+        {% if data.synthesis.distributions or data.synthesis_detailed.score_distributions %}
         <section>
             <h2>Synthesis Analysis</h2>
 
@@ -2235,6 +2474,17 @@
             </div>
             {% endif %}
 
+            <div class="view-toggle" id="synthesis-panel-toggle">
+                <button class="active" onclick="selectSynthesisPanel('raw', this)">Raw Scores</button>
+                {% if plots.synthesis_aligned_dist %}
+                <button onclick="selectSynthesisPanel('aligned', this)">Aligned Comparison</button>
+                {% endif %}
+                {% if data.retrosynthesis and data.retrosynthesis.summary %}
+                <button onclick="selectSynthesisPanel('retrosynthesis', this)">AiZynthFinder</button>
+                {% endif %}
+            </div>
+
+            <div class="tab-panel active" data-synthesis-panel="raw">
             <!-- ==================== Synthesis Scores Section ==================== -->
             <h3 style="margin-top: 20px; margin-bottom: 15px;">Synthesis Scores</h3>
 
@@ -2245,35 +2495,66 @@
                 <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.3); vertical-align: middle; margin-right: 6px; border: 1px solid #d1d5db;"></span>Out of Range</span>
             </div>
 
-            <!-- SA, SYBA, RA histograms (dynamic) -->
-            <div class="three-col">
-                <div>
-                    <h4 style="margin-bottom: 8px;">SA Score Distribution</h4>
-                    <div id="synthesis-sa-hist" class="plot-container">
-                        {% if plots.synthesis_sa_hist %}{{ plots.synthesis_sa_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 8px;">SYBA Score Distribution</h4>
-                    <div id="synthesis-syba-hist" class="plot-container">
-                        {% if plots.synthesis_syba_hist %}{{ plots.synthesis_syba_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 8px;">RA Score Distribution</h4>
-                    <div id="synthesis-ra-hist" class="plot-container">
-                        {% if plots.synthesis_ra_hist %}{{ plots.synthesis_ra_hist | safe }}{% endif %}
-                    </div>
-                </div>
-            </div>
+            <!-- Score histograms (dynamic) -->
+            <div class="three-col" id="synthesis-score-grid"></div>
             <div style="text-align: center; margin-top: 8px;">
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SA Score (lower = easier)</p>
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SYBA Score (higher = easier)</p>
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">RA Score (higher = easier)</p>
+                {% for item in plots.synthesis_score_meta or [] %}
+                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">{{ item.label }}</p>
+                {% endfor %}
             </div>
+            </div>
+
+            {% if plots.synthesis_aligned_dist %}
+            <div class="tab-panel" data-synthesis-panel="aligned">
+                <h3 style="margin-top: 20px; margin-bottom: 15px;">Aligned Synthesis Scorer Comparison</h3>
+                <p style="color: #6b7280; font-size: 13px; margin-bottom: 16px;">
+                    All scores below are normalized to 0..1 with 1 meaning easier to synthesize. Raw score columns are unchanged in CSV outputs.
+                </p>
+                <div class="plot-container">{{ plots.synthesis_aligned_dist | safe }}</div>
+                <div class="two-col" style="margin-top: 20px;">
+                    <div>
+                        {% if plots.synthesis_aligned_corr %}
+                        {{ plots.synthesis_aligned_corr | safe }}
+                        {% else %}
+                        <div class="empty-state">No correlation data available</div>
+                        {% endif %}
+                    </div>
+                    <div>
+                        {% if plots.synthesis_aligned_route %}
+                        {{ plots.synthesis_aligned_route | safe }}
+                        {% else %}
+                        <div class="empty-state">No route comparison data available</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if plots.synthesis_aligned_score_meta %}
+                <table style="margin-top: 20px;">
+                    <thead>
+                        <tr>
+                            <th>Scorer</th>
+                            <th>Raw Direction</th>
+                            <th>Normalization</th>
+                            <th>Aligned Mean</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in plots.synthesis_aligned_score_meta %}
+                        <tr>
+                            <td>{{ item.label }}</td>
+                            <td>{{ item.raw_direction }}</td>
+                            <td>{{ item.normalization }}</td>
+                            <td>{{ "%.3f"|format(item.mean) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            {% endif %}
 
             <!-- ==================== AiZynthFinder Section ==================== -->
             {% if data.retrosynthesis and data.retrosynthesis.summary %}
+            <div class="tab-panel" data-synthesis-panel="retrosynthesis">
             <h3 style="margin-top: 30px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid var(--border);">AiZynthFinder Retrosynthesis</h3>
 
             <!-- AiZynthFinder metrics -->
@@ -2348,6 +2629,7 @@
                         {% endif %}
                     </div>
                 </div>
+            </div>
             </div>
             {% endif %}
         </section>

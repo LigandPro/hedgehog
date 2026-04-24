@@ -31,6 +31,7 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 | `config_synthesis` | string | `src/hedgehog/configs/config_synthesis.yml` | Path to the synthesis stage config |
 | `config_docking` | string | `src/hedgehog/configs/config_docking.yml` | Path to the docking stage config |
 | `config_docking_filters` | string | `src/hedgehog/configs/config_docking_filters.yml` | Path to the docking filters stage config |
+| `config_weighted_score` | string | `src/hedgehog/configs/config_weighted_score.yml` | Path to the weighted model assessment config |
 | `config_moleval` | string | `src/hedgehog/configs/config_moleval.yml` | Path to the MolEval reporting config |
 
 ### Default YAML
@@ -53,6 +54,7 @@ config_structFilters: src/hedgehog/configs/config_structFilters.yml
 config_synthesis: src/hedgehog/configs/config_synthesis.yml
 config_docking: src/hedgehog/configs/config_docking.yml
 config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+config_weighted_score: src/hedgehog/configs/config_weighted_score.yml
 config_moleval: src/hedgehog/configs/config_moleval.yml
 ```
 
@@ -608,9 +610,20 @@ Controls structural alert screening and medicinal chemistry filters. Molecules f
 | `calculate_symmetry` | bool | `false` | Flag highly symmetric molecules (off by default — many drugs are symmetric) |
 | `symmetry_threshold` | float | `0.8` | Symmetry score threshold above which a molecule is flagged |
 
+### Structural Filter Profiles
+
+The default structural filter configuration is the exploration profile in
+`config_structFilters.yml`. Three named ready-to-use profile files are shipped
+alongside it:
+
+- `config_structFilters_strict.yml` - conservative profile for high-confidence hygiene screening
+- `config_structFilters_balanced.yml` - practical mid-conservatism profile
+- `config_structFilters_exploration.yml` - least conservative profile for retaining more chemistry diversity
+
 ### Default YAML
 
 ```yaml
+# Structural filters config - exploration profile (default)
 run: true
 filter_data: true
 parse_input_n_jobs: -1
@@ -636,8 +649,6 @@ include_rulesets:
 - Frequent-Hitter
 - Chelator
 - SureChEMBL
-- MLSMR
-- LINT
 - GST-Hitters
 - HIS-Hitters
 - LuciferaseInhibitor
@@ -646,69 +657,12 @@ exclude_descriptions:
   - Aliphatic long chain
   - isolated alkene
   - triple bond
-  Toxicophore:
-  - acetylene_alkyne
-  - acyclic_alkyne
-  - alkynes
-  - masked_aniline
-  - adamantane
-  - imidazole
-  - michael_acceptors_double
-  - michael_acceptors_triple
-  - n_acylated_azoles
-  - pyrrole
-  Skin:
-  - Activated alkine
-  - Tertiary alkyl
-  - Aromatic primary and secondary amines
-  - Aromatic amines
-  - Esters of aromatic alcohols and their thio and aza analogues
-  - Haloethyl-substituted aromatic compounds
-  - Ortho-disubstituted benzenes
-  Reactive-Unstable-Toxic:
-  - Aldimines and ketimines
-  - Alkyl Halides
-  - Glutarimides
-  - Activated Halides
-  - Activated halides (o-nitro substituted haloaromatics)
-  - Activated halides (p-nitro substituted haloaromatics)
-  - Activated halides (α-halogen substituted N-heterocycles)
-  - Activated halides (γ-halogen substituted N-heterocycles)
-  - Activated haloaromatics
-  - Aminals
-  - Enamines
-  - Halomethyl amines
-  - Halomethyl ethers
-  - Other undesirable policyclic (adamantane derivatives)
-  - Oxetanes
-  - Oxetanes, thietanes
-  - Polycyclic 4 fused rings and more
-  - Simple anilines and phenols
+  Inpharmatica:
+  - Filter82_pyridinium
+  LD50-Oral:
+  - phenylpiperazine
   SureChEMBL:
   - aminothiazole
-  Electrophilic:
-  - Acetates
-  - Alkyl halides
-  - Ethanolamines
-  - Morpholines
-  - Poly aromatic hydrocarbons
-  Genotoxic-Carcinogenicity:
-  - Aromatic N-acyl amine
-  - Aromatic amines
-  - Derivatives of urethane (carbamates)
-  - Halogenated methanes
-  - Polycyclic aromatic hydrocarbons
-  - Polycyclic aromatic system (general)
-  - Polycyclic aromatic system (specific)
-  - Secondary aromatic acetamides and formamides
-  - Tertiary aromatic amines
-  - Aromatic amines
-  LINT:
-  - high halogen content (>3)
-  Non-Genotoxic-Carcinogenicity:
-  - Halogenated benzene
-  - Heterocyclic Polycyclic Aromatic Hydrocarbons
-  - Polycyclic Aromatic Hydrocarbons
   HIS-Hitters:
   - Picolylamines_A
 calculate_molgraph_stats: true
@@ -743,6 +697,7 @@ Controls the retrosynthesis feasibility stage, including synthesizability score 
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the synthesis stage |
 | `n_jobs` | int | `-1` | Worker count for synthesis scoring and retrosynthesis (`-1`/`0` = auto/all available cores) |
+| `enabled_scores` | list | `sa`, `syba`, `rascore`, `sync`, `scscore`, `nonpher`, `fsscore`, `gasa` | Synthesis score calculators to run. Optional scorers return `NaN` with warnings when their external dependencies are not configured |
 | `run_retrosynthesis` | bool | `true` | Run AiZynthFinder retrosynthetic analysis |
 | `filter_solved_only` | bool | `true` | Keep only molecules for which a retrosynthetic route was found |
 | `sa_score_min` | float | `1` | Minimum synthetic accessibility score (Ertl) |
@@ -751,12 +706,34 @@ Controls the retrosynthesis feasibility stage, including synthesizability score 
 | `syba_score_max` | float | `inf` | Maximum SYBA score |
 | `ra_score_min` | float | `0.5` | Minimum retrosynthetic accessibility score |
 | `ra_score_max` | float | `1` | Maximum retrosynthetic accessibility score |
+| `sync_auto_install` | bool | `true` | Download the SYNC checkpoint automatically when it is missing |
+| `sync_device` | string | `cpu` | Torch device for SYNC inference |
+| `sync_conformer_seed` | int | `61453` | RDKit ETKDG conformer seed for SYNC inputs |
+| `fsscore_python` | string \| null | `null` | Python interpreter for isolated FSScore worker environment |
+| `fsscore_model_path` | string \| null | `null` | Explicit FSScore checkpoint path (`*.ckpt`) |
+| `fsscore_repo_path` | string \| null | `null` | Optional FSScore checkout path used to resolve `models/pretrain_graph_GGLGGL_ep242_best_valloss.ckpt` |
+| `fsscore_batch_size` | int | `128` | Batch size passed to `fsscore.score` |
+| `fsscore_num_workers` | int \| null | `null` | Optional dataloader worker count passed to `fsscore.score` |
+| `score_filters` | object | `{}` | Optional min/max filters for additional score columns such as `sync_score`, `sc_score`, `nonpher_complexity_score`, `fs_score`, or `gasa_score` |
+| `gasa.command` | string | `null` | Optional local command template for batch `gasa` scoring using `{input}` and `{output}` placeholders |
+| `gasa.executable` | string | `null` | Optional local executable path/name used for `gasa` scoring (`<exe> --smiles <SMILES>`) |
+| `gasa.api_url` | string | `null` | Optional local loopback HTTP endpoint for `gasa` scoring (`POST {"smiles": ...}`) |
+| `gasa.timeout_seconds` | float | `30` | Timeout per `gasa` backend call |
 
 ### Default YAML
 
 ```yaml
 run: true
 n_jobs: -1
+enabled_scores:
+  - sa
+  - syba
+  - rascore
+  - sync
+  - scscore
+  - nonpher
+  - fsscore
+  - gasa
 run_retrosynthesis: true
 filter_solved_only: true
 sa_score_min: 1
@@ -765,7 +742,50 @@ syba_score_min: 0
 syba_score_max: inf
 ra_score_min: 0.5
 ra_score_max: 1
+sync_auto_install: true
+sync_device: cpu
+sync_conformer_seed: 61453
+fsscore_python:
+fsscore_model_path:
+fsscore_repo_path:
+fsscore_batch_size: 128
+fsscore_num_workers:
+score_filters:
+  sync_score:
+    min: 0.5
+    max: 1
+  sc_score:
+    min:
+    max:
+  nonpher_complexity_score:
+    min:
+    max:
+  fs_score:
+    min:
+    max:
+  gasa_score:
+    min:
+    max:
+gasa:
+  command:
+  executable:
+  api_url:
+  timeout_seconds: 30
 ```
+
+Optional external scorers are configured outside the base dependency set:
+
+- Set `HEDGEHOG_OPTIONAL_ENV_ROOT` to a writable host-local directory (for example `~/work/hedgehog_optional_envs`) so FSScore/GASA/Nonpher uv bootstraps stay isolated and portable across servers. Keep output folders in shared storage.
+- `nonpher` can run in-process or via external worker (`HEDGEHOG_NONPHER_PYTHON`). If runtime is unavailable, `nonpher_complexity_score` is reported as `NaN`. Validate with `uv run hedgehog setup nonpher-check` or `uv run hedgehog setup nonpher-check --python ~/work/hedgehog_optional_envs/nonpher/bin/python`.
+- With `--auto-install` / `HEDGEHOG_AUTO_INSTALL=1`, HEDGEHOG attempts uv-only Nonpher bootstrap under `$HEDGEHOG_OPTIONAL_ENV_ROOT/nonpher` (or `.venv-nonpher-worker`) via pinned `numpy<2` + `rdkit-pypi` + git installs for `nonpher` and `molpher-lib`.
+- If uv-only bootstrap fails on native blockers (for example `cannot find -lmolpher` or other unresolved linker/system dependencies), HEDGEHOG logs the exact blocker and leaves Nonpher scores as `NaN`.
+- `HEDGEHOG_NONPHER_PYTHON` always takes precedence and can point to any validated isolated interpreter, including a prebuilt shared hybrid runtime when uv-only is blocked.
+- `uv run hedgehog setup fsscore --yes` clones upstream FSScore checkout into `modules/fsscore`.
+- `HEDGEHOG_FSSCORE_PYTHON` points to isolated FSScore runtime. With `HEDGEHOG_AUTO_INSTALL=1`, missing Python/model settings can be auto-wired via `ensure_fsscore_runtime` when no explicit `HEDGEHOG_FSSCORE_COMMAND` is set.
+- `HEDGEHOG_FSSCORE_MODEL_PATH` sets an explicit checkpoint path. Alternatively, set `HEDGEHOG_FSSCORE_REPO_PATH` and HEDGEHOG resolves the default checkpoint under `models/`.
+- `HEDGEHOG_FSSCORE_COMMAND` can provide a custom command template using `{input}`, `{output}`, `{smiles_col}`, `{model_path}`, `{batch_size}`, and `{n_jobs}` placeholders.
+- `HEDGEHOG_GASA_COMMAND` can provide a custom batch command template using `{input}`, `{output}`, `{smiles_col}`, `{model_path}`, `{batch_size}`, and `{n_jobs}` placeholders.
+- `HEDGEHOG_GASA_EXECUTABLE` points to a local executable; `HEDGEHOG_GASA_API_URL` points to a local loopback API endpoint. With `HEDGEHOG_AUTO_INSTALL=1`, missing backend can be auto-populated through `ensure_gasa_worker` + `hedgehog.workers.gasa_worker`. If backend setup still fails, scores default to `NaN` with a warning.
 
 ---
 
@@ -1032,6 +1052,155 @@ aggregation:
   mode: "all"
   save_metrics: true
   save_failed: false
+```
+
+---
+
+## config_weighted_score.yml
+
+Controls the post-run Generator Reality Assessment used by HTML reporting and `RUN_INFO.md`.
+
+The scorecard is explainable and intended to rank generator behavior, not to estimate hit probability. It also reports a secondary Final Candidate Pool Quality score for the survivor set.
+
+### General Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run` | bool | `true` | Enable or disable weighted model scoring output |
+| `version` | string | `v1` | Internal scorecard schema version |
+| `mode` | string | `generator_reality` | Scoring mode label for the gate-aware generator score |
+| `target_final_count` | int | `100` | Target final count retained for secondary candidate-pool yield scoring |
+| `target_final_retention` | float | `0.10` | Target final retention rate for generator yield scoring |
+| `confidence.min_final_molecules_high` | int | `100` | Minimum final molecules for high confidence |
+| `confidence.min_final_molecules_medium` | int | `30` | Minimum final molecules for medium confidence |
+
+### Component Weights (`weights`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `weights.yield` | float | `0.30` | Weight for final retention against target |
+| `weights.physchem` | float | `0.15` | Weight for descriptor all-pass gate survival |
+| `weights.structural` | float | `0.25` | Weight for structural stage survival |
+| `weights.synthesis` | float | `0.10` | Weight for synthesis component |
+| `weights.docking_pose` | float | `0.15` | Weight for docking/pipeline pose component |
+| `weights.diversity` | float | `0.05` | Weight for diversity metrics component |
+
+Weights are normalized over all configured components before scoring. When one component is unavailable, it is simply excluded, and the effective average is recomputed from the remaining available components.
+
+`physchem` is measured from `stages/01_descriptors_initial/filtered/pass_flags.csv` as an all-pass descriptor gate rate, so it reflects the early generated set rather than the final survivor pool. The mean flag pass rate is retained as evidence only. `structural` uses the stage survival rate from filtered plus failed molecules, with the weakest structural filter as supporting evidence. Final descriptor files are used only as a fallback for older or partial runs. `synthesis` and `docking_pose` similarly prefer full stage evaluation artifacts before filtered/final survivor files.
+
+### Secondary Candidate Pool Weights (`candidate_pool_weights`)
+
+`candidate_pool_weights` control the secondary Final Candidate Pool Quality score. It keeps the older survivor-pool interpretation: final-count yield saturation, mean descriptor flag pass rate, mean structural flag pass rate, and the same synthesis/docking/diversity formulas.
+
+### Yield and Structural Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `yield.mode` | string | `retention` | Use final retention for the generator score; `absolute` restores count-saturation yield |
+| `yield.target_final_retention` | float | `0.10` | Retention rate that maps to a full yield score |
+| `yield.count_weight` | float | `0.70` | Count-saturation weight for secondary candidate-pool yield |
+| `yield.retention_weight` | float | `0.30` | Log-retention weight for secondary candidate-pool yield |
+| `structural.stage_pass_weight` | float | `0.80` | Weight for structural stage survival |
+| `structural.worst_filter_weight` | float | `0.20` | Weight for the weakest structural filter pass rate |
+
+### Hard Caps (`hard_caps`)
+
+Hard caps prevent a model from receiving a high generator score when an early AND-gate rejects most molecules.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hard_caps.structural_stage_pass_rate_below` | float | `0.20` | Trigger threshold for structural stage survival |
+| `hard_caps.structural_stage_pass_rate_cap` | float | `60.0` | Maximum score after structural cap trigger |
+| `hard_caps.descriptor_all_pass_rate_below` | float | `0.50` | Trigger threshold for descriptor all-pass survival |
+| `hard_caps.descriptor_all_pass_rate_cap` | float | `70.0` | Maximum score after descriptor cap trigger |
+| `hard_caps.final_retention_rate_below` | float | `0.05` | Trigger threshold for final retention |
+| `hard_caps.final_retention_rate_cap` | float | `70.0` | Maximum score after retention cap trigger |
+
+### Docking Thresholds (`docking`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `docking.bad_affinity` | float | `-6.0` | Affinity at which docking contribution starts to approach zero |
+| `docking.good_affinity` | float | `-9.0` | Affinity at which docking affinity contribution reaches upper bound |
+| `docking.bad_cnnscore` | float | `0.35` | GNINA CNN score lower bound |
+| `docking.good_cnnscore` | float | `0.85` | GNINA CNN score upper bound |
+| `docking.bad_cnnaffinity` | float | `4.5` | CnnAffinity lower bound |
+| `docking.good_cnnaffinity` | float | `6.5` | CnnAffinity upper bound |
+
+Increase strictness by moving `bad_*` upward and `good_*` downward, or relax by widening the interval.
+
+### Synthesis Thresholds (`synthesis`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `synthesis.sa_min` | float | `1.0` | Easier-to-synthesize SA floor |
+| `synthesis.sa_max` | float | `4.5` | Harder-to-synthesize SA ceiling |
+| `synthesis.ra_min` | float | `0.5` | Minimum retrosynthetic accessibility minimum |
+| `synthesis.ra_max` | float | `1.0` | Retrosynthetic accessibility maximum |
+| `synthesis.syba_midpoint` | float | `0.0` | Sigmoid midpoint for SYBA |
+| `synthesis.syba_scale` | float | `50.0` | Sigmoid width for SYBA |
+| `synthesis.target_search_time_sec` | float | `30.0` | Reference retrosynthesis search time |
+| `synthesis.search_time_scale_sec` | float | `20.0` | Search-time penalty scale |
+
+Raise or lower these to bias toward faster/easier synthetic routes.
+
+### Default YAML
+
+```yaml
+run: true
+version: v1
+mode: generator_reality
+target_final_count: 100
+target_final_retention: 0.10
+weights:
+  yield: 0.30
+  physchem: 0.15
+  structural: 0.25
+  synthesis: 0.10
+  docking_pose: 0.15
+  diversity: 0.05
+candidate_pool_weights:
+  yield: 0.10
+  physchem: 0.15
+  structural: 0.15
+  synthesis: 0.20
+  docking_pose: 0.30
+  diversity: 0.10
+yield:
+  mode: retention
+  target_final_retention: 0.10
+  count_weight: 0.70
+  retention_weight: 0.30
+structural:
+  stage_pass_weight: 0.80
+  worst_filter_weight: 0.20
+docking:
+  bad_affinity: -6.0
+  good_affinity: -9.0
+  bad_cnnscore: 0.35
+  good_cnnscore: 0.85
+  bad_cnnaffinity: 4.5
+  good_cnnaffinity: 6.5
+synthesis:
+  sa_min: 1.0
+  sa_max: 4.5
+  ra_min: 0.5
+  ra_max: 1.0
+  syba_midpoint: 0.0
+  syba_scale: 50.0
+  target_search_time_sec: 30.0
+  search_time_scale_sec: 20.0
+confidence:
+  min_final_molecules_high: 100
+  min_final_molecules_medium: 30
+hard_caps:
+  structural_stage_pass_rate_below: 0.20
+  structural_stage_pass_rate_cap: 60.0
+  descriptor_all_pass_rate_below: 0.50
+  descriptor_all_pass_rate_cap: 70.0
+  final_retention_rate_below: 0.05
+  final_retention_rate_cap: 70.0
 ```
 
 ---

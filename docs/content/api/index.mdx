@@ -1,0 +1,180 @@
+---
+title: API Overview
+timestamp: 1776848830296
+---
+
+# API Overview
+
+Generated automatically at build time by `scripts/generate_api_docs.py` (2026-04-22 09:07:10 UTC).
+
+This page is intentionally high-level and reflects the current runtime API surface.
+
+## CLI
+
+The CLI metadata is collected from `hedgehog.main:app` via Typer/Click introspection.
+
+```bash
+uv run hedgehog --help
+```
+
+### Commands
+
+| Command | Kind | Description |
+| --- | --- | --- |
+| `info` | command | Display pipeline information and available stages. |
+| `report` | command | Regenerate the HTML report from an existing pipeline run directory. |
+| `run` | command | Run the molecular analysis pipeline as an explicit subcommand. |
+| `setup` | group | Install optional external tools and assets. |
+| `setup aizynthfinder` | command | Install AiZynthFinder into the project env and modules/aizynthfinder/. |
+| `setup nvmolkit-worker` | command | Install isolated nvMolKit worker environment in .venv-nvmolkit-worker. |
+| `setup shepherd-worker` | command | Install isolated Shepherd-Score worker environment in .venv-shepherd-worker. |
+| `tui` | command | Launch the interactive TUI (Text User Interface). |
+| `version` | command | Display version information. |
+
+### `hedgehog info`
+
+Display pipeline information and available stages.
+
+No parameters.
+
+### `hedgehog report`
+
+Regenerate the HTML report from an existing pipeline run directory.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `results_dir` | argument | `-` | `STRING` | yes | `None` | Path to existing pipeline results directory (e.g., results/run_10) |
+
+### `hedgehog run`
+
+Run the molecular analysis pipeline as an explicit subcommand.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `config_path` | option | `--config, -c` | `STRING` | no | `src/hedgehog/configs/config.yml` | Master YAML config path (default: src/hedgehog/configs/config.yml). |
+| `generated_mols_path` | option | `--mols, -m` | `STRING` | no | `None` | SMILES file path or glob (overrides config). |
+| `out_dir` | option | `--out, -o` | `STRING` | no | `None` | Output directory (overrides config folder_to_save). |
+| `stage` | option | `--stage, -s` | `Choice(['mol_prep', 'descriptors', 'struct_filters', 'synthesis', 'docking', 'docking_filters', 'final_descriptors'])` | no | `None` | Run one or more stages only; repeat --stage. See `hedgehog info`. |
+| `reuse_folder` | option | `--reuse` | `BOOL` | no | `False` | Reuse existing results folder. |
+| `force_new_folder` | option | `--force-new` | `BOOL` | no | `False` | Always create a new results folder. |
+| `auto_install` | option | `--auto-install` | `BOOL` | no | `False` | Install missing optional tools automatically. |
+| `show_progress` | option | `--progress` | `BOOL` | no | `False` | Show live progress bar. |
+
+### `hedgehog setup`
+
+Install optional external tools and assets.
+
+No parameters.
+
+### `hedgehog setup aizynthfinder`
+
+Install AiZynthFinder into the project env and modules/aizynthfinder/.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `yes` | option | `--yes, -y, --no-yes, -n` | `BOOL` | no | `True` | Auto-accept downloads (default: yes). Use --no-yes to prompt. |
+
+### `hedgehog setup nvmolkit-worker`
+
+Install isolated nvMolKit worker environment in .venv-nvmolkit-worker.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `yes` | option | `--yes, -y, --no-yes` | `BOOL` | no | `True` | Auto-accept downloads (no prompt). |
+| `python_bin` | option | `--python` | `STRING` | no | `None` | Python interpreter for worker venv (default: python3.12 -> 3.11 -> 3.10). |
+
+### `hedgehog setup shepherd-worker`
+
+Install isolated Shepherd-Score worker environment in .venv-shepherd-worker.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `yes` | option | `--yes, -y` | `BOOL` | no | `False` | Auto-accept downloads (no prompt). |
+| `python_bin` | option | `--python` | `STRING` | no | `None` | Python interpreter for worker venv (default: python3.12 -> 3.11 -> 3.10). |
+
+### `hedgehog tui`
+
+Launch the interactive TUI (Text User Interface).
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `session` | option | `--session, -s` | `STRING` | no | `None` | Resume TUI session by job id. |
+
+### `hedgehog version`
+
+Display version information.
+
+No parameters.
+
+## TUI JSON-RPC
+
+The TUI backend API is read from `JsonRpcServer.handlers` in `hedgehog.tui_backend.server`.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"preflight_pipeline","params":{"stages":["descriptors"]}}
+```
+
+### Methods
+
+| Method | Signature | Handler |
+| --- | --- | --- |
+| `add_job` | `(job_id: str, name: str \| None = None, input_path: str = '', output_path: str = '', stages: list[str] \| None = None) -> dict` | `hedgehog.tui_backend.handlers.history.HistoryHandler.add_job` |
+| `cancel_pipeline` | `(job_id: str) -> bool` | `hedgehog.tui_backend.handlers.pipeline.PipelineHandler.cancel_pipeline` |
+| `count_molecules` | `(path: str) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.files.FilesHandler.count_molecules` |
+| `delete_job` | `(job_id: str) -> bool` | `hedgehog.tui_backend.handlers.history.HistoryHandler.delete_job` |
+| `get_job_history` | `(limit: int = 50) -> list[dict]` | `hedgehog.tui_backend.handlers.history.HistoryHandler.get_job_history` |
+| `get_progress` | `(job_id: str) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.pipeline.PipelineHandler.get_progress` |
+| `list_directory` | `(path: str, extensions: list[str] \| None = None) -> list[dict[str, typing.Any]]` | `hedgehog.tui_backend.handlers.files.FilesHandler.list_directory` |
+| `list_files` | `(path: str, extensions: list[str] \| None = None) -> list[str]` | `hedgehog.tui_backend.handlers.files.FilesHandler.list_files` |
+| `load_config` | `(config_type: str) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.config.ConfigHandler.load_config` |
+| `preflight_pipeline` | `(stages: list[str], config_overrides: dict[str, typing.Any] \| None = None) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.pipeline.PipelineHandler.preflight_pipeline` |
+| `save_config` | `(config_type: str, data: dict[str, typing.Any]) -> bool` | `hedgehog.tui_backend.handlers.config.ConfigHandler.save_config` |
+| `start_pipeline` | `(stages: list[str], config_overrides: dict[str, typing.Any] \| None = None) -> str` | `hedgehog.tui_backend.handlers.pipeline.PipelineHandler.start_pipeline` |
+| `update_job` | `(job_id: str, status: str \| None = None, results: dict \| None = None, error: str \| None = None) -> dict \| None` | `hedgehog.tui_backend.handlers.history.HistoryHandler.update_job` |
+| `validate_config` | `(config_type: str, data: dict[str, typing.Any]) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.config.ConfigHandler.validate_config` |
+| `validate_input_file` | `(path: str) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.validation.ValidationHandler.validate_input_file` |
+| `validate_output_directory` | `(path: str) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.validation.ValidationHandler.validate_output_directory` |
+| `validate_receptor_pdb` | `(path: str) -> dict[str, typing.Any]` | `hedgehog.tui_backend.handlers.validation.ValidationHandler.validate_receptor_pdb` |
+
+### Standard Error Codes
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| `-32601` | Method not found | Unknown RPC method name. |
+| `-32602` | Invalid params | Validation/value error in method parameters. |
+| `-32000` | Server error | Unhandled internal exception. |
+| `-32001` | File not found | Requested file/path does not exist. |
+| `-32002` | Permission denied | Insufficient permissions for operation. |
+| `-32003` | Not a directory | Path expected to be a directory is not one. |
+
+## Python Public API
+
+Public Python API entries are discovered from `__all__` in `src/hedgehog/**/__init__.py`.
+
+```python
+from hedgehog.reporting import ReportGenerator
+from hedgehog.setup import ensure_aizynthfinder
+```
+
+Modules under `hedgehog.vendor.*` and `hedgehog.workers.*` are intentionally excluded.
+
+| Module | Symbol | Kind | Notes |
+| --- | --- | --- | --- |
+| `hedgehog.descriptors` | `run` | function | - |
+| `hedgehog.descriptors.waves` | `register` | function | - |
+| `hedgehog.descriptors.waves` | `run_waves` | function | - |
+| `hedgehog.docking_filters` | `apply_conformer_deviation_filter` | function | - |
+| `hedgehog.docking_filters` | `apply_interaction_filter` | function | - |
+| `hedgehog.docking_filters` | `apply_pose_quality_filter` | function | - |
+| `hedgehog.docking_filters` | `apply_shepherd_score_filter` | function | - |
+| `hedgehog.docking_filters` | `docking_filters_main` | function | - |
+| `hedgehog.molprep` | `run` | function | - |
+| `hedgehog.reporting` | `ReportGenerator` | class | - |
+| `hedgehog.setup` | `ensure_aizynthfinder` | function | - |
+| `hedgehog.setup` | `ensure_gnina` | function | - |
+| `hedgehog.setup` | `ensure_matcha_checkout` | function | - |
+| `hedgehog.setup` | `ensure_nvmolkit_worker` | function | - |
+| `hedgehog.setup` | `ensure_rascore_model` | function | - |
+| `hedgehog.setup` | `ensure_shepherd_worker` | function | - |
+| `hedgehog.utils` | `assign_mol_idx` | function | - |
+| `hedgehog.utils` | `prepare_input_data` | function | - |

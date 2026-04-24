@@ -52,6 +52,93 @@ When the input contains molecules from multiple generative models, the report in
 - **Stacked bar chart** showing where molecules were lost (by stage) for each model.
 - A **model dropdown** at the top of the report to filter all sections by a single model or compare all.
 
+### Generator Reality Assessment
+
+The reporting layer adds a **Generator Reality Assessment** scorecard in `RUN_INFO.md` and an optional chart in the HTML report when scoring data is available.
+
+It summarizes each model with:
+
+- `Generator Reality Score` (0.0–100.0) used for ranking how well the model's initial generated set survives the pipeline gates.
+- `Final Candidate Pool Quality` (0.0–100.0), a secondary survivor-pool score for the molecules that already passed the pipeline.
+- `Grade` (`Excellent`, `Strong`, `Moderate`, `Weak`) for quick triage.
+- `Confidence` (`High`, `Medium`, `Low`) for reliability assessment.
+- `Main Bottleneck` list to show the weakest components.
+
+The default component weights are:
+
+| Component | Default Weight |
+|-----------|----------------|
+| `yield` | 0.30 |
+| `physchem` | 0.15 |
+| `structural` | 0.25 |
+| `synthesis` | 0.10 |
+| `docking_pose` | 0.15 |
+| `diversity` | 0.05 |
+
+Each component is built from stage outputs already produced by the pipeline (descriptors, structural filters, docking, synthesis, and MolEval diversity metrics). In short:
+
+- `yield`: final retention against `target_final_retention`
+- `physchem`: all-pass rate across early descriptor gates
+- `structural`: structural stage survival plus the weakest structural gate
+- `synthesis`: synthesis solvability, SA/RA/SYBA/search-time profile
+- `docking_pose`: docking scores and pose quality pass rates
+- `diversity`: MolEval diversity split across internal, scaffold, and sphere-exclusion metrics
+
+#### How the score is assembled
+
+The score is collected per `model_name`. If a CSV does not have `model_name`, HEDGEHOG treats it as an aggregate `__all__` model.
+
+The report generator reads these sources:
+
+| Component | Source files | Evidence collected |
+|-----------|--------------|--------------------|
+| `yield` | `input/sampled_molecules.csv`, `output/final_molecules.csv`, root `final_molecules.csv`, final descriptor or docking-filter fallback CSVs | Initial count, final count, final retention rate |
+| `physchem` | `stages/01_descriptors_initial/filtered/pass_flags.csv`, `stages/01_descriptors_initial/metrics/descriptors_all.csv`, with final descriptor files only as fallback | Descriptor all-pass rate, mean flag pass rate for evidence, worst flag, QED, MolWt, LogP, TPSA, Fsp3 summaries |
+| `structural` | `stages/03_structural_filters_post/filtered_molecules.csv`, `stages/03_structural_filters_post/failed_molecules.csv` | Stage pass rate, weakest structural flag, mean flag pass rate for evidence, filtered/failed counts |
+| `synthesis` | `stages/04_synthesis/synthesis_extended.csv`, `synthesis_scores.csv`, with `filtered_molecules.csv` only as fallback | Solve rate, median SA, median RA, median SYBA, median search time across molecules evaluated by synthesis |
+| `docking_pose` | `stages/06_docking_filters/metrics.csv`, `filtered_poses.csv`, with final molecule files only as fallback | Median affinity, median CNNscore, median CNNaffinity, pose pass rates across docking-filter input poses |
+| `diversity` | Already computed `moleval.by_stage.Input` in `report_data.json`, with `DockingFilters` only as fallback | IntDiv1, IntDiv2, ScaffDiv, ScaffUniqueness, SEDiv for the model input set |
+
+Component scores are normalized to `0..100`:
+
+- `yield` is `final_retention_rate / target_final_retention`, clipped to `0..1`.
+- `physchem` is the fraction of early descriptor rows that pass every descriptor flag simultaneously.
+- `structural` is `0.80 * structural_stage_pass_rate + 0.20 * worst_filter_pass_rate` by default.
+- `synthesis` combines solve rate, normalized SA, normalized RA, sigmoid-normalized SYBA, and normalized search time across synthesis-evaluated molecules, not only solved survivors.
+- `docking_pose` combines normalized affinity, CNNscore, CNNaffinity, and pose pass rate across docking-filter input poses, not only final accepted molecules.
+- `diversity` combines IntDiv1, IntDiv2, ScaffDiv, ScaffUniqueness, and SEDiv from the model input set when available.
+
+The final model score is:
+
+```text
+overall = sum(component_weight * component_score) / sum(available_component_weights)
+```
+
+Missing components are not scored as zero. They are marked `available: false`, excluded from the denominator, and recorded as warnings where appropriate. This keeps report generation robust for partial runs, but `Confidence` drops when too few components or final molecules are available.
+
+The generator score also supports hard caps for critical funnel failures. By default, a structural stage pass rate below `0.20` caps the score at `60`, a descriptor all-pass rate below `0.50` caps it at `70`, and a final retention rate below `0.05` caps it at `70`. These caps prevent a model from looking strong when an AND-gate stage rejects most of its generated molecules.
+
+`Final Candidate Pool Quality` keeps the older survivor-pool view: yield uses final-count saturation, physchem uses the mean descriptor flag pass rate, structural uses the mean structural flag pass rate, and synthesis/docking/diversity use the same component formulas. Use it to inspect the final pool, not to judge the generator itself.
+
+Important caveat: this is an explainable ranking scorecard, not a calibrated probability of biological success. Use it to compare models inside the same experiment and then validate best candidates with the underlying stage-level reports.
+
+If a component is missing (for example, docking or synthesis is not available for that run), its value is dropped from the denominator and the remaining weights are renormalized automatically. This changes the effective contribution of surviving components and may reduce interpretability across runs with different enabled stages.
+
+If evidence is sparse (`final molecules` is low and/or several components are missing), `Confidence` drops from `High` to `Medium` or `Low`.
+
+To configure or disable this section, use:
+
+```yaml
+config_weighted_score: src/hedgehog/configs/config_weighted_score.yml
+```
+
+Set `run: false` in that file to remove the generator reality assessment from the report.
+
+You can tune docking/synthesis behavior in this config to move rankings toward affinity-rich or synthetic tractability-focused models:
+
+- Docking thresholds are configured under `docking` (`bad_affinity`/`good_affinity`, `bad_cnnscore`/`good_cnnscore`, `bad_cnnaffinity`/`good_cnnaffinity`).
+- Synthesis thresholds are configured under `synthesis` (`sa_*`, `ra_*`, `syba_*`, `target_search_time_sec`).
+
 ### Structural Filters
 
 This section covers the structural filtering stages (pre-descriptor and post-descriptor filters):

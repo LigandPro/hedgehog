@@ -167,6 +167,76 @@ class ConfigValidator:
             if not isinstance(ra_min, (int, float)) or ra_min < 0 or ra_min > 1:
                 result["errors"].append("ra_score_min must be between 0 and 1")
 
+        if "sync_score_min" in data:
+            sync_min = data["sync_score_min"]
+            if not isinstance(sync_min, (int, float)) or sync_min < 0 or sync_min > 1:
+                result["errors"].append("sync_score_min must be between 0 and 1")
+
+        if "sync_score_max" in data:
+            sync_max = data["sync_score_max"]
+            if not isinstance(sync_max, (int, float)) or sync_max < 0 or sync_max > 1:
+                result["errors"].append("sync_score_max must be between 0 and 1")
+
+        ConfigValidator._validate_score_filters(data.get("score_filters"), result)
+
+    @staticmethod
+    def _validate_score_filters(score_filters: Any, result: dict[str, Any]) -> None:
+        if score_filters is None:
+            return
+
+        if not isinstance(score_filters, dict):
+            result["errors"].append("score_filters must be a mapping")
+            return
+
+        for column, thresholds in score_filters.items():
+            if not isinstance(column, str) or not column.strip():
+                result["errors"].append("score_filters keys must be non-empty strings")
+                continue
+
+            if not isinstance(thresholds, dict):
+                result["errors"].append(f"score_filters.{column} must be a mapping")
+                continue
+
+            min_value = thresholds.get("min")
+            max_value = thresholds.get("max")
+            min_number = ConfigValidator._validate_score_threshold(
+                min_value,
+                f"score_filters.{column}.min",
+                result,
+            )
+            max_number = ConfigValidator._validate_score_threshold(
+                max_value,
+                f"score_filters.{column}.max",
+                result,
+                allow_inf=True,
+            )
+            if min_number is not None and max_number is not None:
+                if min_number > max_number:
+                    result["errors"].append(
+                        f"score_filters.{column}.min must be less than or equal to "
+                        f"score_filters.{column}.max"
+                    )
+
+    @staticmethod
+    def _validate_score_threshold(
+        value: Any,
+        label: str,
+        result: dict[str, Any],
+        *,
+        allow_inf: bool = False,
+    ) -> float | None:
+        if value is None:
+            return None
+
+        if allow_inf and value == "inf":
+            return None
+
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            result["errors"].append(f"{label} must be a number")
+            return None
+
+        return float(value)
+
     @staticmethod
     def _validate_retrosynthesis(data: dict[str, Any], result: dict[str, Any]) -> None:
         """Validate retrosynthesis configuration.

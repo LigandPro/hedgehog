@@ -538,6 +538,190 @@ def plot_model_comparison(model_stats: list[dict[str, Any]]) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
+def plot_weighted_score_components(weighted_scores: dict[str, Any]) -> str:
+    """Create a grouped bar chart of generator reality score components.
+
+    Args:
+        weighted_scores: Dictionary with component score configuration and model metrics.
+
+    Returns:
+        HTML string of the plotly figure
+    """
+    if not weighted_scores:
+        return _empty_plot("No generator reality score data available")
+
+    models_data = weighted_scores.get("models")
+    if not isinstance(models_data, dict) or not models_data:
+        return _empty_plot("No generator reality model data available")
+
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    ranking = weighted_scores.get("ranking")
+    model_items: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(ranking, list):
+        ranked_lookup = {
+            str(name): payload
+            for name, payload in models_data.items()
+            if isinstance(payload, dict)
+        }
+        for ranking_item in ranking:
+            model_name = (
+                ranking_item.get("model_name")
+                if isinstance(ranking_item, dict)
+                else ranking_item
+            )
+            model_key = str(model_name)
+            payload = ranked_lookup.get(model_key)
+            if payload is not None:
+                model_items.append((model_key, payload))
+        for model_key, payload in models_data.items():
+            if model_key not in {name for name, _ in model_items} and isinstance(
+                payload, dict
+            ):
+                model_items.append((str(model_key), payload))
+    else:
+        model_items = [
+            (str(name), payload)
+            for name, payload in models_data.items()
+            if isinstance(payload, dict)
+        ]
+
+    # Keep only model entries with component information.
+    model_items = [
+        (name, payload)
+        for name, payload in model_items
+        if isinstance(payload.get("components"), dict) and payload["components"]
+    ]
+    if not model_items:
+        return _empty_plot("No generator reality component data available")
+
+    # Build full component order from all models.
+    component_names: list[str] = sorted(
+        {
+            str(component_name)
+            for _, payload in model_items
+            for component_name in payload.get("components", {})
+            if isinstance(payload.get("components"), dict)
+        }
+    )
+    if not component_names:
+        return _empty_plot("No generator reality component data available")
+
+    def _component_payload(payload: dict[str, Any], component: str) -> dict[str, Any]:
+        components = payload.get("components", {})
+        if isinstance(components, dict):
+            raw_component = components.get(component)
+            if isinstance(raw_component, dict):
+                return raw_component
+        return {}
+
+    if len(model_items) == 1:
+        model_name, model_payload = model_items[0]
+        scores = []
+        custom_data = []
+        for component in component_names:
+            component_payload = _component_payload(model_payload, component)
+            score = _to_float(component_payload.get("score"))
+            weight = _to_float(component_payload.get("weight"))
+            available = component_payload.get("available", True)
+            evidence = component_payload.get("evidence_text", "")
+            scores.append(score)
+            custom_data.append([weight, available, evidence])
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Bar(
+                name=model_name,
+                x=component_names,
+                y=scores,
+                marker_color=PURPLE_PALETTE[0],
+                text=[f"{score:.1f}" for score in scores],
+                textposition="outside",
+                customdata=custom_data,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Score: %{y:.1f}<br>"
+                    "Weight: %{customdata[0]:.0%}<br>"
+                    "Available: %{customdata[1]}<br>"
+                    "Evidence: %{customdata[2]}<extra></extra>"
+                ),
+            )
+        )
+        fig.update_layout(
+            title=f"Generator Reality Components ({model_name})",
+            xaxis_title="Component",
+            yaxis_title="Score",
+            yaxis={"range": [0, 105]},
+            height=360,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font={
+                "family": "-apple-system, BlinkMacSystemFont, sans-serif",
+                "size": 11,
+            },
+        )
+        return fig.to_html(full_html=False, include_plotlyjs=False)
+
+    fig = go.Figure()
+    for idx, (model_name, model_payload) in enumerate(model_items):
+        scores = []
+        custom_data = []
+        for component in component_names:
+            component_payload = _component_payload(model_payload, component)
+            score = _to_float(component_payload.get("score"))
+            weight = _to_float(component_payload.get("weight"))
+            available = component_payload.get("available", True)
+            evidence = component_payload.get("evidence_text", "")
+            scores.append(score)
+            custom_data.append([weight, available, evidence])
+
+        fig.add_trace(
+            go.Bar(
+                name=model_name,
+                x=component_names,
+                y=scores,
+                marker_color=MODEL_COLORS[idx % len(MODEL_COLORS)],
+                customdata=custom_data,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Model: " + model_name + "<br>"
+                    "Score: %{y:.1f}<br>"
+                    "Weight: %{customdata[0]:.0%}<br>"
+                    "Available: %{customdata[1]}<br>"
+                    "Evidence: %{customdata[2]}<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title="Generator Reality Components by Model",
+        barmode="group",
+        height=420,
+        xaxis_title="Component",
+        yaxis_title="Score",
+        xaxis={"tickangle": -20},
+        yaxis={"range": [0, 105]},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
+    )
+
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
 def plot_model_stacked_losses(model_stats: list[dict[str, Any]]) -> str:
     """Create stacked bar chart showing where molecules were lost per model.
 
@@ -857,6 +1041,143 @@ def plot_synthesis_scatter(
         height=400,
     )
 
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def _synthesis_meta_label(meta: list[dict[str, Any]]) -> dict[str, str]:
+    return {
+        item.get("column", ""): item.get("label", item.get("column", ""))
+        for item in meta
+        if item.get("column")
+    }
+
+
+def plot_synthesis_aligned_distributions(
+    aligned_scores: dict[str, list[float]],
+    meta: list[dict[str, Any]],
+) -> str:
+    """Create comparable higher-is-better synthesis score distributions."""
+    if not aligned_scores or not meta:
+        return _empty_plot("No aligned synthesis score data available")
+
+    fig = go.Figure()
+    added = 0
+    for i, item in enumerate(meta):
+        values = aligned_scores.get(item.get("key", ""))
+        if not values:
+            continue
+        fig.add_trace(
+            go.Box(
+                y=values,
+                name=item.get("label", item.get("column", f"Score {i + 1}")),
+                marker_color=COMPARE_PALETTE[i % len(COMPARE_PALETTE)],
+                boxmean=True,
+                hovertemplate="%{y:.3f}<extra>%{fullData.name}</extra>",
+            )
+        )
+        added += 1
+
+    if not added:
+        return _empty_plot("No aligned synthesis score data available")
+
+    fig.update_layout(
+        title="Aligned Synthesis Scorers (Higher = Easier)",
+        yaxis={"title": "Aligned accessibility score", "range": [0, 1]},
+        height=420,
+        margin={"l": 55, "r": 25, "t": 55, "b": 70},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        showlegend=False,
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_synthesis_aligned_correlation(
+    correlations: dict[str, dict[str, float | None]],
+    meta: list[dict[str, Any]],
+) -> str:
+    """Create correlation heatmap for aligned synthesis scores."""
+    columns = [item["column"] for item in meta if item.get("column") in correlations]
+    if len(columns) < 2:
+        return _empty_plot("Not enough aligned synthesis scores for correlation")
+
+    label_by_column = _synthesis_meta_label(meta)
+    labels = [label_by_column.get(column, column) for column in columns]
+    z = [
+        [correlations.get(row, {}).get(column) for column in columns] for row in columns
+    ]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=labels,
+            y=labels,
+            zmin=-1,
+            zmax=1,
+            colorscale="RdBu",
+            text=z,
+            texttemplate="%{text:.2f}",
+            hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>",
+            colorbar={"title": "Pearson r"},
+        )
+    )
+    fig.update_layout(
+        title="Aligned Score Correlations",
+        height=max(430, 42 * len(columns)),
+        margin={"l": 95, "r": 35, "t": 55, "b": 80},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_synthesis_aligned_route_comparison(
+    by_route: dict[str, dict[str, float | int | None]],
+    meta: list[dict[str, Any]],
+) -> str:
+    """Compare aligned score means for solved vs unsolved molecules."""
+    if not by_route or not meta:
+        return _empty_plot("No route status comparison data available")
+
+    columns = [item["column"] for item in meta if item.get("column") in by_route]
+    if not columns:
+        return _empty_plot("No route status comparison data available")
+
+    label_by_column = _synthesis_meta_label(meta)
+    labels = [label_by_column.get(column, column) for column in columns]
+    solved = [by_route[column].get("solved_mean") for column in columns]
+    unsolved = [by_route[column].get("unsolved_mean") for column in columns]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=labels,
+            y=solved,
+            name="Route found",
+            marker_color="rgba(34, 197, 94, 0.75)",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=labels,
+            y=unsolved,
+            name="No route",
+            marker_color="rgba(239, 68, 68, 0.70)",
+        )
+    )
+    fig.update_layout(
+        title="Aligned Scores by AiZynthFinder Status",
+        yaxis={"title": "Mean aligned accessibility score", "range": [0, 1]},
+        barmode="group",
+        height=420,
+        margin={"l": 55, "r": 25, "t": 55, "b": 70},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        legend={"orientation": "h", "y": 1.12, "x": 0.5, "xanchor": "center"},
+    )
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 

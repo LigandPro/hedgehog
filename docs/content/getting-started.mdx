@@ -12,7 +12,7 @@ This guide covers installation, running your first pipeline, and understanding t
 - **uv** — used for dependency management and running the CLI. Install from [astral.sh/uv](https://astral.sh/uv).
 - **git** — to clone the repository.
 
-For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the external `aizynthfinder` tooling and its public data. Use the built-in CLI setup command to install it into `modules/retrosynthesis/`.
+For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the upstream `aizynthfinder` package and its public data. Use the built-in CLI setup command to install the optional dependency into the project environment and download the data into `modules/aizynthfinder/`.
 
 ## Installation
 
@@ -27,7 +27,7 @@ cd hedgehog
 uv sync
 ```
 
-This is the supported path for the default sample configs, the setup helpers, and the TUI. The repository checkout includes the editable config files, bundled examples, and the `modules/` workspace used by optional tool installers.
+This is the supported path for the default sample configs, the setup helpers, and the TUI. The repository checkout includes the editable config files, bundled examples, and the `modules/` workspace used by optional tool data installers.
 
 Advanced: install from PyPI only if you plan to supply your own config and input paths instead of relying on the repository layout:
 

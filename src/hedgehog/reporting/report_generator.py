@@ -20,6 +20,7 @@ from rdkit.Chem.Draw import rdMolDraw2D
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
 from hedgehog.reporting.stage_audit_notebook import write_stage_audit_notebook
+from hedgehog.reporting.weighted_score import compute_weighted_scores, first_existing
 from hedgehog.utils.parallel import resolve_n_jobs
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,247 @@ STAGE_DISPLAY_NAMES = {
     "docking_filters": "Docking Filters",
     "descriptors_final": "Final Descriptors",
 }
+
+
+SYNTHESIS_SCORE_LABELS = {
+    "sa_score": "SA Score (lower = easier)",
+    "syba_score": "SYBA Score (higher = easier)",
+    "ra_score": "RA Score (higher = easier)",
+    "sync_score": "SYNC Score (higher = easier)",
+    "sc_score": "SCScore (lower = less complex)",
+    "nonpher_complexity_score": "Nonpher Complexity Flag",
+    "fs_score": "FSScore",
+    "gasa_score": "GASA Score",
+}
+
+SYNTHESIS_ALIGNED_SCORE_META = {
+    "sa_score": {
+        "label": "SA",
+        "raw_direction": "lower is easier",
+        "aligned_label": "SA accessibility",
+        "direction": "lower",
+        "bounds": (1.0, 10.0),
+        "method": "fixed 1..10 inverted",
+    },
+    "syba_score": {
+        "label": "SYBA",
+        "raw_direction": "higher is easier",
+        "aligned_label": "SYBA accessibility",
+        "direction": "higher",
+        "bounds": None,
+        "method": "run p05..p95",
+    },
+    "ra_score": {
+        "label": "RA",
+        "raw_direction": "higher is easier",
+        "aligned_label": "RA accessibility",
+        "direction": "higher",
+        "bounds": (0.0, 1.0),
+        "method": "fixed 0..1",
+    },
+    "sync_score": {
+        "label": "SYNC",
+        "raw_direction": "higher is easier",
+        "aligned_label": "SYNC accessibility",
+        "direction": "higher",
+        "bounds": (0.0, 1.0),
+        "method": "fixed 0..1",
+    },
+    "sc_score": {
+        "label": "SCScore",
+        "raw_direction": "lower is less complex",
+        "aligned_label": "SCScore accessibility",
+        "direction": "lower",
+        "bounds": (1.0, 5.0),
+        "method": "fixed 1..5 inverted",
+    },
+    "nonpher_complexity_score": {
+        "label": "Nonpher",
+        "raw_direction": "0 is acceptable, 1 is too complex",
+        "aligned_label": "Nonpher accessibility",
+        "direction": "lower",
+        "bounds": (0.0, 1.0),
+        "method": "binary inverted",
+    },
+    "fs_score": {
+        "label": "FSScore",
+        "raw_direction": "higher is easier",
+        "aligned_label": "FSScore accessibility",
+        "direction": "higher",
+        "bounds": None,
+        "method": "run p05..p95",
+    },
+    "gasa_score": {
+        "label": "GASA",
+        "raw_direction": "lower hard-synthesis probability is easier",
+        "aligned_label": "GASA accessibility",
+        "direction": "lower",
+        "bounds": (0.0, 1.0),
+        "method": "fixed 0..1 inverted",
+    },
+}
+
+
+def _score_column_to_series_key(column: str) -> str:
+    """Return report data key for a synthesis score column."""
+    return f"{column.removesuffix('_score')}_scores"
+
+
+def _score_column_to_aligned_key(column: str) -> str:
+    """Return report data key for a higher-is-better synthesis score column."""
+    return f"{column.removesuffix('_score')}_aligned_scores"
+
+
+def _json_float(value: Any) -> float | None:
+    """Convert finite numeric values to plain JSON-safe floats."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(numeric):
+        return None
+    return numeric
+
+
+def _normalize_synthesis_score_series(
+    series: pd.Series,
+    *,
+    direction: str,
+    bounds: tuple[float, float] | None,
+) -> pd.Series:
+    """Normalize a synthesis score to 0..1 with higher values always better."""
+    numeric = pd.to_numeric(series, errors="coerce")
+    valid = numeric.dropna()
+    if valid.empty:
+        return pd.Series(pd.NA, index=series.index, dtype="Float64")
+
+    if bounds is None:
+        low = float(valid.quantile(0.05))
+        high = float(valid.quantile(0.95))
+        if low == high:
+            low = float(valid.min())
+            high = float(valid.max())
+    else:
+        low, high = bounds
+
+    if low == high:
+        normalized = pd.Series(0.5, index=series.index, dtype="float64")
+        normalized[numeric.isna()] = pd.NA
+        return normalized.astype("Float64")
+
+    normalized = (numeric - low) / (high - low)
+    normalized = normalized.clip(lower=0.0, upper=1.0)
+    if direction == "lower":
+        normalized = 1.0 - normalized
+    return normalized.astype("Float64")
+
+
+def _bool_series(series: pd.Series) -> pd.Series:
+    """Normalize common solved-status encodings to booleans."""
+    if series.dtype == bool:
+        return series
+    normalized = series.astype(str).str.strip().str.lower()
+    return normalized.isin({"1", "true", "yes", "y"})
+
+
+def _build_aligned_synthesis_scores(
+    df: pd.DataFrame,
+    score_columns: list[str],
+    solved_col: str | None,
+) -> dict[str, Any]:
+    """Build higher-is-better synthesis score comparison data for reports."""
+    aligned_frame = pd.DataFrame(index=df.index)
+    aligned_scores: dict[str, list[float]] = {}
+    meta_rows: list[dict[str, Any]] = []
+
+    for column in score_columns:
+        meta = SYNTHESIS_ALIGNED_SCORE_META.get(column)
+        if meta is None:
+            continue
+
+        aligned = _normalize_synthesis_score_series(
+            df[column],
+            direction=meta["direction"],
+            bounds=meta["bounds"],
+        )
+        aligned_frame[column] = aligned
+        values = [
+            float(value)
+            for value in aligned.dropna().tolist()
+            if _json_float(value) is not None
+        ]
+        if not values:
+            continue
+
+        aligned_key = _score_column_to_aligned_key(column)
+        aligned_scores[aligned_key] = values
+        meta_rows.append(
+            {
+                "column": column,
+                "key": aligned_key,
+                "label": meta["label"],
+                "aligned_label": meta["aligned_label"],
+                "raw_label": SYNTHESIS_SCORE_LABELS.get(column, column),
+                "raw_direction": meta["raw_direction"],
+                "normalization": meta["method"],
+                "count": len(values),
+                "mean": float(pd.Series(values).mean()),
+                "median": float(pd.Series(values).median()),
+            }
+        )
+
+    columns = [row["column"] for row in meta_rows]
+    correlation: dict[str, dict[str, float | None]] = {}
+    if len(columns) >= 2:
+        corr = aligned_frame[columns].corr(method="pearson")
+        for row_col in columns:
+            correlation[row_col] = {
+                col: _json_float(corr.loc[row_col, col]) for col in columns
+            }
+
+    by_route: dict[str, dict[str, float | int | None]] = {}
+    if solved_col and solved_col in df.columns and columns:
+        solved = _bool_series(df[solved_col])
+        for column in columns:
+            solved_values = aligned_frame.loc[solved, column].dropna()
+            unsolved_values = aligned_frame.loc[~solved, column].dropna()
+            by_route[column] = {
+                "solved_mean": _json_float(solved_values.mean()),
+                "unsolved_mean": _json_float(unsolved_values.mean()),
+                "solved_count": int(solved_values.count()),
+                "unsolved_count": int(unsolved_values.count()),
+            }
+
+    by_model: dict[str, dict[str, Any]] = {}
+    if "model_name" in df.columns:
+        for model in df["model_name"].dropna().unique():
+            model_mask = df["model_name"] == model
+            model_payload = {
+                "scores": {},
+                "summary": {},
+            }
+            for column in columns:
+                values = [
+                    float(value)
+                    for value in aligned_frame.loc[model_mask, column].dropna().tolist()
+                    if _json_float(value) is not None
+                ]
+                if not values:
+                    continue
+                key = _score_column_to_aligned_key(column)
+                model_payload["scores"][key] = values
+                model_payload["summary"][f"avg_{key}"] = float(pd.Series(values).mean())
+            if model_payload["scores"]:
+                by_model[str(model)] = model_payload
+
+    return {
+        "scores": aligned_scores,
+        "meta": meta_rows,
+        "correlations": correlation,
+        "by_route": by_route,
+        "by_model": by_model,
+    }
+
 
 # Key descriptors to show in report
 KEY_DESCRIPTORS = [
@@ -231,6 +473,11 @@ class ReportGenerator:
             Dictionary with all collected data
         """
         funnel_data = self._get_all_funnel_data()
+        moleval = self._get_moleval_metrics()
+        weighted_scores = self._get_weighted_scores(
+            available_models=funnel_data["models"],
+            moleval=moleval,
+        )
         return {
             "metadata": self._get_metadata(),
             "summary": self._get_summary(),
@@ -255,7 +502,8 @@ class ReportGenerator:
                 "descriptors_final"
             ),
             "existing_plots": self._get_existing_plots(),
-            "moleval": self._get_moleval_metrics(),
+            "moleval": moleval,
+            "weighted_scores": weighted_scores,
             "config": self._get_config_summary(),
         }
 
@@ -271,46 +519,41 @@ class ReportGenerator:
         """
         try:
             run_info_path = self.base_path / "RUN_INFO.md"
+            sections = []
+
             moleval = data.get("moleval", {})
             by_stage = moleval.get("by_stage", {})
             stages = moleval.get("stages", [])
             metrics = moleval.get("metrics", [])
 
-            if not by_stage or not stages or not metrics:
+            if by_stage and stages and metrics:
+                # Build markdown table
+                header = "| Metric | " + " | ".join(stages) + " |"
+                separator = "|--------|" + "|".join("--------" for _ in stages) + "|"
+                rows = []
+                for metric in metrics:
+                    cells = []
+                    for stage in stages:
+                        val = by_stage.get(stage, {}).get(metric)
+                        cells.append(f"{val:.4f}" if val is not None else "—")
+                    rows.append(f"| {metric} | " + " | ".join(cells) + " |")
+
+                table_md = "\n".join([header, separator, *rows])
+                sections.append(
+                    ("## MolEval Metrics", f"## MolEval Metrics\n\n{table_md}\n")
+                )
+
+            weighted_section = self._format_weighted_score_run_info(
+                data.get("weighted_scores", {})
+            )
+            if weighted_section:
+                sections.append(("## Generator Reality Assessment", weighted_section))
+
+            if not sections:
                 return
 
-            # Build markdown table
-            header = "| Metric | " + " | ".join(stages) + " |"
-            separator = "|--------|" + "|".join("--------" for _ in stages) + "|"
-            rows = []
-            for metric in metrics:
-                cells = []
-                for stage in stages:
-                    val = by_stage.get(stage, {}).get(metric)
-                    cells.append(f"{val:.4f}" if val is not None else "—")
-                rows.append(f"| {metric} | " + " | ".join(cells) + " |")
-
-            table_md = "\n".join([header, separator, *rows])
-
-            section = f"\n\n## MolEval Metrics\n\n{table_md}\n"
-
             if run_info_path.exists():
-                existing = run_info_path.read_text()
-                # Replace existing section if present, otherwise append
-                marker = "## MolEval Metrics"
-                if marker in existing:
-                    # Remove old section (everything from marker to next ## or EOF)
-                    before = existing[: existing.index(marker)]
-                    rest = existing[existing.index(marker) + len(marker) :]
-                    # Find next section header
-                    next_section = rest.find("\n## ")
-                    if next_section != -1:
-                        after = rest[next_section:]
-                    else:
-                        after = ""
-                    content = before.rstrip() + section + after
-                else:
-                    content = existing.rstrip() + section
+                content = run_info_path.read_text()
             else:
                 # Create minimal RUN_INFO.md
                 retention = (
@@ -325,14 +568,88 @@ class ReportGenerator:
                     f"- Initial molecules: {self.initial_count}\n"
                     f"- Final molecules: {self.final_count}\n"
                     f"- Retention rate: {retention}\n"
-                    f"{section}"
+                )
+
+            if weighted_section and "## Weighted Model Assessment" in content:
+                if "## Generator Reality Assessment" in content:
+                    content = self._remove_run_info_section(
+                        content, "## Weighted Model Assessment"
+                    )
+                else:
+                    content = self._replace_or_append_run_info_section(
+                        content,
+                        "## Weighted Model Assessment",
+                        weighted_section,
+                    )
+
+            for marker, section in sections:
+                content = self._replace_or_append_run_info_section(
+                    content, marker, section
                 )
 
             with open(run_info_path, "w") as f:
                 f.write(content)
-            logger.info("Updated run info with MolEval metrics: %s", run_info_path)
+            logger.info("Updated run info with report metrics: %s", run_info_path)
         except Exception as e:
-            logger.debug("Failed to update RUN_INFO.md with MolEval metrics: %s", e)
+            logger.debug("Failed to update RUN_INFO.md with report metrics: %s", e)
+
+    def _format_weighted_score_run_info(self, weighted_scores: dict[str, Any]) -> str:
+        """Format the Generator Reality Assessment RUN_INFO section."""
+        models = weighted_scores.get("models", {})
+        if not models:
+            return ""
+
+        rows = [
+            (
+                "| Model | Generator Reality Score | Final Candidate Pool Quality | "
+                "Grade | Confidence | Main Bottleneck |"
+            ),
+            "|---|---:|---:|---|---|---|",
+        ]
+        for model_name, score in models.items():
+            overall = score.get("overall")
+            overall_text = f"{overall:.1f}" if overall is not None else "—"
+            pool_quality = score.get("candidate_pool_quality", {}).get("overall")
+            pool_quality_text = (
+                f"{pool_quality:.1f}" if pool_quality is not None else "—"
+            )
+            bottlenecks = score.get("bottlenecks") or []
+            main_bottleneck = bottlenecks[0] if bottlenecks else "None"
+            rows.append(
+                "| "
+                f"{model_name} | {overall_text} | {pool_quality_text} | "
+                f"{score.get('grade', '—')} | "
+                f"{score.get('confidence', '—')} | {main_bottleneck} |"
+            )
+        return "## Generator Reality Assessment\n\n" + "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _replace_or_append_run_info_section(
+        content: str,
+        marker: str,
+        section: str,
+    ) -> str:
+        """Replace a RUN_INFO section if present, otherwise append it."""
+        normalized_section = "\n\n" + section.strip() + "\n"
+        if marker not in content:
+            return content.rstrip() + normalized_section
+
+        before = content[: content.index(marker)]
+        rest = content[content.index(marker) + len(marker) :]
+        next_section = rest.find("\n## ")
+        after = rest[next_section:] if next_section != -1 else ""
+        return before.rstrip() + normalized_section + after
+
+    @staticmethod
+    def _remove_run_info_section(content: str, marker: str) -> str:
+        """Remove a RUN_INFO section when migrating section headings."""
+        if marker not in content:
+            return content
+        before = content[: content.index(marker)]
+        rest = content[content.index(marker) + len(marker) :]
+        next_section = rest.find("\n## ")
+        after = rest[next_section:] if next_section != -1 else ""
+        return before.rstrip() + "\n\n" + after.lstrip()
 
     def _get_metadata(self) -> dict[str, Any]:
         """Get report metadata."""
@@ -479,9 +796,18 @@ class ReportGenerator:
             except Exception as e:
                 logger.debug("Could not read %s: %s", input_path, e)
 
-        # Try output file
-        output_path = self.output_dir / "final_molecules.csv"
-        if output_path.exists():
+        # Try final output files. Pipeline runs store final output under output/,
+        # while some older report paths used the run root.
+        output_path = first_existing(
+            self.base_path,
+            [
+                "output/final_molecules.csv",
+                "final_molecules.csv",
+                "stages/07_descriptors_final/filtered/filtered_molecules.csv",
+                "stages/06_docking_filters/filtered_molecules.csv",
+            ],
+        )
+        if output_path is not None:
             try:
                 df = pd.read_csv(output_path)
                 if "model_name" in df.columns:
@@ -607,8 +933,16 @@ class ReportGenerator:
     def _get_model_stats(self) -> list[dict[str, Any]]:
         """Get per-model statistics."""
         # Try to load final molecules to get model breakdown
-        final_path = self.output_dir / "final_molecules.csv"
-        if not final_path.exists():
+        final_path = first_existing(
+            self.base_path,
+            [
+                "final_molecules.csv",
+                "output/final_molecules.csv",
+                "stages/07_descriptors_final/filtered/filtered_molecules.csv",
+                "stages/06_docking_filters/filtered_molecules.csv",
+            ],
+        )
+        if final_path is None:
             return []
 
         try:
@@ -821,7 +1155,7 @@ class ReportGenerator:
         stats = {"distributions": {}, "scatter_data": {}}
 
         # Get score distributions
-        score_columns = ["sa_score", "syba_score", "ra_score", "sc_score"]
+        score_columns = [col for col in df.columns if col.endswith("_score")]
         for col in score_columns:
             if col in df.columns:
                 values = df[col].dropna().tolist()
@@ -1990,29 +2324,23 @@ class ReportGenerator:
             "sa_scores": [],
             "syba_scores": [],
             "ra_scores": [],
+            "score_distributions": {},
             "solved_count": 0,
             "unsolved_count": 0,
             "summary": {},
             "by_model": {},
+            "aligned_scores": {},
         }
 
-        # Extract SA, SYBA, and RA scores
-        if "sa_score" in df.columns:
-            result["sa_scores"] = df["sa_score"].dropna().tolist()
-            if result["sa_scores"]:
-                result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
-
-        if "syba_score" in df.columns:
-            result["syba_scores"] = df["syba_score"].dropna().tolist()
-            if result["syba_scores"]:
-                result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
-
-        if "ra_score" in df.columns:
-            result["ra_scores"] = df["ra_score"].dropna().tolist()
-            if result["ra_scores"]:
-                result["summary"]["avg_ra_score"] = float(
-                    df["ra_score"].dropna().mean()
-                )
+        score_columns = [col for col in df.columns if col.endswith("_score")]
+        for col in score_columns:
+            values = df[col].dropna().tolist()
+            if not values:
+                continue
+            key = _score_column_to_series_key(col)
+            result[key] = values
+            result["score_distributions"][col] = values
+            result["summary"][f"avg_{col}"] = float(df[col].dropna().mean())
 
         # Count solved/unsolved (look for solved, route_found, etc.)
         solved_col = None
@@ -2031,6 +2359,13 @@ class ReportGenerator:
                     100 * solved / len(df) if len(df) > 0 else 0
                 )
                 break
+
+        if score_columns:
+            result["aligned_scores"] = _build_aligned_synthesis_scores(
+                df,
+                score_columns,
+                solved_col,
+            )
 
         # Collect time data if available
         time_col = None
@@ -2059,38 +2394,21 @@ class ReportGenerator:
             for model in df["model_name"].dropna().unique():
                 model_df = df[df["model_name"] == model]
                 model_data = {
-                    "sa_scores": model_df["sa_score"].dropna().tolist()
-                    if "sa_score" in df.columns
-                    else [],
-                    "syba_scores": model_df["syba_score"].dropna().tolist()
-                    if "syba_score" in df.columns
-                    else [],
-                    "ra_scores": model_df["ra_score"].dropna().tolist()
-                    if "ra_score" in df.columns
-                    else [],
+                    "score_distributions": {},
                     "solved_count": 0,
                     "unsolved_count": 0,
                     "summary": {},
                 }
 
-                # Calculate per-model summary
-                if "sa_score" in model_df.columns and len(model_data["sa_scores"]) > 0:
-                    model_data["summary"]["avg_sa_score"] = float(
-                        model_df["sa_score"].mean()
-                    )
-
-                if (
-                    "syba_score" in model_df.columns
-                    and len(model_data["syba_scores"]) > 0
-                ):
-                    model_data["summary"]["avg_syba_score"] = float(
-                        model_df["syba_score"].mean()
-                    )
-
-                if "ra_score" in model_df.columns and len(model_data["ra_scores"]) > 0:
-                    model_data["summary"]["avg_ra_score"] = float(
-                        model_df["ra_score"].dropna().mean()
-                    )
+                for col in score_columns:
+                    values = model_df[col].dropna().tolist()
+                    key = _score_column_to_series_key(col)
+                    model_data[key] = values
+                    if values:
+                        model_data["score_distributions"][col] = values
+                        model_data["summary"][f"avg_{col}"] = float(
+                            model_df[col].dropna().mean()
+                        )
 
                 # Count solved/unsolved per model
                 if solved_col and solved_col in model_df.columns:
@@ -2942,6 +3260,32 @@ class ReportGenerator:
         """
         return self._load_stage_config("config_moleval")
 
+    def _load_weighted_score_config(self) -> dict[str, Any]:
+        """Load Generator Reality Assessment configuration."""
+        return self._load_stage_config("config_weighted_score")
+
+    def _get_weighted_scores(
+        self,
+        available_models: list[str],
+        moleval: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compute generator reality scores without failing report generation."""
+        config = self._load_weighted_score_config()
+        if not config:
+            return {}
+        try:
+            return compute_weighted_scores(
+                base_path=self.base_path,
+                available_models=available_models,
+                config=config,
+                moleval=moleval,
+                initial_count=self.initial_count,
+                final_count=self.final_count,
+            )
+        except Exception as e:
+            logger.debug("Weighted model score computation failed: %s", e)
+            return {}
+
     def _collect_stage_smiles(self) -> dict[str, list[str]]:
         """Collect SMILES from key pipeline stages for MolEval analysis.
 
@@ -3075,6 +3419,12 @@ class ReportGenerator:
             plot_htmls["model_comparison"] = plots.plot_model_comparison(model_stats)
             plot_htmls["model_losses"] = plots.plot_model_stacked_losses(model_stats)
 
+        weighted_scores = data.get("weighted_scores", {})
+        if weighted_scores.get("models"):
+            plot_htmls["weighted_score_components"] = (
+                plots.plot_weighted_score_components(weighted_scores)
+            )
+
         # Descriptor distributions (original)
         desc_data = data.get("descriptors", {})
         if desc_data.get("distributions"):
@@ -3141,6 +3491,7 @@ class ReportGenerator:
 
         # Synthesis detailed (enhanced)
         synth_detailed = data.get("synthesis_detailed", {})
+        score_distributions = synth_detailed.get("score_distributions", {})
         if synth_detailed.get("sa_scores"):
             plot_htmls["synthesis_sa_hist"] = plots.plot_synthesis_sa_histogram(
                 synth_detailed["sa_scores"]
@@ -3164,6 +3515,27 @@ class ReportGenerator:
         if synth_detailed.get("raw_data"):
             plot_htmls["synthesis_time_box"] = plots.plot_synthesis_time_box(
                 synth_detailed["raw_data"]
+            )
+        aligned_scores = synth_detailed.get("aligned_scores", {})
+        aligned_meta = aligned_scores.get("meta", [])
+        if aligned_meta:
+            plot_htmls["synthesis_aligned_dist"] = (
+                plots.plot_synthesis_aligned_distributions(
+                    aligned_scores.get("scores", {}),
+                    aligned_meta,
+                )
+            )
+            plot_htmls["synthesis_aligned_corr"] = (
+                plots.plot_synthesis_aligned_correlation(
+                    aligned_scores.get("correlations", {}),
+                    aligned_meta,
+                )
+            )
+            plot_htmls["synthesis_aligned_route"] = (
+                plots.plot_synthesis_aligned_route_comparison(
+                    aligned_scores.get("by_route", {}),
+                    aligned_meta,
+                )
             )
 
         # Retrosynthesis (AiZynthFinder) plots
@@ -3215,11 +3587,23 @@ class ReportGenerator:
         # Generate JSON data for JavaScript model filtering (Synthesis)
         synth_detailed = data.get("synthesis_detailed", {})
         if synth_detailed:
+            score_meta = [
+                {
+                    "column": column,
+                    "key": _score_column_to_series_key(column),
+                    "label": SYNTHESIS_SCORE_LABELS.get(column, column),
+                }
+                for column in synth_detailed.get("score_distributions", {})
+            ]
             synthesis_data = {
                 "all": {
-                    "sa_scores": synth_detailed.get("sa_scores", []),
-                    "syba_scores": synth_detailed.get("syba_scores", []),
-                    "ra_scores": synth_detailed.get("ra_scores", []),
+                    **{
+                        item["key"]: synth_detailed.get(item["key"], [])
+                        for item in score_meta
+                    },
+                    "score_distributions": synth_detailed.get(
+                        "score_distributions", {}
+                    ),
                     "solved_count": synth_detailed.get("solved_count", 0),
                     "unsolved_count": synth_detailed.get("unsolved_count", 0),
                     "summary": synth_detailed.get("summary", {}),
@@ -3239,6 +3623,31 @@ class ReportGenerator:
                     "data": by_model,
                 }
             plot_htmls["synthesis_data"] = synthesis_data
+            plot_htmls["synthesis_score_meta"] = score_meta
+
+            aligned_scores = synth_detailed.get("aligned_scores", {})
+            aligned_meta = aligned_scores.get("meta", [])
+            if aligned_meta:
+                aligned_data = {
+                    "all": {
+                        "scores": aligned_scores.get("scores", {}),
+                        "summary": {
+                            f"avg_{item['key']}": item["mean"] for item in aligned_meta
+                        },
+                    }
+                }
+                by_model = aligned_scores.get("by_model", {})
+                for model, model_data in by_model.items():
+                    aligned_data[model] = model_data
+                if by_model:
+                    aligned_data["__compare__"] = {
+                        "is_comparison": True,
+                        "models": list(by_model.keys()),
+                        "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
+                        "data": by_model,
+                    }
+                plot_htmls["synthesis_aligned_data"] = aligned_data
+                plot_htmls["synthesis_aligned_score_meta"] = aligned_meta
 
         # Generate JSON data for JavaScript descriptors visualization
         desc_detailed = data.get("descriptors_detailed", {})
@@ -3348,20 +3757,30 @@ class ReportGenerator:
         # Synthesis thresholds from config
         synth_config = self._load_stage_config("config_synthesis")
         if synth_config:
-            score_keys = [
-                ("sa_scores", "sa_score"),
-                ("syba_scores", "syba_score"),
-                ("ra_scores", "ra_score"),
-            ]
             thresholds = {}
-            for score_key, prefix in score_keys:
+            score_columns = set(score_distributions)
+            score_columns.update(["sa_score", "syba_score", "ra_score"])
+            for column in score_columns:
+                score_key = _score_column_to_series_key(column)
                 entry = {}
                 for bound in ["min", "max"]:
-                    val = synth_config.get(f"{prefix}_{bound}")
+                    val = synth_config.get(f"{column}_{bound}")
                     if val is not None:
                         entry[bound] = val
                 if entry:
                     thresholds[score_key] = entry
+            nested_filters = synth_config.get("score_filters")
+            if isinstance(nested_filters, dict):
+                for column, bounds in nested_filters.items():
+                    if not isinstance(bounds, dict):
+                        continue
+                    entry = {
+                        bound: value
+                        for bound, value in bounds.items()
+                        if bound in {"min", "max"} and value is not None
+                    }
+                    if entry:
+                        thresholds[_score_column_to_series_key(column)] = entry
             if thresholds:
                 plot_htmls["synthesis_thresholds"] = thresholds
 
