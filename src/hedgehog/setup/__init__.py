@@ -39,6 +39,13 @@ def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
 
 
+def ensure_sync_model(*args, **kwargs):
+    """Expose SYNC model setup as a real module attribute."""
+    from hedgehog.setup._sync import ensure_sync_model as _impl
+
+    return _impl(*args, **kwargs)
+
+
 def ensure_matcha_checkout(*args, **kwargs):
     """Expose Matcha checkout setup as a real module attribute."""
     from hedgehog.setup._matcha import ensure_matcha_checkout as _impl
@@ -50,6 +57,7 @@ __all__ = [
     "ensure_gnina",
     "ensure_aizynthfinder",
     "ensure_rascore_model",
+    "ensure_sync_model",
     "ensure_shepherd_worker",
     "ensure_nvmolkit_worker",
     "ensure_matcha_checkout",

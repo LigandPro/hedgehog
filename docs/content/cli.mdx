@@ -227,6 +227,20 @@ If you explicitly want interactive confirmation:
 uv run hedgehog setup aizynthfinder --no-yes
 ```
 
+## `hedgehog setup sync`
+
+Downloads the SYNC 3D synthesizability classifier checkpoint to `modules/sync/classifier_emb.ckpt`.
+
+```bash
+uv run hedgehog setup sync
+```
+
+Use `--no-yes` to prompt before download:
+
+```bash
+uv run hedgehog setup sync --no-yes
+```
+
 ## `hedgehog setup nvmolkit-worker`
 
 Creates an isolated virtual environment at `.venv-nvmolkit-worker` and installs the optional nvMolKit worker there.
