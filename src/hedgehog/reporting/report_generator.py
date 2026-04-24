@@ -58,16 +58,240 @@ SYNTHESIS_SCORE_LABELS = {
     "sa_score": "SA Score (lower = easier)",
     "syba_score": "SYBA Score (higher = easier)",
     "ra_score": "RA Score (higher = easier)",
+    "sync_score": "SYNC Score (higher = easier)",
     "sc_score": "SCScore (lower = less complex)",
     "nonpher_complexity_score": "Nonpher Complexity Flag",
     "fs_score": "FSScore",
     "gasa_score": "GASA Score",
 }
 
+SYNTHESIS_ALIGNED_SCORE_META = {
+    "sa_score": {
+        "label": "SA",
+        "raw_direction": "lower is easier",
+        "aligned_label": "SA accessibility",
+        "direction": "lower",
+        "bounds": (1.0, 10.0),
+        "method": "fixed 1..10 inverted",
+    },
+    "syba_score": {
+        "label": "SYBA",
+        "raw_direction": "higher is easier",
+        "aligned_label": "SYBA accessibility",
+        "direction": "higher",
+        "bounds": None,
+        "method": "run p05..p95",
+    },
+    "ra_score": {
+        "label": "RA",
+        "raw_direction": "higher is easier",
+        "aligned_label": "RA accessibility",
+        "direction": "higher",
+        "bounds": (0.0, 1.0),
+        "method": "fixed 0..1",
+    },
+    "sync_score": {
+        "label": "SYNC",
+        "raw_direction": "higher is easier",
+        "aligned_label": "SYNC accessibility",
+        "direction": "higher",
+        "bounds": (0.0, 1.0),
+        "method": "fixed 0..1",
+    },
+    "sc_score": {
+        "label": "SCScore",
+        "raw_direction": "lower is less complex",
+        "aligned_label": "SCScore accessibility",
+        "direction": "lower",
+        "bounds": (1.0, 5.0),
+        "method": "fixed 1..5 inverted",
+    },
+    "nonpher_complexity_score": {
+        "label": "Nonpher",
+        "raw_direction": "0 is acceptable, 1 is too complex",
+        "aligned_label": "Nonpher accessibility",
+        "direction": "lower",
+        "bounds": (0.0, 1.0),
+        "method": "binary inverted",
+    },
+    "fs_score": {
+        "label": "FSScore",
+        "raw_direction": "higher is easier",
+        "aligned_label": "FSScore accessibility",
+        "direction": "higher",
+        "bounds": None,
+        "method": "run p05..p95",
+    },
+    "gasa_score": {
+        "label": "GASA",
+        "raw_direction": "lower hard-synthesis probability is easier",
+        "aligned_label": "GASA accessibility",
+        "direction": "lower",
+        "bounds": (0.0, 1.0),
+        "method": "fixed 0..1 inverted",
+    },
+}
+
 
 def _score_column_to_series_key(column: str) -> str:
     """Return report data key for a synthesis score column."""
     return f"{column.removesuffix('_score')}_scores"
+
+
+def _score_column_to_aligned_key(column: str) -> str:
+    """Return report data key for a higher-is-better synthesis score column."""
+    return f"{column.removesuffix('_score')}_aligned_scores"
+
+
+def _json_float(value: Any) -> float | None:
+    """Convert finite numeric values to plain JSON-safe floats."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(numeric):
+        return None
+    return numeric
+
+
+def _normalize_synthesis_score_series(
+    series: pd.Series,
+    *,
+    direction: str,
+    bounds: tuple[float, float] | None,
+) -> pd.Series:
+    """Normalize a synthesis score to 0..1 with higher values always better."""
+    numeric = pd.to_numeric(series, errors="coerce")
+    valid = numeric.dropna()
+    if valid.empty:
+        return pd.Series(pd.NA, index=series.index, dtype="Float64")
+
+    if bounds is None:
+        low = float(valid.quantile(0.05))
+        high = float(valid.quantile(0.95))
+        if low == high:
+            low = float(valid.min())
+            high = float(valid.max())
+    else:
+        low, high = bounds
+
+    if low == high:
+        normalized = pd.Series(0.5, index=series.index, dtype="float64")
+        normalized[numeric.isna()] = pd.NA
+        return normalized.astype("Float64")
+
+    normalized = (numeric - low) / (high - low)
+    normalized = normalized.clip(lower=0.0, upper=1.0)
+    if direction == "lower":
+        normalized = 1.0 - normalized
+    return normalized.astype("Float64")
+
+
+def _bool_series(series: pd.Series) -> pd.Series:
+    """Normalize common solved-status encodings to booleans."""
+    if series.dtype == bool:
+        return series
+    normalized = series.astype(str).str.strip().str.lower()
+    return normalized.isin({"1", "true", "yes", "y"})
+
+
+def _build_aligned_synthesis_scores(
+    df: pd.DataFrame,
+    score_columns: list[str],
+    solved_col: str | None,
+) -> dict[str, Any]:
+    """Build higher-is-better synthesis score comparison data for reports."""
+    aligned_frame = pd.DataFrame(index=df.index)
+    aligned_scores: dict[str, list[float]] = {}
+    meta_rows: list[dict[str, Any]] = []
+
+    for column in score_columns:
+        meta = SYNTHESIS_ALIGNED_SCORE_META.get(column)
+        if meta is None:
+            continue
+
+        aligned = _normalize_synthesis_score_series(
+            df[column],
+            direction=meta["direction"],
+            bounds=meta["bounds"],
+        )
+        aligned_frame[column] = aligned
+        values = [
+            float(value)
+            for value in aligned.dropna().tolist()
+            if _json_float(value) is not None
+        ]
+        if not values:
+            continue
+
+        aligned_key = _score_column_to_aligned_key(column)
+        aligned_scores[aligned_key] = values
+        meta_rows.append(
+            {
+                "column": column,
+                "key": aligned_key,
+                "label": meta["label"],
+                "aligned_label": meta["aligned_label"],
+                "raw_label": SYNTHESIS_SCORE_LABELS.get(column, column),
+                "raw_direction": meta["raw_direction"],
+                "normalization": meta["method"],
+                "count": len(values),
+                "mean": float(pd.Series(values).mean()),
+                "median": float(pd.Series(values).median()),
+            }
+        )
+
+    columns = [row["column"] for row in meta_rows]
+    correlation: dict[str, dict[str, float | None]] = {}
+    if len(columns) >= 2:
+        corr = aligned_frame[columns].corr(method="pearson")
+        for row_col in columns:
+            correlation[row_col] = {
+                col: _json_float(corr.loc[row_col, col]) for col in columns
+            }
+
+    by_route: dict[str, dict[str, float | int | None]] = {}
+    if solved_col and solved_col in df.columns and columns:
+        solved = _bool_series(df[solved_col])
+        for column in columns:
+            solved_values = aligned_frame.loc[solved, column].dropna()
+            unsolved_values = aligned_frame.loc[~solved, column].dropna()
+            by_route[column] = {
+                "solved_mean": _json_float(solved_values.mean()),
+                "unsolved_mean": _json_float(unsolved_values.mean()),
+                "solved_count": int(solved_values.count()),
+                "unsolved_count": int(unsolved_values.count()),
+            }
+
+    by_model: dict[str, dict[str, Any]] = {}
+    if "model_name" in df.columns:
+        for model in df["model_name"].dropna().unique():
+            model_mask = df["model_name"] == model
+            model_payload = {
+                "scores": {},
+                "summary": {},
+            }
+            for column in columns:
+                values = [
+                    float(value)
+                    for value in aligned_frame.loc[model_mask, column].dropna().tolist()
+                    if _json_float(value) is not None
+                ]
+                if not values:
+                    continue
+                key = _score_column_to_aligned_key(column)
+                model_payload["scores"][key] = values
+                model_payload["summary"][f"avg_{key}"] = float(pd.Series(values).mean())
+            if model_payload["scores"]:
+                by_model[str(model)] = model_payload
+
+    return {
+        "scores": aligned_scores,
+        "meta": meta_rows,
+        "correlations": correlation,
+        "by_route": by_route,
+        "by_model": by_model,
+    }
 
 
 # Key descriptors to show in report
@@ -1791,6 +2015,7 @@ class ReportGenerator:
             "unsolved_count": 0,
             "summary": {},
             "by_model": {},
+            "aligned_scores": {},
         }
 
         score_columns = [col for col in df.columns if col.endswith("_score")]
@@ -1820,6 +2045,13 @@ class ReportGenerator:
                     100 * solved / len(df) if len(df) > 0 else 0
                 )
                 break
+
+        if score_columns:
+            result["aligned_scores"] = _build_aligned_synthesis_scores(
+                df,
+                score_columns,
+                solved_col,
+            )
 
         # Collect time data if available
         time_col = None
@@ -2970,6 +3202,27 @@ class ReportGenerator:
             plot_htmls["synthesis_time_box"] = plots.plot_synthesis_time_box(
                 synth_detailed["raw_data"]
             )
+        aligned_scores = synth_detailed.get("aligned_scores", {})
+        aligned_meta = aligned_scores.get("meta", [])
+        if aligned_meta:
+            plot_htmls["synthesis_aligned_dist"] = (
+                plots.plot_synthesis_aligned_distributions(
+                    aligned_scores.get("scores", {}),
+                    aligned_meta,
+                )
+            )
+            plot_htmls["synthesis_aligned_corr"] = (
+                plots.plot_synthesis_aligned_correlation(
+                    aligned_scores.get("correlations", {}),
+                    aligned_meta,
+                )
+            )
+            plot_htmls["synthesis_aligned_route"] = (
+                plots.plot_synthesis_aligned_route_comparison(
+                    aligned_scores.get("by_route", {}),
+                    aligned_meta,
+                )
+            )
 
         # Retrosynthesis (AiZynthFinder) plots
         retrosynth = data.get("retrosynthesis", {})
@@ -3057,6 +3310,30 @@ class ReportGenerator:
                 }
             plot_htmls["synthesis_data"] = synthesis_data
             plot_htmls["synthesis_score_meta"] = score_meta
+
+            aligned_scores = synth_detailed.get("aligned_scores", {})
+            aligned_meta = aligned_scores.get("meta", [])
+            if aligned_meta:
+                aligned_data = {
+                    "all": {
+                        "scores": aligned_scores.get("scores", {}),
+                        "summary": {
+                            f"avg_{item['key']}": item["mean"] for item in aligned_meta
+                        },
+                    }
+                }
+                by_model = aligned_scores.get("by_model", {})
+                for model, model_data in by_model.items():
+                    aligned_data[model] = model_data
+                if by_model:
+                    aligned_data["__compare__"] = {
+                        "is_comparison": True,
+                        "models": list(by_model.keys()),
+                        "model_colors": plots.COMPARE_PALETTE[: len(by_model)],
+                        "data": by_model,
+                    }
+                plot_htmls["synthesis_aligned_data"] = aligned_data
+                plot_htmls["synthesis_aligned_score_meta"] = aligned_meta
 
         # Generate JSON data for JavaScript descriptors visualization
         desc_detailed = data.get("descriptors_detailed", {})

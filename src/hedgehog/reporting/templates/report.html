@@ -263,6 +263,14 @@
             color: var(--primary);
         }
 
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
         .descriptor-table {
             font-size: 0.95em;
         }
@@ -672,6 +680,24 @@
                 var synthesisDataByModel = {{ (plots.synthesis_data or {}) | tojson }};
                 var synthesisScoreMeta = {{ (plots.synthesis_score_meta or []) | tojson }};
                 var currentSynthesisModel = 'all';
+
+                function selectSynthesisPanel(panel, btn) {
+                    var toggle = document.getElementById('synthesis-panel-toggle');
+                    if (toggle) {
+                        var buttons = toggle.querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                    }
+                    var panels = document.querySelectorAll('[data-synthesis-panel]');
+                    panels.forEach(function(item) {
+                        item.className = item.getAttribute('data-synthesis-panel') === panel ? 'tab-panel active' : 'tab-panel';
+                    });
+                    window.setTimeout(function() {
+                        document.querySelectorAll('[data-synthesis-panel=\"' + panel + '\"] .js-plotly-plot').forEach(function(plot) {
+                            Plotly.Plots.resize(plot);
+                        });
+                    }, 0);
+                }
 
                 function selectSynthesisModel(model, btn) {
                     currentSynthesisModel = model;
@@ -2089,6 +2115,17 @@
             </div>
             {% endif %}
 
+            <div class="view-toggle" id="synthesis-panel-toggle">
+                <button class="active" onclick="selectSynthesisPanel('raw', this)">Raw Scores</button>
+                {% if plots.synthesis_aligned_dist %}
+                <button onclick="selectSynthesisPanel('aligned', this)">Aligned Comparison</button>
+                {% endif %}
+                {% if data.retrosynthesis and data.retrosynthesis.summary %}
+                <button onclick="selectSynthesisPanel('retrosynthesis', this)">AiZynthFinder</button>
+                {% endif %}
+            </div>
+
+            <div class="tab-panel active" data-synthesis-panel="raw">
             <!-- ==================== Synthesis Scores Section ==================== -->
             <h3 style="margin-top: 20px; margin-bottom: 15px;">Synthesis Scores</h3>
 
@@ -2106,9 +2143,59 @@
                 <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">{{ item.label }}</p>
                 {% endfor %}
             </div>
+            </div>
+
+            {% if plots.synthesis_aligned_dist %}
+            <div class="tab-panel" data-synthesis-panel="aligned">
+                <h3 style="margin-top: 20px; margin-bottom: 15px;">Aligned Synthesis Scorer Comparison</h3>
+                <p style="color: #6b7280; font-size: 13px; margin-bottom: 16px;">
+                    All scores below are normalized to 0..1 with 1 meaning easier to synthesize. Raw score columns are unchanged in CSV outputs.
+                </p>
+                <div class="plot-container">{{ plots.synthesis_aligned_dist | safe }}</div>
+                <div class="two-col" style="margin-top: 20px;">
+                    <div>
+                        {% if plots.synthesis_aligned_corr %}
+                        {{ plots.synthesis_aligned_corr | safe }}
+                        {% else %}
+                        <div class="empty-state">No correlation data available</div>
+                        {% endif %}
+                    </div>
+                    <div>
+                        {% if plots.synthesis_aligned_route %}
+                        {{ plots.synthesis_aligned_route | safe }}
+                        {% else %}
+                        <div class="empty-state">No route comparison data available</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if plots.synthesis_aligned_score_meta %}
+                <table style="margin-top: 20px;">
+                    <thead>
+                        <tr>
+                            <th>Scorer</th>
+                            <th>Raw Direction</th>
+                            <th>Normalization</th>
+                            <th>Aligned Mean</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in plots.synthesis_aligned_score_meta %}
+                        <tr>
+                            <td>{{ item.label }}</td>
+                            <td>{{ item.raw_direction }}</td>
+                            <td>{{ item.normalization }}</td>
+                            <td>{{ "%.3f"|format(item.mean) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            {% endif %}
 
             <!-- ==================== AiZynthFinder Section ==================== -->
             {% if data.retrosynthesis and data.retrosynthesis.summary %}
+            <div class="tab-panel" data-synthesis-panel="retrosynthesis">
             <h3 style="margin-top: 30px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid var(--border);">AiZynthFinder Retrosynthesis</h3>
 
             <!-- AiZynthFinder metrics -->
@@ -2183,6 +2270,7 @@
                         {% endif %}
                     </div>
                 </div>
+            </div>
             </div>
             {% endif %}
         </section>

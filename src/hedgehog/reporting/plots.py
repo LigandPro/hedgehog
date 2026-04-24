@@ -1044,6 +1044,143 @@ def plot_synthesis_scatter(
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
+def _synthesis_meta_label(meta: list[dict[str, Any]]) -> dict[str, str]:
+    return {
+        item.get("column", ""): item.get("label", item.get("column", ""))
+        for item in meta
+        if item.get("column")
+    }
+
+
+def plot_synthesis_aligned_distributions(
+    aligned_scores: dict[str, list[float]],
+    meta: list[dict[str, Any]],
+) -> str:
+    """Create comparable higher-is-better synthesis score distributions."""
+    if not aligned_scores or not meta:
+        return _empty_plot("No aligned synthesis score data available")
+
+    fig = go.Figure()
+    added = 0
+    for i, item in enumerate(meta):
+        values = aligned_scores.get(item.get("key", ""))
+        if not values:
+            continue
+        fig.add_trace(
+            go.Box(
+                y=values,
+                name=item.get("label", item.get("column", f"Score {i + 1}")),
+                marker_color=COMPARE_PALETTE[i % len(COMPARE_PALETTE)],
+                boxmean=True,
+                hovertemplate="%{y:.3f}<extra>%{fullData.name}</extra>",
+            )
+        )
+        added += 1
+
+    if not added:
+        return _empty_plot("No aligned synthesis score data available")
+
+    fig.update_layout(
+        title="Aligned Synthesis Scorers (Higher = Easier)",
+        yaxis={"title": "Aligned accessibility score", "range": [0, 1]},
+        height=420,
+        margin={"l": 55, "r": 25, "t": 55, "b": 70},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        showlegend=False,
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_synthesis_aligned_correlation(
+    correlations: dict[str, dict[str, float | None]],
+    meta: list[dict[str, Any]],
+) -> str:
+    """Create correlation heatmap for aligned synthesis scores."""
+    columns = [item["column"] for item in meta if item.get("column") in correlations]
+    if len(columns) < 2:
+        return _empty_plot("Not enough aligned synthesis scores for correlation")
+
+    label_by_column = _synthesis_meta_label(meta)
+    labels = [label_by_column.get(column, column) for column in columns]
+    z = [
+        [correlations.get(row, {}).get(column) for column in columns] for row in columns
+    ]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=labels,
+            y=labels,
+            zmin=-1,
+            zmax=1,
+            colorscale="RdBu",
+            text=z,
+            texttemplate="%{text:.2f}",
+            hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>",
+            colorbar={"title": "Pearson r"},
+        )
+    )
+    fig.update_layout(
+        title="Aligned Score Correlations",
+        height=max(430, 42 * len(columns)),
+        margin={"l": 95, "r": 35, "t": 55, "b": 80},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def plot_synthesis_aligned_route_comparison(
+    by_route: dict[str, dict[str, float | int | None]],
+    meta: list[dict[str, Any]],
+) -> str:
+    """Compare aligned score means for solved vs unsolved molecules."""
+    if not by_route or not meta:
+        return _empty_plot("No route status comparison data available")
+
+    columns = [item["column"] for item in meta if item.get("column") in by_route]
+    if not columns:
+        return _empty_plot("No route status comparison data available")
+
+    label_by_column = _synthesis_meta_label(meta)
+    labels = [label_by_column.get(column, column) for column in columns]
+    solved = [by_route[column].get("solved_mean") for column in columns]
+    unsolved = [by_route[column].get("unsolved_mean") for column in columns]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=labels,
+            y=solved,
+            name="Route found",
+            marker_color="rgba(34, 197, 94, 0.75)",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=labels,
+            y=unsolved,
+            name="No route",
+            marker_color="rgba(239, 68, 68, 0.70)",
+        )
+    )
+    fig.update_layout(
+        title="Aligned Scores by AiZynthFinder Status",
+        yaxis={"title": "Mean aligned accessibility score", "range": [0, 1]},
+        barmode="group",
+        height=420,
+        margin={"l": 55, "r": 25, "t": 55, "b": 70},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
+        legend={"orientation": "h", "y": 1.12, "x": 0.5, "xanchor": "center"},
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
 def plot_docking_distribution(scores: list[float], tool: str = "gnina") -> str:
     """Create distribution plot for docking scores.
 
