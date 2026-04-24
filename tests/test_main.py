@@ -392,6 +392,85 @@ def test_setup_aizynthfinder_no_yes_restores_prompt(monkeypatch, tmp_path):
     assert captured["auto"] is None
 
 
+def test_setup_fsscore_sets_auto_install_when_yes(monkeypatch, tmp_path):
+    """setup fsscore --yes should set HEDGEHOG_AUTO_INSTALL."""
+    import hedgehog.main as main_mod
+    import hedgehog.setup as setup_mod
+
+    captured: dict[str, str | None] = {"auto": None}
+
+    def _fake_ensure(_project_root):
+        captured["auto"] = os.environ.get("HEDGEHOG_AUTO_INSTALL")
+        return tmp_path / "modules" / "fsscore"
+
+    monkeypatch.setattr(setup_mod, "ensure_fsscore_checkout", _fake_ensure)
+    monkeypatch.setattr(main_mod.console, "print", lambda *args, **kwargs: None)
+    monkeypatch.delenv("HEDGEHOG_AUTO_INSTALL", raising=False)
+
+    main_mod.setup_fsscore(yes=True)
+
+    assert captured["auto"] == "1"
+
+
+def test_setup_nonpher_check_success(monkeypatch):
+    """setup nonpher-check should report availability and return normally."""
+    import hedgehog.main as main_mod
+    import hedgehog.setup as setup_mod
+
+    printed: list[str] = []
+
+    monkeypatch.setattr(
+        setup_mod,
+        "check_nonpher_runtime",
+        lambda **kwargs: SimpleNamespace(available=True, detail="ok"),
+    )
+    monkeypatch.setattr(
+        main_mod.console,
+        "print",
+        lambda *args, **kwargs: printed.append(" ".join(str(a) for a in args)),
+    )
+
+    main_mod.setup_nonpher_check(python_bin="/tmp/nonpher/bin/python")
+
+    assert any("Nonpher runtime is available." in line for line in printed)
+
+
+def test_setup_nonpher_check_failure_exits_with_guidance(monkeypatch):
+    """setup nonpher-check should exit code 1 and print Linux setup guidance."""
+    import hedgehog.main as main_mod
+    import hedgehog.setup as setup_mod
+
+    printed: list[str] = []
+
+    monkeypatch.setattr(
+        setup_mod,
+        "check_nonpher_runtime",
+        lambda **kwargs: SimpleNamespace(
+            available=False,
+            detail="No module named nonpher",
+        ),
+    )
+    monkeypatch.setattr(
+        setup_mod,
+        "nonpher_lobachevsky_setup_commands",
+        lambda: ["ssh lobachevsky", "conda create -n hedgehog-nonpher python=3.10 -y"],
+    )
+    monkeypatch.setattr(
+        main_mod.console,
+        "print",
+        lambda *args, **kwargs: printed.append(" ".join(str(a) for a in args)),
+    )
+
+    try:
+        main_mod.setup_nonpher_check()
+    except main_mod.typer.Exit as exc:
+        assert exc.exit_code == 1
+    else:
+        raise AssertionError("Expected typer.Exit(code=1)")
+
+    assert any("ssh lobachevsky" in line for line in printed)
+
+
 def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     tmp_path, monkeypatch
 ):

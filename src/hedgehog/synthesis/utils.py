@@ -1,17 +1,25 @@
+import ipaddress
 import json
 import os
 import pickle
 import queue
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import warnings
 from collections.abc import Callable
+from dataclasses import dataclass
+from gzip import GzipFile
 from pathlib import Path
 from typing import Any
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 import numpy as np
 import pandas as pd
@@ -29,8 +37,48 @@ _lazy_cache: dict[str, Any] = {
     "sascorer": None,
     "syba_model": None,
     "rascore_booster": None,
+    "scscore_model": None,
+    "nonpher_filter": None,
 }
 STRICT_RASCORE_ENV = "HEDGEHOG_STRICT_RASCORE"
+_FSSCORE_MODEL_FILENAME = "pretrain_graph_GGLGGL_ep242_best_valloss.ckpt"
+GASA_COMMAND_ENV = "HEDGEHOG_GASA_COMMAND"
+GASA_EXECUTABLE_ENV = "HEDGEHOG_GASA_EXECUTABLE"
+GASA_API_URL_ENV = "HEDGEHOG_GASA_API_URL"
+GASA_TIMEOUT_ENV = "HEDGEHOG_GASA_TIMEOUT_SECONDS"
+DEFAULT_GASA_TIMEOUT_SECONDS = 30.0
+_GASA_FLOAT_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+_GASA_SCORE_KEYS = ("gasa_score", "score", "value")
+
+
+@dataclass(frozen=True)
+class SynthesisScorer:
+    """Runtime descriptor for a synthesis score calculator."""
+
+    name: str
+    column: str
+    calculator: Callable[[str], float | None] | None = None
+    batch_calculator: Callable[..., list[float]] | None = None
+    n_jobs: int | str = "config"
+
+
+DEFAULT_SYNTHESIS_SCORERS = ("sa", "syba", "rascore")
+AUTO_INSTALL_ENV = "HEDGEHOG_AUTO_INSTALL"
+OPTIONAL_ENV_ROOT_ENV = "HEDGEHOG_OPTIONAL_ENV_ROOT"
+_NONPHER_AUTO_ENV_DIR = ".venv-nonpher-worker"
+LEGACY_SCORE_FILTERS = {
+    "sa_score": ("sa_score_min", "sa_score_max"),
+    "syba_score": ("syba_score_min", "syba_score_max"),
+    "ra_score": ("ra_score_min", "ra_score_max"),
+    "sc_score": ("sc_score_min", "sc_score_max"),
+    "nonpher_complexity_score": (
+        "nonpher_complexity_score_min",
+        "nonpher_complexity_score_max",
+    ),
+    "fs_score": ("fs_score_min", "fs_score_max"),
+    "gasa_score": ("gasa_score_min", "gasa_score_max"),
+}
+_MISSING_EXTERNAL_SCORER_WARNINGS: set[str] = set()
 
 _DEFAULT_AIZYNTH_LOGGING_YML = """version: 1
 formatters:
@@ -646,10 +694,412 @@ def _load_rascore():
     return _get_cached("rascore_booster", _load_rascore_impl)
 
 
+def _get_scscore_model_path() -> Path:
+    """Get path to SCScore standalone numpy model weights."""
+    return (
+        Path(__file__).resolve().parents[3]
+        / "modules"
+        / "scscore"
+        / "models"
+        / "full_reaxys_model_1024bool"
+        / "model.ckpt-10654.as_numpy.json.gz"
+    )
+
+
+def _load_scscore_model_impl() -> dict[str, Any] | bool:
+    """Load SCScore standalone numpy weights."""
+    model_path = _get_scscore_model_path()
+    if not model_path.exists():
+        try:
+            from hedgehog.setup import ensure_scscore_model
+
+            project_root = Path(__file__).resolve().parents[3]
+            model_path = ensure_scscore_model(project_root)
+        except Exception as e:
+            logger.warning(
+                "SCScore model is unavailable (%s). SC scores will be set to np.nan",
+                e,
+            )
+            return False
+
+    try:
+        with GzipFile(model_path, "r") as model_file:
+            raw_vars = json.loads(model_file.read().decode("utf-8"))
+        return {
+            "vars": [np.array(value) for value in raw_vars],
+            "fp_len": 1024,
+            "fp_rad": 2,
+            "score_scale": 5.0,
+        }
+    except Exception as e:
+        logger.warning(
+            "Failed to load SCScore model from %s: %s",
+            model_path,
+            _short_exception_message(e),
+        )
+        return False
+
+
+def _load_scscore_model():
+    """Load SCScore model with caching."""
+    return _get_cached("scscore_model", _load_scscore_model_impl)
+
+
+def _load_nonpher_filter_impl() -> Any | bool:
+    """Load Nonpher complexity filter instance."""
+    try:
+        from hedgehog.setup import create_nonpher_complexity_filter
+
+        return create_nonpher_complexity_filter()
+    except Exception as e:
+        _warn_missing_external_scorer_once(
+            "nonpher",
+            "Nonpher scorer is enabled but unavailable "
+            f"({_short_exception_message(e)}). Install nonpher/molpher-lib in a "
+            "dedicated Linux environment and validate with "
+            "`uv run hedgehog setup nonpher-check --python /path/to/python`. "
+            "Nonpher scores will be set to np.nan.",
+        )
+        return False
+
+
+def _load_nonpher_filter():
+    """Load Nonpher complexity filter with caching."""
+    return _get_cached("nonpher_filter", _load_nonpher_filter_impl)
+
+
 def _strict_rascore_enabled() -> bool:
     """Return True when strict RAScore mode is enabled via environment."""
     raw = os.environ.get(STRICT_RASCORE_ENV, "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _parse_positive_timeout(raw: Any) -> float:
+    """Parse a timeout value with a safe fallback."""
+    if raw is None or raw == "":
+        return DEFAULT_GASA_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid GASA timeout value %r; using %.1fs",
+            raw,
+            DEFAULT_GASA_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_GASA_TIMEOUT_SECONDS
+    if timeout <= 0:
+        logger.warning(
+            "Non-positive GASA timeout %.3f; using %.1fs",
+            timeout,
+            DEFAULT_GASA_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_GASA_TIMEOUT_SECONDS
+    return timeout
+
+
+def _resolve_gasa_settings(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve GASA adapter settings from config and environment."""
+    cfg = config if isinstance(config, dict) else {}
+    gasa_cfg = cfg.get("gasa")
+    if not isinstance(gasa_cfg, dict):
+        gasa_cfg = {}
+
+    command = os.environ.get(GASA_COMMAND_ENV)
+    if command is None:
+        command = gasa_cfg.get("command", cfg.get("gasa_command"))
+
+    executable = os.environ.get(GASA_EXECUTABLE_ENV)
+    if executable is None:
+        executable = gasa_cfg.get("executable", cfg.get("gasa_executable"))
+
+    api_url = os.environ.get(GASA_API_URL_ENV)
+    if api_url is None:
+        api_url = gasa_cfg.get("api_url", cfg.get("gasa_api_url"))
+
+    timeout_raw = os.environ.get(GASA_TIMEOUT_ENV)
+    if timeout_raw is None:
+        timeout_raw = gasa_cfg.get("timeout_seconds", cfg.get("gasa_timeout_seconds"))
+
+    return {
+        "command": None if command is None else str(command).strip(),
+        "executable": None if executable is None else str(executable).strip(),
+        "api_url": None if api_url is None else str(api_url).strip(),
+        "timeout": _parse_positive_timeout(timeout_raw),
+    }
+
+
+def _resolve_gasa_executable(executable: str | None) -> str | None:
+    """Resolve configured GASA executable path."""
+    if not executable:
+        return None
+
+    expanded = Path(executable).expanduser()
+    if expanded.exists():
+        if expanded.is_file() and os.access(expanded, os.X_OK):
+            return str(expanded.resolve(strict=False))
+        logger.warning(
+            "GASA executable path exists but is not executable: %s",
+            expanded,
+        )
+        return None
+
+    resolved = shutil.which(executable)
+    if resolved:
+        return resolved
+
+    logger.warning("Configured GASA executable not found: %s", executable)
+    return None
+
+
+def _is_local_gasa_api_url(api_url: str) -> bool:
+    """Return True when API URL resolves to loopback host."""
+    parsed = urllib_parse.urlparse(api_url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = parsed.hostname
+    if host is None:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _resolve_gasa_backend(config: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Resolve GASA backend settings for this run."""
+    settings = _resolve_gasa_settings(config)
+    command = settings["command"]
+    executable = _resolve_gasa_executable(settings["executable"])
+    api_url = settings["api_url"]
+    timeout = settings["timeout"]
+
+    if command:
+        return {"type": "command", "command": command}
+
+    if executable and api_url:
+        logger.info(
+            "Both GASA executable and API URL are configured; using executable backend"
+        )
+
+    if executable:
+        return {"type": "executable", "path": executable, "timeout": timeout}
+
+    if api_url:
+        if not _is_local_gasa_api_url(api_url):
+            logger.warning(
+                "GASA API URL %r is not local. Only localhost/loopback URLs are "
+                "supported; returning NaN",
+                api_url,
+            )
+            return None
+        return {"type": "api", "url": api_url, "timeout": timeout}
+
+    logger.warning(
+        "GASA scorer is enabled but no backend is configured. Set %s, %s, or %s "
+        "(or config keys gasa.command / gasa.executable / gasa.api_url); returning NaN",
+        GASA_COMMAND_ENV,
+        GASA_EXECUTABLE_ENV,
+        GASA_API_URL_ENV,
+    )
+    return None
+
+
+def _coerce_gasa_float(value: Any) -> float | None:
+    """Convert arbitrary backend value to float when possible."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_gasa_score_from_json_payload(payload: Any) -> float | None:
+    """Extract score from a parsed JSON payload."""
+    if isinstance(payload, dict):
+        for key in _GASA_SCORE_KEYS:
+            value = _coerce_gasa_float(payload.get(key))
+            if value is not None:
+                return value
+        return None
+    if isinstance(payload, (int, float, str)):
+        return _coerce_gasa_float(payload)
+    return None
+
+
+def _extract_gasa_score(raw_output: str) -> float | None:
+    """Extract GASA score from text or JSON output."""
+    text = raw_output.strip()
+    if not text:
+        return None
+
+    parsed_json: Any = None
+    try:
+        parsed_json = json.loads(text)
+    except json.JSONDecodeError:
+        parsed_json = None
+
+    parsed_score = _extract_gasa_score_from_json_payload(parsed_json)
+    if parsed_score is not None:
+        return parsed_score
+
+    for line in reversed(text.splitlines()):
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        try:
+            line_json = json.loads(stripped_line)
+        except json.JSONDecodeError:
+            line_json = None
+        line_score = _extract_gasa_score_from_json_payload(line_json)
+        if line_score is not None:
+            return line_score
+
+    match = _GASA_FLOAT_RE.search(text)
+    if match is None:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _query_gasa_executable(
+    smiles: str, executable_path: str, timeout: float
+) -> tuple[float | None, str | None]:
+    """Run local GASA executable and parse score from stdout."""
+    try:
+        completed = subprocess.run(
+            [executable_path, "--smiles", smiles],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"timeout after {timeout:.1f}s"
+    except Exception as e:
+        return None, _short_exception_message(e)
+
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        if stderr:
+            return None, f"exit code {completed.returncode}: {stderr}"
+        return None, f"exit code {completed.returncode}"
+
+    score = _extract_gasa_score(completed.stdout)
+    if score is not None:
+        return score, None
+
+    fallback_score = _extract_gasa_score(completed.stderr)
+    if fallback_score is not None:
+        return fallback_score, None
+    return None, "could not parse score from executable output"
+
+
+def _query_gasa_api(
+    smiles: str, api_url: str, timeout: float
+) -> tuple[float | None, str | None]:
+    """Call local HTTP API and parse returned GASA score."""
+    payload = json.dumps({"smiles": smiles}).encode("utf-8")
+    request = urllib_request.Request(
+        api_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except urllib_error.URLError as e:
+        return None, _short_exception_message(e)
+    except TimeoutError:
+        return None, f"timeout after {timeout:.1f}s"
+    except Exception as e:
+        return None, _short_exception_message(e)
+
+    score = _extract_gasa_score(body)
+    if score is None:
+        return None, "could not parse score from API response"
+    return score, None
+
+
+def _calculate_gasa_scores_batch(
+    smiles_list: list[str],
+    config: dict[str, Any] | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> list[float]:
+    """Calculate optional GASA scores via explicitly configured local backend."""
+    total = len(smiles_list)
+    if total == 0:
+        return []
+
+    backend = _resolve_gasa_backend(config)
+    nan_scores = [np.nan] * total
+    if backend is None:
+        if progress_cb is not None:
+            progress_cb(total, total)
+        return nan_scores
+
+    if backend["type"] == "command":
+        return _run_external_score_command_template(
+            scorer_name="GASA",
+            smiles_list=smiles_list,
+            raw_command=backend["command"],
+            config=config,
+            score_columns=["gasa_score", "gasa", "GASA", "score", "probability"],
+            progress_cb=progress_cb,
+        )
+
+    scores: list[float] = []
+    failure_warned = False
+    for idx, smiles in enumerate(smiles_list, start=1):
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            scores.append(np.nan)
+            if progress_cb is not None:
+                progress_cb(idx, total)
+            continue
+
+        if backend["type"] == "executable":
+            score, error = _query_gasa_executable(
+                smiles,
+                backend["path"],
+                backend["timeout"],
+            )
+        else:
+            score, error = _query_gasa_api(
+                smiles,
+                backend["url"],
+                backend["timeout"],
+            )
+
+        if score is None:
+            scores.append(np.nan)
+            if error and not failure_warned:
+                logger.warning(
+                    "GASA backend call failed (%s). Returning NaN for failed molecules.",
+                    error,
+                )
+                failure_warned = True
+        else:
+            scores.append(float(score))
+
+        if progress_cb is not None:
+            progress_cb(idx, total)
+
+    return scores
 
 
 def _calculate_sa_score_single(smiles: str) -> float | None:
@@ -686,6 +1136,114 @@ def _calculate_syba_score_single(smiles: str) -> float | None:
         return syba_model.predict(mol=mol)
     except Exception:
         return np.nan
+
+
+def _calculate_sc_score_single(smiles: str) -> float | None:
+    """Calculate SCScore for a single SMILES string."""
+    model = _load_scscore_model()
+    if not model:
+        return np.nan
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return np.nan
+        fp = np.array(
+            AllChem.GetMorganFingerprintAsBitVect(
+                mol,
+                model["fp_rad"],
+                nBits=model["fp_len"],
+                useChirality=True,
+            ),
+            dtype=np.float32,
+        )
+        if float(fp.sum()) == 0:
+            return np.nan
+        x: np.ndarray | float = fp
+        model_vars = model["vars"]
+        for idx in range(0, len(model_vars), 2):
+            is_last_layer = idx == len(model_vars) - 2
+            x = np.matmul(x, model_vars[idx]) + model_vars[idx + 1]
+            if not is_last_layer:
+                x = x * (x > 0)
+        scaled = 1 + (model["score_scale"] - 1) / (1 + np.exp(-x))
+        return float(np.asarray(scaled).reshape(-1)[0])
+    except Exception:
+        return np.nan
+
+
+def _calculate_nonpher_complexity_score_single(smiles: str) -> float | None:
+    """Return 1.0 when Nonpher classifies a molecule as too complex, else 0.0."""
+    complexity_filter = _load_nonpher_filter()
+    if not complexity_filter:
+        return np.nan
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return np.nan
+        return 1.0 if complexity_filter.isTooComplex(mol) else 0.0
+    except Exception:
+        return np.nan
+
+
+def _calculate_nonpher_scores_batch(
+    smiles_list: list[str],
+    config: dict[str, Any] | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> list[float]:
+    """Calculate Nonpher scores via external worker when configured, else in-process."""
+    total = len(smiles_list)
+    nan_scores = [np.nan] * total
+    if total == 0:
+        return nan_scores
+
+    if isinstance(config, dict) and config.get("_nonpher_force_nan"):
+        if progress_cb is not None:
+            progress_cb(total, total)
+        return nan_scores
+
+    worker_python = _resolve_nonpher_python_for_run(config)
+    if worker_python:
+        with tempfile.TemporaryDirectory(prefix="nonpher_scorer_") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_csv = tmp_path / "input.csv"
+            output_csv = tmp_path / "output.csv"
+            pd.DataFrame({"smiles": smiles_list}).to_csv(input_csv, index=False)
+
+            try:
+                from hedgehog.setup import run_nonpher_batch_external
+
+                run_nonpher_batch_external(
+                    input_csv=str(input_csv),
+                    output_csv=str(output_csv),
+                    smiles_column="smiles",
+                    score_column="nonpher_complexity_score",
+                    python_bin=worker_python,
+                )
+            except Exception as exc:
+                _warn_missing_external_scorer_once(
+                    "nonpher",
+                    "Nonpher external worker failed "
+                    f"({_short_exception_message(exc)}). Nonpher scores will be set to np.nan.",
+                )
+                if progress_cb is not None:
+                    progress_cb(total, total)
+                return nan_scores
+
+            scores = _read_external_scores(
+                output_csv,
+                ["nonpher_complexity_score", "score", "value"],
+                total,
+            )
+            if progress_cb is not None:
+                progress_cb(total, total)
+            return scores if scores is not None else nan_scores
+
+    return parallel_map(
+        _calculate_nonpher_complexity_score_single,
+        smiles_list,
+        resolve_n_jobs(config),
+        progress=progress_cb,
+    )
 
 
 def _get_rascore_model_path() -> Path:
@@ -1016,8 +1574,671 @@ def _calculate_ra_scores_batch(
         return nan_list
 
 
+def _get_optional_config_value(
+    config: dict[str, Any] | None,
+    config_key: str,
+    env_key: str,
+) -> Any:
+    """Return optional scorer setting from config first, then environment."""
+    if config is not None and config.get(config_key) not in (None, ""):
+        return config[config_key]
+    return os.environ.get(env_key)
+
+
+def _warn_missing_external_scorer_once(scorer_name: str, message: str) -> None:
+    """Log one warning per missing optional external scorer."""
+    if scorer_name in _MISSING_EXTERNAL_SCORER_WARNINGS:
+        return
+    _MISSING_EXTERNAL_SCORER_WARNINGS.add(scorer_name)
+    logger.warning(message)
+
+
+def _project_root() -> Path:
+    """Return project root for setup/runtime helpers."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _auto_install_enabled() -> bool:
+    """Return True when optional scorer auto-install is enabled."""
+    return os.environ.get(AUTO_INSTALL_ENV) == "1"
+
+
+def _resolve_optional_env_path(
+    project_root: Path, env_name: str, fallback: str
+) -> Path:
+    """Resolve optional scorer runtime env path from shared root or project fallback."""
+    optional_root = os.environ.get(OPTIONAL_ENV_ROOT_ENV, "").strip()
+    if optional_root:
+        return Path(optional_root).expanduser() / env_name
+    return project_root / fallback
+
+
+def _build_auto_gasa_command(worker_python: Path, repo_path: Path) -> str:
+    """Build local command template for GASA batch worker wrapper."""
+    return (
+        f"{shlex.quote(sys.executable)} -m hedgehog.workers.gasa_worker "
+        f"--worker-python {shlex.quote(str(worker_python))} "
+        f"--repo-path {shlex.quote(str(repo_path))} "
+        "--input-csv {input} --output-csv {output} "
+        "--smiles-column {smiles_col} --batch-size {batch_size} --num-workers {n_jobs}"
+    )
+
+
+def _auto_configure_fsscore_runtime(config: dict[str, Any]) -> None:
+    """Populate missing FSScore runtime settings when auto-install is enabled."""
+    raw_command = _get_optional_config_value(
+        config,
+        "fsscore_command",
+        "HEDGEHOG_FSSCORE_COMMAND",
+    )
+    if raw_command:
+        return
+
+    fsscore_python = _get_optional_config_value(
+        config,
+        "fsscore_python",
+        "HEDGEHOG_FSSCORE_PYTHON",
+    )
+    model_path = _resolve_fsscore_model_path(config)
+    if fsscore_python and model_path is not None:
+        return
+
+    try:
+        from hedgehog.setup import ensure_fsscore_runtime
+
+        runtime = ensure_fsscore_runtime(_project_root())
+    except Exception as exc:
+        _warn_missing_external_scorer_once(
+            "fsscore",
+            "FSScore auto-setup failed "
+            f"({_short_exception_message(exc)}). FS scores will be set to np.nan.",
+        )
+        return
+
+    if not fsscore_python:
+        config["fsscore_python"] = str(runtime.worker_python)
+    if model_path is None:
+        config["fsscore_model_path"] = str(runtime.model_path)
+    if (
+        _get_optional_config_value(
+            config,
+            "fsscore_repo_path",
+            "HEDGEHOG_FSSCORE_REPO_PATH",
+        )
+        is None
+    ):
+        config["fsscore_repo_path"] = str(runtime.checkout_path)
+
+
+def _auto_configure_gasa_runtime(config: dict[str, Any]) -> None:
+    """Populate GASA command fallback when no backend is configured."""
+    settings = _resolve_gasa_settings(config)
+    if settings["command"] or settings["executable"] or settings["api_url"]:
+        return
+
+    try:
+        from hedgehog.setup import ensure_gasa_worker
+
+        setup_result = ensure_gasa_worker(_project_root())
+    except Exception as exc:
+        _warn_missing_external_scorer_once(
+            "gasa",
+            "GASA auto-setup failed "
+            f"({_short_exception_message(exc)}). GASA scores will be set to np.nan.",
+        )
+        return
+
+    command = _build_auto_gasa_command(
+        worker_python=setup_result.worker_python,
+        repo_path=setup_result.repo_path,
+    )
+    config["gasa_command"] = command
+    gasa_cfg = config.get("gasa")
+    if isinstance(gasa_cfg, dict):
+        gasa_cfg["command"] = command
+
+
+def _resolve_nonpher_python_for_run(config: dict[str, Any] | None) -> str | None:
+    """Resolve external Nonpher worker python from config/env."""
+    if isinstance(config, dict):
+        configured_python = config.get("nonpher_python")
+        if configured_python not in (None, ""):
+            return str(configured_python)
+    try:
+        from hedgehog.setup import resolve_nonpher_python
+
+        return resolve_nonpher_python()
+    except Exception:
+        return None
+
+
+def _auto_configure_nonpher_runtime(config: dict[str, Any]) -> None:
+    """Try to provision Nonpher runtime in uv-only isolated env for external worker mode."""
+    if _resolve_nonpher_python_for_run(config):
+        return
+
+    target_env = _resolve_optional_env_path(
+        project_root=_project_root(),
+        env_name="nonpher",
+        fallback=_NONPHER_AUTO_ENV_DIR,
+    )
+    try:
+        from hedgehog.setup import ensure_nonpher_uv_runtime
+
+        result = ensure_nonpher_uv_runtime(env_prefix=str(target_env))
+    except Exception as exc:
+        _warn_missing_external_scorer_once(
+            "nonpher",
+            "Nonpher uv-only auto-setup failed "
+            f"({_short_exception_message(exc)}). Nonpher scores will be set to np.nan.",
+        )
+        config["_nonpher_force_nan"] = True
+        return
+
+    if result.available and result.python_bin:
+        config["nonpher_python"] = str(result.python_bin)
+        return
+
+    detail = (result.detail or "").strip()
+    config["_nonpher_force_nan"] = True
+    _warn_missing_external_scorer_once(
+        "nonpher",
+        "Nonpher uv-only auto-setup failed "
+        f"({detail or 'unknown error'}). Nonpher scores will be set to np.nan.",
+    )
+
+
+def _prepare_optional_scorer_runtime(
+    config: dict[str, Any] | None, enabled_scorers: list[SynthesisScorer]
+) -> dict[str, Any] | None:
+    """Prepare scorer runtime settings before worker fan-out starts."""
+    enabled_columns = {scorer.column for scorer in enabled_scorers}
+    if not enabled_columns:
+        return config
+
+    # Preload once in parent process so workers do not race for the same download.
+    if "sc_score" in enabled_columns:
+        _load_scscore_model()
+
+    if not _auto_install_enabled():
+        return config
+
+    runtime_config: dict[str, Any] = dict(config) if isinstance(config, dict) else {}
+    if "fs_score" in enabled_columns:
+        _auto_configure_fsscore_runtime(runtime_config)
+    if "gasa_score" in enabled_columns:
+        _auto_configure_gasa_runtime(runtime_config)
+    if "nonpher_complexity_score" in enabled_columns:
+        _auto_configure_nonpher_runtime(runtime_config)
+    return runtime_config
+
+
+def _resolve_fsscore_model_path(config: dict[str, Any] | None) -> Path | None:
+    """Resolve FSScore model path from explicit setting or configured checkout."""
+    explicit = _get_optional_config_value(
+        config,
+        "fsscore_model_path",
+        "HEDGEHOG_FSSCORE_MODEL_PATH",
+    )
+    if explicit:
+        return Path(str(explicit)).expanduser()
+
+    repo_path = _get_optional_config_value(
+        config,
+        "fsscore_repo_path",
+        "HEDGEHOG_FSSCORE_REPO_PATH",
+    )
+    if not repo_path:
+        return None
+    return Path(str(repo_path)).expanduser() / "models" / _FSSCORE_MODEL_FILENAME
+
+
+def _format_external_command(
+    raw_command: str,
+    *,
+    input_csv: Path,
+    output_csv: Path,
+    smiles_col: str,
+    config: dict[str, Any] | None,
+    total: int,
+) -> list[str]:
+    """Format a user-provided external scorer command template."""
+    model_path = _resolve_fsscore_model_path(config)
+    values = {
+        "input": str(input_csv),
+        "output": str(output_csv),
+        "smiles_col": smiles_col,
+        "model_path": str(model_path) if model_path is not None else "",
+        "batch_size": str(config.get("fsscore_batch_size", 128) if config else 128),
+        "n_jobs": str(_resolve_external_worker_count(config, total)),
+    }
+    return shlex.split(raw_command.format(**values))
+
+
+_EXTERNAL_ROW_ID_COLUMN = "__hedgehog_row_id"
+
+
+def _coerce_external_scores(values: pd.Series) -> list[float]:
+    """Convert score series to floats with np.nan for invalid values."""
+    scores = pd.to_numeric(values, errors="coerce").tolist()
+    return [float(score) if pd.notna(score) else np.nan for score in scores]
+
+
+def _read_external_scores(
+    output_csv: Path,
+    score_columns: list[str],
+    expected_len: int,
+    expected_smiles: list[str] | None = None,
+) -> list[float] | None:
+    """Read score values from an external scorer CSV output."""
+    if not output_csv.exists():
+        logger.warning("External scorer output file is missing: %s", output_csv)
+        return None
+
+    out_df = pd.read_csv(output_csv)
+    score_col = next((col for col in score_columns if col in out_df.columns), None)
+    if score_col is None:
+        logger.warning(
+            "External scorer output %s has none of expected score columns: %s",
+            output_csv,
+            ", ".join(score_columns),
+        )
+        return None
+    if len(out_df) != expected_len:
+        logger.warning(
+            "External scorer returned %d rows for %d input molecules",
+            len(out_df),
+            expected_len,
+        )
+        return None
+
+    if expected_smiles is None:
+        return _coerce_external_scores(out_df[score_col])
+
+    if _EXTERNAL_ROW_ID_COLUMN in out_df.columns:
+        row_ids = pd.to_numeric(out_df[_EXTERNAL_ROW_ID_COLUMN], errors="coerce")
+        if row_ids.isna().any() or row_ids.duplicated().any():
+            logger.warning(
+                "External scorer output %s has invalid or duplicate row ids",
+                output_csv,
+            )
+            return None
+        ordered = out_df.assign(_row_id=row_ids.astype(int)).sort_values("_row_id")
+        if ordered["_row_id"].tolist() != list(range(expected_len)):
+            logger.warning(
+                "External scorer output %s row ids do not match input rows",
+                output_csv,
+            )
+            return None
+        return _coerce_external_scores(ordered[score_col])
+
+    if "smiles" not in out_df.columns:
+        return _coerce_external_scores(out_df[score_col])
+
+    output_smiles = out_df["smiles"].astype(str).tolist()
+    if output_smiles == expected_smiles:
+        return _coerce_external_scores(out_df[score_col])
+
+    expected_series = pd.Series(expected_smiles)
+    output_series = pd.Series(output_smiles)
+    if expected_series.duplicated().any() or output_series.duplicated().any():
+        logger.warning(
+            "External scorer output %s reordered duplicate SMILES; refusing to "
+            "attach scores by position",
+            output_csv,
+        )
+        return None
+
+    score_by_smiles = dict(zip(output_smiles, out_df[score_col], strict=True))
+    if set(score_by_smiles) != set(expected_smiles):
+        logger.warning(
+            "External scorer output %s SMILES do not match input SMILES",
+            output_csv,
+        )
+        return None
+    ordered_scores = pd.Series([score_by_smiles[smiles] for smiles in expected_smiles])
+    return _coerce_external_scores(ordered_scores)
+
+
+def _write_external_input_csv(path: Path, smiles_list: list[str]) -> None:
+    """Write external scorer input with a stable row id for score realignment."""
+    pd.DataFrame(
+        {_EXTERNAL_ROW_ID_COLUMN: range(len(smiles_list)), "smiles": smiles_list}
+    ).to_csv(path, index=False)
+
+
+def _resolve_external_worker_count(
+    config: dict[str, Any] | None,
+    total: int,
+    override_key: str | None = None,
+) -> int:
+    """Resolve a positive worker count capped by the current batch size."""
+    configured_workers = None
+    if override_key and config:
+        configured_workers = config.get(override_key)
+    if configured_workers is None:
+        configured_workers = resolve_n_jobs(config)
+    try:
+        worker_count = int(configured_workers)
+    except (TypeError, ValueError):
+        worker_count = resolve_n_jobs(config)
+    return max(1, min(worker_count, total))
+
+
+def _run_external_score_command_template(
+    *,
+    scorer_name: str,
+    smiles_list: list[str],
+    raw_command: str,
+    config: dict[str, Any] | None,
+    score_columns: list[str],
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> list[float]:
+    """Run an optional external batch scorer and return one score per SMILES."""
+    nan_list = [np.nan] * len(smiles_list)
+    total = len(smiles_list)
+    if total <= 0:
+        return nan_list
+    if progress_cb is not None:
+        progress_cb(0, total)
+
+    with tempfile.TemporaryDirectory(prefix=f"{scorer_name}_scorer_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        _write_external_input_csv(input_csv, smiles_list)
+
+        try:
+            command = _format_external_command(
+                raw_command,
+                input_csv=input_csv,
+                output_csv=output_csv,
+                smiles_col="smiles",
+                config=config,
+                total=total,
+            )
+            subprocess.run(
+                command,
+                cwd=str(_project_root()),
+                shell=False,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except Exception as e:
+            logger.warning("%s scorer command failed: %s", scorer_name, e)
+            if progress_cb is not None:
+                progress_cb(total, total)
+            return nan_list
+
+        scores = _read_external_scores(output_csv, score_columns, total, smiles_list)
+        if progress_cb is not None:
+            progress_cb(total, total)
+        return scores if scores is not None else nan_list
+
+
+def _calculate_fsscore_scores_batch(
+    smiles_list: list[str],
+    config: dict[str, Any] | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> list[float]:
+    """Calculate FSScore via an explicitly configured external environment."""
+    total = len(smiles_list)
+    nan_list = [np.nan] * total
+    if total == 0:
+        return nan_list
+
+    def _finish_with_nan() -> list[float]:
+        if progress_cb is not None:
+            progress_cb(total, total)
+        return nan_list
+
+    raw_command = _get_optional_config_value(
+        config,
+        "fsscore_command",
+        "HEDGEHOG_FSSCORE_COMMAND",
+    )
+    fsscore_python = _get_optional_config_value(
+        config,
+        "fsscore_python",
+        "HEDGEHOG_FSSCORE_PYTHON",
+    )
+    model_path = _resolve_fsscore_model_path(config)
+
+    if raw_command:
+        return _run_external_score_command_template(
+            scorer_name="FSScore",
+            smiles_list=smiles_list,
+            raw_command=raw_command,
+            config=config,
+            score_columns=[
+                "fs_score",
+                "fsscore",
+                "fsscore_score",
+                "smiles_score",
+                "score",
+            ],
+            progress_cb=progress_cb,
+        )
+
+    if not fsscore_python:
+        _warn_missing_external_scorer_once(
+            "fsscore",
+            "FSScore scorer is enabled but not configured. Set "
+            "HEDGEHOG_FSSCORE_PYTHON to a Python environment with FSScore "
+            "installed. FS scores will be set to np.nan.",
+        )
+        return _finish_with_nan()
+
+    if model_path is None:
+        _warn_missing_external_scorer_once(
+            "fsscore",
+            "FSScore scorer is enabled but no model path is configured. Set "
+            "HEDGEHOG_FSSCORE_MODEL_PATH or HEDGEHOG_FSSCORE_REPO_PATH. "
+            "FS scores will be set to np.nan.",
+        )
+        return _finish_with_nan()
+
+    model_path = model_path.resolve()
+    if not model_path.exists():
+        _warn_missing_external_scorer_once(
+            "fsscore",
+            "Configured FSScore model path does not exist "
+            f"({model_path}). FS scores will be set to np.nan.",
+        )
+        return _finish_with_nan()
+
+    project_root = Path(__file__).resolve().parents[3]
+    with tempfile.TemporaryDirectory(prefix="fsscore_scorer_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        pd.DataFrame({"smiles": smiles_list}).to_csv(input_csv, index=False)
+
+        if progress_cb is not None:
+            progress_cb(0, total)
+
+        command = [
+            sys.executable,
+            "-m",
+            "hedgehog.workers.fsscore_worker",
+            "--worker-python",
+            str(fsscore_python),
+            "--model-path",
+            str(model_path),
+            "--input-csv",
+            str(input_csv),
+            "--output-csv",
+            str(output_csv),
+            "--smiles-column",
+            "smiles",
+            "--batch-size",
+            str(config.get("fsscore_batch_size", 128) if config else 128),
+            "--graph-datapath",
+            str(tmp_path / "fsscore_graphs.pt"),
+        ]
+        configured_workers = config.get("fsscore_num_workers") if config else None
+        if configured_workers is None:
+            num_workers = 0
+        else:
+            num_workers = _resolve_external_worker_count(
+                config,
+                total,
+                override_key="fsscore_num_workers",
+            )
+        command.extend(["--num-workers", str(num_workers)])
+
+        try:
+            subprocess.run(
+                command,
+                cwd=str(project_root),
+                shell=False,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            detail = (e.stderr or e.stdout or "").strip()
+            if detail:
+                logger.warning("FSScore scorer command failed: %s (%s)", e, detail)
+            else:
+                logger.warning("FSScore scorer command failed: %s", e)
+            return _finish_with_nan()
+        except Exception as e:
+            logger.warning("FSScore scorer command failed: %s", e)
+            return _finish_with_nan()
+
+        scores = _read_external_scores(
+            output_csv,
+            ["fs_score", "fsscore", "fsscore_score", "smiles_score", "score"],
+            total,
+            smiles_list,
+        )
+        if progress_cb is not None:
+            progress_cb(total, total)
+        return scores if scores is not None else nan_list
+
+
+SYNTHESIS_SCORERS = {
+    "sa": SynthesisScorer(
+        name="sa",
+        column="sa_score",
+        calculator=_calculate_sa_score_single,
+    ),
+    "syba": SynthesisScorer(
+        name="syba",
+        column="syba_score",
+        calculator=_calculate_syba_score_single,
+        n_jobs=1,
+    ),
+    "rascore": SynthesisScorer(
+        name="rascore",
+        column="ra_score",
+        batch_calculator=_calculate_ra_scores_batch,
+    ),
+    "ra": SynthesisScorer(
+        name="ra",
+        column="ra_score",
+        batch_calculator=_calculate_ra_scores_batch,
+    ),
+    "scscore": SynthesisScorer(
+        name="scscore",
+        column="sc_score",
+        calculator=_calculate_sc_score_single,
+    ),
+    "sc": SynthesisScorer(
+        name="sc",
+        column="sc_score",
+        calculator=_calculate_sc_score_single,
+    ),
+    "nonpher": SynthesisScorer(
+        name="nonpher",
+        column="nonpher_complexity_score",
+        batch_calculator=_calculate_nonpher_scores_batch,
+    ),
+    "fsscore": SynthesisScorer(
+        name="fsscore",
+        column="fs_score",
+        batch_calculator=_calculate_fsscore_scores_batch,
+    ),
+    "fs": SynthesisScorer(
+        name="fs",
+        column="fs_score",
+        batch_calculator=_calculate_fsscore_scores_batch,
+    ),
+    "gasa": SynthesisScorer(
+        name="gasa",
+        column="gasa_score",
+        batch_calculator=_calculate_gasa_scores_batch,
+    ),
+}
+
+
+def _resolve_enabled_scorers(config: dict[str, Any] | None) -> list[SynthesisScorer]:
+    """Resolve enabled synthesis scorers from config."""
+    raw_enabled = None if config is None else config.get("enabled_scores")
+    if raw_enabled is None:
+        raw_enabled = DEFAULT_SYNTHESIS_SCORERS
+
+    if isinstance(raw_enabled, str):
+        raw_items = re.split(r"[\s,]+", raw_enabled.strip())
+    else:
+        raw_items = raw_enabled
+
+    enabled_names = [str(name).strip().lower() for name in raw_items if str(name)]
+    enabled_scorers: list[SynthesisScorer] = []
+    seen_columns: set[str] = set()
+    for name in enabled_names:
+        scorer = SYNTHESIS_SCORERS.get(name)
+        if scorer is None:
+            logger.warning("Unknown synthesis scorer %r; skipping", name)
+            continue
+        if scorer.column in seen_columns:
+            continue
+        enabled_scorers.append(scorer)
+        seen_columns.add(scorer.column)
+    return enabled_scorers
+
+
+def _score_progress_callback(
+    score_name: str,
+    progress_cb: Callable[[str, int, int], None] | None,
+) -> Callable[[int, int], None] | None:
+    """Bind score name to the stage progress callback."""
+    if progress_cb is None:
+        return None
+
+    def _progress(done: int, total: int) -> None:
+        progress_cb(score_name, done, total)
+
+    return _progress
+
+
+def _calculate_scorer_values(
+    scorer: SynthesisScorer,
+    smiles_list: list[str],
+    config: dict[str, Any] | None,
+    n_jobs: int,
+    progress_cb: Callable[[str, int, int], None] | None,
+) -> list[float]:
+    """Calculate one synthesis score column."""
+    progress = _score_progress_callback(scorer.column, progress_cb)
+    if scorer.batch_calculator is not None:
+        return scorer.batch_calculator(smiles_list, config, progress_cb=progress)
+    if scorer.calculator is None:
+        return [np.nan] * len(smiles_list)
+
+    scorer_n_jobs = n_jobs if scorer.n_jobs == "config" else int(scorer.n_jobs)
+    return parallel_map(
+        scorer.calculator,
+        smiles_list,
+        scorer_n_jobs,
+        progress=progress,
+    )
+
+
 def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb=None):
-    """Calculate SA, SYBA, and RA scores for all molecules in DataFrame.
+    """Calculate enabled synthesis scores for all molecules in DataFrame.
 
     Args:
         df: DataFrame with 'smiles' column
@@ -1025,54 +2246,26 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
         config: Optional config dict
 
     Returns:
-        DataFrame with added columns: sa_score, syba_score, ra_score
+        DataFrame with added synthesis score columns
     """
     logger.info("Calculating synthetic accessibility scores...")
-    _load_sascorer()
-    _load_syba_model()
-    _load_rascore()
 
-    n_jobs = resolve_n_jobs(config)
     result_df = df.copy()
     smiles_list = result_df["smiles"].tolist()
+    enabled_scorers = _resolve_enabled_scorers(config)
+    runtime_config = _prepare_optional_scorer_runtime(config, enabled_scorers)
+    n_jobs = resolve_n_jobs(runtime_config)
 
-    sa_progress = None
-    if progress_cb is not None:
+    for scorer in enabled_scorers:
+        result_df[scorer.column] = _calculate_scorer_values(
+            scorer,
+            smiles_list,
+            runtime_config,
+            n_jobs,
+            progress_cb,
+        )
 
-        def _sa_progress(done: int, total: int) -> None:
-            progress_cb("sa_score", done, total)
-
-        sa_progress = _sa_progress
-
-    result_df["sa_score"] = parallel_map(
-        _calculate_sa_score_single, smiles_list, n_jobs, progress=sa_progress
-    )
-
-    # SYBA uses GPU internally — always run sequentially to avoid forking issues
-    syba_progress = None
-    if progress_cb is not None:
-
-        def _syba_progress(done: int, total: int) -> None:
-            progress_cb("syba_score", done, total)
-
-        syba_progress = _syba_progress
-
-    result_df["syba_score"] = parallel_map(
-        _calculate_syba_score_single, smiles_list, n_jobs=1, progress=syba_progress
-    )
-
-    ra_progress = None
-    if progress_cb is not None:
-
-        def _ra_progress(done: int, total: int) -> None:
-            progress_cb("ra_score", done, total)
-
-        ra_progress = _ra_progress
-
-    ra_scores = _calculate_ra_scores_batch(smiles_list, config, progress_cb=ra_progress)
-    result_df["ra_score"] = ra_scores
-
-    for score_name in ["sa_score", "syba_score", "ra_score"]:
+    for score_name in [scorer.column for scorer in enabled_scorers]:
         valid_scores = result_df[score_name].dropna()
         if len(valid_scores) > 0:
             logger.info(
@@ -1092,7 +2285,7 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
 
 
 def _build_score_filter_mask(
-    df: pd.DataFrame, column: str, min_val: float, max_val
+    df: pd.DataFrame, column: str, min_val: float | None, max_val
 ) -> pd.Series | None:
     """Build a boolean mask for filtering by score thresholds.
 
@@ -1115,14 +2308,41 @@ def _build_score_filter_mask(
         logger.info("%s filter: skipped (no valid scores calculated)", column)
         return None
 
-    is_na = df[column].isna()
-    above_min = df[column] >= min_val
+    if min_val is None and max_val is None:
+        logger.info("%s filter: skipped (no thresholds configured)", column)
+        return None
 
-    if max_val == "inf":
+    is_na = df[column].isna()
+    above_min = True if min_val is None else df[column] >= min_val
+
+    if max_val is None or max_val == "inf":
         return is_na | above_min
 
     below_max = df[column] <= max_val
     return is_na | (above_min & below_max)
+
+
+def _iter_score_filter_specs(config: dict[str, Any]) -> list[tuple[str, Any, Any]]:
+    """Return score filter specs from legacy and nested config formats."""
+    specs: list[tuple[str, Any, Any]] = []
+    seen: set[str] = set()
+
+    nested_filters = config.get("score_filters")
+    if isinstance(nested_filters, dict):
+        for column, thresholds in nested_filters.items():
+            if not isinstance(thresholds, dict):
+                continue
+            specs.append((column, thresholds.get("min"), thresholds.get("max")))
+            seen.add(column)
+
+    for column, (min_key, max_key) in LEGACY_SCORE_FILTERS.items():
+        if column in seen:
+            continue
+        if min_key not in config and max_key not in config:
+            continue
+        specs.append((column, config.get(min_key), config.get(max_key)))
+
+    return specs
 
 
 def apply_synthesis_score_filters(
@@ -1142,17 +2362,9 @@ def apply_synthesis_score_filters(
     Returns:
         Filtered DataFrame with molecules that pass all applicable filters
     """
-    score_filters = [
-        ("sa_score", "sa_score_min", "sa_score_max"),
-        ("ra_score", "ra_score_min", "ra_score_max"),
-        ("syba_score", "syba_score_min", "syba_score_max"),
-    ]
-
     pass_mask = pd.Series(True, index=df.index)
 
-    for column, min_key, max_key in score_filters:
-        min_val = config.get(min_key, 0)
-        max_val = config.get(max_key, "inf")
+    for column, min_val, max_val in _iter_score_filter_specs(config):
         mask = _build_score_filter_mask(df, column, min_val, max_val)
         if mask is not None:
             pass_mask = pass_mask & mask

@@ -53,6 +53,23 @@ STAGE_DISPLAY_NAMES = {
     "descriptors_final": "Final Descriptors",
 }
 
+
+SYNTHESIS_SCORE_LABELS = {
+    "sa_score": "SA Score (lower = easier)",
+    "syba_score": "SYBA Score (higher = easier)",
+    "ra_score": "RA Score (higher = easier)",
+    "sc_score": "SCScore (lower = less complex)",
+    "nonpher_complexity_score": "Nonpher Complexity Flag",
+    "fs_score": "FSScore",
+    "gasa_score": "GASA Score",
+}
+
+
+def _score_column_to_series_key(column: str) -> str:
+    """Return report data key for a synthesis score column."""
+    return f"{column.removesuffix('_score')}_scores"
+
+
 # Key descriptors to show in report
 KEY_DESCRIPTORS = [
     "MolWt",
@@ -910,7 +927,7 @@ class ReportGenerator:
         stats = {"distributions": {}, "scatter_data": {}}
 
         # Get score distributions
-        score_columns = ["sa_score", "syba_score", "ra_score", "sc_score"]
+        score_columns = [col for col in df.columns if col.endswith("_score")]
         for col in score_columns:
             if col in df.columns:
                 values = df[col].dropna().tolist()
@@ -1769,29 +1786,22 @@ class ReportGenerator:
             "sa_scores": [],
             "syba_scores": [],
             "ra_scores": [],
+            "score_distributions": {},
             "solved_count": 0,
             "unsolved_count": 0,
             "summary": {},
             "by_model": {},
         }
 
-        # Extract SA, SYBA, and RA scores
-        if "sa_score" in df.columns:
-            result["sa_scores"] = df["sa_score"].dropna().tolist()
-            if result["sa_scores"]:
-                result["summary"]["avg_sa_score"] = float(df["sa_score"].mean())
-
-        if "syba_score" in df.columns:
-            result["syba_scores"] = df["syba_score"].dropna().tolist()
-            if result["syba_scores"]:
-                result["summary"]["avg_syba_score"] = float(df["syba_score"].mean())
-
-        if "ra_score" in df.columns:
-            result["ra_scores"] = df["ra_score"].dropna().tolist()
-            if result["ra_scores"]:
-                result["summary"]["avg_ra_score"] = float(
-                    df["ra_score"].dropna().mean()
-                )
+        score_columns = [col for col in df.columns if col.endswith("_score")]
+        for col in score_columns:
+            values = df[col].dropna().tolist()
+            if not values:
+                continue
+            key = _score_column_to_series_key(col)
+            result[key] = values
+            result["score_distributions"][col] = values
+            result["summary"][f"avg_{col}"] = float(df[col].dropna().mean())
 
         # Count solved/unsolved (look for solved, route_found, etc.)
         solved_col = None
@@ -1838,38 +1848,21 @@ class ReportGenerator:
             for model in df["model_name"].dropna().unique():
                 model_df = df[df["model_name"] == model]
                 model_data = {
-                    "sa_scores": model_df["sa_score"].dropna().tolist()
-                    if "sa_score" in df.columns
-                    else [],
-                    "syba_scores": model_df["syba_score"].dropna().tolist()
-                    if "syba_score" in df.columns
-                    else [],
-                    "ra_scores": model_df["ra_score"].dropna().tolist()
-                    if "ra_score" in df.columns
-                    else [],
+                    "score_distributions": {},
                     "solved_count": 0,
                     "unsolved_count": 0,
                     "summary": {},
                 }
 
-                # Calculate per-model summary
-                if "sa_score" in model_df.columns and len(model_data["sa_scores"]) > 0:
-                    model_data["summary"]["avg_sa_score"] = float(
-                        model_df["sa_score"].mean()
-                    )
-
-                if (
-                    "syba_score" in model_df.columns
-                    and len(model_data["syba_scores"]) > 0
-                ):
-                    model_data["summary"]["avg_syba_score"] = float(
-                        model_df["syba_score"].mean()
-                    )
-
-                if "ra_score" in model_df.columns and len(model_data["ra_scores"]) > 0:
-                    model_data["summary"]["avg_ra_score"] = float(
-                        model_df["ra_score"].dropna().mean()
-                    )
+                for col in score_columns:
+                    values = model_df[col].dropna().tolist()
+                    key = _score_column_to_series_key(col)
+                    model_data[key] = values
+                    if values:
+                        model_data["score_distributions"][col] = values
+                        model_data["summary"][f"avg_{col}"] = float(
+                            model_df[col].dropna().mean()
+                        )
 
                 # Count solved/unsolved per model
                 if solved_col and solved_col in model_df.columns:
@@ -2952,6 +2945,7 @@ class ReportGenerator:
 
         # Synthesis detailed (enhanced)
         synth_detailed = data.get("synthesis_detailed", {})
+        score_distributions = synth_detailed.get("score_distributions", {})
         if synth_detailed.get("sa_scores"):
             plot_htmls["synthesis_sa_hist"] = plots.plot_synthesis_sa_histogram(
                 synth_detailed["sa_scores"]
@@ -3026,11 +3020,23 @@ class ReportGenerator:
         # Generate JSON data for JavaScript model filtering (Synthesis)
         synth_detailed = data.get("synthesis_detailed", {})
         if synth_detailed:
+            score_meta = [
+                {
+                    "column": column,
+                    "key": _score_column_to_series_key(column),
+                    "label": SYNTHESIS_SCORE_LABELS.get(column, column),
+                }
+                for column in synth_detailed.get("score_distributions", {})
+            ]
             synthesis_data = {
                 "all": {
-                    "sa_scores": synth_detailed.get("sa_scores", []),
-                    "syba_scores": synth_detailed.get("syba_scores", []),
-                    "ra_scores": synth_detailed.get("ra_scores", []),
+                    **{
+                        item["key"]: synth_detailed.get(item["key"], [])
+                        for item in score_meta
+                    },
+                    "score_distributions": synth_detailed.get(
+                        "score_distributions", {}
+                    ),
                     "solved_count": synth_detailed.get("solved_count", 0),
                     "unsolved_count": synth_detailed.get("unsolved_count", 0),
                     "summary": synth_detailed.get("summary", {}),
@@ -3050,6 +3056,7 @@ class ReportGenerator:
                     "data": by_model,
                 }
             plot_htmls["synthesis_data"] = synthesis_data
+            plot_htmls["synthesis_score_meta"] = score_meta
 
         # Generate JSON data for JavaScript descriptors visualization
         desc_detailed = data.get("descriptors_detailed", {})
@@ -3159,20 +3166,30 @@ class ReportGenerator:
         # Synthesis thresholds from config
         synth_config = self._load_stage_config("config_synthesis")
         if synth_config:
-            score_keys = [
-                ("sa_scores", "sa_score"),
-                ("syba_scores", "syba_score"),
-                ("ra_scores", "ra_score"),
-            ]
             thresholds = {}
-            for score_key, prefix in score_keys:
+            score_columns = set(score_distributions)
+            score_columns.update(["sa_score", "syba_score", "ra_score"])
+            for column in score_columns:
+                score_key = _score_column_to_series_key(column)
                 entry = {}
                 for bound in ["min", "max"]:
-                    val = synth_config.get(f"{prefix}_{bound}")
+                    val = synth_config.get(f"{column}_{bound}")
                     if val is not None:
                         entry[bound] = val
                 if entry:
                     thresholds[score_key] = entry
+            nested_filters = synth_config.get("score_filters")
+            if isinstance(nested_filters, dict):
+                for column, bounds in nested_filters.items():
+                    if not isinstance(bounds, dict):
+                        continue
+                    entry = {
+                        bound: value
+                        for bound, value in bounds.items()
+                        if bound in {"min", "max"} and value is not None
+                    }
+                    if entry:
+                        thresholds[_score_column_to_series_key(column)] = entry
             if thresholds:
                 plot_htmls["synthesis_thresholds"] = thresholds
 
