@@ -2,21 +2,14 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag (vX.Y.Z). Optional, defaults to v<pyproject version>."
-        required: false
-        type: string
+    branches: [main]
 
 permissions:
   contents: write
   id-token: write
 
 concurrency:
-  group: release-${{ github.ref_type }}-${{ github.ref_name }}
+  group: release-main
   cancel-in-progress: false
 
 jobs:
@@ -53,57 +46,88 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
-      - name: Resolve release metadata
-        id: release_meta
-        shell: bash
-        env:
-          TAG_INPUT: ${{ github.event.inputs.tag }}
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAG="${GITHUB_REF_NAME}"
-          elif [[ -n "${TAG_INPUT}" ]]; then
-            TAG="${TAG_INPUT}"
-          else
-            PROJECT_VERSION="$(uv run python - <<'PY'
-            import tomllib
-            from pathlib import Path
-
-            text = Path("pyproject.toml").read_text(encoding="utf-8")
-            print(tomllib.loads(text)["project"]["version"])
-            PY
-            )"
-            TAG="v${PROJECT_VERSION}"
-          fi
-
-          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: Invalid release tag '${TAG}'. Expected format vX.Y.Z."
-            exit 1
-          fi
-
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate tag matches project version
+      - name: Bump patch version
+        id: bump
         shell: bash
         run: |
           set -euo pipefail
 
-          PROJECT_VERSION="$(uv run python - <<'PY'
-          import tomllib
+          CURRENT_VERSION="$(uv run python - <<'PY'
+          import re
           from pathlib import Path
 
           text = Path("pyproject.toml").read_text(encoding="utf-8")
-          print(tomllib.loads(text)["project"]["version"])
+          m = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', text)
+          if not m:
+              raise SystemExit("ERROR: Could not find version in pyproject.toml")
+          print(m.group(1))
           PY
           )"
 
-          RELEASE_VERSION="${{ steps.release_meta.outputs.version }}"
-          if [[ "${PROJECT_VERSION}" != "${RELEASE_VERSION}" ]]; then
-            echo "ERROR: pyproject version (${PROJECT_VERSION}) != release version (${RELEASE_VERSION})."
-            exit 1
-          fi
+          uv run python - <<PY
+          import re
+          from pathlib import Path
+
+          current = "${CURRENT_VERSION}"
+          parts = current.split(".")
+          if len(parts) != 3 or not all(p.isdigit() for p in parts):
+              raise SystemExit(f"ERROR: Unsupported version format: {current!r}")
+          parts[2] = str(int(parts[2]) + 1)
+          new = ".".join(parts)
+
+          pyproject = Path("pyproject.toml")
+          py_text = pyproject.read_text(encoding="utf-8")
+          py_text2, n = re.subn(
+              r'(?m)^version\s*=\s*"[^"]+"\s*$',
+              f'version = "{new}"',
+              py_text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("ERROR: Failed to update version in pyproject.toml")
+          pyproject.write_text(py_text2, encoding="utf-8")
+
+          tui_version = Path("tui/src/constants/version.ts")
+          if tui_version.exists():
+              tui_text = tui_version.read_text(encoding="utf-8")
+              tui_text2, n2 = re.subn(
+                  r"(?m)^export const APP_VERSION = '[^']+';$",
+                  f"export const APP_VERSION = '{new}';",
+                  tui_text,
+                  count=1,
+              )
+              if n2 != 1:
+                  raise SystemExit("ERROR: Failed to update TUI version constant")
+              tui_version.write_text(tui_text2, encoding="utf-8")
+
+          print(f"bumped {current} -> {new}")
+          PY
+
+          NEW_VERSION="$(uv run python - <<'PY'
+          import re
+          from pathlib import Path
+
+          text = Path("pyproject.toml").read_text(encoding="utf-8")
+          m = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', text)
+          if not m:
+              raise SystemExit("ERROR: Could not find version in pyproject.toml")
+          print(m.group(1))
+          PY
+          )"
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add pyproject.toml tui/src/constants/version.ts
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:main
 
       - name: Build package
         run: uv build
@@ -122,14 +146,14 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.release_meta.outputs.tag }}
+          TAG: v${{ steps.bump.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           TARGET="$(git rev-parse HEAD)"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release already exists: $TAG"
+          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            echo "Tag already exists: $TAG"
             exit 0
           fi
 
