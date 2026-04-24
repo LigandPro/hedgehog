@@ -13,6 +13,9 @@ from typing import Any
 
 import pandas as pd
 from jinja2 import Environment, PackageLoader
+from rdkit import Chem
+from rdkit.Chem import rdDepictor
+from rdkit.Chem.Draw import rdMolDraw2D
 
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
@@ -487,6 +490,7 @@ class ReportGenerator:
             "descriptors_detailed": self._get_descriptors_detailed(),
             "filters": self._get_filter_stats(),
             "filters_detailed": self._get_filters_detailed(),
+            "common_alert_diagnostics": self._get_common_alert_diagnostics(),
             "synthesis": self._get_synthesis_stats(),
             "synthesis_detailed": self._get_synthesis_detailed(),
             "retrosynthesis": self._get_retrosynthesis_detailed(),
@@ -1984,6 +1988,316 @@ class ReportGenerator:
                             pass
 
         return result
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        """Convert CSV boolean-like values to bool."""
+        if isinstance(value, bool):
+            return value
+        if pd.isna(value):
+            return False
+        return str(value).strip().lower() in {"true", "1", "yes", "y"}
+
+    @staticmethod
+    def _parse_json_list(value: Any) -> list[int]:
+        """Parse a JSON list of integer ids from hits_long.csv."""
+        if value is None or pd.isna(value):
+            return []
+        try:
+            parsed = json.loads(str(value))
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [int(v) for v in parsed]
+
+    @staticmethod
+    def _common_alert_description_key(item: Any) -> str:
+        """Build stable ruleset/description key for description-level what-if logic."""
+        return f"{item.get('ruleset', '')}\t{item.get('description', '')}"
+
+    @staticmethod
+    def _common_alert_molecule_key(item: Any) -> tuple[Any, Any]:
+        """Build a molecule identity that stays unique across generator models."""
+        model_name = item.get("model_name", "")
+        if pd.isna(model_name):
+            model_name = ""
+        mol_idx = item.get("mol_idx")
+        if pd.notna(mol_idx):
+            return (model_name, mol_idx)
+        return (model_name, item.get("smiles", ""))
+
+    @staticmethod
+    def _common_alert_pass_columns(df: pd.DataFrame) -> list[str]:
+        """Return per-ruleset pass columns from common_alerts extended data."""
+        return [
+            c
+            for c in df.columns
+            if c.startswith("pass_") and c not in {"pass", "pass_any"}
+        ]
+
+    @staticmethod
+    def _coerce_pass_frame(
+        extended_df: pd.DataFrame, pass_cols: list[str]
+    ) -> pd.DataFrame:
+        """Convert pass_* columns to booleans while preserving original index."""
+        if not pass_cols:
+            return pd.DataFrame(index=extended_df.index)
+        return extended_df[pass_cols].apply(
+            lambda col: col.map(ReportGenerator._coerce_bool)
+        )
+
+    @staticmethod
+    def _sorted_records(
+        df: pd.DataFrame | None, sort_by: list[str], limit: int
+    ) -> list[dict[str, Any]]:
+        """Return descending-sorted top-N records for compact report payloads."""
+        if df is None or df.empty:
+            return []
+        return (
+            df.sort_values(sort_by, ascending=[False] * len(sort_by))
+            .head(limit)
+            .to_dict("records")
+        )
+
+    @staticmethod
+    def _render_common_alert_svg(
+        smiles: str, atom_ids: list[int], bond_ids: list[int]
+    ) -> str:
+        """Render a compact SVG depiction for one highlighted alert match."""
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return ""
+        rdDepictor.Compute2DCoords(mol)
+        drawer = rdMolDraw2D.MolDraw2DSVG(260, 190)
+        options = drawer.drawOptions()
+        options.clearBackground = False
+        drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightBonds=bond_ids)
+        drawer.FinishDrawing()
+        svg = drawer.GetDrawingText()
+        return svg.replace("svg:", "")
+
+    def _build_common_alert_examples(
+        self, hits_long: pd.DataFrame, limit: int = 72
+    ) -> list[dict[str, Any]]:
+        """Build bounded molecule examples with pre-rendered highlighted SVGs."""
+        if hits_long.empty:
+            return []
+        sort_cols = [
+            c
+            for c in [
+                "would_pass_if_disable_description",
+                "would_pass_if_disable_ruleset",
+                "total_rulesets_failed",
+            ]
+            if c in hits_long.columns
+        ]
+        if sort_cols:
+            hits_long = hits_long.sort_values(
+                sort_cols, ascending=[False] * len(sort_cols)
+            )
+
+        examples: list[dict[str, Any]] = []
+        for _, row in hits_long.head(limit).iterrows():
+            atom_ids = self._parse_json_list(row.get("matched_atom_ids"))
+            bond_ids = self._parse_json_list(row.get("matched_bond_ids"))
+            smiles = str(row.get("smiles", ""))
+            match_smiles_value = row.get("match_smiles")
+            match_smiles = (
+                smiles
+                if pd.isna(match_smiles_value) or not str(match_smiles_value).strip()
+                else str(match_smiles_value)
+            )
+            examples.append(
+                {
+                    "mol_idx": row.get("mol_idx"),
+                    "model_name": row.get("model_name"),
+                    "smiles": smiles,
+                    "ruleset": row.get("ruleset"),
+                    "description": row.get("description"),
+                    "rule_id": row.get("rule_id"),
+                    "smarts": row.get("smarts"),
+                    "n_matches": int(row.get("n_matches_for_rule", 1) or 1),
+                    "total_rulesets_failed": int(
+                        row.get("total_rulesets_failed", 0) or 0
+                    ),
+                    "would_rescue": bool(
+                        self._coerce_bool(row.get("would_pass_if_disable_description"))
+                    ),
+                    "svg": self._render_common_alert_svg(
+                        match_smiles, atom_ids, bond_ids
+                    ),
+                }
+            )
+        return examples
+
+    def _build_common_alert_cumulative_rulesets(
+        self, extended_df: pd.DataFrame, pass_cols: list[str], rulesets: list[str]
+    ) -> list[dict[str, int]]:
+        """Compute exact cumulative rescue when disabling top rulesets in order."""
+        if extended_df.empty or not pass_cols or not rulesets:
+            return []
+        pass_bool = self._coerce_pass_frame(extended_df, pass_cols)
+        failed_sets = [
+            {col.removeprefix("pass_") for col in pass_cols if not bool(row[col])}
+            for _, row in pass_bool.iterrows()
+        ]
+        out: list[dict[str, int]] = []
+        disabled: set[str] = set()
+        for idx, ruleset in enumerate(rulesets, start=1):
+            disabled.add(ruleset)
+            rescued = sum(bool(failed) and failed <= disabled for failed in failed_sets)
+            out.append({"step": idx, "disabled": ruleset, "rescued": int(rescued)})
+        return out
+
+    def _build_common_alert_cumulative_descriptions(
+        self, hits_long: pd.DataFrame, description_rows: list[dict[str, Any]]
+    ) -> list[dict[str, int]]:
+        """Compute exact cumulative rescue when disabling descriptions in order."""
+        if hits_long.empty or not description_rows:
+            return []
+        mol_to_keys: dict[Any, set[str]] = {}
+        for _, row in hits_long.iterrows():
+            key = self._common_alert_description_key(row)
+            mol_key = self._common_alert_molecule_key(row)
+            mol_to_keys.setdefault(mol_key, set()).add(key)
+
+        out: list[dict[str, int]] = []
+        disabled: set[str] = set()
+        for idx, item in enumerate(description_rows, start=1):
+            key = self._common_alert_description_key(item)
+            disabled.add(key)
+            rescued = sum(
+                bool(keys) and keys <= disabled for keys in mol_to_keys.values()
+            )
+            out.append(
+                {
+                    "step": idx,
+                    "disabled": str(item.get("description", "")),
+                    "rescued": int(rescued),
+                }
+            )
+        return out
+
+    def _get_common_alert_diagnostics(self) -> dict[str, Any]:
+        """Collect bounded Common Alerts diagnostics for the final report."""
+        alerts_dir = (
+            self.base_path / STAGE_DIRS["struct_filters_post"] / "common_alerts"
+        )
+        extended_path = alerts_dir / "extended.csv"
+        hits_path = alerts_dir / "hits_long.csv"
+        if not extended_path.exists() and not hits_path.exists():
+            return {}
+
+        extended_df = _try_read_csv(extended_path) if extended_path.exists() else None
+        hits_long = _try_read_csv(hits_path) if hits_path.exists() else None
+        if extended_df is None and hits_long is None:
+            return {}
+        if extended_df is None:
+            extended_df = pd.DataFrame()
+        if hits_long is None:
+            hits_long = pd.DataFrame()
+
+        pass_cols = self._common_alert_pass_columns(extended_df)
+        pass_bool = self._coerce_pass_frame(extended_df, pass_cols)
+        failed_counts = (~pass_bool).sum(axis=1) if pass_cols else pd.Series(dtype=int)
+        if len(extended_df):
+            total = int(len(extended_df))
+        elif "mol_idx" in hits_long.columns:
+            total = int(
+                len(
+                    {
+                        self._common_alert_molecule_key(row)
+                        for _, row in hits_long.iterrows()
+                    }
+                )
+            )
+        else:
+            total = 0
+        passed = int((failed_counts == 0).sum()) if pass_cols else 0
+        failed = int(total - passed)
+        failed_only = failed_counts[failed_counts > 0]
+
+        histogram = [
+            {"failed_rulesets": int(k), "molecules": int(v)}
+            for k, v in failed_counts.value_counts().sort_index().items()
+        ]
+
+        ruleset_summary = _try_read_csv(alerts_dir / "ruleset_summary.csv")
+        if ruleset_summary is None and pass_cols:
+            rows = []
+            for col in pass_cols:
+                ruleset = col.removeprefix("pass_")
+                failed_mask = ~pass_bool[col]
+                rows.append(
+                    {
+                        "ruleset": ruleset,
+                        "total_hits": int(failed_mask.sum()),
+                        "unique_rescue": int(
+                            (failed_mask & (failed_counts == 1)).sum()
+                        ),
+                    }
+                )
+            ruleset_summary = pd.DataFrame(rows)
+            if not ruleset_summary.empty:
+                ruleset_summary["overlap_hits"] = (
+                    ruleset_summary["total_hits"] - ruleset_summary["unique_rescue"]
+                )
+        if ruleset_summary is None:
+            ruleset_summary = pd.DataFrame()
+        ruleset_rows = self._sorted_records(
+            ruleset_summary, ["unique_rescue", "total_hits"], 15
+        )
+
+        description_summary = _try_read_csv(alerts_dir / "description_summary.csv")
+        description_rows = self._sorted_records(
+            description_summary, ["unique_rescue", "total_hits"], 20
+        )
+
+        cooccurrence = _try_read_csv(alerts_dir / "cooccurrence_ruleset.csv")
+        cooccurrence_rows = self._sorted_records(cooccurrence, ["intersection"], 50)
+
+        ruleset_order = [str(row.get("ruleset", "")) for row in ruleset_rows]
+
+        return {
+            "overview": {
+                "input_molecules": total,
+                "passed": passed,
+                "failed": failed,
+                "pass_rate": round((passed / total * 100), 1) if total else 0.0,
+                "mean_ruleset_alerts_failed": round(float(failed_only.mean()), 2)
+                if not failed_only.empty
+                else 0.0,
+                "median_ruleset_alerts_failed": float(failed_only.median())
+                if not failed_only.empty
+                else 0.0,
+                "max_ruleset_alerts": int(failed_counts.max())
+                if not failed_counts.empty
+                else 0,
+            },
+            "histogram": histogram,
+            "rulesets": ruleset_rows,
+            "descriptions": description_rows,
+            "cooccurrence": cooccurrence_rows,
+            "whatif_rulesets": self._build_common_alert_cumulative_rulesets(
+                extended_df, pass_cols, ruleset_order[:10]
+            ),
+            "whatif_descriptions": self._build_common_alert_cumulative_descriptions(
+                hits_long, description_rows[:10]
+            ),
+            "examples": self._build_common_alert_examples(hits_long),
+            "artifacts": {
+                "hits_long": str(hits_path.relative_to(self.base_path))
+                if hits_path.exists()
+                else None,
+                "ruleset_summary": "stages/03_structural_filters_post/common_alerts/ruleset_summary.csv"
+                if (alerts_dir / "ruleset_summary.csv").exists()
+                else None,
+                "description_summary": "stages/03_structural_filters_post/common_alerts/description_summary.csv"
+                if (alerts_dir / "description_summary.csv").exists()
+                else None,
+            },
+        }
 
     def _get_synthesis_detailed(self) -> dict[str, Any]:
         """Get detailed synthesis data for enhanced visualization.

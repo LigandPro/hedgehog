@@ -738,6 +738,131 @@ class TestStageAuditNotebook:
         assert notebook_meta["name"] == "stage_filter_audit.ipynb"
 
 
+class TestCommonAlertDiagnosticsReport:
+    """Tests for Common Alert Diagnostics report integration."""
+
+    def test_collects_bounded_common_alert_diagnostics(self, report_gen, base_path):
+        """Should read common_alerts artifacts without embedding full hit tables."""
+        alerts_dir = (
+            base_path / "stages" / "03_structural_filters_post" / "common_alerts"
+        )
+        alerts_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCN", "CCCl", "CCO"],
+                "model_name": ["m1", "m1", "m1"],
+                "mol_idx": [0, 1, 2],
+                "pass_RulesetA": [False, True, True],
+                "pass_RulesetB": [True, False, True],
+                "pass": [False, False, True],
+                "pass_any": [True, True, True],
+            }
+        ).to_csv(alerts_dir / "extended.csv", index=False)
+        pd.DataFrame(
+            {
+                "mol_idx": [0, 1],
+                "model_name": ["m1", "m1"],
+                "smiles": ["CCN", "CCCl"],
+                "ruleset": ["RulesetA", "RulesetB"],
+                "rule_id": [0, 1],
+                "description": ["nitrogen atom", "chlorine atom"],
+                "smarts": ["[#7]", "[#17]"],
+                "match_id": [0, 0],
+                "matched_atom_ids": ["[2]", "[2]"],
+                "matched_bond_ids": ["[]", "[]"],
+                "n_matches_for_rule": [1, 1],
+                "total_alerts_for_molecule": [1, 1],
+                "total_rulesets_failed": [1, 1],
+                "would_pass_if_disable_ruleset": [True, True],
+                "would_pass_if_disable_description": [True, True],
+            }
+        ).to_csv(alerts_dir / "hits_long.csv", index=False)
+        pd.DataFrame(
+            {
+                "ruleset": ["RulesetA", "RulesetB"],
+                "total_hits": [1, 1],
+                "unique_rescue": [1, 1],
+                "overlap_hits": [0, 0],
+            }
+        ).to_csv(alerts_dir / "ruleset_summary.csv", index=False)
+        pd.DataFrame(
+            {
+                "ruleset": ["RulesetA", "RulesetB"],
+                "description": ["nitrogen atom", "chlorine atom"],
+                "total_hits": [1, 1],
+                "unique_rescue": [1, 1],
+                "overlap_hits": [0, 0],
+            }
+        ).to_csv(alerts_dir / "description_summary.csv", index=False)
+        pd.DataFrame(
+            {
+                "left": ["RulesetA"],
+                "right": ["RulesetB"],
+                "intersection": [0],
+                "jaccard": [0.0],
+                "containment": [0.0],
+            }
+        ).to_csv(alerts_dir / "cooccurrence_ruleset.csv", index=False)
+
+        result = report_gen._get_common_alert_diagnostics()
+
+        assert result["overview"]["input_molecules"] == 3
+        assert result["overview"]["passed"] == 1
+        assert result["overview"]["failed"] == 2
+        assert result["histogram"][0] == {"failed_rulesets": 0, "molecules": 1}
+        assert result["rulesets"][0]["unique_rescue"] == 1
+        assert len(result["examples"]) == 2
+        assert "<svg" in result["examples"][0]["svg"]
+
+    def test_description_whatif_keeps_model_identities_separate(self, report_gen):
+        """Description what-if counts same mol_idx from different models separately."""
+        hits_long = pd.DataFrame(
+            {
+                "mol_idx": [0, 0],
+                "model_name": ["model_a", "model_b"],
+                "smiles": ["CCN", "CCO"],
+                "ruleset": ["RulesetA", "RulesetB"],
+                "description": ["nitrogen atom", "oxygen atom"],
+            }
+        )
+        description_rows = [
+            {"ruleset": "RulesetA", "description": "nitrogen atom"},
+            {"ruleset": "RulesetB", "description": "oxygen atom"},
+        ]
+
+        cumulative = report_gen._build_common_alert_cumulative_descriptions(
+            hits_long, description_rows
+        )
+
+        assert cumulative[0]["rescued"] == 1
+        assert cumulative[1]["rescued"] == 2
+
+    def test_full_report_renders_common_alert_section(self, report_gen, base_path):
+        """Full HTML report should include the compact diagnostics section."""
+        alerts_dir = (
+            base_path / "stages" / "03_structural_filters_post" / "common_alerts"
+        )
+        alerts_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCN"],
+                "model_name": ["m1"],
+                "mol_idx": [0],
+                "pass_RulesetA": [False],
+                "pass": [False],
+                "pass_any": [False],
+            }
+        ).to_csv(alerts_dir / "extended.csv", index=False)
+
+        report_path = report_gen.generate()
+        html = report_path.read_text(encoding="utf-8")
+
+        assert "Common Alert Diagnostics" in html
+        assert "Distribution of Failed Common Alert Rulesets per Molecule" in html
+        assert "common-alert-card-count" in html
+        assert "common-alert-card-columns" in html
+
+
 class TestSynthesisAlignedScores:
     """Tests for higher-is-better synthesis scorer comparison data."""
 
