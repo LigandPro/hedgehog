@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/public/hedgehog-title-dark.png" />
-    <source media="(prefers-color-scheme: light)" srcset="docs/public/hedgehog-title-light.png" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/hedgehog-title-light.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/public/hedgehog-title-dark.png" />
     <img src="docs/public/hedgehog-title.png" alt="HEDGEHOG" width="40%" />
   </picture>
 </p>
