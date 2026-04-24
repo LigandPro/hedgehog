@@ -896,6 +896,47 @@ class TestConfigValidatorDescriptorsStructuralConstraints:
         )
 
 
+class TestConfigValidatorSynthesis:
+    """Synthesis validator should validate registered score filters."""
+
+    def test_validate_synthesis_accepts_nested_score_filters(self):
+        result = ConfigValidator.validate(
+            "synthesis",
+            {
+                "score_filters": {
+                    "sync_score": {"min": 0.5, "max": 1},
+                    "fs_score": {"min": -10.0, "max": "inf"},
+                    "gasa_score": {"min": None, "max": None},
+                }
+            },
+        )
+
+        assert result["valid"] is True
+        assert result["errors"] == []
+
+    def test_validate_synthesis_rejects_invalid_score_filters(self):
+        result = ConfigValidator.validate(
+            "synthesis",
+            {
+                "sync_score_max": 2,
+                "score_filters": {
+                    "sync_score": {"min": 0.9, "max": 0.1},
+                    "fs_score": {"min": "low", "max": 1},
+                    "gasa_score": [0, 1],
+                },
+            },
+        )
+
+        assert result["valid"] is False
+        assert "sync_score_max must be between 0 and 1" in result["errors"]
+        assert (
+            "score_filters.sync_score.min must be less than or equal to "
+            "score_filters.sync_score.max" in result["errors"]
+        )
+        assert "score_filters.fs_score.min must be a number" in result["errors"]
+        assert "score_filters.gasa_score must be a mapping" in result["errors"]
+
+
 class TestConfigValidatorDocking:
     """Docking config validator should accept the supported engine names."""
 

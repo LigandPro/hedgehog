@@ -241,6 +241,58 @@ Use `--no-yes` to prompt before download:
 uv run hedgehog setup sync --no-yes
 ```
 
+## `hedgehog setup fsscore`
+
+Clones upstream FSScore checkout into `modules/fsscore` so you can point synthesis
+configuration to the pretrained checkpoint without adding heavy torch dependencies
+to the base HEDGEHOG environment.
+
+```bash
+uv run hedgehog setup fsscore --yes
+```
+
+Options:
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--yes` | `-y` | `FLAG` | `False` | Auto-accept checkout prompt. |
+
+After checkout, configure:
+
+- `HEDGEHOG_FSSCORE_PYTHON` to an isolated FSScore environment
+- `HEDGEHOG_FSSCORE_MODEL_PATH` (or `HEDGEHOG_FSSCORE_REPO_PATH`)
+
+## `hedgehog setup nonpher-check`
+
+Validates optional Nonpher runtime for the synthesis `nonpher` scorer.
+This command does not install dependencies. For portable setup, first use
+uv-isolated environments under a writable per-host `HEDGEHOG_OPTIONAL_ENV_ROOT`
+(for example `~/work/hedgehog_optional_envs`), then probe with `--python`.
+
+```bash
+uv run hedgehog setup nonpher-check
+```
+
+Options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--python` | `TEXT` | `None` | External interpreter to probe (for example `~/work/hedgehog_optional_envs/nonpher/bin/python`). |
+| `--probe-smiles` | `TEXT` | `CCO` | Probe molecule used for runtime validation. |
+
+Examples:
+
+```bash
+# Probe current uv environment
+uv run hedgehog setup nonpher-check
+
+# Probe uv-only isolated Nonpher env
+uv run hedgehog setup nonpher-check --python ~/work/hedgehog_optional_envs/nonpher/bin/python
+
+# If uv-only bootstrap is blocked by native deps, probe a validated external runtime
+uv run hedgehog setup nonpher-check --python /mnt/ligandpro/shared_storage/data/nikolenko/hedgehog_optional_envs/nonpher-hybrid-py38-v2/bin/python
+```
+
 ## `hedgehog setup nvmolkit-worker`
 
 Creates an isolated virtual environment at `.venv-nvmolkit-worker` and installs the optional nvMolKit worker there.

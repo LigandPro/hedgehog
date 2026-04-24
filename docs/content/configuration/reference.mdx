@@ -697,6 +697,7 @@ Controls the retrosynthesis feasibility stage, including synthesizability score 
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the synthesis stage |
 | `n_jobs` | int | `-1` | Worker count for synthesis scoring and retrosynthesis (`-1`/`0` = auto/all available cores) |
+| `enabled_scores` | list | `sa`, `syba`, `rascore`, `sync`, `scscore`, `nonpher`, `fsscore`, `gasa` | Synthesis score calculators to run. Optional scorers return `NaN` with warnings when their external dependencies are not configured |
 | `run_retrosynthesis` | bool | `true` | Run AiZynthFinder retrosynthetic analysis |
 | `filter_solved_only` | bool | `true` | Keep only molecules for which a retrosynthetic route was found |
 | `sa_score_min` | float | `1` | Minimum synthetic accessibility score (Ertl) |
@@ -705,18 +706,34 @@ Controls the retrosynthesis feasibility stage, including synthesizability score 
 | `syba_score_max` | float | `inf` | Maximum SYBA score |
 | `ra_score_min` | float | `0.5` | Minimum retrosynthetic accessibility score |
 | `ra_score_max` | float | `1` | Maximum retrosynthetic accessibility score |
-| `run_sync` | bool | `true` | Compute the 3D SYNC synthesizability classifier score |
 | `sync_auto_install` | bool | `true` | Download the SYNC checkpoint automatically when it is missing |
 | `sync_device` | string | `cpu` | Torch device for SYNC inference |
 | `sync_conformer_seed` | int | `61453` | RDKit ETKDG conformer seed for SYNC inputs |
-| `sync_score_min` | float | `0.5` | Minimum SYNC synthesizability probability |
-| `sync_score_max` | float | `1` | Maximum SYNC synthesizability probability |
+| `fsscore_python` | string \| null | `null` | Python interpreter for isolated FSScore worker environment |
+| `fsscore_model_path` | string \| null | `null` | Explicit FSScore checkpoint path (`*.ckpt`) |
+| `fsscore_repo_path` | string \| null | `null` | Optional FSScore checkout path used to resolve `models/pretrain_graph_GGLGGL_ep242_best_valloss.ckpt` |
+| `fsscore_batch_size` | int | `128` | Batch size passed to `fsscore.score` |
+| `fsscore_num_workers` | int \| null | `null` | Optional dataloader worker count passed to `fsscore.score` |
+| `score_filters` | object | `{}` | Optional min/max filters for additional score columns such as `sync_score`, `sc_score`, `nonpher_complexity_score`, `fs_score`, or `gasa_score` |
+| `gasa.command` | string | `null` | Optional local command template for batch `gasa` scoring using `{input}` and `{output}` placeholders |
+| `gasa.executable` | string | `null` | Optional local executable path/name used for `gasa` scoring (`<exe> --smiles <SMILES>`) |
+| `gasa.api_url` | string | `null` | Optional local loopback HTTP endpoint for `gasa` scoring (`POST {"smiles": ...}`) |
+| `gasa.timeout_seconds` | float | `30` | Timeout per `gasa` backend call |
 
 ### Default YAML
 
 ```yaml
 run: true
 n_jobs: -1
+enabled_scores:
+  - sa
+  - syba
+  - rascore
+  - sync
+  - scscore
+  - nonpher
+  - fsscore
+  - gasa
 run_retrosynthesis: true
 filter_solved_only: true
 sa_score_min: 1
@@ -725,13 +742,50 @@ syba_score_min: 0
 syba_score_max: inf
 ra_score_min: 0.5
 ra_score_max: 1
-run_sync: true
 sync_auto_install: true
 sync_device: cpu
 sync_conformer_seed: 61453
-sync_score_min: 0.5
-sync_score_max: 1
+fsscore_python:
+fsscore_model_path:
+fsscore_repo_path:
+fsscore_batch_size: 128
+fsscore_num_workers:
+score_filters:
+  sync_score:
+    min: 0.5
+    max: 1
+  sc_score:
+    min:
+    max:
+  nonpher_complexity_score:
+    min:
+    max:
+  fs_score:
+    min:
+    max:
+  gasa_score:
+    min:
+    max:
+gasa:
+  command:
+  executable:
+  api_url:
+  timeout_seconds: 30
 ```
+
+Optional external scorers are configured outside the base dependency set:
+
+- Set `HEDGEHOG_OPTIONAL_ENV_ROOT` to a writable host-local directory (for example `~/work/hedgehog_optional_envs`) so FSScore/GASA/Nonpher uv bootstraps stay isolated and portable across servers. Keep output folders in shared storage.
+- `nonpher` can run in-process or via external worker (`HEDGEHOG_NONPHER_PYTHON`). If runtime is unavailable, `nonpher_complexity_score` is reported as `NaN`. Validate with `uv run hedgehog setup nonpher-check` or `uv run hedgehog setup nonpher-check --python ~/work/hedgehog_optional_envs/nonpher/bin/python`.
+- With `--auto-install` / `HEDGEHOG_AUTO_INSTALL=1`, HEDGEHOG attempts uv-only Nonpher bootstrap under `$HEDGEHOG_OPTIONAL_ENV_ROOT/nonpher` (or `.venv-nonpher-worker`) via pinned `numpy<2` + `rdkit-pypi` + git installs for `nonpher` and `molpher-lib`.
+- If uv-only bootstrap fails on native blockers (for example `cannot find -lmolpher` or other unresolved linker/system dependencies), HEDGEHOG logs the exact blocker and leaves Nonpher scores as `NaN`.
+- `HEDGEHOG_NONPHER_PYTHON` always takes precedence and can point to any validated isolated interpreter, including a prebuilt shared hybrid runtime when uv-only is blocked.
+- `uv run hedgehog setup fsscore --yes` clones upstream FSScore checkout into `modules/fsscore`.
+- `HEDGEHOG_FSSCORE_PYTHON` points to isolated FSScore runtime. With `HEDGEHOG_AUTO_INSTALL=1`, missing Python/model settings can be auto-wired via `ensure_fsscore_runtime` when no explicit `HEDGEHOG_FSSCORE_COMMAND` is set.
+- `HEDGEHOG_FSSCORE_MODEL_PATH` sets an explicit checkpoint path. Alternatively, set `HEDGEHOG_FSSCORE_REPO_PATH` and HEDGEHOG resolves the default checkpoint under `models/`.
+- `HEDGEHOG_FSSCORE_COMMAND` can provide a custom command template using `{input}`, `{output}`, `{smiles_col}`, `{model_path}`, `{batch_size}`, and `{n_jobs}` placeholders.
+- `HEDGEHOG_GASA_COMMAND` can provide a custom batch command template using `{input}`, `{output}`, `{smiles_col}`, `{model_path}`, `{batch_size}`, and `{n_jobs}` placeholders.
+- `HEDGEHOG_GASA_EXECUTABLE` points to a local executable; `HEDGEHOG_GASA_API_URL` points to a local loopback API endpoint. With `HEDGEHOG_AUTO_INSTALL=1`, missing backend can be auto-populated through `ensure_gasa_worker` + `hedgehog.workers.gasa_worker`. If backend setup still fails, scores default to `NaN` with a warning.
 
 ---
 

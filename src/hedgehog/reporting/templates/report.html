@@ -263,6 +263,14 @@
             color: var(--primary);
         }
 
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
         .descriptor-table {
             font-size: 0.95em;
         }
@@ -670,7 +678,26 @@
                 // Synthesis Analysis - Model Filtering
                 // =====================================================
                 var synthesisDataByModel = {{ (plots.synthesis_data or {}) | tojson }};
+                var synthesisScoreMeta = {{ (plots.synthesis_score_meta or []) | tojson }};
                 var currentSynthesisModel = 'all';
+
+                function selectSynthesisPanel(panel, btn) {
+                    var toggle = document.getElementById('synthesis-panel-toggle');
+                    if (toggle) {
+                        var buttons = toggle.querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                    }
+                    var panels = document.querySelectorAll('[data-synthesis-panel]');
+                    panels.forEach(function(item) {
+                        item.className = item.getAttribute('data-synthesis-panel') === panel ? 'tab-panel active' : 'tab-panel';
+                    });
+                    window.setTimeout(function() {
+                        document.querySelectorAll('[data-synthesis-panel=\"' + panel + '\"] .js-plotly-plot').forEach(function(plot) {
+                            Plotly.Plots.resize(plot);
+                        });
+                    }, 0);
+                }
 
                 function selectSynthesisModel(model, btn) {
                     currentSynthesisModel = model;
@@ -691,10 +718,53 @@
                     updateSynthesisMetrics(data);
 
                     // Update plots
-                    drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', '', 'sa_scores');
-                    drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', '', 'syba_scores');
-                    drawHistogram('synthesis-ra-hist', data.ra_scores || [], 'RA Score (higher = easier)', '', 'ra_scores');
+                    updateSynthesisScoreHistograms(data);
                     drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (document.getElementById('synthesis-score-grid')) {
+                        updateSynthesisPlots();
+                    }
+                });
+
+                function updateSynthesisScoreHistograms(data) {
+                    var grid = document.getElementById('synthesis-score-grid');
+                    if (!grid) return;
+                    grid.innerHTML = '';
+
+                    var meta = synthesisScoreMeta || [];
+                    if (!meta.length && data.score_distributions) {
+                        meta = Object.keys(data.score_distributions).map(function(column) {
+                            return {
+                                column: column,
+                                key: column.replace(/_score$/, '') + '_scores',
+                                label: column
+                            };
+                        });
+                    }
+
+                    meta.forEach(function(item) {
+                        var values = data[item.key] || (data.score_distributions && data.score_distributions[item.column]) || [];
+                        if (!values.length) return;
+                        var panel = document.createElement('div');
+                        var title = document.createElement('h4');
+                        var container = document.createElement('div');
+                        var containerId = 'synthesis-' + item.key.replace(/_/g, '-') + '-hist';
+
+                        title.style.marginBottom = '8px';
+                        title.textContent = item.label + ' Distribution';
+                        container.id = containerId;
+                        container.className = 'plot-container';
+                        panel.appendChild(title);
+                        panel.appendChild(container);
+                        grid.appendChild(panel);
+                        drawHistogram(containerId, values, item.label, '', item.key);
+                    });
+
+                    if (!grid.children.length) {
+                        showEmptyState(grid);
+                    }
                 }
 
                 function updateSynthesisMetrics(data) {
@@ -2031,7 +2101,7 @@
         {% endif %}
 
         <!-- Synthesis Analysis (Stage 04) -->
-        {% if data.synthesis.distributions or data.synthesis_detailed.sa_scores %}
+        {% if data.synthesis.distributions or data.synthesis_detailed.score_distributions %}
         <section>
             <h2>Synthesis Analysis</h2>
 
@@ -2045,6 +2115,17 @@
             </div>
             {% endif %}
 
+            <div class="view-toggle" id="synthesis-panel-toggle">
+                <button class="active" onclick="selectSynthesisPanel('raw', this)">Raw Scores</button>
+                {% if plots.synthesis_aligned_dist %}
+                <button onclick="selectSynthesisPanel('aligned', this)">Aligned Comparison</button>
+                {% endif %}
+                {% if data.retrosynthesis and data.retrosynthesis.summary %}
+                <button onclick="selectSynthesisPanel('retrosynthesis', this)">AiZynthFinder</button>
+                {% endif %}
+            </div>
+
+            <div class="tab-panel active" data-synthesis-panel="raw">
             <!-- ==================== Synthesis Scores Section ==================== -->
             <h3 style="margin-top: 20px; margin-bottom: 15px;">Synthesis Scores</h3>
 
@@ -2055,35 +2136,66 @@
                 <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.3); vertical-align: middle; margin-right: 6px; border: 1px solid #d1d5db;"></span>Out of Range</span>
             </div>
 
-            <!-- SA, SYBA, RA histograms (dynamic) -->
-            <div class="three-col">
-                <div>
-                    <h4 style="margin-bottom: 8px;">SA Score Distribution</h4>
-                    <div id="synthesis-sa-hist" class="plot-container">
-                        {% if plots.synthesis_sa_hist %}{{ plots.synthesis_sa_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 8px;">SYBA Score Distribution</h4>
-                    <div id="synthesis-syba-hist" class="plot-container">
-                        {% if plots.synthesis_syba_hist %}{{ plots.synthesis_syba_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 8px;">RA Score Distribution</h4>
-                    <div id="synthesis-ra-hist" class="plot-container">
-                        {% if plots.synthesis_ra_hist %}{{ plots.synthesis_ra_hist | safe }}{% endif %}
-                    </div>
-                </div>
-            </div>
+            <!-- Score histograms (dynamic) -->
+            <div class="three-col" id="synthesis-score-grid"></div>
             <div style="text-align: center; margin-top: 8px;">
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SA Score (lower = easier)</p>
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SYBA Score (higher = easier)</p>
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">RA Score (higher = easier)</p>
+                {% for item in plots.synthesis_score_meta or [] %}
+                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">{{ item.label }}</p>
+                {% endfor %}
             </div>
+            </div>
+
+            {% if plots.synthesis_aligned_dist %}
+            <div class="tab-panel" data-synthesis-panel="aligned">
+                <h3 style="margin-top: 20px; margin-bottom: 15px;">Aligned Synthesis Scorer Comparison</h3>
+                <p style="color: #6b7280; font-size: 13px; margin-bottom: 16px;">
+                    All scores below are normalized to 0..1 with 1 meaning easier to synthesize. Raw score columns are unchanged in CSV outputs.
+                </p>
+                <div class="plot-container">{{ plots.synthesis_aligned_dist | safe }}</div>
+                <div class="two-col" style="margin-top: 20px;">
+                    <div>
+                        {% if plots.synthesis_aligned_corr %}
+                        {{ plots.synthesis_aligned_corr | safe }}
+                        {% else %}
+                        <div class="empty-state">No correlation data available</div>
+                        {% endif %}
+                    </div>
+                    <div>
+                        {% if plots.synthesis_aligned_route %}
+                        {{ plots.synthesis_aligned_route | safe }}
+                        {% else %}
+                        <div class="empty-state">No route comparison data available</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if plots.synthesis_aligned_score_meta %}
+                <table style="margin-top: 20px;">
+                    <thead>
+                        <tr>
+                            <th>Scorer</th>
+                            <th>Raw Direction</th>
+                            <th>Normalization</th>
+                            <th>Aligned Mean</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in plots.synthesis_aligned_score_meta %}
+                        <tr>
+                            <td>{{ item.label }}</td>
+                            <td>{{ item.raw_direction }}</td>
+                            <td>{{ item.normalization }}</td>
+                            <td>{{ "%.3f"|format(item.mean) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            {% endif %}
 
             <!-- ==================== AiZynthFinder Section ==================== -->
             {% if data.retrosynthesis and data.retrosynthesis.summary %}
+            <div class="tab-panel" data-synthesis-panel="retrosynthesis">
             <h3 style="margin-top: 30px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid var(--border);">AiZynthFinder Retrosynthesis</h3>
 
             <!-- AiZynthFinder metrics -->
@@ -2158,6 +2270,7 @@
                         {% endif %}
                     </div>
                 </div>
+            </div>
             </div>
             {% endif %}
         </section>

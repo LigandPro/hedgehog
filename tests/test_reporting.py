@@ -736,3 +736,92 @@ class TestStageAuditNotebook:
         notebook_meta = report_data["metadata"]["stage_audit_notebook"]
         assert notebook_meta["path"] == "stage_filter_audit.ipynb"
         assert notebook_meta["name"] == "stage_filter_audit.ipynb"
+
+
+class TestSynthesisAlignedScores:
+    """Tests for higher-is-better synthesis scorer comparison data."""
+
+    def test_aligned_scores_normalize_every_scorer_to_higher_is_better(self, tmp_path):
+        synth_dir = tmp_path / "stages" / "04_synthesis"
+        synth_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "c1ccccc1"],
+                "model_name": ["ModelA", "ModelA"],
+                "sa_score": [2.0, 8.0],
+                "syba_score": [-10.0, 100.0],
+                "ra_score": [0.2, 0.9],
+                "sync_score": [0.1, 0.9],
+                "sc_score": [2.0, 5.0],
+                "nonpher_complexity_score": [0.0, 1.0],
+                "fs_score": [-5.0, 5.0],
+                "gasa_score": [0.1, 0.9],
+                "solved": [True, False],
+            }
+        ).to_csv(synth_dir / "synthesis_extended.csv", index=False)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={},
+            initial_count=2,
+            final_count=2,
+        )
+        result = gen._get_synthesis_detailed()
+        aligned = result["aligned_scores"]
+        scores = aligned["scores"]
+
+        assert scores["sa_aligned_scores"][0] > scores["sa_aligned_scores"][1]
+        assert scores["syba_aligned_scores"][1] > scores["syba_aligned_scores"][0]
+        assert scores["ra_aligned_scores"][1] > scores["ra_aligned_scores"][0]
+        assert scores["sync_aligned_scores"][1] > scores["sync_aligned_scores"][0]
+        assert scores["sc_aligned_scores"][0] > scores["sc_aligned_scores"][1]
+        assert (
+            scores["nonpher_complexity_aligned_scores"][0]
+            > scores["nonpher_complexity_aligned_scores"][1]
+        )
+        assert scores["fs_aligned_scores"][1] > scores["fs_aligned_scores"][0]
+        assert scores["gasa_aligned_scores"][0] > scores["gasa_aligned_scores"][1]
+
+        for values in scores.values():
+            assert all(0.0 <= value <= 1.0 for value in values)
+
+        assert (
+            aligned["by_route"]["sa_score"]["solved_mean"]
+            > aligned["by_route"]["sa_score"]["unsolved_mean"]
+        )
+        assert aligned["by_model"]["ModelA"]["scores"]
+
+    def test_report_renders_aligned_synthesis_comparison_tab(self, tmp_path):
+        synth_dir = tmp_path / "stages" / "04_synthesis"
+        synth_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN", "CCC"],
+                "model_name": ["ModelA", "ModelA", "ModelB"],
+                "sa_score": [2.0, 3.0, 6.0],
+                "syba_score": [90.0, 80.0, -5.0],
+                "ra_score": [0.9, 0.8, 0.3],
+                "sync_score": [0.99, 0.95, 0.2],
+                "sc_score": [2.1, 2.8, 4.5],
+                "solved": [True, True, False],
+                "search_time": [4.0, 5.0, 12.0],
+            }
+        ).to_csv(synth_dir / "synthesis_extended.csv", index=False)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={},
+            initial_count=3,
+            final_count=3,
+        )
+        data = gen._collect_data()
+        plots = gen._generate_plots(data)
+        html = gen._render_template(data, plots)
+
+        assert "Aligned Synthesis Scorer Comparison" in html
+        assert "synthesis_aligned_dist" not in html
+        assert plots["synthesis_aligned_dist"]
+        assert plots["synthesis_aligned_corr"]
+        assert plots["synthesis_aligned_route"]

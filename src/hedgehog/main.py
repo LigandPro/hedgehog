@@ -1330,6 +1330,107 @@ def setup_sync(
     console.print(f"[bold]SYNC classifier installed.[/bold] Model: {model_path}")
 
 
+@setup_app.command("fsscore")
+def setup_fsscore(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Auto-accept checkout prompt.",
+    ),
+) -> None:
+    """Download FSScore source checkout into modules/fsscore."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    from hedgehog.setup import ensure_fsscore_checkout
+
+    project_root = Path(__file__).resolve().parents[2]
+    checkout_path = ensure_fsscore_checkout(project_root)
+    model_path = (
+        checkout_path / "models" / "pretrain_graph_GGLGGL_ep242_best_valloss.ckpt"
+    )
+    console.print(f"[bold]FSScore checkout is ready.[/bold] Path: {checkout_path}")
+    console.print(
+        "Set HEDGEHOG_FSSCORE_PYTHON to an isolated FSScore environment and "
+        f"HEDGEHOG_FSSCORE_MODEL_PATH={model_path}."
+    )
+
+
+@setup_app.command("gasa")
+def setup_gasa(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Auto-accept checkout/dependency installs.",
+    ),
+    python_bin: str | None = typer.Option(
+        None,
+        "--python",
+        help="Python interpreter for worker venv (default: python3.10 -> 3.11).",
+    ),
+) -> None:
+    """Install optional GASA scorer checkout + isolated worker environment."""
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    from hedgehog.setup import ensure_gasa_worker
+
+    project_root = Path(__file__).resolve().parents[2]
+    setup_result = ensure_gasa_worker(project_root, python_bin=python_bin)
+    command_template = (
+        "python -m hedgehog.workers.gasa_worker "
+        f"--worker-python {setup_result.worker_python} "
+        f"--repo-path {setup_result.repo_path} "
+        "--input-csv {input} --output-csv {output} "
+        "--smiles-column {smiles_col} --batch-size {batch_size} --num-workers {n_jobs}"
+    )
+    console.print("[bold]GASA worker is ready.[/bold]")
+    console.print(f"Repo: {setup_result.repo_path}")
+    console.print(f"Worker Python: {setup_result.worker_python}")
+    console.print(
+        "Set [bold]HEDGEHOG_GASA_COMMAND[/bold] (or synthesis.gasa.command) to:"
+    )
+    console.print(command_template)
+
+
+@setup_app.command("nonpher-check")
+def setup_nonpher_check(
+    python_bin: str | None = typer.Option(
+        None,
+        "--python",
+        help=(
+            "Optional Python interpreter for an isolated Nonpher environment "
+            "(for example, ~/work/hedgehog_optional_envs/nonpher/bin/python)."
+        ),
+    ),
+    probe_smiles: str = typer.Option(
+        "CCO",
+        "--probe-smiles",
+        help="SMILES used for runtime probe.",
+    ),
+) -> None:
+    """Validate optional Nonpher runtime without modifying the main uv env."""
+    from hedgehog.setup import (
+        check_nonpher_runtime,
+        nonpher_lobachevsky_setup_commands,
+    )
+
+    result = check_nonpher_runtime(python_bin=python_bin, probe_smiles=probe_smiles)
+    if result.available:
+        target = python_bin or "current environment"
+        console.print(f"[bold]Nonpher runtime is available.[/bold] Target: {target}")
+        console.print(f"Probe SMILES: {probe_smiles}")
+        return
+
+    console.print(f"[yellow]Nonpher runtime check failed:[/yellow] {result.detail}")
+    console.print("[bold]Suggested isolated setup path (Linux/lobachevsky):[/bold]")
+    for command in nonpher_lobachevsky_setup_commands():
+        console.print(f"  {command}")
+    raise typer.Exit(code=1)
+
+
 @setup_app.command("nvmolkit-worker")
 def setup_nvmolkit_worker(
     yes: bool = typer.Option(
