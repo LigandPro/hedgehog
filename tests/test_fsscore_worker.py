@@ -24,7 +24,7 @@ def _args() -> argparse.Namespace:
 def test_main_sets_cpu_default_for_subprocess(monkeypatch) -> None:
     """Worker should disable CUDA by default for broader host compatibility."""
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    monkeypatch.setattr(fsscore_worker, "_parse_args", lambda: _args())
+    monkeypatch.setattr(fsscore_worker, "_parse_args", _args)
 
     captured: dict[str, object] = {}
 
@@ -49,7 +49,7 @@ def test_main_sets_cpu_default_for_subprocess(monkeypatch) -> None:
 def test_main_preserves_explicit_cuda_env(monkeypatch) -> None:
     """Explicit CUDA_VISIBLE_DEVICES should be preserved, not overridden."""
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
-    monkeypatch.setattr(fsscore_worker, "_parse_args", lambda: _args())
+    monkeypatch.setattr(fsscore_worker, "_parse_args", _args)
 
     captured: dict[str, object] = {}
 

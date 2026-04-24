@@ -11,6 +11,9 @@ if TYPE_CHECKING:
     from hedgehog.setup._nonpher import NonpherCheckResult, NonpherEnsureResult
 
 
+NONPHER_PYTHON_ENV_VAR = "HEDGEHOG_NONPHER_PYTHON"
+
+
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ensure_gnina": ("hedgehog.setup._gnina", "ensure_gnina"),
     "ensure_aizynthfinder": ("hedgehog.setup._aizynthfinder", "ensure_aizynthfinder"),
@@ -26,7 +29,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "ensure_nvmolkit_worker",
     ),
     "NonpherCheckResult": ("hedgehog.setup._nonpher", "NonpherCheckResult"),
-    "NONPHER_PYTHON_ENV_VAR": ("hedgehog.setup._nonpher", "NONPHER_PYTHON_ENV_VAR"),
     "NonpherEnsureResult": ("hedgehog.setup._nonpher", "NonpherEnsureResult"),
 }
 

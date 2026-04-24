@@ -335,7 +335,7 @@ class TestStageEnum:
 
 def test_apply_cli_overrides_supports_multiple_stage_selection():
     """Repeated --stage flags should map to an ordered stage-selection override."""
-    import hedgehog.main as main_mod
+    from hedgehog import main as main_mod
 
     config = {"generated_mols_path": "input.csv"}
 
@@ -354,8 +354,8 @@ def test_apply_cli_overrides_supports_multiple_stage_selection():
 
 def test_setup_aizynthfinder_auto_accepts_by_default(monkeypatch, tmp_path):
     """setup aizynthfinder should auto-accept downloads without extra flags."""
-    import hedgehog.main as main_mod
     import hedgehog.setup as setup_mod
+    from hedgehog import main as main_mod
 
     captured: dict[str, str | None] = {"auto": None}
 
@@ -374,8 +374,8 @@ def test_setup_aizynthfinder_auto_accepts_by_default(monkeypatch, tmp_path):
 
 def test_setup_aizynthfinder_no_yes_restores_prompt(monkeypatch, tmp_path):
     """--no-yes should avoid forcing auto-install confirmations."""
-    import hedgehog.main as main_mod
     import hedgehog.setup as setup_mod
+    from hedgehog import main as main_mod
 
     captured: dict[str, str | None] = {"auto": "unexpected"}
 
@@ -394,8 +394,8 @@ def test_setup_aizynthfinder_no_yes_restores_prompt(monkeypatch, tmp_path):
 
 def test_setup_fsscore_sets_auto_install_when_yes(monkeypatch, tmp_path):
     """setup fsscore --yes should set HEDGEHOG_AUTO_INSTALL."""
-    import hedgehog.main as main_mod
     import hedgehog.setup as setup_mod
+    from hedgehog import main as main_mod
 
     captured: dict[str, str | None] = {"auto": None}
 
@@ -414,8 +414,8 @@ def test_setup_fsscore_sets_auto_install_when_yes(monkeypatch, tmp_path):
 
 def test_setup_nonpher_check_success(monkeypatch):
     """setup nonpher-check should report availability and return normally."""
-    import hedgehog.main as main_mod
     import hedgehog.setup as setup_mod
+    from hedgehog import main as main_mod
 
     printed: list[str] = []
 
@@ -437,8 +437,8 @@ def test_setup_nonpher_check_success(monkeypatch):
 
 def test_setup_nonpher_check_failure_exits_with_guidance(monkeypatch):
     """setup nonpher-check should exit code 1 and print Linux setup guidance."""
-    import hedgehog.main as main_mod
     import hedgehog.setup as setup_mod
+    from hedgehog import main as main_mod
 
     printed: list[str] = []
 
@@ -475,7 +475,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     tmp_path, monkeypatch
 ):
     """CLI progress should reuse one task and keep stage numbering monotonic."""
-    import hedgehog.main as main_mod
+    from hedgehog import main as main_mod
 
     _FakeProgress.instances.clear()
 
@@ -609,7 +609,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
 
 def test_run_progress_strips_duplicate_stage_prefix(tmp_path, monkeypatch):
     """StructFilters progress should not duplicate stage name in description."""
-    import hedgehog.main as main_mod
+    from hedgehog import main as main_mod
 
     _FakeProgress.instances.clear()
 
@@ -704,7 +704,7 @@ def test_run_progress_strips_duplicate_stage_prefix(tmp_path, monkeypatch):
 
 def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
     """CLI should not create Rich progress/task unless --progress is enabled."""
-    import hedgehog.main as main_mod
+    from hedgehog import main as main_mod
 
     results_dir = tmp_path / "results"
     input_path = tmp_path / "input.csv"
@@ -777,7 +777,7 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
 
 def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
     """Explicit run subcommand should delegate to pipeline command helper."""
-    import hedgehog.main as main_mod
+    from hedgehog import main as main_mod
 
     captured: dict[str, object] = {}
 
