@@ -262,6 +262,33 @@ After checkout, configure:
 - `HEDGEHOG_FSSCORE_PYTHON` to an isolated FSScore environment
 - `HEDGEHOG_FSSCORE_MODEL_PATH` (or `HEDGEHOG_FSSCORE_REPO_PATH`)
 
+## `hedgehog setup gasa`
+
+Bootstraps the optional GASA scorer checkout and isolated worker environment,
+then prints a ready-to-copy `HEDGEHOG_GASA_COMMAND` template for synthesis
+configuration.
+
+```bash
+uv run hedgehog setup gasa
+```
+
+Options:
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--yes` | `-y` | `FLAG` | `False` | Auto-accept checkout and dependency installs. |
+| `--python` | | `TEXT` | `None` | Python interpreter for the worker venv. Defaults to `python3.10`, then falls back to `python3.11`. |
+
+Examples:
+
+```bash
+# Bootstrap the worker and print the command template
+uv run hedgehog setup gasa --yes
+
+# Force worker setup to use a specific interpreter
+uv run hedgehog setup gasa --python python3.11 --yes
+```
+
 ## `hedgehog setup nonpher-check`
 
 Validates optional Nonpher runtime for the synthesis `nonpher` scorer.
