@@ -5,6 +5,12 @@ n_jobs: -1
 sample_size: 10000
 batch_size: 512
 save_sampled_mols: true
+large_dataset_mode: false
+large_dataset_chunk_rows: 250000
+large_dataset_single_csv_limit: 1000000
+large_dataset_output_format: csv.gz
+large_dataset_filter_data: false
+large_dataset_enable_all_filters: true
 pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
 mcf_file_path: src/hedgehog/vendor/moleval/metrics/mcf.csv
 ligand_preparation_tool: /opt/proprietary_tools/ligand_prep/bin/ligand_prep

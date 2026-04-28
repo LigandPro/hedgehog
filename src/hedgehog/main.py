@@ -28,6 +28,11 @@ from hedgehog._constants import (
     KEY_FOLDER_TO_SAVE,
 )
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
+from hedgehog.large_dataset import (
+    LARGE_DATASET_MODE_KEY,
+    apply_large_dataset_defaults,
+    is_large_dataset_mode,
+)
 from hedgehog.pipeline import calculate_metrics
 from hedgehog.utils.data_prep import prepare_input_data
 from hedgehog.utils.mol_index import assign_mol_idx
@@ -910,6 +915,7 @@ def _run_pipeline_command(
     force_new_folder: bool,
     auto_install: bool,
     show_progress: bool,
+    large_dataset: bool,
 ) -> None:
     _display_banner()
 
@@ -933,6 +939,30 @@ def _run_pipeline_command(
     config_dict = load_config(config_path)
     _resolve_config_paths(config_dict, config_path)
     _apply_cli_overrides(config_dict, generated_mols_path, stage)
+    if large_dataset:
+        config_dict[LARGE_DATASET_MODE_KEY] = True
+    if is_large_dataset_mode(config_dict):
+        apply_large_dataset_defaults(config_dict)
+        if stage is None:
+            config_dict[STAGE_SELECTION_KEY] = [
+                Stage.mol_prep.value,
+                Stage.descriptors.value,
+                Stage.struct_filters.value,
+                Stage.synthesis.value,
+            ]
+        selected = set(config_dict.get(STAGE_SELECTION_KEY, []) or [])
+        unsupported = {
+            Stage.docking.value,
+            Stage.docking_filters.value,
+            Stage.final_descriptors.value,
+        }
+        requested_unsupported = sorted(selected & unsupported)
+        if requested_unsupported:
+            logger.error(
+                "Large dataset mode supports pre-docking stages only; unsupported stages requested: %s",
+                ", ".join(requested_unsupported),
+            )
+            raise typer.Exit(code=1)
 
     if out_dir:
         folder_to_save = Path(out_dir).resolve()
@@ -947,15 +977,21 @@ def _run_pipeline_command(
     config_dict[KEY_FOLDER_TO_SAVE] = str(folder_to_save)
     LoggerSingleton().configure_log_directory(folder_to_save)
 
-    _preprocess_input(config_dict, folder_to_save)
+    if is_large_dataset_mode(config_dict):
+        logger.info(
+            "[bold]Large dataset mode:[/bold] streaming chunks; plots and report-heavy outputs are disabled."
+        )
+        data = None
+    else:
+        _preprocess_input(config_dict, folder_to_save)
 
-    data = prepare_input_data(config_dict, logger)
+        data = prepare_input_data(config_dict, logger)
 
-    if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
-        data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
+        if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
+            data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
 
-    should_save = config_dict.get("save_sampled_mols", False) or bool(stage)
-    _save_sampled_molecules(data, folder_to_save, should_save)
+        should_save = config_dict.get("save_sampled_mols", False) or bool(stage)
+        _save_sampled_molecules(data, folder_to_save, should_save)
 
     logger.info("[bold]Starting pipeline...[/bold]")
 
@@ -1024,6 +1060,11 @@ def run(
         "--progress",
         help="Show live progress bar.",
     ),
+    large_dataset: bool = typer.Option(
+        False,
+        "--large-dataset",
+        help="Stream large libraries in chunks and write row-level shard outputs.",
+    ),
 ) -> None:
     """
     Run the molecular analysis pipeline.
@@ -1056,6 +1097,9 @@ def run(
     \b
       uv run hedgehog --progress
 
+    \b
+      uv run hedgehog --large-dataset --mols input/pubchem.csv
+
     """
     if ctx is None or ctx.invoked_subcommand is None:
         _run_pipeline_command(
@@ -1067,6 +1111,7 @@ def run(
             force_new_folder=force_new_folder,
             auto_install=auto_install,
             show_progress=show_progress,
+            large_dataset=large_dataset,
         )
 
 
@@ -1120,6 +1165,11 @@ def run_command(
         "--progress",
         help="Show live progress bar.",
     ),
+    large_dataset: bool = typer.Option(
+        False,
+        "--large-dataset",
+        help="Stream large libraries in chunks and write row-level shard outputs.",
+    ),
 ) -> None:
     """Run the molecular analysis pipeline as an explicit subcommand."""
     _run_pipeline_command(
@@ -1131,6 +1181,7 @@ def run_command(
         force_new_folder=force_new_folder,
         auto_install=auto_install,
         show_progress=show_progress,
+        large_dataset=large_dataset,
     )
 
 

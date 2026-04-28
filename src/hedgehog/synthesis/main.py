@@ -4,6 +4,8 @@ import pandas as pd
 
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.large_dataset import is_large_dataset_mode
+from hedgehog.synthesis.large import run_large as run_large_synthesis
 from hedgehog.synthesis.utils import *
 
 IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
@@ -67,6 +69,10 @@ def main(config: dict, reporter=None) -> None:
     output_folder.mkdir(parents=True, exist_ok=True)
     config_synthesis = load_config(config["config_synthesis"])
     filtered_output = output_folder / "filtered_molecules.csv"
+
+    if is_large_dataset_mode(config):
+        run_large_synthesis(config, config_synthesis, output_folder, reporter=reporter)
+        return
 
     input_path = get_input_path(config, folder_to_save)
     if not Path(input_path).exists():

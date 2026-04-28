@@ -9,8 +9,10 @@ from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.compute import compute_metrics
 from hedgehog.descriptors.filtering import filter_molecules
 from hedgehog.descriptors.io import process_path
+from hedgehog.descriptors.large import run_large
 from hedgehog.descriptors.plotting import draw_filtered_mols
 from hedgehog.descriptors.waves.registry import run_waves
+from hedgehog.large_dataset import is_large_dataset_mode
 from hedgehog.utils.mol_index import assign_mol_idx
 
 
@@ -59,14 +61,9 @@ def run(data, config, subfolder=None, reporter=None):
                    or 'stages/07_descriptors_final')
         reporter: Optional progress reporter instance
     """
-    if data is None or len(data) == 0:
-        logger.warning("No molecules provided for descriptor calculation. Skipping.")
-        return None
-
     folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     subfolder = subfolder or str(Path("stages") / "01_descriptors_initial")
     descriptors_folder = folder_to_save / subfolder
-    data = _prepare_identity_columns(data, run_base=folder_to_save)
 
     metrics_folder = descriptors_folder / "metrics"
     filtered_folder = descriptors_folder / "filtered"
@@ -75,12 +72,27 @@ def run(data, config, subfolder=None, reporter=None):
     for folder in [descriptors_folder, metrics_folder, filtered_folder, plots_folder]:
         Path(folder).mkdir(parents=True, exist_ok=True)
 
-    molecule_total = max(len(data), 1)
+    molecule_total = max(len(data), 1) if data is not None else 1
 
     if reporter is not None:
         reporter.progress(0, molecule_total, message="Loading descriptor config")
 
     config_descriptors = load_config(config[CFG_DESCRIPTORS])
+    if is_large_dataset_mode(config):
+        return run_large(
+            data,
+            config,
+            config_descriptors,
+            descriptors_folder,
+            reporter=reporter,
+        )
+
+    if data is None or len(data) == 0:
+        logger.warning("No molecules provided for descriptor calculation. Skipping.")
+        return None
+
+    data = _prepare_identity_columns(data, run_base=folder_to_save)
+    molecule_total = max(len(data), 1)
     metrics_df = compute_metrics(
         data,
         metrics_folder,

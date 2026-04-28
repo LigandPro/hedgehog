@@ -11,6 +11,7 @@ import pytest
 from rdkit import Chem
 
 import hedgehog.struct_filters.filters_alerts as modular_alerts
+import hedgehog.struct_filters.filters_molgraph as modular_molgraph
 from hedgehog.struct_filters import utils as structfilters_utils
 from hedgehog.struct_filters.utils import (
     apply_halogenicity,
@@ -1255,6 +1256,118 @@ class TestNIBRFilter:
         assert abs(res_df["max_severity"].iloc[0] - 10.0) < 1e-9
         # banned_ratio: 2 of 3 have severity > 0 → banned_ratio = 2/3
         assert abs(res_df["banned_ratio"].iloc[0] - 2 / 3) < 1e-9
+
+
+class _FakeMolgraphEntry:
+    def __init__(self, description):
+        self._description = str(description)
+
+    def GetDescription(self):
+        return self._description
+
+
+class _FakeMolgraphCatalog:
+    def __init__(self, matches_by_mol_id):
+        self._matches_by_mol_id = matches_by_mol_id
+
+    def GetMatches(self, mol):
+        entry_ids = self._matches_by_mol_id.get(id(mol), [])
+        return [_FakeMolgraphEntry(entry_id) for entry_id in entry_ids]
+
+
+def _fake_parallelized(fn, inputs_list, **kwargs):
+    return [fn(item) for item in inputs_list]
+
+
+class TestMolGraphStatsOnePass:
+    @staticmethod
+    def _severity_table():
+        return pd.DataFrame({"severity": [10, 10, 10, 10, 8, 8, 5, 8, 5, 8, 5]})
+
+    @staticmethod
+    def _assert_expected_pass_columns(result):
+        assert result["molgraph_max_severity"].tolist() == [0, 8, 10]
+        assert result["pass_1"].tolist() == [True, False, False]
+        assert result["pass_5"].tolist() == [True, False, False]
+        assert result["pass_6"].tolist() == [True, False, False]
+        assert result["pass_8"].tolist() == [True, False, False]
+        assert result["pass_9"].tolist() == [True, True, False]
+        assert result["pass_10"].tolist() == [True, True, False]
+        assert result["pass_11"].tolist() == [True, True, True]
+
+    @patch("hedgehog.struct_filters.utils.resolve_n_jobs")
+    @patch("hedgehog.struct_filters.utils.load_config")
+    @patch("hedgehog.struct_filters.utils.mc")
+    def test_utils_apply_molgraph_stats_one_pass(
+        self, mock_mc, mock_load_config, mock_resolve_n_jobs, monkeypatch
+    ):
+        mock_load_config.return_value = {"molgraph_scheduler": "threads"}
+        mock_resolve_n_jobs.return_value = 1
+        mock_mc.utils.loader.get_data_path.return_value = "graph.csv"
+
+        mols = [dm.to_mol("CC"), dm.to_mol("CCC"), dm.to_mol("c1ccccc1")]
+        matches = {
+            id(mols[0]): [],
+            id(mols[1]): [4, 9],  # severities 8 and 8
+            id(mols[2]): [0],  # severity 10
+        }
+        fake_catalog = _FakeMolgraphCatalog(matches)
+        mock_mc.catalogs.NamedCatalogs.unstable_graph.return_value = fake_catalog
+
+        monkeypatch.setattr(
+            structfilters_utils.pd,
+            "read_csv",
+            lambda *_args, **_kwargs: self._severity_table(),
+        )
+        monkeypatch.setattr(structfilters_utils.dm, "parallelized", _fake_parallelized)
+
+        old_filter = MagicMock()
+        monkeypatch.setattr(
+            structfilters_utils.mc.functional, "molecular_graph_filter", old_filter
+        )
+
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        result = structfilters_utils.apply_molgraph_stats(config, mols)
+
+        self._assert_expected_pass_columns(result)
+        old_filter.assert_not_called()
+
+    @patch("hedgehog.struct_filters.filters_molgraph.resolve_n_jobs")
+    @patch("hedgehog.struct_filters.filters_molgraph.load_config")
+    @patch("hedgehog.struct_filters.filters_molgraph.mc")
+    def test_modular_apply_molgraph_stats_one_pass(
+        self, mock_mc, mock_load_config, mock_resolve_n_jobs, monkeypatch
+    ):
+        mock_load_config.return_value = {"molgraph_scheduler": "threads"}
+        mock_resolve_n_jobs.return_value = 1
+        mock_mc.utils.loader.get_data_path.return_value = "graph.csv"
+
+        mols = [dm.to_mol("CC"), dm.to_mol("CCC"), dm.to_mol("c1ccccc1")]
+        matches = {
+            id(mols[0]): [],
+            id(mols[1]): [4, 9],  # severities 8 and 8
+            id(mols[2]): [0],  # severity 10
+        }
+        fake_catalog = _FakeMolgraphCatalog(matches)
+        mock_mc.catalogs.NamedCatalogs.unstable_graph.return_value = fake_catalog
+
+        monkeypatch.setattr(
+            modular_molgraph.pd,
+            "read_csv",
+            lambda *_args, **_kwargs: self._severity_table(),
+        )
+        monkeypatch.setattr(modular_molgraph.dm, "parallelized", _fake_parallelized)
+
+        old_filter = MagicMock()
+        monkeypatch.setattr(
+            modular_molgraph.mc.functional, "molecular_graph_filter", old_filter
+        )
+
+        config = {CFG_STRUCT_FILTERS: "dummy.yml"}
+        result = modular_molgraph.apply_molgraph_stats(config, mols)
+
+        self._assert_expected_pass_columns(result)
+        old_filter.assert_not_called()
 
 
 class TestGetBasicStatsLilly:

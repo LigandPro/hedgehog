@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from hedgehog.main import (
     Stage,
@@ -592,6 +593,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
         force_new_folder=False,
         auto_install=False,
         show_progress=True,
+        large_dataset=False,
     )
 
     progress_instance = _FakeProgress.instances[-1]
@@ -688,6 +690,7 @@ def test_run_progress_strips_duplicate_stage_prefix(tmp_path, monkeypatch):
         force_new_folder=False,
         auto_install=False,
         show_progress=True,
+        large_dataset=False,
     )
 
     progress_instance = _FakeProgress.instances[-1]
@@ -770,9 +773,96 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
         force_new_folder=False,
         auto_install=False,
         show_progress=False,
+        large_dataset=False,
     )
 
     assert captured["progress_callback"] is None
+
+
+def test_large_dataset_defaults_to_compute_only_statistics_path(tmp_path, monkeypatch):
+    """Large-dataset mode should default to the no-drop statistics stage set."""
+    import hedgehog.main as main_mod
+
+    input_path = tmp_path / "input.csv"
+    input_path.write_text("smiles,model_name,mol_idx\nCCO,m1,0\n", encoding="utf-8")
+    base_config = {
+        "folder_to_save": str(tmp_path / "configured"),
+        "generated_mols_path": str(input_path),
+    }
+
+    monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
+    monkeypatch.setattr(
+        main_mod, "load_config", lambda *args, **kwargs: base_config.copy()
+    )
+    monkeypatch.setattr(main_mod, "_resolve_config_paths", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_mod.LoggerSingleton,
+        "configure_log_directory",
+        lambda self, folder_to_save: None,
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_calculate_metrics(data, config, progress_callback):
+        captured["data"] = data
+        captured["config"] = config
+        captured["progress_callback"] = progress_callback
+        return True
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
+
+    main_mod._run_pipeline_command(
+        config_path="unused.yml",
+        generated_mols_path=None,
+        out_dir=str(tmp_path / "run"),
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+        show_progress=False,
+        large_dataset=True,
+    )
+
+    config = captured["config"]
+    assert captured["data"] is None
+    assert config[main_mod.STAGE_SELECTION_KEY] == [
+        "mol_prep",
+        "descriptors",
+        "struct_filters",
+        "synthesis",
+    ]
+    assert config["large_dataset_mode"] is True
+    assert config["large_dataset_filter_data"] is False
+    assert config["large_dataset_enable_all_filters"] is True
+
+
+def test_large_dataset_still_rejects_docking_stage(tmp_path, monkeypatch):
+    """Large-dataset mode allows synthesis but not docking-heavy stages."""
+    import hedgehog.main as main_mod
+
+    monkeypatch.setattr(main_mod, "_display_banner", lambda: None)
+    monkeypatch.setattr(
+        main_mod,
+        "load_config",
+        lambda *args, **kwargs: {
+            "folder_to_save": str(tmp_path / "run"),
+            "generated_mols_path": str(tmp_path / "input.csv"),
+        },
+    )
+    monkeypatch.setattr(main_mod, "_resolve_config_paths", lambda *args, **kwargs: None)
+
+    with pytest.raises(main_mod.typer.Exit):
+        main_mod._run_pipeline_command(
+            config_path="unused.yml",
+            generated_mols_path=None,
+            out_dir=str(tmp_path / "run"),
+            stage=[main_mod.Stage.docking],
+            reuse_folder=False,
+            force_new_folder=False,
+            auto_install=False,
+            show_progress=False,
+            large_dataset=True,
+        )
 
 
 def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
@@ -795,6 +885,7 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
         force_new_folder=False,
         auto_install=True,
         show_progress=True,
+        large_dataset=False,
     )
 
     assert captured == {
@@ -806,4 +897,5 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
         "force_new_folder": False,
         "auto_install": True,
         "show_progress": True,
+        "large_dataset": False,
     }
