@@ -5,6 +5,8 @@ import pandas as pd
 
 from hedgehog._constants import CFG_DESCRIPTORS, CFG_STRUCT_FILTERS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.large_dataset import is_large_dataset_mode
+from hedgehog.struct_filters.large import run_large
 from hedgehog.struct_filters.utils import (
     combine_filter_results_in_memory,
     filter_data,
@@ -490,10 +492,21 @@ def main(config, stage_dir, reporter=None):
         config: Configuration dictionary
         stage_dir: Stage directory path (e.g., 'stages/03_structural_filters_post')
     """
-    sample_size = config["sample_size"]
+    sample_size = config.get("sample_size")
     folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     output_dir = folder_to_save / stage_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    config_struct_filters = load_config(config[CFG_STRUCT_FILTERS])
+    _write_stage_readme(output_dir, stage_dir, config_struct_filters)
+    if is_large_dataset_mode(config):
+        return run_large(
+            config,
+            stage_dir,
+            config_struct_filters,
+            output_dir,
+            reporter=reporter,
+        )
 
     input_path = _get_input_path(config, stage_dir, folder_to_save)
 
@@ -503,8 +516,6 @@ def main(config, stage_dir, reporter=None):
         logger.error("Could not load input data from %s: %s", input_path, e)
         raise
 
-    config_struct_filters = load_config(config[CFG_STRUCT_FILTERS])
-    _write_stage_readme(output_dir, stage_dir, config_struct_filters)
     filters_to_calculate = _get_enabled_filters(config_struct_filters)
     opts = _resolve_stage_options(config_struct_filters, config)
 

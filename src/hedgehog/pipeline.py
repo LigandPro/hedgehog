@@ -13,6 +13,21 @@ from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.stage import run as descriptors_main
 from hedgehog.docking.main import main as docking_main
 from hedgehog.docking_filters.main import docking_filters_main
+from hedgehog.large_dataset import (
+    copy_parts,
+    count_part_rows,
+    get_chunk_rows,
+    get_single_csv_limit,
+    is_large_dataset_mode,
+    iter_input_chunks,
+    materialize_csv_if_small,
+    output_path_or_parts,
+    parts_dir_for_csv,
+    stage_output_or_parts,
+)
+from hedgehog.large_dataset import (
+    count_csv_rows as count_large_csv_rows,
+)
 from hedgehog.molprep.main import main as mol_prep_main
 from hedgehog.reporting import ReportGenerator
 from hedgehog.struct_filters.main import main as structural_filters_main
@@ -490,13 +505,21 @@ class DataChecker:
     def check_stage_data(self, stage_name: str) -> bool:
         """Check if data exists for a given stage."""
         path = self._get_stage_output_path(stage_name.strip())
-        return _file_exists_and_not_empty(path) if path else False
+        if path is None:
+            return False
+        if path.is_dir():
+            counted = count_part_rows(path)
+            return counted is not None and counted > 0
+        return _file_exists_and_not_empty(path)
 
     def stage_has_molecules(self, stage_name: str) -> bool:
         """Check if a stage output contains at least one molecule row."""
         path = self._get_stage_output_path(stage_name.strip())
         if path is None:
             return False
+        if path.is_dir():
+            counted = count_part_rows(path)
+            return counted is not None and counted > 0
         if path.suffix.lower() == ".csv":
             return _csv_has_data_rows(path)
         return _file_exists_and_not_empty(path)
@@ -504,7 +527,12 @@ class DataChecker:
     def _get_stage_output_path(self, stage_name: str) -> Path | None:
         """Get the expected output file path for a stage."""
         relative_path = self._STAGE_OUTPUT_PATHS.get(stage_name)
-        return self.base_path / relative_path if relative_path else None
+        if relative_path is None:
+            return None
+        csv_path = self.base_path / relative_path
+        if is_large_dataset_mode(self.config):
+            return output_path_or_parts(csv_path)
+        return csv_path
 
 
 class PipelineStageRunner:
@@ -631,7 +659,12 @@ class PipelineStageRunner:
             output_path = (
                 self.data_checker.base_path / DIR_SYNTHESIS / FILE_FILTERED_MOLECULES
             )
-            if not output_path.exists():
+            resolved_output = (
+                output_path_or_parts(output_path)
+                if is_large_dataset_mode(self.config)
+                else output_path
+            )
+            if resolved_output is None or not resolved_output.exists():
                 logger.error("Synthesis finished but no output file detected")
                 return False
             return True
@@ -644,6 +677,9 @@ class PipelineStageRunner:
     def _validate_synthesis_input(self) -> bool:
         """Validate that input data exists for synthesis stage."""
         if self.find_latest_data_source():
+            return True
+
+        if is_large_dataset_mode(self.config) and self.config.get("generated_mols_path"):
             return True
 
         if self.config.get(OVERRIDE_SINGLE_STAGE) != STAGE_SYNTHESIS:
@@ -860,6 +896,10 @@ class MoleculeCounter:
 
     def count_csv_rows(self, path: Path) -> int | None:
         """Count data rows in a CSV file (excluding header)."""
+        if path.is_dir():
+            return count_part_rows(path)
+        if path.name.endswith(".gz"):
+            return count_large_csv_rows(path)
         if not path.exists():
             return None
         try:
@@ -905,7 +945,11 @@ class MoleculeCounter:
                 return len(final_data)
 
         source = _find_input(self.base_path)
-        if source is not None and source.suffix.lower() == ".csv":
+        if source is not None and source.is_dir():
+            counted = count_part_rows(source)
+            if counted is not None:
+                return counted
+        if source is not None and source.suffix.lower() in {".csv", ".gz"}:
             counted = self.count_csv_rows(source)
             if counted is not None:
                 return counted
@@ -924,7 +968,12 @@ class MoleculeCounter:
         path_parts = self._OUTPUT_PATHS.get(stage_name)
         if path_parts is not None:
             output_path = self.base_path.joinpath(*path_parts)
-            counted = self.count_csv_rows(output_path)
+            if output_path.exists():
+                counted = self.count_csv_rows(output_path)
+                if counted is not None:
+                    return counted
+            parts_path = parts_dir_for_csv(output_path)
+            counted = self.count_csv_rows(parts_path)
             if counted is not None:
                 return counted
 
@@ -1383,6 +1432,10 @@ class MolecularAnalysisPipeline:
         self, skip_descriptors: bool = False, fallback_on_empty: bool = True
     ):
         """Load the most recent stage output data."""
+        if is_large_dataset_mode(self.config):
+            logger.info("Large dataset mode: latest data is sharded; skipping DataFrame load.")
+            return None
+
         priority = self.stage_runner.DATA_SOURCE_PRIORITY.copy()
         if skip_descriptors:
             priority = [p for p in priority if p != DIR_DESCRIPTORS]
@@ -1415,9 +1468,14 @@ class MolecularAnalysisPipeline:
         base = self.data_checker.base_path
         if source.startswith("stages/"):
             if "descriptors" in source:
-                return base / source / "filtered" / FILE_FILTERED_MOLECULES
-            return base / source / FILE_FILTERED_MOLECULES
-        return base / source / FILE_FILTERED_MOLECULES
+                csv_path = base / source / "filtered" / FILE_FILTERED_MOLECULES
+            else:
+                csv_path = base / source / FILE_FILTERED_MOLECULES
+        else:
+            csv_path = base / source / FILE_FILTERED_MOLECULES
+        if is_large_dataset_mode(self.config):
+            return output_path_or_parts(csv_path) or csv_path
+        return csv_path
 
     def _try_fallback_sources(
         self, priority: list[str], current_source: str, empty_data
@@ -1483,7 +1541,12 @@ class MolecularAnalysisPipeline:
             "Pipeline completed: %d/%d stages successful", success_count, total_enabled
         )
         self._raise_if_cancel_requested("pipeline finalization")
-        return self._finalize_pipeline(data, success_count, total_enabled)
+        return self._finalize_pipeline(
+            data,
+            success_count,
+            total_enabled,
+            final_stage_name=last_completed_stage,
+        )
 
     def _run_stage(
         self, stage_name: str, runner_func, *args, on_failure=None
@@ -1571,6 +1634,8 @@ class MolecularAnalysisPipeline:
             return completed, early_exit
 
         out_path = self.data_checker.base_path / DIR_MOL_PREP / FILE_FILTERED_MOLECULES
+        if is_large_dataset_mode(self.config):
+            return True, False
         if out_path.exists():
             try:
                 df_out = pd.read_csv(out_path)
@@ -1587,6 +1652,11 @@ class MolecularAnalysisPipeline:
 
     def _run_descriptors(self, data) -> tuple[bool, bool]:
         """Run descriptors calculation stage."""
+        if is_large_dataset_mode(self.config):
+            return self._run_stage(
+                STAGE_DESCRIPTORS, self.stage_runner.run_descriptors, None
+            )
+
         descriptors_input = data
 
         # If MolPrep is enabled, use its output as the input to descriptors.
@@ -1716,6 +1786,9 @@ class MolecularAnalysisPipeline:
         final_stage_name: str | None = None,
     ) -> bool:
         """Finalize pipeline execution with summary and output."""
+        if is_large_dataset_mode(self.config):
+            return self._finalize_large_pipeline(final_stage_name)
+
         self.reporter.log_summary()
 
         initial_count = len(data)
@@ -1760,6 +1833,104 @@ class MolecularAnalysisPipeline:
                 elapsed_seconds=report_elapsed,
             )
 
+        return not any(self.reporter.stage_is_failed(s) for s in self.stages)
+
+    def _count_large_initial(self) -> int:
+        """Resolve initial molecule count without materializing the input DataFrame."""
+        base = self.data_checker.base_path
+        counts_path = base / DIR_MOL_PREP / "summary" / "stage_counts.tsv"
+        if counts_path.exists():
+            try:
+                counts = pd.read_csv(counts_path, sep="\t")
+                if "input" in counts.columns:
+                    return int(counts["input"].sum())
+            except Exception:
+                pass
+
+        total = 0
+        try:
+            for chunk in iter_input_chunks(
+                self.config["generated_mols_path"], get_chunk_rows(self.config)
+            ):
+                total += len(chunk)
+        except Exception as exc:
+            logger.warning("Could not count large input rows: %s", exc)
+        return total
+
+    def _find_large_final_output(self, final_stage_name: str | None) -> Path | None:
+        base = self.data_checker.base_path
+        stage_candidates: dict[str, list[tuple[str, ...]]] = {
+            STAGE_SYNTHESIS: [
+                (DIR_SYNTHESIS, FILE_FILTERED_MOLECULES),
+                (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
+                (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
+                (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
+            ],
+            STAGE_STRUCT_FILTERS: [
+                (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
+                (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
+                (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
+            ],
+            STAGE_DESCRIPTORS: [
+                (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
+                (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
+            ],
+            STAGE_MOL_PREP: [
+                (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
+            ],
+        }
+        candidates = stage_candidates.get(final_stage_name or "", [])
+        for parts in candidates:
+            resolved = stage_output_or_parts(base.joinpath(*parts))
+            if resolved is not None:
+                return resolved
+        return None
+
+    def _save_large_final_output(self, source: Path | None) -> int:
+        output_csv = self.data_checker.base_path / DIR_OUTPUT / FILE_FINAL_MOLECULES
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        if source is None:
+            pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]).to_csv(
+                output_csv, index=False
+            )
+            return 0
+
+        if source.is_dir():
+            final_parts = parts_dir_for_csv(output_csv)
+            copy_parts(source, final_parts)
+            final_count = materialize_csv_if_small(
+                final_parts,
+                output_csv,
+                get_single_csv_limit(self.config),
+                columns=["smiles", "model_name", "mol_idx"],
+            )
+            logger.info(
+                "Saved large final molecules as shards to %s (%d rows)",
+                final_parts,
+                final_count,
+            )
+            return final_count
+
+        shutil.copyfile(source, output_csv)
+        return self.counter.count_csv_rows(output_csv) or 0
+
+    def _finalize_large_pipeline(self, final_stage_name: str | None) -> bool:
+        """Finalize large-dataset runs without loading row-level outputs into RAM."""
+        self.reporter.log_summary()
+        initial_count = self._count_large_initial()
+        final_source = self._find_large_final_output(final_stage_name)
+        final_count = self._save_large_final_output(final_source)
+
+        self.reporter.log_molecule_summary(initial_count, final_count)
+        _generate_structure_readme(
+            self.data_checker.base_path,
+            self.stages,
+            initial_count,
+            final_count,
+            stage_timings=self.stage_timings,
+            config=self.config,
+        )
+        logger.info("Skipping HTML report in large dataset mode.")
         return not any(self.reporter.stage_is_failed(s) for s in self.stages)
 
     def _load_stage_output(self, stage_name: str | None):

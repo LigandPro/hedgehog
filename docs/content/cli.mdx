@@ -48,12 +48,15 @@ uv run hedgehog run [OPTIONS]
 | `--force-new` | | `FLAG` | `False` | Always create a new results folder. |
 | `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools without prompts. |
 | `--progress` | | `FLAG` | `False` | Show live progress bar. |
+| `--large-dataset` | | `FLAG` | `False` | Stream large molecule libraries in chunks, write row-level `.parts` shards, and skip plots/report-heavy outputs. Filters are calculated by default but do not remove molecules unless `large_dataset_filter_data: true`. |
 
 The `--reuse` and `--force-new` flags are mutually exclusive. Using both will produce an error.
 
 The `--out` option cannot be used together with `--reuse` or `--force-new`.
 
 The progress bar is disabled by default in CLI runs. Use `--progress` when you want live stage progress rendering.
+
+Use `--large-dataset` for PubChem/Enamine-scale statistics runs. It stores intermediate row-level tables as compressed shard directories such as `filtered_molecules.parts/` and `descriptors_all.parts/`, uses `large_dataset_chunk_rows` from the master config, and skips plots plus HTML report generation. Without an explicit `--stage` selection, large-dataset mode runs the scalable statistics path: `mol_prep`, `descriptors`, `struct_filters`, and `synthesis`. Descriptor, structural, and synthesis filters are calculated by default, but downstream large-mode outputs keep all molecules unless `large_dataset_filter_data: true`. The synthesis stage skips AiZynthFinder retrosynthesis in large-dataset mode.
 
 When you request any stage other than `mol_prep`, the pipeline may still run `mol_prep` first if the Mol Prep stage is enabled in `config_mol_prep.yml`. This is intentional: downstream stages operate on standardized molecules when that preprocessing stage is active.
 
@@ -163,6 +166,9 @@ uv run hedge --stage synthesis --force-new
 
 # Enable live progress bar
 uv run hedge --progress
+
+# Stream a large library without monolithic intermediate CSVs or plots
+uv run hedge --large-dataset --mols input/pubchem.csv
 ```
 
 ## `hedgehog report`

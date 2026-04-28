@@ -4,6 +4,8 @@ from pathlib import Path
 
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.large_dataset import is_large_dataset_mode
+from hedgehog.molprep.large import run_large
 from hedgehog.molprep.orchestrator import run_mol_prep
 from hedgehog.utils.paths import process_path
 
@@ -25,14 +27,16 @@ def run(data, config: dict, subfolder: str | None = None, reporter=None):
       - metrics.csv
       - duplicates_removed.csv (optional)
     """
-    if data is None or len(data) == 0:
-        logger.warning("No molecules provided for MolPrep. Skipping.")
-        return None
-
     folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     subfolder = subfolder or str(Path("stages") / "00_mol_prep")
     out_dir = folder_to_save / subfolder
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = load_config(config["config_mol_prep"])
+    if is_large_dataset_mode(config):
+        return run_large(config, cfg, out_dir, reporter=reporter)
+
+    if data is None or len(data) == 0:
+        logger.warning("No molecules provided for MolPrep. Skipping.")
+        return None
     return run_mol_prep(data, cfg, out_dir, reporter=reporter)
