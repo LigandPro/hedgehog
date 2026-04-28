@@ -49,7 +49,7 @@ uv run hedgehog setup aizynthfinder
 ```
 
 The setup command will automatically:
-- Clone the retrosynthesis repository (if not already present)
+- Install the optional `retrosynthesis` dependency into the project environment
 - Download public data 
 - Set up logging configuration
 
@@ -63,18 +63,16 @@ cd modules
 ### Manual Installation
 If you prefer to install manually:
 
-1. **Clone the retrosynthesis repository**:
+1. **Install the optional dependency**:
     ```bash
-    git clone https://github.com/LigandPro/retrosynthesis.git
+    uv sync --extra retrosynthesis
     ```
 
 2. **Download public data**:
     ```bash
-    cd retrosynthesis/aizynthfinder
-    mkdir -p public aizynthfinder/data
-    # Using uv run
-    uv run python -m aizynthfinder.tools.download_public_data ./public
-    mv ../../../src/hedgehog/synthesis/logging.yml aizynthfinder/data/
+    mkdir -p modules/aizynthfinder/public modules/aizynthfinder/aizynthfinder/data
+    uv run python -m aizynthfinder.tools.download_public_data modules/aizynthfinder/public
+    cp src/hedgehog/synthesis/logging.yml modules/aizynthfinder/aizynthfinder/data/logging.yml
     ```
 3. **Continue environment setup** following main [README.md](../README.md)
 

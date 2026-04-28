@@ -1,0 +1,53 @@
+run: true
+version: v1
+mode: generator_reality
+target_final_count: 100
+target_final_retention: 0.10
+weights:
+  yield: 0.30
+  physchem: 0.15
+  structural: 0.25
+  synthesis: 0.10
+  docking_pose: 0.15
+  diversity: 0.05
+candidate_pool_weights:
+  yield: 0.10
+  physchem: 0.15
+  structural: 0.15
+  synthesis: 0.20
+  docking_pose: 0.30
+  diversity: 0.10
+yield:
+  mode: retention
+  target_final_retention: 0.10
+  count_weight: 0.70
+  retention_weight: 0.30
+structural:
+  stage_pass_weight: 0.80
+  worst_filter_weight: 0.20
+docking:
+  bad_affinity: -6.0
+  good_affinity: -9.0
+  bad_cnnscore: 0.35
+  good_cnnscore: 0.85
+  bad_cnnaffinity: 4.5
+  good_cnnaffinity: 6.5
+synthesis:
+  sa_min: 1.0
+  sa_max: 4.5
+  ra_min: 0.5
+  ra_max: 1.0
+  syba_midpoint: 0.0
+  syba_scale: 50.0
+  target_search_time_sec: 30.0
+  search_time_scale_sec: 20.0
+confidence:
+  min_final_molecules_high: 100
+  min_final_molecules_medium: 30
+hard_caps:
+  structural_stage_pass_rate_below: 0.20
+  structural_stage_pass_rate_cap: 60.0
+  descriptor_all_pass_rate_below: 0.50
+  descriptor_all_pass_rate_cap: 70.0
+  final_retention_rate_below: 0.05
+  final_retention_rate_cap: 70.0

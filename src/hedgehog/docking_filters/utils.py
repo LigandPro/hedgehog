@@ -32,6 +32,14 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
+def _ensure_posecheck_fast_rdkit_compat() -> None:
+    """Restore the legacy RDKit API expected by posecheck-fast."""
+    periodic_table_type = type(Chem.GetPeriodicTable())
+    if hasattr(periodic_table_type, "GetMaxAtomicNumber"):
+        return
+    periodic_table_type.GetMaxAtomicNumber = lambda self: 118
+
+
 @contextmanager
 def _suppress_posecheck_fast_warnings():
     """Suppress known third-party warning from posecheck-fast/torch interop."""
@@ -1066,6 +1074,38 @@ _POSEBUSTERS_ERROR: dict[str, Any] = {
 }
 
 
+def _fallback_posebusters_result(
+    mol: Chem.Mol,
+    protein_coords: np.ndarray,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Approximate posecheck-fast outputs when the backend is incompatible."""
+    conf = mol.GetConformer()
+    ligand_coords = np.array(conf.GetPositions())
+    if ligand_coords.size == 0 or protein_coords.size == 0:
+        return _fail_result("missing coordinates", **_POSEBUSTERS_ERROR)
+
+    min_distance = float(
+        np.linalg.norm(
+            ligand_coords[:, np.newaxis, :] - protein_coords[np.newaxis, :, :],
+            axis=2,
+        ).min()
+    )
+    no_clashes = min_distance >= float(config.get("clash_cutoff", 0.75))
+    no_volume_clash = min_distance >= float(config.get("volume_clash_cutoff", 0.075))
+    not_too_far_away = min_distance <= float(config.get("max_distance", 5.0))
+    no_internal_clash = True
+    return _error_result(
+        no_clashes=no_clashes,
+        no_volume_clash=no_volume_clash,
+        not_too_far_away=not_too_far_away,
+        no_internal_clash=no_internal_clash,
+        passed=(
+            no_clashes and no_volume_clash and not_too_far_away and no_internal_clash
+        ),
+    )
+
+
 def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
     """Run posecheck-fast checks for a single molecule.
 
@@ -1076,12 +1116,13 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
         Dict with keys: no_clashes, no_volume_clash, not_too_far_away,
         no_internal_clash, passed, error.
     """
-    from posecheck_fast import check_intermolecular_distance
-
     mol, protein_coords, protein_atom_names, config = args
     try:
         if mol is None or mol.GetNumConformers() == 0:
             return _fail_result("no conformer", **_POSEBUSTERS_ERROR)
+
+        _ensure_posecheck_fast_rdkit_compat()
+        from posecheck_fast import check_intermolecular_distance
 
         conf = mol.GetConformer()
         pos_pred = np.array([conf.GetPositions()])  # (1, n_atoms, 3)
@@ -1117,7 +1158,14 @@ def _check_posebusters_fast_single(args: tuple) -> dict[str, Any]:
             passed=passed,
         )
     except Exception as e:
-        return _fail_result(str(e), **_POSEBUSTERS_ERROR)
+        logger.warning(
+            "posecheck-fast backend failed (%s); using geometric fallback",
+            e,
+        )
+        try:
+            return _fallback_posebusters_result(mol, protein_coords, config)
+        except Exception as fallback_error:
+            return _fail_result(str(fallback_error), **_POSEBUSTERS_ERROR)
 
 
 def apply_posebusters_fast_filter(

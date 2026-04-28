@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/public/hedgehog-title.png" alt="HEDGEHOG" width="40%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/hedgehog-title-light.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/public/hedgehog-title-dark.png" />
+    <img src="docs/public/hedgehog-title.png" alt="HEDGEHOG" width="40%" />
+  </picture>
 </p>
 <p align="center">HEDGEHOG: Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration.</p>
 <p align="center">
@@ -40,7 +44,7 @@ cd hedgehog
 uv sync
 ```
 
-This is the recommended way to run HEDGEHOG end to end. The repository checkout contains the editable configs, bundled examples, TUI sources, and the `modules/` workspace used by setup commands.
+This is the recommended way to run HEDGEHOG end to end. The repository checkout contains the editable configs, bundled examples, TUI sources, and the `modules/` workspace used to store optional tool assets such as AiZynthFinder public data.
 
 Requirements:
 
@@ -155,7 +159,7 @@ results/run_N/
 
 ## Documentation
 
-![HEDGEHOG Pipeline](docs/public/pipeline_structure.png)
+![HEDGEHOG Pipeline](docs/public/pipeline_structure_v2.png)
 
 For full details, use the documentation instead of this README:
 

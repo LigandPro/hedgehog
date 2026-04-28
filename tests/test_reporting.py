@@ -736,3 +736,217 @@ class TestStageAuditNotebook:
         notebook_meta = report_data["metadata"]["stage_audit_notebook"]
         assert notebook_meta["path"] == "stage_filter_audit.ipynb"
         assert notebook_meta["name"] == "stage_filter_audit.ipynb"
+
+
+class TestCommonAlertDiagnosticsReport:
+    """Tests for Common Alert Diagnostics report integration."""
+
+    def test_collects_bounded_common_alert_diagnostics(self, report_gen, base_path):
+        """Should read common_alerts artifacts without embedding full hit tables."""
+        alerts_dir = (
+            base_path / "stages" / "03_structural_filters_post" / "common_alerts"
+        )
+        alerts_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCN", "CCCl", "CCO"],
+                "model_name": ["m1", "m1", "m1"],
+                "mol_idx": [0, 1, 2],
+                "pass_RulesetA": [False, True, True],
+                "pass_RulesetB": [True, False, True],
+                "pass": [False, False, True],
+                "pass_any": [True, True, True],
+            }
+        ).to_csv(alerts_dir / "extended.csv", index=False)
+        pd.DataFrame(
+            {
+                "mol_idx": [0, 1],
+                "model_name": ["m1", "m1"],
+                "smiles": ["CCN", "CCCl"],
+                "ruleset": ["RulesetA", "RulesetB"],
+                "rule_id": [0, 1],
+                "description": ["nitrogen atom", "chlorine atom"],
+                "smarts": ["[#7]", "[#17]"],
+                "match_id": [0, 0],
+                "matched_atom_ids": ["[2]", "[2]"],
+                "matched_bond_ids": ["[]", "[]"],
+                "n_matches_for_rule": [1, 1],
+                "total_alerts_for_molecule": [1, 1],
+                "total_rulesets_failed": [1, 1],
+                "would_pass_if_disable_ruleset": [True, True],
+                "would_pass_if_disable_description": [True, True],
+            }
+        ).to_csv(alerts_dir / "hits_long.csv", index=False)
+        pd.DataFrame(
+            {
+                "ruleset": ["RulesetA", "RulesetB"],
+                "total_hits": [1, 1],
+                "unique_rescue": [1, 1],
+                "overlap_hits": [0, 0],
+            }
+        ).to_csv(alerts_dir / "ruleset_summary.csv", index=False)
+        pd.DataFrame(
+            {
+                "ruleset": ["RulesetA", "RulesetB"],
+                "description": ["nitrogen atom", "chlorine atom"],
+                "total_hits": [1, 1],
+                "unique_rescue": [1, 1],
+                "overlap_hits": [0, 0],
+            }
+        ).to_csv(alerts_dir / "description_summary.csv", index=False)
+        pd.DataFrame(
+            {
+                "left": ["RulesetA"],
+                "right": ["RulesetB"],
+                "intersection": [0],
+                "jaccard": [0.0],
+                "containment": [0.0],
+            }
+        ).to_csv(alerts_dir / "cooccurrence_ruleset.csv", index=False)
+
+        result = report_gen._get_common_alert_diagnostics()
+
+        assert result["overview"]["input_molecules"] == 3
+        assert result["overview"]["passed"] == 1
+        assert result["overview"]["failed"] == 2
+        assert result["histogram"][0] == {"failed_rulesets": 0, "molecules": 1}
+        assert result["rulesets"][0]["unique_rescue"] == 1
+        assert len(result["examples"]) == 2
+        assert "<svg" in result["examples"][0]["svg"]
+
+    def test_description_whatif_keeps_model_identities_separate(self, report_gen):
+        """Description what-if counts same mol_idx from different models separately."""
+        hits_long = pd.DataFrame(
+            {
+                "mol_idx": [0, 0],
+                "model_name": ["model_a", "model_b"],
+                "smiles": ["CCN", "CCO"],
+                "ruleset": ["RulesetA", "RulesetB"],
+                "description": ["nitrogen atom", "oxygen atom"],
+            }
+        )
+        description_rows = [
+            {"ruleset": "RulesetA", "description": "nitrogen atom"},
+            {"ruleset": "RulesetB", "description": "oxygen atom"},
+        ]
+
+        cumulative = report_gen._build_common_alert_cumulative_descriptions(
+            hits_long, description_rows
+        )
+
+        assert cumulative[0]["rescued"] == 1
+        assert cumulative[1]["rescued"] == 2
+
+    def test_full_report_renders_common_alert_section(self, report_gen, base_path):
+        """Full HTML report should include the compact diagnostics section."""
+        alerts_dir = (
+            base_path / "stages" / "03_structural_filters_post" / "common_alerts"
+        )
+        alerts_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCN"],
+                "model_name": ["m1"],
+                "mol_idx": [0],
+                "pass_RulesetA": [False],
+                "pass": [False],
+                "pass_any": [False],
+            }
+        ).to_csv(alerts_dir / "extended.csv", index=False)
+
+        report_path = report_gen.generate()
+        html = report_path.read_text(encoding="utf-8")
+
+        assert "Common Alert Diagnostics" in html
+        assert "Distribution of Failed Common Alert Rulesets per Molecule" in html
+        assert "common-alert-card-count" in html
+        assert "common-alert-card-columns" in html
+
+
+class TestSynthesisAlignedScores:
+    """Tests for higher-is-better synthesis scorer comparison data."""
+
+    def test_aligned_scores_normalize_every_scorer_to_higher_is_better(self, tmp_path):
+        synth_dir = tmp_path / "stages" / "04_synthesis"
+        synth_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "c1ccccc1"],
+                "model_name": ["ModelA", "ModelA"],
+                "sa_score": [2.0, 8.0],
+                "syba_score": [-10.0, 100.0],
+                "ra_score": [0.2, 0.9],
+                "sync_score": [0.1, 0.9],
+                "sc_score": [2.0, 5.0],
+                "nonpher_complexity_score": [0.0, 1.0],
+                "fs_score": [-5.0, 5.0],
+                "gasa_score": [0.1, 0.9],
+                "solved": [True, False],
+            }
+        ).to_csv(synth_dir / "synthesis_extended.csv", index=False)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={},
+            initial_count=2,
+            final_count=2,
+        )
+        result = gen._get_synthesis_detailed()
+        aligned = result["aligned_scores"]
+        scores = aligned["scores"]
+
+        assert scores["sa_aligned_scores"][0] > scores["sa_aligned_scores"][1]
+        assert scores["syba_aligned_scores"][1] > scores["syba_aligned_scores"][0]
+        assert scores["ra_aligned_scores"][1] > scores["ra_aligned_scores"][0]
+        assert scores["sync_aligned_scores"][1] > scores["sync_aligned_scores"][0]
+        assert scores["sc_aligned_scores"][0] > scores["sc_aligned_scores"][1]
+        assert (
+            scores["nonpher_complexity_aligned_scores"][0]
+            > scores["nonpher_complexity_aligned_scores"][1]
+        )
+        assert scores["fs_aligned_scores"][1] > scores["fs_aligned_scores"][0]
+        assert scores["gasa_aligned_scores"][0] > scores["gasa_aligned_scores"][1]
+
+        for values in scores.values():
+            assert all(0.0 <= value <= 1.0 for value in values)
+
+        assert (
+            aligned["by_route"]["sa_score"]["solved_mean"]
+            > aligned["by_route"]["sa_score"]["unsolved_mean"]
+        )
+        assert aligned["by_model"]["ModelA"]["scores"]
+
+    def test_report_renders_aligned_synthesis_comparison_tab(self, tmp_path):
+        synth_dir = tmp_path / "stages" / "04_synthesis"
+        synth_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN", "CCC"],
+                "model_name": ["ModelA", "ModelA", "ModelB"],
+                "sa_score": [2.0, 3.0, 6.0],
+                "syba_score": [90.0, 80.0, -5.0],
+                "ra_score": [0.9, 0.8, 0.3],
+                "sync_score": [0.99, 0.95, 0.2],
+                "sc_score": [2.1, 2.8, 4.5],
+                "solved": [True, True, False],
+                "search_time": [4.0, 5.0, 12.0],
+            }
+        ).to_csv(synth_dir / "synthesis_extended.csv", index=False)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={},
+            initial_count=3,
+            final_count=3,
+        )
+        data = gen._collect_data()
+        plots = gen._generate_plots(data)
+        html = gen._render_template(data, plots)
+
+        assert "Aligned Synthesis Scorer Comparison" in html
+        assert "synthesis_aligned_dist" not in html
+        assert plots["synthesis_aligned_dist"]
+        assert plots["synthesis_aligned_corr"]
+        assert plots["synthesis_aligned_route"]

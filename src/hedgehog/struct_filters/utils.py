@@ -36,7 +36,7 @@ if _LILLY_BIN_PATH.exists():
 _VALID_SCHEDULERS = {"threads", "processes"}
 _COMPLEXITY_FILTERS_CACHE = {}
 _MOLCOMPLEXITY_ALERT_NAMES: list[str] | None = None
-_ALERT_COMPILED_SMARTS: list[tuple[str, object, str]] | None = None
+_ALERT_COMPILED_SMARTS: list[dict] | None = None
 _ALERT_RULESET_NAMES: list[str] | None = None
 _MOLGRAPH_CATALOG = None
 _MOLGRAPH_SEVERITY_BY_ENTRY: list[int] | None = None
@@ -207,6 +207,12 @@ except ImportError:
 
 from hedgehog._constants import CFG_STRUCT_FILTERS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.struct_filters.common_alert_diagnostics import (
+    HITS_JSON_COLUMN,
+    hit_records_to_json,
+    make_compiled_alert_rule,
+    make_hit_record,
+)
 from hedgehog.utils.datamol_import import import_datamol_quietly
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 from hedgehog.utils.paths import process_path as _shared_process_path
@@ -765,24 +771,41 @@ def _check_alerts_single_mol(args):
             row_data[f"pass_{name}"] = True
             reasons_map[name] = []
 
-        for ruleset, patt, desc in compiled_smarts:
-            if mol.HasSubstructMatch(patt):
+        hit_records = []
+        for rule in compiled_smarts:
+            ruleset = rule["ruleset"]
+            patt = rule["patt"]
+            desc = rule["description"]
+            matches = mol.GetSubstructMatches(patt, uniquify=True)
+            if matches:
                 row_data[f"pass_{ruleset}"] = False
                 if desc and desc not in reasons_map[ruleset]:
                     reasons_map[ruleset].append(desc)
+                for match_id, atom_ids in enumerate(matches):
+                    hit_records.append(
+                        make_hit_record(
+                            mol=mol,
+                            rule=rule,
+                            atom_ids=atom_ids,
+                            match_id=match_id,
+                            n_matches_for_rule=len(matches),
+                        )
+                    )
 
         for name in rule_set_names:
             row_data[f"reasons_{name}"] = ";".join(reasons_map[name])
+        row_data[HITS_JSON_COLUMN] = hit_records_to_json(hit_records)
     else:
         for name in rule_set_names:
             row_data[f"pass_{name}"] = False
             row_data[f"reasons_{name}"] = "invalid_molecule"
+        row_data[HITS_JSON_COLUMN] = hit_records_to_json([])
 
     return row_data
 
 
 def _init_alert_worker(
-    compiled_smarts: list[tuple[str, object, str]],
+    compiled_smarts: list[dict],
     rule_set_names: list[str],
 ) -> None:
     global _ALERT_COMPILED_SMARTS, _ALERT_RULESET_NAMES
@@ -791,16 +814,16 @@ def _init_alert_worker(
 
 
 def _init_alert_worker_quiet(
-    compiled_smarts: list[tuple[str, object, str]],
+    compiled_smarts: list[dict],
     rule_set_names: list[str],
 ) -> None:
     _silence_worker_stdio()
     _init_alert_worker(compiled_smarts, rule_set_names)
 
 
-def _compile_alert_smarts(alert_data) -> list[tuple[str, object, str]]:
+def _compile_alert_smarts(alert_data) -> list[dict]:
     """Pre-compile SMARTS patterns from alert data to avoid per-molecule recompilation."""
-    compiled: list[tuple[str, object, str]] = []
+    compiled: list[dict] = []
     for _, row in alert_data.iterrows():
         smarts = row.get("smarts")
         ruleset = row.get("rule_set_name")
@@ -809,7 +832,15 @@ def _compile_alert_smarts(alert_data) -> list[tuple[str, object, str]]:
             continue
         patt = Chem.MolFromSmarts(smarts)
         if patt is not None:
-            compiled.append((ruleset, patt, str(desc)))
+            compiled.append(
+                make_compiled_alert_rule(
+                    row,
+                    ruleset=ruleset,
+                    patt=patt,
+                    smarts=smarts,
+                    description=str(desc),
+                )
+            )
     return compiled
 
 
@@ -1229,19 +1260,56 @@ def apply_ring_infraction(config, mols, smiles_model_name_mols=None):
     )
 
 
-def apply_stereo_center(config, mols, smiles_model_name_mols=None):
-    return _apply_simple_medchem_filter(
-        config,
-        mols,
-        smiles_model_name_mols,
-        "Stereo Center",
-        mc.functional.num_stereo_center_filter,
-        "stereo_center_scheduler",
-        extra_kwargs=lambda cfg: {
-            "max_stereo_centers": cfg.get("stereo_max_centers", 4),
-            "max_undefined_stereo_centers": cfg.get("stereo_max_undefined", 2),
-        },
+def _compute_stereo_center_row(args):
+    mol_idx, mol, max_stereo_centers, max_undefined_stereo_centers = args
+    if mol is None:
+        return {"_mol_idx": mol_idx, "pass": False}
+
+    prepared_mol = Chem.Mol(mol)
+    Chem.AssignStereochemistry(prepared_mol, cleanIt=True, force=True)
+    stereo_centers = Chem.FindMolChiralCenters(
+        prepared_mol,
+        includeUnassigned=True,
+        useLegacyImplementation=False,
     )
+    n_stereo_centers = len(stereo_centers)
+    n_undefined_stereo_centers = sum(1 for _, label in stereo_centers if label == "?")
+    return {
+        "_mol_idx": mol_idx,
+        "pass": (
+            n_stereo_centers < max_stereo_centers
+            and n_undefined_stereo_centers < max_undefined_stereo_centers
+        ),
+    }
+
+
+def apply_stereo_center(config, mols, smiles_model_name_mols=None):
+    logger.info("Calculating Stereo Center filter...")
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    logger.info("Stereo Center workers: %d", n_jobs)
+
+    max_stereo_centers = int(config_sf.get("stereo_max_centers", 4))
+    max_undefined_stereo_centers = int(config_sf.get("stereo_max_undefined", 2))
+    items = [
+        (
+            mol_idx,
+            mol,
+            max_stereo_centers,
+            max_undefined_stereo_centers,
+        )
+        for mol_idx, mol in enumerate(mols)
+    ]
+    rows = parallel_map(_compute_stereo_center_row, items, n_jobs)
+    result = pd.DataFrame(
+        {
+            "mol": [mols[row["_mol_idx"]] for row in rows],
+            "pass": [row["pass"] for row in rows],
+        }
+    )
+    if smiles_model_name_mols is not None:
+        result = add_model_name_col(result, smiles_model_name_mols)
+    return result
 
 
 def apply_halogenicity(config, mols, smiles_model_name_mols=None):

@@ -19,7 +19,7 @@ CONFIG_SOURCE_PATHS = {
     "descriptors": "src/hedgehog/configs/config_descriptors.yml",
     "filters": "src/hedgehog/configs/config_structFilters.yml",
     "synthesis": "src/hedgehog/configs/config_synthesis.yml",
-    "retrosynthesis": "modules/retrosynthesis/aizynthfinder/public/config.yml",
+    "retrosynthesis": "modules/aizynthfinder/public/config.yml",
     "docking": "src/hedgehog/configs/config_docking.yml",
     "docking_filters": "src/hedgehog/configs/config_docking_filters.yml",
 }

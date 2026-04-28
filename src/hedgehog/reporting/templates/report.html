@@ -263,6 +263,14 @@
             color: var(--primary);
         }
 
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
         .descriptor-table {
             font-size: 0.95em;
         }
@@ -302,6 +310,146 @@
             text-transform: uppercase;
             letter-spacing: 0.05em;
             font-weight: 500;
+        }
+
+        .molecule-card-grid {
+            display: grid;
+            grid-template-columns: repeat(var(--molecule-card-columns, 3), minmax(0, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .molecule-card-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin: 16px 0 4px;
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+        }
+
+        .molecule-card-controls label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .molecule-card-controls select {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: white;
+            color: var(--text);
+            padding: 6px 8px;
+            font: inherit;
+        }
+
+        .molecule-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            background: white;
+            min-width: 0;
+        }
+
+        .molecule-card svg {
+            width: 100%;
+            height: auto;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .molecule-card dl {
+            display: grid;
+            grid-template-columns: 88px 1fr;
+            gap: 4px 8px;
+            font-size: 0.78rem;
+        }
+
+        .molecule-card dt {
+            color: var(--text-secondary);
+        }
+
+        .molecule-card dd {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        @media (max-width: 768px) {
+            .molecule-card-grid {
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            }
+        }
+
+        .weighted-score-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .weighted-score-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px;
+            background: white;
+        }
+
+        .weighted-score-card h3 {
+            margin-bottom: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        .weighted-score-card .meta-list {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin: 10px 0 14px;
+            line-height: 1.35;
+            white-space: normal;
+        }
+
+        .weighted-score-stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .weighted-score-stat-value {
+            color: var(--primary);
+            font-size: 1.25rem;
+            font-weight: 600;
+            overflow-wrap: anywhere;
+        }
+
+        .weighted-score-stat-label {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .weighted-evidence-table {
+            font-size: 0.78rem;
+            margin-top: 12px;
+        }
+
+        .weighted-evidence-table th,
+        .weighted-evidence-table td {
+            padding: 8px 10px;
+        }
+
+        .weighted-evidence-table td:not(:first-child),
+        .weighted-evidence-table th:not(:first-child) {
+            text-align: right;
+        }
+
+        .weighted-score-card .evidence-empty {
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+            margin-top: 12px;
         }
 
         /* Section headers */
@@ -391,6 +539,104 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </section>
+        {% endif %}
+
+        {% if data.weighted_scores.models %}
+        <section>
+            <h2>Generator Reality Assessment</h2>
+
+            {% if plots.weighted_score_components %}
+            <div class="plot-container">{{ plots.weighted_score_components | safe }}</div>
+            {% else %}
+            <div class="plot-container empty-state"><p>No generator reality component data available</p></div>
+            {% endif %}
+
+            <div class="weighted-score-grid">
+                {% for model_name, model in data.weighted_scores.models.items() %}
+                {% set overall = (model.overall | default(0)) | float %}
+                {% set grade = model.grade | default("N/A") %}
+                {% set confidence = model.confidence | default("N/A") %}
+                {% set candidate_pool = model.candidate_pool_quality | default({}) %}
+                {% set candidate_pool_overall = candidate_pool.overall | default(none) %}
+                <article class="weighted-score-card">
+                    <h3>{{ model_name }}</h3>
+
+                    <div class="weighted-score-stats">
+                        <div>
+                            <div class="weighted-score-stat-value">{{ "%.1f"|format(overall) }}</div>
+                            <div class="weighted-score-stat-label">Generator Reality /100</div>
+                        </div>
+                        {% if candidate_pool_overall is not none %}
+                        <div>
+                            <div class="weighted-score-stat-value">{{ "%.1f"|format((candidate_pool_overall | default(0)) | float) }}</div>
+                            <div class="weighted-score-stat-label">Final Candidate Pool Quality</div>
+                        </div>
+                        {% endif %}
+                        <div>
+                            <div class="weighted-score-stat-value">{{ grade }}</div>
+                            <div class="weighted-score-stat-label">Grade</div>
+                        </div>
+                        <div>
+                            <div class="weighted-score-stat-value">{{ confidence }}</div>
+                            <div class="weighted-score-stat-label">Confidence</div>
+                        </div>
+                    </div>
+
+                    <p class="meta-list">
+                        <strong>Bottlenecks:</strong>
+                        {% if model.bottlenecks %}
+                        {% for bottleneck in model.bottlenecks %}
+                        {{ bottleneck }}{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                        {% else %}
+                        None
+                        {% endif %}
+                    </p>
+
+                    {% if model.warnings %}
+                    <p class="meta-list">
+                        <strong>Warnings:</strong>
+                        {% for warning in model.warnings %}
+                        {{ warning }}{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </p>
+                    {% endif %}
+
+                    <h4>Generator Component Evidence</h4>
+                    {% if model.components %}
+                    <table class="weighted-evidence-table">
+                        <thead>
+                            <tr>
+                                <th>Component</th>
+                                <th>Score</th>
+                                <th>Weight</th>
+                                <th>Evidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for component_name, component in model.components.items() %}
+                            <tr>
+                                <td>{{ component_name }}</td>
+                                <td>
+                                    {% if component.available and component.score is not none %}
+                                    {{ "%.1f"|format((component.score | default(0)) | float) }}
+                                    {% else %}
+                                    &mdash;
+                                    {% endif %}
+                                </td>
+                                <td>{{ "%.0f"|format(((component.weight | default(0)) | float) * 100) }}%</td>
+                                <td>{{ component.evidence_text | default("-") }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="evidence-empty">No component evidence available.</p>
+                    {% endif %}
+                </article>
+                {% endfor %}
+            </div>
         </section>
         {% endif %}
 
@@ -501,7 +747,26 @@
                 // Synthesis Analysis - Model Filtering
                 // =====================================================
                 var synthesisDataByModel = {{ (plots.synthesis_data or {}) | tojson }};
+                var synthesisScoreMeta = {{ (plots.synthesis_score_meta or []) | tojson }};
                 var currentSynthesisModel = 'all';
+
+                function selectSynthesisPanel(panel, btn) {
+                    var toggle = document.getElementById('synthesis-panel-toggle');
+                    if (toggle) {
+                        var buttons = toggle.querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                    }
+                    var panels = document.querySelectorAll('[data-synthesis-panel]');
+                    panels.forEach(function(item) {
+                        item.className = item.getAttribute('data-synthesis-panel') === panel ? 'tab-panel active' : 'tab-panel';
+                    });
+                    window.setTimeout(function() {
+                        document.querySelectorAll('[data-synthesis-panel=\"' + panel + '\"] .js-plotly-plot').forEach(function(plot) {
+                            Plotly.Plots.resize(plot);
+                        });
+                    }, 0);
+                }
 
                 function selectSynthesisModel(model, btn) {
                     currentSynthesisModel = model;
@@ -522,10 +787,53 @@
                     updateSynthesisMetrics(data);
 
                     // Update plots
-                    drawHistogram('synthesis-sa-hist', data.sa_scores || [], 'SA Score (lower = easier)', '', 'sa_scores');
-                    drawHistogram('synthesis-syba-hist', data.syba_scores || [], 'SYBA Score (higher = easier)', '', 'syba_scores');
-                    drawHistogram('synthesis-ra-hist', data.ra_scores || [], 'RA Score (higher = easier)', '', 'ra_scores');
+                    updateSynthesisScoreHistograms(data);
                     drawPie('synthesis-solved-pie', data.solved_count || 0, data.unsolved_count || 0);
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (document.getElementById('synthesis-score-grid')) {
+                        updateSynthesisPlots();
+                    }
+                });
+
+                function updateSynthesisScoreHistograms(data) {
+                    var grid = document.getElementById('synthesis-score-grid');
+                    if (!grid) return;
+                    grid.innerHTML = '';
+
+                    var meta = synthesisScoreMeta || [];
+                    if (!meta.length && data.score_distributions) {
+                        meta = Object.keys(data.score_distributions).map(function(column) {
+                            return {
+                                column: column,
+                                key: column.replace(/_score$/, '') + '_scores',
+                                label: column
+                            };
+                        });
+                    }
+
+                    meta.forEach(function(item) {
+                        var values = data[item.key] || (data.score_distributions && data.score_distributions[item.column]) || [];
+                        if (!values.length) return;
+                        var panel = document.createElement('div');
+                        var title = document.createElement('h4');
+                        var container = document.createElement('div');
+                        var containerId = 'synthesis-' + item.key.replace(/_/g, '-') + '-hist';
+
+                        title.style.marginBottom = '8px';
+                        title.textContent = item.label + ' Distribution';
+                        container.id = containerId;
+                        container.className = 'plot-container';
+                        panel.appendChild(title);
+                        panel.appendChild(container);
+                        grid.appendChild(panel);
+                        drawHistogram(containerId, values, item.label, '', item.key);
+                    });
+
+                    if (!grid.children.length) {
+                        showEmptyState(grid);
+                    }
                 }
 
                 function updateSynthesisMetrics(data) {
@@ -1591,7 +1899,7 @@
         {% endif %}
 
         <!-- Structural Filters Analysis (Stage 02) -->
-        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter or plots.filters_data %}
+        {% if data.filters.by_filter or data.filters.totals or data.filters_detailed.by_filter or plots.filters_data or data.common_alert_diagnostics %}
         <section>
             <h2>Structural Filters Analysis</h2>
 
@@ -1858,11 +2166,301 @@
                 });
             </script>
             {% endif %}
+
+            {% if data.common_alert_diagnostics %}
+            {% set ca = data.common_alert_diagnostics %}
+            <div style="margin-top: 32px; padding-top: 28px; border-top: 1px solid var(--border);">
+                <h3 style="margin-bottom: 16px;">Common Alert Diagnostics</h3>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.input_molecules }}</div>
+                        <div class="metric-label">Input Molecules</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.passed }}</div>
+                        <div class="metric-label">Passed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.failed }}</div>
+                        <div class="metric-label">Failed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.pass_rate }}%</div>
+                        <div class="metric-label">Pass Rate</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.mean_ruleset_alerts_failed }}</div>
+                        <div class="metric-label">Mean Rulesets / Failed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{{ ca.overview.max_ruleset_alerts }}</div>
+                        <div class="metric-label">Max Rulesets / Molecule</div>
+                    </div>
+                </div>
+
+                <div class="view-toggle" id="common-alert-toggle">
+                    <button class="active" onclick="selectCommonAlertView('overview', this)">Overview</button>
+                    <button onclick="selectCommonAlertView('rulesets', this)">Rulesets</button>
+                    <button onclick="selectCommonAlertView('descriptions', this)">Descriptions</button>
+                    <button onclick="selectCommonAlertView('overlap', this)">Overlap</button>
+                    <button onclick="selectCommonAlertView('whatif', this)">What-if</button>
+                    <button onclick="selectCommonAlertView('molecules', this)">Molecules</button>
+                </div>
+
+                <div id="common-alert-overview" class="plot-container"></div>
+                <div id="common-alert-rulesets" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-descriptions" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-overlap" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-whatif" class="plot-container" style="display:none;"></div>
+                <div id="common-alert-molecules" style="display:none;">
+                    {% if ca.examples %}
+                    <div class="molecule-card-controls">
+                        <label>
+                            Show
+                            <select id="common-alert-card-count" onchange="updateCommonAlertMoleculeCards()">
+                                <option value="12">12 cards</option>
+                                <option value="18" selected>18 cards</option>
+                                <option value="36">36 cards</option>
+                                <option value="72">72 cards</option>
+                                <option value="all">All cards</option>
+                            </select>
+                        </label>
+                        <label>
+                            Columns
+                            <select id="common-alert-card-columns" onchange="updateCommonAlertMoleculeCards()">
+                                <option value="2">2</option>
+                                <option value="3" selected>3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                                <option value="6">6</option>
+                            </select>
+                        </label>
+                        <span id="common-alert-card-status"></span>
+                    </div>
+                    <div id="common-alert-card-grid" class="molecule-card-grid">
+                        {% for mol in ca.examples %}
+                        <div class="molecule-card" data-card-index="{{ loop.index }}">
+                            {{ mol.svg | safe }}
+                            <dl>
+                                <dt>mol_idx</dt><dd>{{ mol.mol_idx }}</dd>
+                                <dt>ruleset</dt><dd>{{ mol.ruleset }}</dd>
+                                <dt>description</dt><dd>{{ mol.description }}</dd>
+                                <dt>rule_id</dt><dd>{{ mol.rule_id }}</dd>
+                                <dt>SMARTS</dt><dd><code>{{ mol.smarts }}</code></dd>
+                                <dt>matches</dt><dd>{{ mol.n_matches }}</dd>
+                                <dt>rescue</dt><dd>{{ "yes" if mol.would_rescue else "no" }}</dd>
+                            </dl>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="empty-state">No atom-level hit examples available. Run Common Alerts with hits_long.csv diagnostics enabled.</p>
+                    {% endif %}
+                </div>
+
+                <script>
+                    var commonAlertData = {{ ca | tojson }};
+
+                    function selectCommonAlertView(view, btn) {
+                        var buttons = document.getElementById('common-alert-toggle').querySelectorAll('button');
+                        buttons.forEach(function(b) { b.className = ''; });
+                        btn.className = 'active';
+                        ['overview', 'rulesets', 'descriptions', 'overlap', 'whatif', 'molecules'].forEach(function(name) {
+                            var el = document.getElementById('common-alert-' + name);
+                            if (el) el.style.display = (name === view) ? 'block' : 'none';
+                        });
+                        renderCommonAlertView(view);
+                    }
+
+                    function renderCommonAlertView(view) {
+                        if (view === 'overview') renderCommonAlertOverview();
+                        if (view === 'rulesets') renderCommonAlertRulesets();
+                        if (view === 'descriptions') renderCommonAlertDescriptions();
+                        if (view === 'overlap') renderCommonAlertOverlap();
+                        if (view === 'whatif') renderCommonAlertWhatif();
+                        if (view === 'molecules') updateCommonAlertMoleculeCards();
+                    }
+
+                    function updateCommonAlertMoleculeCards() {
+                        var grid = document.getElementById('common-alert-card-grid');
+                        if (!grid) return;
+
+                        var countSelect = document.getElementById('common-alert-card-count');
+                        var columnsSelect = document.getElementById('common-alert-card-columns');
+                        var status = document.getElementById('common-alert-card-status');
+                        var cards = Array.prototype.slice.call(grid.querySelectorAll('.molecule-card'));
+                        var countValue = countSelect ? countSelect.value : '18';
+                        var visibleCount = countValue === 'all' ? cards.length : parseInt(countValue, 10);
+                        var columns = columnsSelect ? parseInt(columnsSelect.value, 10) : 3;
+
+                        grid.style.setProperty('--molecule-card-columns', columns);
+                        cards.forEach(function(card, index) {
+                            card.style.display = index < visibleCount ? 'block' : 'none';
+                        });
+                        if (status) {
+                            status.textContent = Math.min(visibleCount, cards.length) + ' of ' + cards.length + ' cards shown';
+                        }
+                    }
+
+                    function renderCommonAlertOverview() {
+                        var rows = commonAlertData.histogram || [];
+                        Plotly.react('common-alert-overview', [{
+                            type: 'bar',
+                            x: rows.map(function(r) { return r.failed_rulesets; }),
+                            y: rows.map(function(r) { return r.molecules; }),
+                            marker: { color: 'rgba(59, 130, 246, 0.75)' },
+                            hovertemplate: '%{y} molecules<br>%{x} failed rulesets<extra></extra>'
+                        }], {
+                            title: 'Distribution of Failed Common Alert Rulesets per Molecule',
+                            xaxis: { title: 'Failed rulesets' },
+                            yaxis: { title: 'Molecules' },
+                            height: 360,
+                            margin: { l: 70, r: 30, t: 50, b: 60 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertRulesets() {
+                        var rows = (commonAlertData.rulesets || []).slice().reverse();
+                        Plotly.react('common-alert-rulesets', [
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Total hits',
+                                y: rows.map(function(r) { return r.ruleset; }),
+                                x: rows.map(function(r) { return r.total_hits; }),
+                                marker: { color: 'rgba(139, 92, 246, 0.65)' }
+                            },
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Unique rescue',
+                                y: rows.map(function(r) { return r.ruleset; }),
+                                x: rows.map(function(r) { return r.unique_rescue; }),
+                                marker: { color: 'rgba(34, 197, 94, 0.75)' }
+                            }
+                        ], {
+                            title: 'Ruleset Impact: Total Hits vs Unique Rescue',
+                            barmode: 'group',
+                            height: Math.max(360, rows.length * 34 + 100),
+                            margin: { l: 180, r: 30, t: 50, b: 50 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertDescriptions() {
+                        var rows = (commonAlertData.descriptions || []).slice().reverse();
+                        var labels = rows.map(function(r) { return r.ruleset + ' / ' + r.description; });
+                        Plotly.react('common-alert-descriptions', [
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Total hits',
+                                y: labels,
+                                x: rows.map(function(r) { return r.total_hits; }),
+                                marker: { color: 'rgba(20, 184, 166, 0.65)' }
+                            },
+                            {
+                                type: 'bar',
+                                orientation: 'h',
+                                name: 'Unique rescue',
+                                y: labels,
+                                x: rows.map(function(r) { return r.unique_rescue; }),
+                                marker: { color: 'rgba(249, 115, 22, 0.75)' }
+                            }
+                        ], {
+                            title: 'Description-Level Pareto',
+                            barmode: 'group',
+                            height: Math.max(420, rows.length * 30 + 120),
+                            margin: { l: 260, r: 30, t: 50, b: 50 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertOverlap() {
+                        var rows = commonAlertData.cooccurrence || [];
+                        var labels = [];
+                        rows.forEach(function(r) {
+                            if (labels.indexOf(r.left) === -1) labels.push(r.left);
+                            if (labels.indexOf(r.right) === -1) labels.push(r.right);
+                        });
+                        labels = labels.slice(0, 12);
+                        var z = labels.map(function(left) {
+                            return labels.map(function(right) {
+                                if (left === right) return 1;
+                                var match = rows.find(function(r) {
+                                    return (r.left === left && r.right === right) || (r.left === right && r.right === left);
+                                });
+                                return match ? match.jaccard : 0;
+                            });
+                        });
+                        Plotly.react('common-alert-overlap', [{
+                            type: 'heatmap',
+                            x: labels,
+                            y: labels,
+                            z: z,
+                            colorscale: 'Blues',
+                            hovertemplate: '%{y} × %{x}<br>Jaccard: %{z:.2f}<extra></extra>'
+                        }], {
+                            title: 'Ruleset Co-occurrence Jaccard Overlap',
+                            height: Math.max(420, labels.length * 34 + 120),
+                            margin: { l: 170, r: 40, t: 50, b: 150 },
+                            xaxis: { tickangle: -45 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    function renderCommonAlertWhatif() {
+                        var rules = commonAlertData.whatif_rulesets || [];
+                        var desc = commonAlertData.whatif_descriptions || [];
+                        Plotly.react('common-alert-whatif', [
+                            {
+                                type: 'scatter',
+                                mode: 'lines+markers',
+                                name: 'Rulesets',
+                                x: rules.map(function(r) { return r.step; }),
+                                y: rules.map(function(r) { return r.rescued; }),
+                                text: rules.map(function(r) { return r.disabled; }),
+                                hovertemplate: 'Top %{x}: %{text}<br>rescued: %{y}<extra></extra>'
+                            },
+                            {
+                                type: 'scatter',
+                                mode: 'lines+markers',
+                                name: 'Descriptions',
+                                x: desc.map(function(r) { return r.step; }),
+                                y: desc.map(function(r) { return r.rescued; }),
+                                text: desc.map(function(r) { return r.disabled; }),
+                                hovertemplate: 'Top %{x}: %{text}<br>rescued: %{y}<extra></extra>'
+                            }
+                        ], {
+                            title: 'Cumulative What-if Rescue',
+                            xaxis: { title: 'Top disabled alerts' },
+                            yaxis: { title: 'Molecules rescued' },
+                            height: 380,
+                            margin: { l: 70, r: 30, t: 50, b: 60 },
+                            paper_bgcolor: 'white',
+                            plot_bgcolor: 'white'
+                        }, {displayModeBar: true});
+                    }
+
+                    document.addEventListener('DOMContentLoaded', function() {
+                        if (document.getElementById('common-alert-overview')) {
+                            renderCommonAlertOverview();
+                            updateCommonAlertMoleculeCards();
+                        }
+                    });
+                </script>
+            </div>
+            {% endif %}
         </section>
         {% endif %}
 
         <!-- Synthesis Analysis (Stage 04) -->
-        {% if data.synthesis.distributions or data.synthesis_detailed.sa_scores %}
+        {% if data.synthesis.distributions or data.synthesis_detailed.score_distributions %}
         <section>
             <h2>Synthesis Analysis</h2>
 
@@ -1876,6 +2474,17 @@
             </div>
             {% endif %}
 
+            <div class="view-toggle" id="synthesis-panel-toggle">
+                <button class="active" onclick="selectSynthesisPanel('raw', this)">Raw Scores</button>
+                {% if plots.synthesis_aligned_dist %}
+                <button onclick="selectSynthesisPanel('aligned', this)">Aligned Comparison</button>
+                {% endif %}
+                {% if data.retrosynthesis and data.retrosynthesis.summary %}
+                <button onclick="selectSynthesisPanel('retrosynthesis', this)">AiZynthFinder</button>
+                {% endif %}
+            </div>
+
+            <div class="tab-panel active" data-synthesis-panel="raw">
             <!-- ==================== Synthesis Scores Section ==================== -->
             <h3 style="margin-top: 20px; margin-bottom: 15px;">Synthesis Scores</h3>
 
@@ -1886,35 +2495,66 @@
                 <span><span style="display: inline-block; width: 20px; height: 12px; background: rgba(156, 163, 175, 0.3); vertical-align: middle; margin-right: 6px; border: 1px solid #d1d5db;"></span>Out of Range</span>
             </div>
 
-            <!-- SA, SYBA, RA histograms (dynamic) -->
-            <div class="three-col">
-                <div>
-                    <h4 style="margin-bottom: 8px;">SA Score Distribution</h4>
-                    <div id="synthesis-sa-hist" class="plot-container">
-                        {% if plots.synthesis_sa_hist %}{{ plots.synthesis_sa_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 8px;">SYBA Score Distribution</h4>
-                    <div id="synthesis-syba-hist" class="plot-container">
-                        {% if plots.synthesis_syba_hist %}{{ plots.synthesis_syba_hist | safe }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <h4 style="margin-bottom: 8px;">RA Score Distribution</h4>
-                    <div id="synthesis-ra-hist" class="plot-container">
-                        {% if plots.synthesis_ra_hist %}{{ plots.synthesis_ra_hist | safe }}{% endif %}
-                    </div>
-                </div>
-            </div>
+            <!-- Score histograms (dynamic) -->
+            <div class="three-col" id="synthesis-score-grid"></div>
             <div style="text-align: center; margin-top: 8px;">
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SA Score (lower = easier)</p>
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">SYBA Score (higher = easier)</p>
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">RA Score (higher = easier)</p>
+                {% for item in plots.synthesis_score_meta or [] %}
+                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">{{ item.label }}</p>
+                {% endfor %}
             </div>
+            </div>
+
+            {% if plots.synthesis_aligned_dist %}
+            <div class="tab-panel" data-synthesis-panel="aligned">
+                <h3 style="margin-top: 20px; margin-bottom: 15px;">Aligned Synthesis Scorer Comparison</h3>
+                <p style="color: #6b7280; font-size: 13px; margin-bottom: 16px;">
+                    All scores below are normalized to 0..1 with 1 meaning easier to synthesize. Raw score columns are unchanged in CSV outputs.
+                </p>
+                <div class="plot-container">{{ plots.synthesis_aligned_dist | safe }}</div>
+                <div class="two-col" style="margin-top: 20px;">
+                    <div>
+                        {% if plots.synthesis_aligned_corr %}
+                        {{ plots.synthesis_aligned_corr | safe }}
+                        {% else %}
+                        <div class="empty-state">No correlation data available</div>
+                        {% endif %}
+                    </div>
+                    <div>
+                        {% if plots.synthesis_aligned_route %}
+                        {{ plots.synthesis_aligned_route | safe }}
+                        {% else %}
+                        <div class="empty-state">No route comparison data available</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if plots.synthesis_aligned_score_meta %}
+                <table style="margin-top: 20px;">
+                    <thead>
+                        <tr>
+                            <th>Scorer</th>
+                            <th>Raw Direction</th>
+                            <th>Normalization</th>
+                            <th>Aligned Mean</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in plots.synthesis_aligned_score_meta %}
+                        <tr>
+                            <td>{{ item.label }}</td>
+                            <td>{{ item.raw_direction }}</td>
+                            <td>{{ item.normalization }}</td>
+                            <td>{{ "%.3f"|format(item.mean) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            {% endif %}
 
             <!-- ==================== AiZynthFinder Section ==================== -->
             {% if data.retrosynthesis and data.retrosynthesis.summary %}
+            <div class="tab-panel" data-synthesis-panel="retrosynthesis">
             <h3 style="margin-top: 30px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid var(--border);">AiZynthFinder Retrosynthesis</h3>
 
             <!-- AiZynthFinder metrics -->
@@ -1989,6 +2629,7 @@
                         {% endif %}
                     </div>
                 </div>
+            </div>
             </div>
             {% endif %}
         </section>

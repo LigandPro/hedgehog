@@ -6,6 +6,9 @@ import pandas as pd
 from hedgehog._constants import CFG_DESCRIPTORS, CFG_STRUCT_FILTERS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.large_dataset import is_large_dataset_mode
+from hedgehog.struct_filters.common_alert_diagnostics import (
+    write_common_alert_diagnostics,
+)
 from hedgehog.struct_filters.large import run_large
 from hedgehog.struct_filters.utils import (
     combine_filter_results_in_memory,
@@ -228,6 +231,9 @@ def _save_filter_results(output_dir, filter_name, metrics_df, extended_df):
     filtered_mols = extended_df[extended_df["pass"]].copy()
     filtered_mols = _order_identity_columns(filtered_mols)
     filtered_mols.to_csv(filter_subdir / "filtered_molecules.csv", index=False)
+
+    if filter_name == "common_alerts":
+        write_common_alert_diagnostics(filter_subdir, extended_df)
 
 
 def _get_enabled_filters(config_struct_filters):

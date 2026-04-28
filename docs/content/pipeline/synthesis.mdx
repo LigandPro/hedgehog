@@ -4,7 +4,7 @@ title: Synthesis
 
 # Synthesis
 
-The synthesis stage evaluates whether generated molecules can be practically synthesized. It computes three independent accessibility scores and optionally runs full retrosynthetic route analysis using AiZynthFinder.
+The synthesis stage evaluates whether generated molecules can be practically synthesized. It computes registry-enabled accessibility scores and optionally runs full retrosynthetic route analysis using AiZynthFinder.
 
 ## Scoring Methods
 
@@ -29,6 +29,60 @@ The synthesis stage evaluates whether generated molecules can be practically syn
 - **How it works**: An XGBoost classifier trained on the output of a retrosynthesis tool. Predicts the probability that a retrosynthesis planner can find a valid route to the molecule. Faster than running actual retrosynthesis but less precise.
 - **Default threshold**: 0.5--1
 
+### SYNC Score (3D Synthesizability Classifier)
+
+- **Range**: 0--1 (higher is better)
+- **Method**: 3D EGNN classifier from SYNC, using an RDKit ETKDG conformer for each input SMILES
+- **How it works**: Predicts easy-vs-hard synthesizability from atom types, bonds, and 3D coordinates. The checkpoint is downloaded to `modules/sync/classifier_emb.ckpt` by `uv run hedgehog setup sync` or automatically when `sync_auto_install: true`.
+- **Default threshold**: 0.5--1 through `score_filters.sync_score`
+
+### SCScore (Synthetic Complexity Score)
+
+- **Range**: 1--5 (lower is less complex)
+- **Method**: Standalone numpy SCScore model trained on Reaxys reactions
+- **How it works**: Scores synthetic complexity from Morgan fingerprints using the published SCScore neural model. The default configuration computes the score but does not filter on it unless `score_filters.sc_score` thresholds are set.
+
+### Nonpher Complexity Flag
+
+- **Range**: 0 or 1 (1 means too complex)
+- **Method**: Optional Nonpher/Molpher complexity filter
+- **How it works**: Uses Nonpher's molecular complexity thresholds to mark molecules that exceed hard-to-synthesize complexity limits. If `HEDGEHOG_NONPHER_PYTHON` is set, HEDGEHOG runs `hedgehog.workers.nonpher_worker` inside that external interpreter.
+- **Missing dependency behavior**: if Nonpher is unavailable, `nonpher_complexity_score` is reported as `NaN` and synthesis continues.
+- **Auto-install behavior**: with `--auto-install` / `HEDGEHOG_AUTO_INSTALL=1`, HEDGEHOG first attempts an isolated **uv-only** bootstrap in `$HEDGEHOG_OPTIONAL_ENV_ROOT/nonpher` (or `.venv-nonpher-worker`) using pinned `numpy<2`, `rdkit-pypi`, `nonpher` (git), and `molpher-lib` (git).
+- **Known blocker behavior**: if uv-only bootstrap cannot build/link `molpher-lib` (for example `cannot find -lmolpher`) or hits other native dependency blockers, HEDGEHOG logs the exact blocker and returns `NaN` for Nonpher scores.
+- **Manual override**: you can still point `HEDGEHOG_NONPHER_PYTHON` to any validated isolated interpreter (for example a prebuilt shared hybrid env) and HEDGEHOG will use it via the external worker.
+- **Validation helper**: run `uv run hedgehog setup nonpher-check` (or pass `--python` to probe an isolated environment).
+
+Example isolated Linux path (keeps main `uv` env unchanged):
+
+```bash
+export HEDGEHOG_OPTIONAL_ENV_ROOT=~/work/hedgehog_optional_envs
+mkdir -p "$HEDGEHOG_OPTIONAL_ENV_ROOT"
+# uv-only attempt happens automatically with --auto-install
+uv run hedgehog setup nonpher-check --python "$HEDGEHOG_OPTIONAL_ENV_ROOT/nonpher/bin/python"
+# fallback when uv-only fails with native linker blockers
+uv run hedgehog setup nonpher-check --python /mnt/ligandpro/shared_storage/data/nikolenko/hedgehog_optional_envs/nonpher-hybrid-py38-v2/bin/python
+```
+
+### FSScore (Focused Synthesizability Score)
+
+- **Range**: model-dependent raw score
+- **Method**: Optional external FSScore model environment
+- **How it works**: HEDGEHOG writes a temporary SMILES CSV and runs `hedgehog.workers.fsscore_worker`, which delegates scoring to an isolated Python interpreter (`HEDGEHOG_FSSCORE_PYTHON`) via `python -m fsscore.score`.
+- **Model path resolution**: set `HEDGEHOG_FSSCORE_MODEL_PATH` directly, or set `HEDGEHOG_FSSCORE_REPO_PATH` and HEDGEHOG resolves `models/pretrain_graph_GGLGGL_ep242_best_valloss.ckpt`.
+- **Auto-install behavior**: with `--auto-install` / `HEDGEHOG_AUTO_INSTALL=1`, if Python/model settings are missing and no explicit `fsscore_command` is provided, HEDGEHOG bootstraps an isolated `uv` runtime in `$HEDGEHOG_OPTIONAL_ENV_ROOT/fsscore` (or `.venv-fsscore-worker`) via `ensure_fsscore_runtime` and wires runtime paths automatically.
+- **Missing configuration behavior**: if FSScore Python/model is not configured, `fs_score` is emitted as `NaN` with a clear warning and synthesis continues.
+- **Setup helper**: run `uv run hedgehog setup fsscore --yes` to clone the upstream FSScore checkout into `modules/fsscore`.
+
+### GASA
+
+- **Range**: adapter-dependent score or probability
+- **Method**: Optional local command, executable, or local HTTP API adapter
+- **How it works**: GASA supports three local adapters: `gasa.command` / `HEDGEHOG_GASA_COMMAND`, `gasa.executable` / `HEDGEHOG_GASA_EXECUTABLE`, and `gasa.api_url` / `HEDGEHOG_GASA_API_URL` (loopback URLs only).
+- **Auto-install behavior**: with `--auto-install` / `HEDGEHOG_AUTO_INSTALL=1`, if no backend is configured, HEDGEHOG bootstraps an isolated `uv` runtime in `$HEDGEHOG_OPTIONAL_ENV_ROOT/gasa` (or `.venv-gasa-worker`) and injects a local `hedgehog.workers.gasa_worker` command automatically.
+- **Missing backend behavior**: if auto-setup is unavailable and no backend is configured, HEDGEHOG logs a clear warning and returns `NaN` for `gasa_score`.
+- **Portability requirement**: set `HEDGEHOG_OPTIONAL_ENV_ROOT` to a writable host-local path (for example `~/work/hedgehog_optional_envs`), while keeping run outputs in shared storage.
+
 ## AiZynthFinder Retrosynthesis
 
 When `run_retrosynthesis: true`, the pipeline runs AiZynthFinder to search for actual retrosynthetic routes:
@@ -40,7 +94,7 @@ When `run_retrosynthesis: true`, the pipeline runs AiZynthFinder to search for a
 
 If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept. This is the strictest synthesis filter but also the most computationally expensive.
 
-Setting `run_retrosynthesis: false` skips AiZynthFinder entirely and only computes the three scores above, which is significantly faster.
+Setting `run_retrosynthesis: false` skips AiZynthFinder entirely and only computes the enabled scores above, which is significantly faster.
 
 ## Configuration
 
@@ -49,16 +103,56 @@ Full configuration in `config_synthesis.yml`:
 ```yaml
 run: true
 n_jobs: -1                # Workers for scoring + AiZynthFinder (--nproc)
+enabled_scores:
+  - sa
+  - syba
+  - rascore
+  - sync
+  - scscore
+  - nonpher
+  - fsscore
+  - gasa
 run_retrosynthesis: true     # Run AiZynthFinder route search
 filter_solved_only: true     # Keep only molecules with found routes
 
-# Score thresholds
+# Legacy score thresholds
 sa_score_min: 1
 sa_score_max: 4.5
 syba_score_min: 0
 syba_score_max: inf
 ra_score_min: 0.5
 ra_score_max: 1
+sync_auto_install: true
+sync_device: cpu
+sync_conformer_seed: 61453
+
+# Optional FSScore isolated worker configuration.
+# fsscore_python: /abs/path/to/fsscore-env/bin/python
+# fsscore_model_path: /abs/path/to/pretrain_graph_GGLGGL_ep242_best_valloss.ckpt
+# fsscore_repo_path: /abs/path/to/fsscore
+
+# Optional score filters for new or experimental scorers.
+score_filters:
+  sync_score:
+    min: 0.5
+    max: 1
+  sc_score:
+    min:
+    max:
+  nonpher_complexity_score:
+    min:
+    max:
+  fs_score:
+    min:
+    max:
+  gasa_score:
+    min:
+    max:
+gasa:
+  command:
+  executable:
+  api_url:
+  timeout_seconds: 30
 ```
 
 ## Filtering Logic
@@ -68,13 +162,14 @@ A molecule passes the synthesis stage if **all** of the following hold:
 1. SA Score is within `[sa_score_min, sa_score_max]`
 2. SYBA Score is within `[syba_score_min, syba_score_max]`
 3. RA Score is within `[ra_score_min, ra_score_max]`
-4. If `filter_solved_only: true` and `run_retrosynthesis: true`: AiZynthFinder found at least one valid route
+4. Any enabled `score_filters` thresholds are satisfied, including `score_filters.sync_score` when `sync` is enabled
+5. If `filter_solved_only: true` and `run_retrosynthesis: true`: AiZynthFinder found at least one valid route
 
 ## Output Files
 
 | File | Description |
 |------|-------------|
-| `synthesis_scores.csv` | SA Score, RA Score, and SYBA Score for all input molecules |
+| `synthesis_scores.csv` | Enabled synthesis scores for all input molecules |
 | `synthesis_extended.csv` | Scores combined with retrosynthesis results (when retrosynthesis is enabled) |
 | `filtered_molecules.csv` | Molecules passing all synthesis filters |
 | `input_smiles.smi` | SMILES input file generated for AiZynthFinder |
