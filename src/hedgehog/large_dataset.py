@@ -181,7 +181,9 @@ def stage_output_or_parts(csv_path: Path) -> Path | None:
     return _resolve_csv_or_parts(csv_path, allow_empty_csv=True)
 
 
-def iter_csv_parts(path_or_parts: Path, chunk_rows: int | None = None) -> Iterator[pd.DataFrame]:
+def iter_csv_parts(
+    path_or_parts: Path, chunk_rows: int | None = None
+) -> Iterator[pd.DataFrame]:
     """Yield DataFrames from one CSV/CSV.GZ file or a .parts directory."""
     if path_or_parts.is_dir():
         for part in list_part_files(path_or_parts):
@@ -298,7 +300,9 @@ def _iter_table_chunks(path: Path, chunk_rows: int) -> Iterator[pd.DataFrame]:
         yield normalize_molecule_chunk(chunk, path)
 
 
-def iter_input_chunks(input_path: str | Path, chunk_rows: int) -> Iterator[pd.DataFrame]:
+def iter_input_chunks(
+    input_path: str | Path, chunk_rows: int
+) -> Iterator[pd.DataFrame]:
     """Stream molecule input chunks from CSV/TSV or headerless SMI-style files."""
     normalized_chunk_rows = max(int(chunk_rows), 1)
     for path in _expand_input_paths(input_path):
@@ -339,7 +343,9 @@ class StreamingMolIdxAssigner:
         if row is not None:
             return int(row[0]), int(row[1])
 
-        max_row = self.conn.execute("SELECT MAX(model_number) FROM model_state").fetchone()
+        max_row = self.conn.execute(
+            "SELECT MAX(model_number) FROM model_state"
+        ).fetchone()
         next_model = int(max_row[0] or 0) + 1
         self.conn.execute(
             "INSERT INTO model_state(model_name, model_number, next_counter) VALUES (?, ?, ?)",
@@ -372,7 +378,9 @@ class StreamingMolIdxAssigner:
         if not missing_mask.any():
             return out
 
-        for model_name, idxs in out.loc[missing_mask].groupby(MODEL_NAME_COLUMN).groups.items():
+        for model_name, idxs in (
+            out.loc[missing_mask].groupby(MODEL_NAME_COLUMN).groups.items()
+        ):
             model_number, next_counter = self._get_or_create_model(str(model_name))
             ordered_indices = list(idxs)
             values = [

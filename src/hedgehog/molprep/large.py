@@ -127,8 +127,12 @@ def run_large(config: dict, cfg: dict, out_dir: Path, reporter=None) -> None:
     dedup_conn = sqlite3.connect(work_dir / "state.sqlite")
     _ensure_dedup_table(dedup_conn)
 
-    passed_writer = ShardedCsvWriter(parts_dir_for_csv(out_dir / "filtered_molecules.csv"), config)
-    failed_writer = ShardedCsvWriter(parts_dir_for_csv(out_dir / "failed_molecules.csv"), config)
+    passed_writer = ShardedCsvWriter(
+        parts_dir_for_csv(out_dir / "filtered_molecules.csv"), config
+    )
+    failed_writer = ShardedCsvWriter(
+        parts_dir_for_csv(out_dir / "failed_molecules.csv"), config
+    )
     duplicates_writer = ShardedCsvWriter(
         parts_dir_for_csv(out_dir / "duplicates_removed.csv"), config
     )
@@ -146,7 +150,9 @@ def run_large(config: dict, cfg: dict, out_dir: Path, reporter=None) -> None:
     total_seen = 0
 
     try:
-        for chunk_index, chunk in enumerate(iter_input_chunks(input_path, chunk_rows), start=1):
+        for chunk_index, chunk in enumerate(
+            iter_input_chunks(input_path, chunk_rows), start=1
+        ):
             chunk = assigner.assign(chunk)
             total_seen += len(chunk)
             if reporter is not None:
@@ -160,7 +166,11 @@ def run_large(config: dict, cfg: dict, out_dir: Path, reporter=None) -> None:
             items: list[tuple[str, str | None, str | None]] = []
             for _, row in chunk.iterrows():
                 smiles_value = row.get(smiles_col, "")
-                smiles_raw = "" if _is_missing_smiles_value(smiles_value) else str(smiles_value).strip()
+                smiles_raw = (
+                    ""
+                    if _is_missing_smiles_value(smiles_value)
+                    else str(smiles_value).strip()
+                )
                 model_name = row.get(model_col)
                 mol_idx = row.get(idx_col)
                 items.append(
@@ -210,10 +220,17 @@ def run_large(config: dict, cfg: dict, out_dir: Path, reporter=None) -> None:
 
             passed_df, duplicates_df = _deduplicate_global(dedup_conn, passed_df)
             stable_cols = ["smiles", "model_name", "mol_idx"]
-            extra_cols = [c for c in ["smiles_raw", smiles_raw_col] if c in passed_df.columns]
-            stable_cols = [*stable_cols, *[c for c in extra_cols if c not in stable_cols]]
+            extra_cols = [
+                c for c in ["smiles_raw", smiles_raw_col] if c in passed_df.columns
+            ]
+            stable_cols = [
+                *stable_cols,
+                *[c for c in extra_cols if c not in stable_cols],
+            ]
 
-            passed_writer.write(passed_df[[c for c in stable_cols if c in passed_df.columns]])
+            passed_writer.write(
+                passed_df[[c for c in stable_cols if c in passed_df.columns]]
+            )
             failed_writer.write(failed_df)
             duplicates_writer.write(duplicates_df)
 
@@ -224,7 +241,9 @@ def run_large(config: dict, cfg: dict, out_dir: Path, reporter=None) -> None:
                 "passed": len(passed_df),
                 "failed": len(failed_df),
                 "duplicates_removed": len(duplicates_df),
-                "failure_reasons_json": json.dumps(dict(failure_reasons), sort_keys=True),
+                "failure_reasons_json": json.dumps(
+                    dict(failure_reasons), sort_keys=True
+                ),
             }
             stage_rows.append(row)
             manifest_rows.append(

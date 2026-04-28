@@ -30,7 +30,9 @@ from hedgehog.struct_filters.large import _struct_input_chunks
 
 def test_sharded_writer_materializes_small_csv(tmp_path):
     output_csv = tmp_path / "filtered_molecules.csv"
-    writer = ShardedCsvWriter(parts_dir_for_csv(output_csv), {"large_dataset_output_format": "csv.gz"})
+    writer = ShardedCsvWriter(
+        parts_dir_for_csv(output_csv), {"large_dataset_output_format": "csv.gz"}
+    )
 
     writer.write(
         pd.DataFrame(
@@ -145,12 +147,11 @@ def test_streaming_mol_idx_assigner_persists_counters_across_chunks(tmp_path):
 
 def test_data_checker_accepts_large_dataset_parts_output(tmp_path):
     output_csv = (
-        tmp_path
-        / DIR_DESCRIPTORS_INITIAL
-        / "filtered"
-        / FILE_FILTERED_MOLECULES
+        tmp_path / DIR_DESCRIPTORS_INITIAL / "filtered" / FILE_FILTERED_MOLECULES
     )
-    writer = ShardedCsvWriter(parts_dir_for_csv(output_csv), {"large_dataset_output_format": "csv.gz"})
+    writer = ShardedCsvWriter(
+        parts_dir_for_csv(output_csv), {"large_dataset_output_format": "csv.gz"}
+    )
     writer.write(
         pd.DataFrame(
             {
@@ -211,10 +212,7 @@ def test_large_synthesis_validation_accepts_generated_input(tmp_path):
 
 def test_struct_filters_respect_empty_descriptor_output(tmp_path):
     descriptor_csv = (
-        tmp_path
-        / DIR_DESCRIPTORS_INITIAL
-        / "filtered"
-        / FILE_FILTERED_MOLECULES
+        tmp_path / DIR_DESCRIPTORS_INITIAL / "filtered" / FILE_FILTERED_MOLECULES
     )
     descriptor_csv.parent.mkdir(parents=True)
     pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]).to_csv(
@@ -222,7 +220,9 @@ def test_struct_filters_respect_empty_descriptor_output(tmp_path):
     )
 
     molprep_csv = tmp_path / "stages" / "00_mol_prep" / FILE_FILTERED_MOLECULES
-    writer = ShardedCsvWriter(parts_dir_for_csv(molprep_csv), {"large_dataset_output_format": "csv.gz"})
+    writer = ShardedCsvWriter(
+        parts_dir_for_csv(molprep_csv), {"large_dataset_output_format": "csv.gz"}
+    )
     writer.write(
         pd.DataFrame(
             {

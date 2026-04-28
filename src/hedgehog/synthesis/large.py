@@ -164,7 +164,9 @@ def run_large(
 
     stage_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
-    pass_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"passed": 0, "total": 0})
+    pass_counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"passed": 0, "total": 0}
+    )
     processed_total = 0
 
     logger.info(
@@ -172,7 +174,9 @@ def run_large(
         chunk_rows,
     )
 
-    for chunk_index, chunk in enumerate(_synthesis_input_chunks(config, chunk_rows), start=1):
+    for chunk_index, chunk in enumerate(
+        _synthesis_input_chunks(config, chunk_rows), start=1
+    ):
         if chunk.empty:
             continue
         processed_total += len(chunk)
@@ -198,7 +202,9 @@ def run_large(
         flags_writer.write(flags)
         passed_writer.write(passed_df)
         failed_writer.write(failed_df)
-        filtered_writer.write(filtered_df[[c for c in IDENTITY_COLUMNS if c in filtered_df.columns]])
+        filtered_writer.write(
+            filtered_df[[c for c in IDENTITY_COLUMNS if c in filtered_df.columns]]
+        )
         _update_pass_counts(pass_counts, flags)
 
         stage_rows.append(
@@ -238,7 +244,9 @@ def run_large(
             IDENTITY_COLUMNS,
         ),
     ]:
-        materialize_csv_if_small(parts_dir, output_csv, single_csv_limit, columns=columns)
+        materialize_csv_if_small(
+            parts_dir, output_csv, single_csv_limit, columns=columns
+        )
 
     _write_summary(output_folder, stage_rows, pass_counts)
     write_manifest(output_folder / "manifest.tsv", manifest_rows)

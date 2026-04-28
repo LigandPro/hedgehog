@@ -44,13 +44,17 @@ def _enabled_filters(
     return {
         key.replace("calculate_", ""): value
         for key, value in config_struct_filters.items()
-        if key.startswith("calculate_") and isinstance(value, bool) and (value or force_all)
+        if key.startswith("calculate_")
+        and isinstance(value, bool)
+        and (value or force_all)
     }
 
 
 def _struct_input_chunks(config: dict, stage_dir: str, chunk_rows: int):
     base = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
-    is_post_descriptors = "03_structural_filters_post" in stage_dir or stage_dir == "StructFilters"
+    is_post_descriptors = (
+        "03_structural_filters_post" in stage_dir or stage_dir == "StructFilters"
+    )
     if is_post_descriptors:
         descriptors_output = stage_output_or_parts(
             base
@@ -65,7 +69,9 @@ def _struct_input_chunks(config: dict, stage_dir: str, chunk_rows: int):
             yield from iter_csv_parts(descriptors_output, chunk_rows=chunk_rows)
             return
 
-    molprep_output = resolve_large_output(base, "stages", "00_mol_prep", "filtered_molecules.csv")
+    molprep_output = resolve_large_output(
+        base, "stages", "00_mol_prep", "filtered_molecules.csv"
+    )
     if molprep_output is not None:
         yield from iter_csv_parts(molprep_output, chunk_rows=chunk_rows)
         return
@@ -98,7 +104,11 @@ def _pass_mask(filter_extended: pd.DataFrame) -> pd.DataFrame:
 def _merge_filter_pass(
     combined: pd.DataFrame, filter_name: str, filter_extended: pd.DataFrame
 ) -> pd.DataFrame:
-    id_cols = [c for c in IDENTITY_COLUMNS if c in combined.columns and c in filter_extended.columns]
+    id_cols = [
+        c
+        for c in IDENTITY_COLUMNS
+        if c in combined.columns and c in filter_extended.columns
+    ]
     mask = _pass_mask(filter_extended)
     if mask.empty or not id_cols:
         combined[filter_name] = False
@@ -112,7 +122,9 @@ def _merge_filter_pass(
 def _summarize_filter_parts(filter_name: str, parts_dir: Path) -> dict[str, Any]:
     rows = 0
     passed = 0
-    pass_col_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"passed": 0, "total": 0})
+    pass_col_counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"passed": 0, "total": 0}
+    )
     numeric: dict[str, dict[str, float]] = {}
 
     for part_df in iter_csv_parts(parts_dir):
@@ -205,7 +217,9 @@ def run_large(
         ",".join(filters),
     )
 
-    for chunk_index, chunk in enumerate(_struct_input_chunks(config, stage_dir, chunk_rows), start=1):
+    for chunk_index, chunk in enumerate(
+        _struct_input_chunks(config, stage_dir, chunk_rows), start=1
+    ):
         if chunk.empty:
             continue
         processed_total += len(chunk)
@@ -245,7 +259,9 @@ def run_large(
             if filter_results is None:
                 combined[filter_name] = False
                 continue
-            model_names = sorted(chunk["model_name"].dropna().astype(str).unique().tolist())
+            model_names = sorted(
+                chunk["model_name"].dropna().astype(str).unique().tolist()
+            )
             model_name = model_names[0] if len(model_names) == 1 else model_names
             _, final_extended = get_basic_stats(
                 config_struct_filters,

@@ -139,7 +139,12 @@ def run_large(
 
     chunk_rows = get_chunk_rows(config)
     single_csv_limit = get_single_csv_limit(config)
-    work_dir = Path(process_path(config[KEY_FOLDER_TO_SAVE])) / "_workdir" / "large_dataset" / "descriptors"
+    work_dir = (
+        Path(process_path(config[KEY_FOLDER_TO_SAVE]))
+        / "_workdir"
+        / "large_dataset"
+        / "descriptors"
+    )
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -165,7 +170,9 @@ def run_large(
 
     stage_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
-    pass_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"passed": 0, "total": 0})
+    pass_counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"passed": 0, "total": 0}
+    )
     numeric_summary: dict[str, dict[str, float]] = {}
     processed_total = 0
     calculate_filters = bool(config_descriptors.get("filter_data", False)) or (
@@ -173,7 +180,9 @@ def run_large(
     )
     filter_outputs = should_filter_large_outputs(config)
 
-    for chunk_index, chunk in enumerate(_descriptor_input_chunks(config, chunk_rows), start=1):
+    for chunk_index, chunk in enumerate(
+        _descriptor_input_chunks(config, chunk_rows), start=1
+    ):
         if chunk.empty:
             continue
         processed_total += len(chunk)
@@ -285,7 +294,9 @@ def run_large(
             ["smiles", "model_name", "mol_idx"],
         ),
     ]:
-        materialize_csv_if_small(parts_dir, output_csv, single_csv_limit, columns=columns)
+        materialize_csv_if_small(
+            parts_dir, output_csv, single_csv_limit, columns=columns
+        )
 
     _write_descriptor_summary(
         descriptors_folder,

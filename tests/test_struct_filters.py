@@ -1282,9 +1282,7 @@ def _fake_parallelized(fn, inputs_list, **kwargs):
 class TestMolGraphStatsOnePass:
     @staticmethod
     def _severity_table():
-        return pd.DataFrame(
-            {"severity": [10, 10, 10, 10, 8, 8, 5, 8, 5, 8, 5]}
-        )
+        return pd.DataFrame({"severity": [10, 10, 10, 10, 8, 8, 5, 8, 5, 8, 5]})
 
     @staticmethod
     def _assert_expected_pass_columns(result):
@@ -1361,7 +1359,9 @@ class TestMolGraphStatsOnePass:
         monkeypatch.setattr(modular_molgraph.dm, "parallelized", _fake_parallelized)
 
         old_filter = MagicMock()
-        monkeypatch.setattr(modular_molgraph.mc.functional, "molecular_graph_filter", old_filter)
+        monkeypatch.setattr(
+            modular_molgraph.mc.functional, "molecular_graph_filter", old_filter
+        )
 
         config = {CFG_STRUCT_FILTERS: "dummy.yml"}
         result = modular_molgraph.apply_molgraph_stats(config, mols)

@@ -679,7 +679,9 @@ class PipelineStageRunner:
         if self.find_latest_data_source():
             return True
 
-        if is_large_dataset_mode(self.config) and self.config.get("generated_mols_path"):
+        if is_large_dataset_mode(self.config) and self.config.get(
+            "generated_mols_path"
+        ):
             return True
 
         if self.config.get(OVERRIDE_SINGLE_STAGE) != STAGE_SYNTHESIS:
@@ -1433,7 +1435,9 @@ class MolecularAnalysisPipeline:
     ):
         """Load the most recent stage output data."""
         if is_large_dataset_mode(self.config):
-            logger.info("Large dataset mode: latest data is sharded; skipping DataFrame load.")
+            logger.info(
+                "Large dataset mode: latest data is sharded; skipping DataFrame load."
+            )
             return None
 
         priority = self.stage_runner.DATA_SOURCE_PRIORITY.copy()
