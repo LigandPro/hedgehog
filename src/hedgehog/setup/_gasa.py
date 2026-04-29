@@ -30,6 +30,8 @@ _GASA_DEPS = (
     "dgl==1.1.3",
     "dgllife==0.3.2",
 )
+_GASA_VERIFY_TIMEOUT_SECONDS_ENV = "HEDGEHOG_GASA_VERIFY_TIMEOUT_SECONDS"
+_GASA_VERIFY_TIMEOUT_SECONDS = 600
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,17 @@ def _resolve_worker_venv_dir(project_root: Path) -> Path:
     return project_root / ".venv-gasa-worker"
 
 
+def _resolve_gasa_verify_timeout() -> int:
+    raw = os.environ.get(_GASA_VERIFY_TIMEOUT_SECONDS_ENV, "").strip()
+    if not raw:
+        return _GASA_VERIFY_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _GASA_VERIFY_TIMEOUT_SECONDS
+    return max(value, 1)
+
+
 def _verify_gasa_dependencies(venv_python: Path) -> None:
     _run(
         [
@@ -128,7 +141,7 @@ def _verify_gasa_dependencies(venv_python: Path) -> None:
             "import numpy, pandas, sklearn, hyperopt, rdkit, torch, dgl, dgllife",
         ],
         cwd=venv_python.parent.parent,
-        timeout=120,
+        timeout=_resolve_gasa_verify_timeout(),
     )
 
 

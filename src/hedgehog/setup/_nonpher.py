@@ -14,8 +14,13 @@ from rdkit import Chem
 from hedgehog.setup._download import resolve_uv_binary
 
 NONPHER_PYTHON_ENV_VAR = "HEDGEHOG_NONPHER_PYTHON"
+NONPHER_FALLBACK_PYTHON_ENV_VAR = "HEDGEHOG_NONPHER_FALLBACK_PYTHON"
 DEFAULT_NONPHER_GIT_URL = "git+https://github.com/lich-uct/nonpher.git"
 DEFAULT_MOLPHER_GIT_URL = "git+https://github.com/lich-uct/molpher-lib.git"
+DEFAULT_NONPHER_FALLBACK_PYTHON = (
+    "/mnt/ligandpro/shared_storage/data/nikolenko/"
+    "hedgehog_optional_envs/nonpher-hybrid-py38-v2/bin/python"
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,46 @@ def resolve_nonpher_python(python_bin: str | None = None) -> str | None:
         return python_bin.strip()
     env_value = os.getenv(NONPHER_PYTHON_ENV_VAR, "").strip()
     return env_value or None
+
+
+def resolve_nonpher_fallback_python(python_bin: str | None = None) -> str | None:
+    """Resolve a validated fallback Nonpher interpreter, if one is available."""
+    candidates = (
+        python_bin,
+        os.getenv(NONPHER_FALLBACK_PYTHON_ENV_VAR, "").strip(),
+        DEFAULT_NONPHER_FALLBACK_PYTHON,
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        expanded = Path(candidate).expanduser()
+        if expanded.exists():
+            return str(expanded)
+    return None
+
+
+def _check_nonpher_fallback_python(
+    fallback_python: str | None,
+    probe_smiles: str,
+    detail_prefix: str,
+) -> NonpherEnsureResult | None:
+    resolved_fallback = resolve_nonpher_fallback_python(fallback_python)
+    if not resolved_fallback:
+        return None
+
+    checked = _check_nonpher_external_python(resolved_fallback, probe_smiles)
+    if not checked.available:
+        return None
+
+    detail = checked.detail
+    if detail_prefix:
+        detail = f"{detail_prefix}; using fallback runtime. {checked.detail}"
+    return NonpherEnsureResult(
+        available=True,
+        python_bin=resolved_fallback,
+        detail=detail,
+        install_attempted=False,
+    )
 
 
 def create_nonpher_complexity_filter() -> Any:
@@ -300,6 +345,7 @@ def ensure_nonpher_uv_runtime(
     timeout: int = 3600,
     nonpher_git_url: str = DEFAULT_NONPHER_GIT_URL,
     molpher_git_url: str = DEFAULT_MOLPHER_GIT_URL,
+    fallback_python: str | None = None,
 ) -> NonpherEnsureResult:
     """Attempt isolated uv-only Nonpher bootstrap in ``env_prefix``."""
     prefix = Path(env_prefix).expanduser()
@@ -326,6 +372,13 @@ def ensure_nonpher_uv_runtime(
                 detail=existing.detail,
                 install_attempted=False,
             )
+        fallback = _check_nonpher_fallback_python(
+            fallback_python,
+            probe_smiles,
+            f"Existing uv runtime is unavailable ({existing.detail})",
+        )
+        if fallback is not None:
+            return fallback
 
     try:
         uv_bin = resolve_uv_binary()
@@ -365,14 +418,40 @@ def ensure_nonpher_uv_runtime(
     for command in commands:
         completed = _run_command(command, timeout=timeout)
         if completed.returncode != 0:
+            failure_detail = _format_command_failure(command, completed)
+            fallback = _check_nonpher_fallback_python(
+                fallback_python,
+                probe_smiles,
+                f"uv-only bootstrap failed ({failure_detail})",
+            )
+            if fallback is not None:
+                return NonpherEnsureResult(
+                    available=fallback.available,
+                    python_bin=fallback.python_bin,
+                    detail=fallback.detail,
+                    install_attempted=True,
+                )
             return NonpherEnsureResult(
                 available=False,
                 python_bin=prefix_python,
-                detail=_format_command_failure(command, completed),
+                detail=failure_detail,
                 install_attempted=True,
             )
 
     checked = _check_nonpher_external_python(prefix_python, probe_smiles)
+    if not checked.available:
+        fallback = _check_nonpher_fallback_python(
+            fallback_python,
+            probe_smiles,
+            f"uv-only runtime probe failed ({checked.detail})",
+        )
+        if fallback is not None:
+            return NonpherEnsureResult(
+                available=fallback.available,
+                python_bin=fallback.python_bin,
+                detail=fallback.detail,
+                install_attempted=True,
+            )
     return NonpherEnsureResult(
         available=checked.available,
         python_bin=prefix_python,

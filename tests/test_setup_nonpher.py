@@ -249,6 +249,78 @@ def test_ensure_nonpher_uv_runtime_reports_linker_blocker(monkeypatch, tmp_path)
     assert "cannot find -lmolpher" in result.detail
 
 
+def test_ensure_nonpher_uv_runtime_uses_fallback_after_linker_blocker(
+    monkeypatch, tmp_path
+):
+    """uv linker failure should not force NaN when a validated fallback exists."""
+
+    env_prefix = tmp_path / "nonpher-uv"
+    fallback_python = tmp_path / "nonpher-hybrid" / "bin" / "python"
+    fallback_python.parent.mkdir(parents=True)
+    fallback_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+    monkeypatch.setattr(nonpher_setup, "resolve_uv_binary", lambda: "uv")
+
+    def _fake_check(python_bin: str, _probe_smiles: str):
+        return nonpher_setup.NonpherCheckResult(
+            available=python_bin == str(fallback_python),
+            detail="fallback ok" if python_bin == str(fallback_python) else "missing",
+        )
+
+    monkeypatch.setattr(nonpher_setup, "_check_nonpher_external_python", _fake_check)
+
+    steps = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["uv", "venv"], returncode=0, stdout="", stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["uv", "pip", "install", "numpy<2"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["uv", "pip", "install", "rdkit-pypi==2022.9.5"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["uv", "pip", "install", "setuptools<81", "wheel"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["uv", "pip", "install", "--no-deps", "nonpher"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["uv", "pip", "install", "--no-build-isolation", "molpher-lib"],
+                returncode=1,
+                stdout="",
+                stderr="... /usr/bin/ld: cannot find -lmolpher ...",
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        nonpher_setup, "_run_command", lambda *_args, **_kwargs: next(steps)
+    )
+
+    result = nonpher_setup.ensure_nonpher_uv_runtime(
+        env_prefix=str(env_prefix),
+        fallback_python=str(fallback_python),
+    )
+
+    assert result.available is True
+    assert result.install_attempted is True
+    assert result.python_bin == str(fallback_python)
+    assert "fallback" in result.detail
+
+
 def test_ensure_nonpher_uv_runtime_preserves_non_venv_prefix(monkeypatch, tmp_path):
     """uv helper must not delete arbitrary directories passed as env_prefix."""
 
