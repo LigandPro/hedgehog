@@ -56,11 +56,10 @@ def test_ensure_gasa_worker_clones_and_installs(
         "hedgehog.setup._gasa._resolve_python_binary", lambda *_: "python3.10"
     )
 
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], int]] = []
 
     def _fake_run(cmd: list[str], cwd: Path, timeout: int = 1800) -> None:
-        del timeout
-        calls.append(cmd)
+        calls.append((cmd, timeout))
         if cmd[:2] == ["git", "clone"]:
             _write_min_checkout(Path(cmd[-1]))
         elif cmd[:2] == ["uv", "venv"]:
@@ -71,16 +70,23 @@ def test_ensure_gasa_worker_clones_and_installs(
     result = ensure_gasa_worker(tmp_path)
     assert result.repo_path == tmp_path / "modules" / "gasa"
     assert result.worker_python == tmp_path / ".venv-gasa-worker" / "bin" / "python"
-    assert any(cmd[:2] == ["git", "clone"] for cmd in calls)
+    assert any(cmd[:2] == ["git", "clone"] for cmd, _timeout in calls)
     assert any(
         cmd[:4] == ["uv", "pip", "install", "--python"] and "dgl==1.1.3" in cmd
-        for cmd in calls
+        for cmd, _timeout in calls
     )
     assert any(
         cmd[:4] == ["uv", "pip", "install", "--python"] and "setuptools<81" in cmd
-        for cmd in calls
+        for cmd, _timeout in calls
     )
-    assert any(cmd[:3] == ["uv", "venv", "--python"] for cmd in calls)
+    assert any(cmd[:3] == ["uv", "venv", "--python"] for cmd, _timeout in calls)
+    assert any(
+        cmd[1] == "-c"
+        and "import numpy, pandas, sklearn, hyperopt, rdkit, torch, dgl, dgllife"
+        in cmd[2]
+        for cmd, _timeout in calls
+    )
+    assert any(cmd[1] == "-c" and timeout >= 600 for cmd, timeout in calls)
 
 
 def test_ensure_gasa_worker_honors_optional_env_root(
