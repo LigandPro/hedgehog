@@ -62,34 +62,36 @@ jobs:
       - name: Pack static docs artifact
         run: tar -C docs/out -czf docs-out.tgz .
 
-      - name: Trigger token-based deploy webhook
+      - name: Configure SSH for deploy
         env:
-          DOCS_DEPLOY_WEBHOOK_URL: ${{ secrets.DOCS_DEPLOY_WEBHOOK_URL }}
-          DOCS_DEPLOY_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-          REF_NAME: ${{ github.ref_name }}
-          ACTOR: ${{ github.actor }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          test -n "${DOCS_DEPLOY_WEBHOOK_URL:-}"
-          test -n "${DOCS_DEPLOY_TOKEN:-}"
+          test -n "${SSH_KEY:-}"          || { echo "DEPLOY_SSH_KEY is empty"; exit 1; }
+          test -n "${SSH_KNOWN_HOSTS:-}"  || { echo "DEPLOY_SSH_KNOWN_HOSTS is empty"; exit 1; }
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY"         > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
-          curl --fail --show-error --silent \
-            --retry 3 --retry-delay 2 --retry-connrefused \
-            -X POST "$DOCS_DEPLOY_WEBHOOK_URL" \
-            -H "Authorization: Bearer $DOCS_DEPLOY_TOKEN" \
-            -H "X-Hedgehog-Repo: $REPO" \
-            -H "X-Hedgehog-Sha: $SHA" \
-            -F "repo=$REPO" \
-            -F "sha=$SHA" \
-            -F "ref=$REF_NAME" \
-            -F "actor=$ACTOR" \
-            -F "run_id=$RUN_ID" \
-            -F "run_attempt=$RUN_ATTEMPT" \
-            -F "artifact=@docs-out.tgz;type=application/gzip" \
-            -o deploy-response.json
-
-          cat deploy-response.json
+      - name: Deploy docs via SSH
+        env:
+          SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          SSH_PORT: ${{ vars.DEPLOY_SSH_PORT }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_USER:-}" && test -n "${SSH_HOST:-}" && test -n "${SSH_PORT:-}"
+          ssh -i ~/.ssh/id_ed25519 \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -p "$SSH_PORT" \
+              "$SSH_USER@$SSH_HOST" \
+              "/home/deployer/bin/deploy-docs.sh $SHA $REF $RUN_ID" \
+              < docs-out.tgz
