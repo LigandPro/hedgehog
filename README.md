@@ -8,6 +8,7 @@
 <p align="center">HEDGEHOG: Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration.</p>
 <p align="center">
   <a href="https://pypi.org/project/hedgehog/"><img alt="PyPI" src="https://img.shields.io/pypi/v/hedgehog?style=flat-square" /></a>
+  <a href="https://hedgehog.ligandpro.ru"><img alt="Docs" src="https://img.shields.io/badge/docs-hedgehog.ligandpro.ru-blue?style=flat-square" /></a>
   <a href="https://github.com/LigandPro/hedgehog/actions/workflows/ci.yaml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/LigandPro/hedgehog/ci.yaml?style=flat-square&branch=main" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow.svg?style=flat-square" /></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue.svg?style=flat-square" /></a>
@@ -163,6 +164,7 @@ results/run_N/
 
 For full details, use the documentation instead of this README:
 
+- [Public documentation](https://hedgehog.ligandpro.ru)
 - [Introduction](docs/content/index.mdx)
 - [Getting Started](docs/content/getting-started.mdx)
 - [CLI Reference](docs/content/cli.mdx)
