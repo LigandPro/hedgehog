@@ -158,9 +158,47 @@ results/run_N/
 └── report.html
 ```
 
+### Benchmark Results
+#### Filtering pass rates by model class
+Percentages are computed relative to the initial set for each model class. Unconditional and protein-based models each start from 80,000 molecules, and ligand-based models start from 70,000 molecules.
+<table>
+  <thead>
+    <tr><th rowspan="2">Stage / Pass Rate</th> <th colspan="2">Unconditional</th> <th colspan="2">Ligand-based</th> <th colspan="2">Protein-based</th></tr>
+    <tr>                                           <th>#mols</th><th>%</th>      <th>#mols</th><th>%</th>      <th>#mols</th><th>%</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Initial</td>                           <td>80,000</td><td>100</td>   <td>70,000</td><td>100</td>   <td>80,000</td><td>100</td></tr>
+    <tr><td>Preprocessing / Init</td>              <td>60,407</td><td>75.51</td> <td>68,858</td><td>98.37</td> <td>77,396</td><td>96.75</td></tr>
+    <tr><td>Descriptors / Init</td>                <td>19,941</td><td>24.93</td> <td>19,978</td><td>28.54</td> <td>19,412</td><td>24.27</td></tr>
+    <tr><td>Structural Filters / Init</td>         <td>4,652</td><td>5.82</td>   <td>4,132</td><td>5.90</td>   <td>2,896</td><td>3.62</td></tr>
+    <tr><td>Synthesis Feasibility / Init</td>      <td>2,778</td><td>3.47</td>   <td>1,483</td><td>2.12</td>   <td>1,316</td><td>1.65</td></tr>
+    <tr><td>Docking &amp; Binding Aff. / Init</td> <td>1,441</td><td>1.80</td>   <td>1,084</td><td>1.55</td>   <td>768</td><td>0.96</td></tr>
+    <tr><td>3D Filters / Init</td>                 <td>609</td><td>0.76</td>     <td>396</td><td>0.57</td>     <td>485</td><td>0.61</td></tr>
+  </tbody>
+</table>
+
+#### Top generators by final pass count
+Best-performing generators within each model class, ranked by the number of molecules that pass the full HEDGEHOG pipeline.
+<table>
+  <thead>
+    <tr><th rowspan="2">Rank</th><th colspan="2">Unconditional</th><th colspan="2">Ligand-based</th><th colspan="2">Protein-based</th></tr>
+    <tr><th>Generator</th><th>Final</th> <th>Generator</th><th>Final</th> <th>Generator</th><th>Final</th></tr>
+  </thead>
+  <tbody>
+    <tr><td align="right">1</td> <td>REINVENT4</td><td align="right">163</td>    <td>REINVENT4 (V)</td><td align="right">182</td> <td>Dragonfly</td><td align="right">345</td></tr>
+    <tr><td align="right">2</td> <td>JT-VAE</td><td align="right">148</td>       <td>MolFinder</td><td align="right">87</td>      <td>DrugFlow</td><td align="right">70</td></tr>
+    <tr><td align="right">3</td> <td>MoLeR</td><td align="right">116</td>        <td>REINVENT4 (TL)</td><td align="right">72</td> <td>ProtoBind-Diff</td><td align="right">35</td></tr>
+    <tr><td align="right">4</td> <td>HierGraphVAE</td><td align="right">108</td> <td>GENTRL</td><td align="right">25</td>         <td>Pocket2Mol</td><td align="right">25</td></tr>
+    <tr><td align="right">5</td> <td>MolGPT</td><td align="right">69</td>        <td>REINVENT4 (P)</td><td align="right">21</td>  <td>ResGen</td><td align="right">10</td></tr>
+    <tr><td align="right">6</td> <td>TGM-DLM</td><td align="right">4</td>        <td>GCPG</td><td align="right">8</td>            <td>DiffSBDD</td><td align="right">0</td></tr> 
+    <tr><td align="right">7</td> <td>ShEPhERD</td><td align="right">1</td>       <td>PGMG</td><td align="right">1</td>            <td>Dragonfly (b)</td><td align="right">0</td></tr>
+    <tr><td align="right">8</td> <td>E(3)DM</td><td align="right">0</td>         <td>—</td> <td align="right">—</td>              <td>TargetDiff</td><td align="right">0</td></tr>
+  </tbody>
+</table>
+
 ## Documentation
 
-![HEDGEHOG Pipeline](docs/public/pipeline_structure_v2.png)
+![HEDGEHOG Pipeline](docs/public/pipeline_structure_v3.png)
 
 For full details, use the documentation instead of this README:
 
