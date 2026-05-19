@@ -9,14 +9,13 @@ preprocess:
   # MolPrep stage owns molecule standardization. Keep these disabled to avoid
   # double-processing the same transformations. If you disable MolPrep, you can
   # enable these as a fallback (but MolPrep is recommended).
-  remove_charges: false
   remove_radicals: false
   remove_stereochemistry: false
 
 structural_constraints:
   # Adds these structural caps to descriptor filtering when filter_data is true.
   # If false, the full structural_constraints block is ignored.
-  enabled: false
+  enabled: true
   type_limits:
     ".=O": 4
     C2r: 6
@@ -42,17 +41,6 @@ structural_constraints:
   max_acyclic_chain_length: 4
 
 borders:
-  allowed_chars:
-  - C
-  - N
-  - S
-  - O
-  - F
-  - Cl
-  - Br
-  - I
-  - P
-  - H
   n_atoms_min: 10
   n_atoms_max: 100
   n_heavy_atoms_min: 10

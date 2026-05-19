@@ -317,6 +317,11 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
             )
 
     filtered_data_df = pd.DataFrame(filtered_data)
+    pass_cols = [c for c in filtered_data_df.columns if c.endswith("_pass")]
+    if pass_cols:
+        filtered_data_df["stage_pass"] = filtered_data_df[pass_cols].all(axis=1)
+    else:
+        filtered_data_df["stage_pass"] = True
     filtered_data_df = order_identity_columns(filtered_data_df)
     filtered_data_df.to_csv(
         folder_to_save / "pass_flags.csv", index_label="SMILES", index=False
