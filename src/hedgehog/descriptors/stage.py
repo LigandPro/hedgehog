@@ -104,7 +104,12 @@ def run(data, config, subfolder=None, reporter=None):
     if config_descriptors["filter_data"]:
         if reporter is not None:
             reporter.progress(0, molecule_total, message="Applying descriptor filters")
-        filter_molecules(metrics_df, config_descriptors, filtered_folder)
+        filter_molecules(
+            metrics_df,
+            config_descriptors["borders"],
+            filtered_folder,
+            structural_constraints=config_descriptors.get("structural_constraints"),
+        )
         if reporter is not None:
             reporter.progress(
                 molecule_total, molecule_total, message="Saving descriptor outputs"
