@@ -14,8 +14,7 @@ NAME_COLUMN = "name"
 MOL_IDX_COLUMN = "mol_idx"
 DEFAULT_MODEL_NAME = "single"
 
-SUPPORTED_EXTENSIONS = ["csv", "tsv", "txt"]
-SMI_EXTENSIONS = {"smi", "ismi", "cmi", "smiles"}
+SUPPORTED_EXTENSIONS = ["csv", "tsv", "txt", "sdf", "smi", "smiles"]
 MODE_SINGLE = "single_comparison"
 MODE_MULTI = "multi_comparison"
 
@@ -184,54 +183,81 @@ def _read_csv_with_fallback(path: str) -> pd.DataFrame:
         return df
 
 
-def _read_smi(path: str) -> pd.DataFrame:
-    """Read a headerless SMILES file with optional molecule names."""
-    rows = []
-    path_obj = Path(path)
-    for line in path_obj.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        parts = stripped.split()
-        if parts[0].lower() == SMILES_COLUMN:
-            continue
-
-        rows.append(
-            {
-                SMILES_COLUMN: parts[0],
-                MODEL_NAME_COLUMN: parts[1] if len(parts) > 1 else path_obj.stem,
-            }
-        )
-
-    return pd.DataFrame(rows, columns=[SMILES_COLUMN, MODEL_NAME_COLUMN])
-
-
-def _txt_looks_like_headerless_smi(path: str) -> bool:
-    """Return True when a .txt input looks like one-SMILES-per-line data."""
+def _read_sdf(path: str) -> pd.DataFrame:
+    """Read SDF into a dataframe with identity columns and SDF properties."""
     try:
-        with Path(path).open(encoding="utf-8") as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                first = stripped.split()[0].lower()
-                return (
-                    first != SMILES_COLUMN
-                    and "," not in stripped
-                    and "\t" not in stripped
-                )
-    except OSError:
-        return False
-    return False
+        from rdkit import Chem
+    except ImportError as err:
+        raise RuntimeError("RDKit is required to read SDF inputs") from err
+
+    model_name_default = _extract_model_name_from_path(path)
+    rows: list[dict] = []
+    supplier = Chem.SDMolSupplier(path, removeHs=False)
+    for idx, mol in enumerate(supplier):
+        if mol is None:
+            continue
+
+        try:
+            smiles = Chem.MolToSmiles(mol)
+        except Exception:
+            continue
+        if not smiles:
+            continue
+
+        row: dict[str, object] = {SMILES_COLUMN: smiles}
+
+        props = mol.GetPropsAsDict(includePrivate=False, includeComputed=False)
+        for key, value in props.items():
+            row[str(key)] = value
+
+        model_name_val = row.get(MODEL_NAME_COLUMN)
+        if model_name_val is None or str(model_name_val).strip() == "":
+            row[MODEL_NAME_COLUMN] = model_name_default
+
+        mol_idx_val = row.get(MOL_IDX_COLUMN)
+        if mol_idx_val is None or str(mol_idx_val).strip() == "":
+            title = mol.GetProp("_Name") if mol.HasProp("_Name") else ""
+            row[MOL_IDX_COLUMN] = title if title else f"{idx + 1}"
+
+        rows.append(row)
+
+    if not rows:
+        raise ValueError(f"No readable molecules found in SDF: {path}")
+    return pd.DataFrame(rows)
+
+
+def _read_smi(path: str) -> pd.DataFrame:
+    """Read SMI/SMILES text file into a dataframe with identity columns."""
+    model_name_default = _extract_model_name_from_path(path)
+    rows: list[dict] = []
+    with open(path, encoding="utf-8", errors="ignore") as handle:
+        for idx, line in enumerate(handle):
+            text = line.strip()
+            if not text:
+                continue
+            parts = text.split()
+            smiles = parts[0].strip()
+            if not smiles:
+                continue
+            mol_idx = parts[1].strip() if len(parts) > 1 else f"{idx + 1}"
+            rows.append(
+                {
+                    SMILES_COLUMN: smiles,
+                    MODEL_NAME_COLUMN: model_name_default,
+                    MOL_IDX_COLUMN: mol_idx,
+                }
+            )
+    if not rows:
+        raise ValueError(f"No readable SMILES found in file: {path}")
+    return pd.DataFrame(rows)
 
 
 def _read_input_file(path: str) -> pd.DataFrame:
-    """Read a supported molecule input file."""
-    suffix = Path(path).suffix.lower().lstrip(".")
-    if suffix in SMI_EXTENSIONS or (
-        suffix == "txt" and _txt_looks_like_headerless_smi(path)
-    ):
+    """Read supported input file types into a dataframe."""
+    ext = Path(path).suffix.lower().lstrip(".")
+    if ext == "sdf":
+        return _read_sdf(path)
+    if ext in {"smi", "smiles"}:
         return _read_smi(path)
     return _read_csv_with_fallback(path)
 
@@ -253,7 +279,8 @@ def _detect_mode_and_paths(
             matched = [generated_mols_path]
         elif path_obj.exists() and path_obj.is_dir():
             # Handle directory: find all supported files in the directory
-            all_extensions = [*SUPPORTED_EXTENSIONS, *SMI_EXTENSIONS]
+            all_extensions = SUPPORTED_EXTENSIONS
+            
             matched = [
                 str(p)
                 for p in path_obj.iterdir()
