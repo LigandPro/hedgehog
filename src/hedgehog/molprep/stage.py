@@ -25,6 +25,7 @@ def run(data, config: dict, subfolder: str | None = None, reporter=None):
       - filtered_molecules.csv
       - failed_molecules.csv
       - metrics.csv
+      - molprep_detail.csv (per-molecule step/filter pass flags)
       - duplicates_removed.csv (optional)
     """
     folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))

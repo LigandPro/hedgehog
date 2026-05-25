@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -52,16 +53,16 @@ def _safe_to_mol(
 def _molprep_one(
     smiles_raw: str,
     cfg: dict[str, Any],
-) -> tuple[str | None, str | None, str | None]:
-    """Return (smiles, reason, step) where smiles is standardized or None on failure."""
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return (smiles, reason, step, reason_detail_json) on success/failure."""
     if _is_missing_smiles_value(smiles_raw):
-        return None, "parse_failed", "to_mol"
+        return None, "parse_failed", "to_mol", None
 
     smiles_raw = str(smiles_raw).strip()
     to_mol_cfg = _get_cfg(cfg, ["steps", "to_mol"], {}) or {}
     mol = _safe_to_mol(smiles_raw, to_mol_cfg)
     if mol is None:
-        return None, "parse_failed", "to_mol"
+        return None, "parse_failed", "to_mol", None
 
     if _get_cfg(cfg, ["steps", "fix_mol", "enabled"], True):
         try:
@@ -74,7 +75,7 @@ def _molprep_one(
                 inplace=False,
             )
         except Exception:
-            return None, "fix_failed", "fix_mol"
+            return None, "fix_failed", "fix_mol", None
 
     if _get_cfg(cfg, ["steps", "sanitize_mol", "enabled"], True):
         try:
@@ -82,7 +83,7 @@ def _molprep_one(
         except Exception:
             mol = None
         if mol is None:
-            return None, "sanitize_failed", "sanitize_mol"
+            return None, "sanitize_failed", "sanitize_mol", None
 
     if _get_cfg(cfg, ["steps", "remove_salts_solvents", "enabled"], True):
         try:
@@ -97,24 +98,24 @@ def _molprep_one(
                 sanitize=bool(rss_cfg.get("sanitize", True)),
             )
         except Exception:
-            return None, "remove_salts_failed", "remove_salts_solvents"
+            return None, "remove_salts_failed", "remove_salts_solvents", None
         if mol is None:
-            return None, "remove_salts_failed", "remove_salts_solvents"
+            return None, "remove_salts_failed", "remove_salts_solvents", None
 
     if bool(_get_cfg(cfg, ["steps", "keep_largest_fragment"], True)):
         try:
             mol = dm.keep_largest_fragment(mol)
         except Exception:
-            return None, "largest_fragment_failed", "keep_largest_fragment"
+            return None, "largest_fragment_failed", "keep_largest_fragment", None
 
         if mol is None:
-            return None, "largest_fragment_failed", "keep_largest_fragment"
+            return None, "largest_fragment_failed", "keep_largest_fragment", None
 
         require_single_fragment = bool(
             _get_cfg(cfg, ["filters", "require_single_fragment"], True)
         )
         if require_single_fragment and not _is_single_fragment(mol):
-            return None, "multifragment_after_largest", "keep_largest_fragment"
+            return None, "multifragment_after_largest", "keep_largest_fragment", None
 
     if _get_cfg(cfg, ["steps", "standardize_mol", "enabled"], True):
         try:
@@ -128,68 +129,76 @@ def _molprep_one(
                 stereo=bool(std_cfg.get("stereo", True)),
             )
         except Exception:
-            return None, "standardize_mol_failed", "standardize_mol"
+            return None, "standardize_mol_failed", "standardize_mol", None
         if mol is None:
-            return None, "standardize_mol_failed", "standardize_mol"
+            return None, "standardize_mol_failed", "standardize_mol", None
 
     if bool(_get_cfg(cfg, ["steps", "remove_stereochemistry"], True)):
         try:
             Chem.RemoveStereochemistry(mol)
         except Exception:
-            return None, "remove_stereo_failed", "remove_stereochemistry"
+            return None, "remove_stereo_failed", "remove_stereochemistry", None
 
     try:
         smiles = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
     except Exception:
-        return None, "to_smiles_failed", "to_smiles"
+        return None, "to_smiles_failed", "to_smiles", None
 
     if _get_cfg(cfg, ["steps", "standardize_smiles", "enabled"], True):
         try:
             smiles = dm.standardize_smiles(smiles)
         except Exception:
-            return None, "standardize_smiles_failed", "standardize_smiles"
+            return None, "standardize_smiles_failed", "standardize_smiles", None
 
         if _is_missing_smiles_value(smiles):
-            return None, "standardize_smiles_failed", "standardize_smiles"
+            return None, "standardize_smiles_failed", "standardize_smiles", None
         smiles = str(smiles).strip()
 
         mol2 = dm.to_mol(smiles, sanitize=True)
         if mol2 is None:
-            return None, "post_standardize_parse_failed", "post_standardize_parse"
+            return None, "post_standardize_parse_failed", "post_standardize_parse", None
         mol = mol2
 
-    # Final strict filters
+    # Final strict filters: evaluate independently so downstream pass rates are criterion-wise.
     allowed_atoms = set(_get_cfg(cfg, ["filters", "allowed_atoms"], []) or [])
-    if not _allowed_atoms_ok(mol, allowed_atoms):
-        return None, "disallowed_atoms", "filters"
-
-    if bool(_get_cfg(cfg, ["filters", "reject_radicals"], True)) and _has_radicals(mol):
-        return None, "radicals", "filters"
-
-    if bool(_get_cfg(cfg, ["filters", "reject_isotopes"], True)) and _has_isotopes(mol):
-        return None, "isotopes", "filters"
-
-    if bool(_get_cfg(cfg, ["filters", "require_single_fragment"], True)) and (
-        not _is_single_fragment(mol)
-    ):
-        return None, "multifragment", "filters"
+    reject_radicals = bool(_get_cfg(cfg, ["filters", "reject_radicals"], True))
+    reject_isotopes = bool(_get_cfg(cfg, ["filters", "reject_isotopes"], True))
+    require_single_fragment = bool(
+        _get_cfg(cfg, ["filters", "require_single_fragment"], True)
+    )
+    filter_flags = {
+        "filter_allowed_atoms_pass": _allowed_atoms_ok(mol, allowed_atoms),
+        "filter_radicals_pass": (not _has_radicals(mol)) if reject_radicals else True,
+        "filter_isotopes_pass": (not _has_isotopes(mol)) if reject_isotopes else True,
+        "filter_single_fragment_pass": _is_single_fragment(mol)
+        if require_single_fragment
+        else True,
+    }
+    if not filter_flags["filter_allowed_atoms_pass"]:
+        return None, "disallowed_atoms", "filters", json.dumps(filter_flags, ensure_ascii=False)
+    if not filter_flags["filter_radicals_pass"]:
+        return None, "radicals", "filters", json.dumps(filter_flags, ensure_ascii=False)
+    if not filter_flags["filter_isotopes_pass"]:
+        return None, "isotopes", "filters", json.dumps(filter_flags, ensure_ascii=False)
+    if not filter_flags["filter_single_fragment_pass"]:
+        return None, "multifragment", "filters", json.dumps(filter_flags, ensure_ascii=False)
 
     # Normalize final SMILES once more after filters (canonical, no stereo)
     try:
         smiles_final = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
     except Exception:
-        return None, "to_smiles_failed", "to_smiles_final"
+        return None, "to_smiles_failed", "to_smiles_final", None
 
     if _is_missing_smiles_value(smiles_final):
-        return None, "to_smiles_failed", "to_smiles_final"
+        return None, "to_smiles_failed", "to_smiles_final", None
     smiles_final = str(smiles_final).strip()
 
     if "." in smiles_final and bool(
         _get_cfg(cfg, ["filters", "require_single_fragment"], True)
     ):
-        return None, "multifragment", "filters"
+        return None, "multifragment", "filters", json.dumps(filter_flags, ensure_ascii=False)
 
-    return smiles_final, None, None
+    return smiles_final, None, None, json.dumps(filter_flags, ensure_ascii=False)
 
 
 def _process_molprep_item(
@@ -220,7 +229,7 @@ def _process_molprep_item(
         raise RuntimeError("MolPrep worker configuration was not initialized")
 
     smiles_raw, model_name, mol_idx = item
-    smiles_std, reason, step = _molprep_one(smiles_raw, cfg)
+    smiles_std, reason, step, reason_detail = _molprep_one(smiles_raw, cfg)
     if smiles_std is None:
         return None, MolPrepFailure(
             smiles_raw=smiles_raw,
@@ -228,7 +237,7 @@ def _process_molprep_item(
             mol_idx=mol_idx,
             reason=str(reason or "unknown"),
             step=str(step or "unknown"),
-            reason_detail=None,
+            reason_detail=reason_detail,
         )
 
     return {
