@@ -78,8 +78,12 @@ modules/mce18.py
 modules/dockingTools/
 modules/MolScore/
 modules/pyscreener/
-modules/retrosynthesis/
 modules/sync/
+modules/aizynthfinder/
+modules/fsscore/
+modules/gasa/
+modules/matcha_remote/
+modules/scscore/
 
 # Build artifacts in external modules
 modules/*/build/
