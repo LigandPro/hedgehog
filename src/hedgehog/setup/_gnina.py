@@ -169,11 +169,81 @@ def _install_gnina_runtime_dependencies(project_root: Path) -> None:
     logger.info("GNINA runtime dependencies installed successfully")
 
 
-def _maybe_auto_install_runtime_dependencies(path: str) -> bool:
-    """Bootstrap missing CUDA runtime libs for GNINA when auto-install is enabled."""
-    if not _auto_install_enabled():
+def _cuda_runtime_libraries_available(
+    project_root: Path,
+    *,
+    extra_venv_roots: tuple[Path | str, ...] = (),
+) -> bool:
+    """Return True when CUDA 12 runtime libraries are discoverable for GNINA."""
+    paths = collect_nvidia_library_paths(
+        project_root=project_root,
+        extra_venv_roots=extra_venv_roots,
+    )
+    return any("cuda_runtime" in path for path in paths)
+
+
+def ensure_gnina_runtime_dependencies(
+    project_root: Path | str | None = None,
+    *,
+    auto_install: bool = True,
+    extra_venv_roots: tuple[Path | str, ...] = (),
+    raise_on_failure: bool = False,
+) -> bool:
+    """Ensure CUDA runtime libraries required by GNINA are available.
+
+    When *auto_install* is true (default), runs ``uv sync --extra docking-gpu``
+    in the hedgehog project root whenever CUDA 12 runtime libraries are missing.
+    Set *auto_install* to false only to disable this behavior explicitly.
+    """
+    resolved_root = (
+        Path(project_root).expanduser()
+        if project_root is not None
+        else _hedgehog_project_root()
+    )
+    if resolved_root is None or not resolved_root.is_dir():
+        message = (
+            "Cannot verify GNINA CUDA runtime dependencies: "
+            "hedgehog project root not found."
+        )
+        if raise_on_failure:
+            raise RuntimeError(message)
+        logger.warning(message)
         return False
 
+    if _cuda_runtime_libraries_available(
+        resolved_root, extra_venv_roots=extra_venv_roots
+    ):
+        return True
+
+    if not auto_install:
+        message = (
+            f"GNINA requires CUDA runtime libraries (for example libcudart.so.12). "
+            f"Install them with: uv sync --extra {_GNINA_RUNTIME_EXTRA}"
+        )
+        if raise_on_failure:
+            raise RuntimeError(message)
+        logger.warning(message)
+        return False
+
+    _install_gnina_runtime_dependencies(resolved_root)
+    if _cuda_runtime_libraries_available(
+        resolved_root, extra_venv_roots=extra_venv_roots
+    ):
+        return True
+
+    message = (
+        f"GNINA CUDA runtime libraries are still missing after "
+        f"'uv sync --extra {_GNINA_RUNTIME_EXTRA}'. "
+        "Check network access and retry, or install the docking-gpu extra manually."
+    )
+    if raise_on_failure:
+        raise RuntimeError(message)
+    logger.error(message)
+    return False
+
+
+def _maybe_auto_install_runtime_dependencies(path: str) -> bool:
+    """Bootstrap missing CUDA runtime libs whenever GNINA fails to launch."""
     project_root = _hedgehog_project_root()
     if project_root is None or not project_root.is_dir():
         return False
@@ -182,7 +252,8 @@ def _maybe_auto_install_runtime_dependencies(path: str) -> bool:
     if not _looks_like_missing_runtime_libraries(result):
         return False
 
-    _install_gnina_runtime_dependencies(project_root)
+    if not ensure_gnina_runtime_dependencies(project_root, auto_install=True):
+        return False
     return _is_working_gnina(path)
 
 
