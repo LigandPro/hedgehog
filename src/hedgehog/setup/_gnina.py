@@ -18,7 +18,7 @@ from hedgehog.setup._download import confirm_download, download_with_progress
 _GNINA_CACHE_DIR = Path.home() / ".hedgehog" / "bin"
 _GNINA_RELEASES_API_LATEST = "https://api.github.com/repos/gnina/gnina/releases/latest"
 _GNINA_RELEASES_API_TAG = "https://api.github.com/repos/gnina/gnina/releases/tags"
-_GNINA_FALLBACK_TAG = "v1.1"
+_GNINA_FALLBACK_TAG = "v1.3.2"
 _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES = 800 * 1024 * 1024
 _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES_GPU = 3 * 1024 * 1024 * 1024
 _GNINA_ARCHIVE_SUFFIXES = (
@@ -380,6 +380,193 @@ def _extract_cuda_version(name: str) -> tuple[int, int]:
     return (major, minor)
 
 
+def _hedgehog_project_root() -> Path | None:
+    """Return the hedgehog repository root when running from a source checkout."""
+    try:
+        import hedgehog
+
+        return Path(hedgehog.__file__).resolve().parent.parent.parent
+    except Exception:
+        return None
+
+
+_NVIDIA_LIB_PRIORITY: tuple[str, ...] = (
+    "cuda_runtime",
+    "cublas",
+    "cusparse",
+    "cufft",
+    "cusolver",
+    "cudnn",
+    "cuda_nvrtc",
+    "nvjitlink",
+    "nccl",
+    "cusparselt",
+    "nvshmem",
+    "cu13",
+)
+
+
+def _sort_nvidia_lib_dirs(paths: list[str]) -> list[str]:
+    """Prefer CUDA runtime/BLAS dirs before ancillary NVIDIA bundles."""
+
+    def _priority(path: str) -> tuple[int, str]:
+        package = Path(path).parent.name
+        try:
+            return (_NVIDIA_LIB_PRIORITY.index(package), path)
+        except ValueError:
+            return (len(_NVIDIA_LIB_PRIORITY), path)
+
+    return sorted(paths, key=_priority)
+
+
+def _iter_venv_site_packages_roots(venv_root: Path) -> list[Path]:
+    """Return site-packages directories inside a virtual environment."""
+    lib_dir = venv_root / "lib"
+    if not lib_dir.is_dir():
+        return []
+    return sorted(
+        path
+        for path in lib_dir.glob("python*/site-packages")
+        if path.is_dir()
+    )
+
+
+def _iter_managed_venv_site_packages(project_root: Path) -> list[Path]:
+    """Discover site-packages from hedgehog-managed tool virtualenvs."""
+    managed_roots = [
+        project_root / "modules" / "matcha_remote" / ".venv",
+    ]
+    discovered: list[Path] = []
+    for venv_root in managed_roots:
+        discovered.extend(_iter_venv_site_packages_roots(venv_root))
+    return discovered
+
+
+def _nvidia_lib_dirs_from_site_packages(site_packages: Path) -> list[str]:
+    """Collect nvidia/*/lib directories from one site-packages root."""
+    nvidia_root = site_packages / "nvidia"
+    if not nvidia_root.is_dir():
+        return []
+
+    lib_dirs: list[str] = []
+    for child in sorted(nvidia_root.iterdir()):
+        lib_dir = child / "lib"
+        if lib_dir.is_dir():
+            lib_dirs.append(str(lib_dir))
+    return lib_dirs
+
+
+def _collect_nvidia_lib_dirs_from_site_packages_roots(
+    site_packages_roots: list[Path],
+) -> list[str]:
+    """Merge nvidia/*/lib paths from multiple site-packages roots."""
+    lib_dirs: list[str] = []
+    for site_packages in site_packages_roots:
+        lib_dirs.extend(_nvidia_lib_dirs_from_site_packages(site_packages))
+    return _sort_nvidia_lib_dirs(_dedupe_library_paths(lib_dirs))
+
+
+def collect_nvidia_library_paths(
+    *,
+    project_root: Path | str | None = None,
+    extra_venv_roots: tuple[Path | str, ...] = (),
+) -> list[str]:
+    """Collect NVIDIA/CUDA library directories for external GPU binaries.
+
+    Scans the active interpreter site-packages, optional project-managed
+    virtualenvs (e.g. Matcha), and any extra venv roots supplied by callers.
+    """
+    resolved_root = Path(project_root).expanduser() if project_root else None
+    if resolved_root is None:
+        resolved_root = _hedgehog_project_root()
+
+    extra_site_packages: list[Path] = []
+    if resolved_root is not None:
+        extra_site_packages.extend(_iter_managed_venv_site_packages(resolved_root))
+    for raw_root in extra_venv_roots:
+        extra_site_packages.extend(
+            _iter_venv_site_packages_roots(Path(raw_root).expanduser())
+        )
+
+    main_site_packages = _iter_site_packages_dirs()
+    ordered = _collect_nvidia_lib_dirs_from_site_packages_roots(
+        _dedupe_site_packages_roots(extra_site_packages + main_site_packages)
+    )
+
+    extra_paths: list[str] = list(ordered)
+    extra_paths.extend(_collect_torch_and_conda_library_paths())
+    return _dedupe_library_paths(extra_paths)
+
+
+def collect_matcha_library_paths(matcha_repo: Path | str) -> list[str]:
+    """Collect CUDA library paths from the Matcha checkout virtualenv."""
+    repo = Path(matcha_repo).expanduser().resolve()
+    site_packages_roots = _iter_venv_site_packages_roots(repo / ".venv")
+    if not site_packages_roots:
+        return collect_nvidia_library_paths(project_root=repo.parent.parent)
+
+    paths = _collect_nvidia_lib_dirs_from_site_packages_roots(site_packages_roots)
+    paths.extend(_collect_torch_lib_dirs_from_site_packages(site_packages_roots))
+    return _dedupe_library_paths(paths)
+
+
+def _dedupe_site_packages_roots(roots: list[Path]) -> list[Path]:
+    """Keep unique site-packages directories in first-seen order."""
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in roots:
+        normalized = str(path.resolve())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(path)
+    return result
+
+
+def _collect_torch_lib_dirs_from_site_packages(
+    site_packages_roots: list[Path],
+) -> list[str]:
+    """Return torch/lib directories discovered under provided site-packages roots."""
+    torch_libs: list[str] = []
+    for site_packages in site_packages_roots:
+        torch_root = site_packages / "torch"
+        if not torch_root.is_dir():
+            continue
+        torch_lib = torch_root / "lib"
+        if torch_lib.is_dir():
+            torch_libs.append(str(torch_lib))
+    return torch_libs
+
+
+def _collect_torch_and_conda_library_paths() -> list[str]:
+    """Collect torch/lib and common conda library directories."""
+    extra_paths: list[str] = []
+
+    try:
+        import torch
+
+        torch_lib = Path(torch.__file__).parent / "lib"
+        if torch_lib.is_dir():
+            extra_paths.append(str(torch_lib))
+    except ImportError:
+        pass
+
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        conda_prefix_lib = Path(conda_prefix) / "lib"
+        if conda_prefix_lib.is_dir():
+            extra_paths.append(str(conda_prefix_lib))
+
+    conda_roots = ("miniforge", "miniforge3", "miniconda3", "mambaforge", "anaconda3")
+    home = Path.home()
+    for root_name in conda_roots:
+        lib_dir = home / root_name / "lib"
+        if lib_dir.is_dir():
+            extra_paths.append(str(lib_dir))
+
+    return extra_paths
+
+
 def _gnina_env() -> dict[str, str]:
     """Build an environment dict with extended ``LD_LIBRARY_PATH`` for GNINA.
 
@@ -397,46 +584,9 @@ def _gnina_env() -> dict[str, str]:
     return env
 
 
-def _collect_gnina_library_paths() -> list[str]:
+def _collect_gnina_library_paths(project_root: Path | str | None = None) -> list[str]:
     """Collect candidate library directories required by GNINA."""
-    extra_paths: list[str] = []
-
-    # PyTorch bundled libraries
-    try:
-        import torch
-
-        torch_lib = Path(torch.__file__).parent / "lib"
-        if torch_lib.is_dir():
-            extra_paths.append(str(torch_lib))
-    except ImportError:
-        pass
-
-    # NVIDIA Python package libraries (e.g. nvidia/cudnn/lib, nvidia/cublas/lib)
-    for site_packages in _iter_site_packages_dirs():
-        nvidia_root = site_packages / "nvidia"
-        if not nvidia_root.is_dir():
-            continue
-        for child in sorted(nvidia_root.iterdir()):
-            lib_dir = child / "lib"
-            if lib_dir.is_dir():
-                extra_paths.append(str(lib_dir))
-
-    # Active conda environment first
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    if conda_prefix:
-        conda_prefix_lib = Path(conda_prefix) / "lib"
-        if conda_prefix_lib.is_dir():
-            extra_paths.append(str(conda_prefix_lib))
-
-    # Common conda roots in home directory
-    conda_roots = ("miniforge", "miniforge3", "miniconda3", "mambaforge", "anaconda3")
-    home = Path.home()
-    for root_name in conda_roots:
-        lib_dir = home / root_name / "lib"
-        if lib_dir.is_dir():
-            extra_paths.append(str(lib_dir))
-
-    return _dedupe_library_paths(extra_paths)
+    return collect_nvidia_library_paths(project_root=project_root)
 
 
 def _iter_site_packages_dirs() -> list[Path]:

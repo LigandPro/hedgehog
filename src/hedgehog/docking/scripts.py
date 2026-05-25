@@ -395,8 +395,8 @@ def _build_matcha_command(
     ligands_dir: Path,
     receptor: str,
     ligands_path: str,
-) -> tuple[list[str], str]:
-    """Build Matcha CLI command and return (command_parts, run_name)."""
+) -> tuple[list[str], str, Path]:
+    """Build Matcha CLI command and return (command_parts, run_name, checkout_path)."""
     matcha_cfg = cfg.get("matcha_config", {}) or {}
     matcha_repo = ensure_matcha_checkout(
         _project_root(),
@@ -438,6 +438,29 @@ def _build_matcha_command(
     n_confs = matcha_cfg.get("n_confs")
     if n_confs is not None:
         command.extend(["--n-confs", str(int(n_confs))])
+
+    docking_batch_limit = matcha_cfg.get("docking_batch_limit")
+    if docking_batch_limit is not None:
+        command.extend(["--docking-batch-limit", str(int(docking_batch_limit))])
+
+    num_workers = matcha_cfg.get("num_workers")
+    if num_workers is not None:
+        command.extend(["--num-workers", str(int(num_workers))])
+
+    prefetch_factor = matcha_cfg.get("prefetch_factor")
+    if prefetch_factor is not None:
+        command.extend(["--prefetch-factor", str(int(prefetch_factor))])
+
+    persistent_workers = matcha_cfg.get("persistent_workers")
+    if persistent_workers is not None:
+        if _parse_bool_config(persistent_workers, False):
+            command.append("--persistent-workers")
+        else:
+            command.append("--no-persistent-workers")
+
+    gnina_batch_mode = matcha_cfg.get("gnina_batch_mode")
+    if gnina_batch_mode:
+        command.extend(["--gnina-batch-mode", str(gnina_batch_mode)])
 
     checkpoints = _resolve_matcha_path(matcha_cfg.get("checkpoints"), matcha_repo)
     if checkpoints:
@@ -487,7 +510,17 @@ def _build_matcha_command(
             ]
         )
 
-    return command, run_name
+    return command, run_name, matcha_repo
+
+
+def _get_matcha_ld_library_path(matcha_repo: Path) -> str | None:
+    """Build LD_LIBRARY_PATH for Matcha from its managed virtualenv."""
+    try:
+        from hedgehog.setup._gnina import collect_matcha_library_paths
+    except Exception:
+        return None
+
+    return _join_existing_library_paths(collect_matcha_library_paths(matcha_repo))
 
 
 def _create_matcha_script(
@@ -496,6 +529,7 @@ def _create_matcha_script(
     run_name: str,
     preparation_cmd=None,
     prepared_output_relative=None,
+    ld_library_path: str | None = None,
 ):
     """Create Matcha run script."""
     script_path = ligands_dir / "_workdir" / "run_matcha.sh"
@@ -503,6 +537,8 @@ def _create_matcha_script(
     with open(script_path, "w") as f:
         f.write("#!/usr/bin/env bash\n")
         f.write("set -eo pipefail\n")
+        if ld_library_path:
+            f.write(f'export LD_LIBRARY_PATH="{ld_library_path}:$LD_LIBRARY_PATH"\n')
         f.write(f"cd {_shell_quote(ligands_dir)}\n")
 
         if preparation_cmd and prepared_output_relative:
@@ -554,10 +590,11 @@ def _create_smina_per_molecule_script(
     ligands_dir,
     smina_bin,
     protein_prep_cmd,
+    parallel_jobs: int,
 ):
     """Create SMINA run script with per-molecule processing and error handling.
 
-    This script processes each molecule individually, allowing:
+    This script processes each molecule individually with bounded parallelism:
     - Individual molecule failures without stopping the entire run
     - Detailed per-molecule logging
     - Easy retry of failed molecules
@@ -579,33 +616,50 @@ def _create_smina_per_molecule_script(
         f.write(f"CONFIGS_DIR={_shell_quote(configs_dir)}\n")
         f.write('mkdir -p "${LOGS_DIR}"\n\n')
 
-        f.write("# Per-molecule docking with error handling\n")
-        f.write("FAILED=()\n")
-        f.write("SUCCESS=0\n")
-        f.write("TOTAL=0\n\n")
-
-        f.write('for config in "${CONFIGS_DIR}"/smina_*.ini; do\n')
-        f.write('    [ -e "$config" ] || continue\n')
-        f.write("    mol_id=$(basename \"$config\" .ini | sed 's/smina_//')\n")
+        f.write("# Per-molecule docking with bounded parallelism\n")
+        f.write(f"MAX_JOBS={max(1, int(parallel_jobs))}\n")
+        f.write('echo "Running SMINA per-molecule with MAX_JOBS=${MAX_JOBS}"\n')
+        f.write(f'STATUS_DIR="{ligands_dir}/_workdir/smina/status"\n')
+        f.write('rm -rf "${STATUS_DIR}"\n')
+        f.write('mkdir -p "${STATUS_DIR}"\n\n')
+        f.write("TOTAL=0\n")
+        f.write(f'for config in "{configs_dir}"/smina_*.ini; do\n')
+        f.write('    [ -e "${config}" ] || continue\n')
+        f.write('    while [ "$(jobs -rp | wc -l)" -ge "${MAX_JOBS}" ]; do\n')
+        f.write("        sleep 0.2\n")
+        f.write("    done\n")
         f.write("    TOTAL=$((TOTAL + 1))\n")
-        f.write('    echo "[$TOTAL] Processing $mol_id..."\n\n')
-
+        f.write("    (\n")
+        f.write('        mol_id=$(basename "${config}" .ini | sed "s/smina_//")\n')
+        f.write('        echo "[${TOTAL}] Processing ${mol_id}..."\n')
         f.write(
-            f'    if {_shell_quote(smina_bin)} --config "$config" 2>> "${{LOGS_DIR}}/${{mol_id}}.log"; then\n'
+            f'        if {smina_bin} --config "${{config}}" 2>> "{logs_dir}/${{mol_id}}.log"; then\n'
         )
-        f.write('        echo "  $mol_id: SUCCESS"\n')
-        f.write("        SUCCESS=$((SUCCESS + 1))\n")
-        f.write("    else\n")
-        f.write("        EXIT_CODE=$?\n")
-        f.write('        echo "  $mol_id: FAILED (exit $EXIT_CODE)"\n')
-        f.write('        FAILED+=("$mol_id")\n')
-        f.write("        if [ $EXIT_CODE -eq 143 ]; then\n")
+        f.write('            echo "${mol_id}" >> "${STATUS_DIR}/success.txt"\n')
+        f.write("        else\n")
+        f.write("            exit_code=$?\n")
+        f.write('            echo "${mol_id}" >> "${STATUS_DIR}/failed.txt"\n')
         f.write(
-            '            echo "    -> SIGTERM detected (timeout/memory limit/killed)"\n'
+            '            echo "${mol_id}:${exit_code}" >> "${STATUS_DIR}/failed_with_code.txt"\n'
         )
+        f.write("            if [ ${exit_code} -eq 143 ]; then\n")
+        f.write(
+            '                echo "${mol_id}: SIGTERM detected (timeout/memory limit/killed)" >> "${STATUS_DIR}/signals.txt"\n'
+        )
+        f.write("            fi\n")
         f.write("        fi\n")
-        f.write("    fi\n")
-        f.write("done\n\n")
+        f.write("    ) &\n")
+        f.write("done\n")
+        f.write("wait\n\n")
+
+        f.write("SUCCESS=0\n")
+        f.write("FAILED=0\n")
+        f.write('if [ -f "${STATUS_DIR}/success.txt" ]; then\n')
+        f.write('    SUCCESS=$(wc -l < "${STATUS_DIR}/success.txt")\n')
+        f.write("fi\n")
+        f.write('if [ -f "${STATUS_DIR}/failed.txt" ]; then\n')
+        f.write('    FAILED=$(wc -l < "${STATUS_DIR}/failed.txt")\n')
+        f.write("fi\n\n")
 
         f.write("# Report summary\n")
         f.write('echo ""\n')
@@ -614,19 +668,20 @@ def _create_smina_per_molecule_script(
         f.write('echo "========================================"\n')
         f.write('echo "Total molecules: $TOTAL"\n')
         f.write('echo "Successful: $SUCCESS"\n')
-        f.write('echo "Failed: ${#FAILED[@]}"\n\n')
+        f.write('echo "Failed: ${FAILED}"\n')
+        f.write('echo "Parallel jobs: ${MAX_JOBS}"\n\n')
 
-        f.write("if [ ${#FAILED[@]} -gt 0 ]; then\n")
+        f.write('if [ "${FAILED}" -gt 0 ] && [ -f "${STATUS_DIR}/failed.txt" ]; then\n')
         f.write('    echo ""\n')
         f.write('    echo "Failed molecules:"\n')
-        f.write('    printf "  %s\\n" "${FAILED[@]}"\n')
+        f.write('    sed "s/^/  /" "${STATUS_DIR}/failed.txt"\n')
         f.write(
-            f'    printf "%s\\n" "${{FAILED[@]}}" > {_shell_quote(ligands_dir / "smina" / "failed_molecules.txt")}\n'
+            f'    cp "${{STATUS_DIR}}/failed.txt" "{ligands_dir}/smina/failed_molecules.txt"\n'
         )
         f.write("fi\n\n")
 
         f.write("# Exit with success if at least one molecule succeeded\n")
-        f.write("if [ $SUCCESS -gt 0 ]; then\n")
+        f.write('if [ "${SUCCESS}" -gt 0 ]; then\n')
         f.write('    echo ""\n')
         f.write(
             '    echo "Docking completed with $SUCCESS/$TOTAL molecules successful"\n'
@@ -761,9 +816,28 @@ def _create_gnina_per_molecule_script(
         f.write("  TOTAL=$((TOTAL + 1))\n")
         f.write("  (\n")
         f.write('    mol_id=$(basename "${config}" .ini | sed "s/gnina_//")\n')
+        f.write(
+            '    output_file=$(awk -F"=" \'/^out[[:space:]]*=/{sub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}\' "${config}")\n'
+        )
+        f.write('    if [ -z "${output_file}" ]; then\n')
+        f.write('      echo "[${TOTAL}] ${mol_id} failed: output path missing in config"\n')
+        f.write('      echo "${mol_id}" >> "${STATUS_DIR}/failed.txt"\n')
+        f.write('      echo "${mol_id}:missing_out_path" >> "${STATUS_DIR}/failed_with_code.txt"\n')
+        f.write("      exit 0\n")
+        f.write("    fi\n")
         f.write('    echo "[${TOTAL}] Processing ${mol_id}..."\n')
-        f.write(f'    if {per_mol_cmd} 2>> "${{LOGS_DIR}}/${{mol_id}}.log"; then\n')
-        f.write('      echo "${mol_id}" >> "${STATUS_DIR}/success.txt"\n')
+        f.write(f'    if {per_mol_cmd} 2>> "{logs_dir}/${{mol_id}}.log"; then\n')
+        f.write(
+            '      if [ -s "${output_file}" ] && awk \'/\\$\\$\\$\\$/{found=1; exit} END{exit found?0:1}\' "${output_file}"; then\n'
+        )
+        f.write('        echo "${mol_id}" >> "${STATUS_DIR}/success.txt"\n')
+        f.write("      else\n")
+        f.write(
+            '        echo "[${TOTAL}] ${mol_id} produced invalid/empty SDF: ${output_file}"\n'
+        )
+        f.write('        echo "${mol_id}" >> "${STATUS_DIR}/failed.txt"\n')
+        f.write('        echo "${mol_id}:invalid_output" >> "${STATUS_DIR}/failed_with_code.txt"\n')
+        f.write("      fi\n")
         f.write("    else\n")
         f.write("      exit_code=$?\n")
         f.write('      echo "${mol_id}" >> "${STATUS_DIR}/failed.txt"\n')
@@ -872,9 +946,9 @@ def _get_gnina_environment(cfg, base_folder):
             _resolve_env_library_paths(env_path)
         )
 
-    # Auto-detect from PyTorch or conda when no env_path is configured
+    # Auto-detect from PyTorch, Matcha venv, or conda when no env_path is configured
     if not ld_library_path:
-        ld_library_path = _auto_detect_cudnn_path()
+        ld_library_path = _auto_detect_cudnn_path(_project_root())
 
     return gnina_activate, ld_library_path
 
@@ -897,15 +971,16 @@ def _join_existing_library_paths(paths: list[str]) -> str | None:
     return os.pathsep.join(resolved)
 
 
-def _auto_detect_cudnn_path() -> str | None:
+def _auto_detect_cudnn_path(project_root: Path | None = None) -> str | None:
     """Auto-detect LD_LIBRARY_PATH for GNINA from PyTorch or conda environments."""
     try:
         from hedgehog.setup._gnina import _collect_gnina_library_paths
     except Exception:
-        pass
         return None
 
-    return _join_existing_library_paths(_collect_gnina_library_paths())
+    return _join_existing_library_paths(
+        _collect_gnina_library_paths(project_root=project_root)
+    )
 
 
 def _get_gnina_output_directory(cfg, base_folder):
@@ -978,6 +1053,26 @@ def _resolve_gnina_parallel_jobs(cfg: dict, cpu_per_process: int) -> int:
     return jobs
 
 
+def _resolve_smina_parallel_jobs(cfg: dict, smina_config: dict) -> int:
+    """Resolve per-molecule parallel process count for SMINA."""
+    explicit = cfg.get("smina_parallel_jobs")
+    if explicit is not None:
+        return _parse_positive_int(explicit, 1)
+
+    smina_cpu_default = smina_config.get("cpu", 1)
+    cpu_per_process = _parse_positive_int(
+        cfg.get("smina_per_process_cpu", smina_cpu_default), 1
+    )
+    cpus = os.environ.get("SLURM_CPUS_PER_TASK") or os.cpu_count() or cpu_per_process
+    total_cpus = _parse_positive_int(cpus, cpu_per_process)
+    jobs = max(1, total_cpus // max(1, cpu_per_process))
+
+    jobs_max = cfg.get("smina_parallel_jobs_max")
+    if jobs_max is not None:
+        jobs = min(jobs, _parse_positive_int(jobs_max, jobs))
+    return jobs
+
+
 def _resolve_gnina_parallelism(cfg, gnina_config):
     """Resolve GNINA CPU-per-process, GPU count, and parallel jobs."""
     gnina_cpu_default = gnina_config.get("cpu", 8)
@@ -1011,10 +1106,10 @@ def _setup_smina(
             return None
 
         smina_config = cfg.get("smina_config", {})
-        smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin")
-        smina_bin = _resolve_docking_binary(
-            smina_bin_cfg, TOOL_SMINA, config_dir=config_dir
-        )
+
+        smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin", TOOL_SMINA)
+        smina_bin = _resolve_docking_binary(smina_bin_cfg, TOOL_SMINA)
+        parallel_jobs = _resolve_smina_parallel_jobs(cfg, smina_config)
 
         ligands_path, prep_cmd = _prepare_ligands_for_docking(
             ligands_csv, ligands_dir, ligand_preparation_tool, cfg, tool_name=TOOL_SMINA
@@ -1043,10 +1138,12 @@ def _setup_smina(
                     ligands_dir,
                     smina_bin,
                     protein_prep_cmd,
+                    parallel_jobs,
                 )
                 logger.info(
-                    "SMINA per-molecule configuration prepared for %d molecules",
+                    "SMINA per-molecule configuration prepared for %d molecules (parallel_jobs=%d)",
                     len(molecule_files),
+                    parallel_jobs,
                 )
                 return script_path
             else:
@@ -1316,7 +1413,7 @@ def _setup_docking_tools(
                     cfg,
                     tool_name=TOOL_MATCHA,
                 )
-                matcha_command, run_name = _build_matcha_command(
+                matcha_command, run_name, matcha_repo = _build_matcha_command(
                     cfg, ligands_dir, receptor, ligands_path
                 )
                 script = _create_matcha_script(
@@ -1325,6 +1422,7 @@ def _setup_docking_tools(
                     run_name,
                     prep_cmd,
                     _extract_prepared_output_from_cmd(prep_cmd),
+                    _get_matcha_ld_library_path(matcha_repo),
                 )
                 scripts_prepared.append(str(script))
                 job_ids[TOOL_MATCHA] = _generate_job_id(TOOL_MATCHA)

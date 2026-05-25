@@ -14,6 +14,8 @@ from hedgehog.setup._gnina import (
     _gnina_variant,
     _is_working_gnina,
     _resolve_gnina_download,
+    collect_matcha_library_paths,
+    collect_nvidia_library_paths,
     ensure_gnina,
 )
 
@@ -697,6 +699,43 @@ class TestGninaEnvDiscovery:
 
         paths = _collect_gnina_library_paths()
         assert str(miniforge_lib.resolve()) in paths
+
+    def test_collects_managed_matcha_venv_cuda_libs(self, monkeypatch, tmp_path):
+        """Should include CUDA libs from modules/matcha_remote/.venv when present."""
+        project_root = tmp_path / "hedgehog"
+        site_packages = (
+            project_root
+            / "modules"
+            / "matcha_remote"
+            / ".venv"
+            / "lib"
+            / "python3.11"
+            / "site-packages"
+        )
+        cuda_runtime_lib = site_packages / "nvidia" / "cuda_runtime" / "lib"
+        cuda_runtime_lib.mkdir(parents=True)
+
+        monkeypatch.setattr("hedgehog.setup._gnina.sys.path", [])
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.site.getsitepackages", lambda: [str(site_packages)]
+        )
+        monkeypatch.setattr("hedgehog.setup._gnina.Path.home", lambda: tmp_path)
+        monkeypatch.delenv("CONDA_PREFIX", raising=False)
+
+        paths = collect_nvidia_library_paths(project_root=project_root)
+        assert str(cuda_runtime_lib.resolve()) in paths
+
+    def test_collect_matcha_library_paths_from_checkout_venv(self, tmp_path):
+        """Matcha-specific helper should read CUDA libs from checkout .venv."""
+        matcha_repo = tmp_path / "matcha_remote"
+        site_packages = (
+            matcha_repo / ".venv" / "lib" / "python3.11" / "site-packages"
+        )
+        nvrtc_lib = site_packages / "nvidia" / "cuda_nvrtc" / "lib"
+        nvrtc_lib.mkdir(parents=True)
+
+        paths = collect_matcha_library_paths(matcha_repo)
+        assert str(nvrtc_lib.resolve()) in paths
 
     def test_gnina_env_merges_existing_ld_library_path(self, monkeypatch, tmp_path):
         """Discovered paths should be prepended while preserving existing entries."""
