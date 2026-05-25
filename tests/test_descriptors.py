@@ -501,7 +501,7 @@ class TestDescriptorsStage:
         passed = pd.read_csv(
             tmp_path
             / "stages"
-            / "01_descriptors_initial"
+            / "02_descriptors_initial"
             / "filtered"
             / FILE_FILTERED_MOLECULES
         )

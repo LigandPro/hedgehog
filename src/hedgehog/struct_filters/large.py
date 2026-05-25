@@ -59,7 +59,7 @@ def _struct_input_chunks(config: dict, stage_dir: str, chunk_rows: int):
         descriptors_output = stage_output_or_parts(
             base
             / "stages"
-            / "01_descriptors_initial"
+            / "02_descriptors_initial"
             / "filtered"
             / "filtered_molecules.csv"
         )
@@ -70,7 +70,7 @@ def _struct_input_chunks(config: dict, stage_dir: str, chunk_rows: int):
             return
 
     molprep_output = resolve_large_output(
-        base, "stages", "00_mol_prep", "filtered_molecules.csv"
+        base, "stages", "01_mol_prep", "filtered_molecules.csv"
     )
     if molprep_output is not None:
         yield from iter_csv_parts(molprep_output, chunk_rows=chunk_rows)

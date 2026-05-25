@@ -143,41 +143,39 @@ class TestFolderIsEmpty:
 class TestGetUniqueResultsFolder:
     """Tests for _get_unique_results_folder function."""
 
-    def test_empty_folder(self, tmp_path):
-        """If base folder is available, keep it without suffix."""
+    def test_first_run_is_numbered_one(self, tmp_path):
+        """Fresh installs always get base_name_1."""
         result = _get_unique_results_folder(tmp_path / "results")
-        assert result == tmp_path / "results"
+        assert result == tmp_path / "results_1"
 
-    def test_nonexistent_folder(self, tmp_path):
-        """If base folder doesn't exist, keep the base name."""
+    def test_nonexistent_parent_still_numbers_from_one(self, tmp_path):
+        """Numbering starts at 1 even when the parent directory is new."""
         result = _get_unique_results_folder(tmp_path / "new_results")
-        assert result == tmp_path / "new_results"
+        assert result == tmp_path / "new_results_1"
 
-    def test_folder_exists_with_content(self, tmp_path):
-        """If folder exists with content but no numbered folders, return _1."""
+    def test_unnumbered_base_folder_advances_sequence(self, tmp_path):
+        """Unnumbered base folder with content advances the run suffix."""
         results = tmp_path / "results"
         results.mkdir()
         (results / "file.txt").touch()
 
         result = _get_unique_results_folder(results)
-        assert result == tmp_path / "results_1"
+        assert result == tmp_path / "results_2"
 
-    def test_multiple_existing_folders(self, tmp_path):
-        """If base folder is free, use it even when numbered folders exist."""
-        # Create results_1 and results_2
+    def test_increments_past_existing_numbered_folders(self, tmp_path):
+        """Next folder is one above the highest existing suffix."""
         (tmp_path / "results_1").mkdir()
         (tmp_path / "results_2").mkdir()
 
         result = _get_unique_results_folder(tmp_path / "results")
-        assert result == tmp_path / "results"
+        assert result == tmp_path / "results_3"
 
-    def test_folder_already_numbered(self, tmp_path):
-        """Base folder is still preferred when available."""
-        # Create results_5
+    def test_skips_gaps_in_numbering(self, tmp_path):
+        """Highest suffix wins even when intermediate numbers are missing."""
         (tmp_path / "results_5").mkdir()
 
         result = _get_unique_results_folder(tmp_path / "results")
-        assert result == tmp_path / "results"
+        assert result == tmp_path / "results_6"
 
 
 class TestValidateInputPath:

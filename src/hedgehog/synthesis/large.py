@@ -44,10 +44,10 @@ def _synthesis_input_chunks(config: dict, chunk_rows: int):
         base / "stages" / "03_structural_filters_post" / "filtered_molecules.csv",
         base
         / "stages"
-        / "01_descriptors_initial"
+        / "02_descriptors_initial"
         / "filtered"
         / "filtered_molecules.csv",
-        base / "stages" / "00_mol_prep" / "filtered_molecules.csv",
+        base / "stages" / "01_mol_prep" / "filtered_molecules.csv",
     ]
     for candidate in candidates:
         source = stage_output_or_parts(candidate)

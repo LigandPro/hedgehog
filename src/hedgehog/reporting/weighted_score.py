@@ -246,7 +246,7 @@ def collect_physchem_evidence(base_path: Path, model_name: str) -> dict[str, Any
     flags = _read_first_csv(
         base_path,
         [
-            "stages/01_descriptors_initial/filtered/pass_flags.csv",
+            "stages/02_descriptors_initial/filtered/pass_flags.csv",
             "stages/07_descriptors_final/filtered/pass_flags.csv",
         ],
         warnings,
@@ -254,8 +254,8 @@ def collect_physchem_evidence(base_path: Path, model_name: str) -> dict[str, Any
     descriptors = _read_first_csv(
         base_path,
         [
-            "stages/01_descriptors_initial/metrics/descriptors_all.csv",
-            "stages/01_descriptors_initial/filtered/descriptors_passed.csv",
+            "stages/02_descriptors_initial/metrics/descriptors_all.csv",
+            "stages/02_descriptors_initial/filtered/descriptors_passed.csv",
             "stages/07_descriptors_final/metrics/descriptors_all.csv",
             "stages/07_descriptors_final/filtered/descriptors_passed.csv",
         ],

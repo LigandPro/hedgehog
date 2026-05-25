@@ -105,7 +105,7 @@ def _get_input_path(config, stage_dir, folder_to_save):
             str(
                 base
                 / "stages"
-                / "01_descriptors_initial"
+                / "02_descriptors_initial"
                 / "filtered"
                 / "filtered_molecules.csv"
             ),
@@ -127,7 +127,7 @@ def _get_input_path(config, stage_dir, folder_to_save):
                 "Single-stage struct_filters: descriptors output not found; falling back to mol_prep/sampled input."
             )
 
-        mol_prep_path = base / "stages" / "00_mol_prep" / "filtered_molecules.csv"
+        mol_prep_path = base / "stages" / "01_mol_prep" / "filtered_molecules.csv"
         if mol_prep_path.exists() and mol_prep_path.stat().st_size > 0:
             return str(mol_prep_path)
 

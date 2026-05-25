@@ -82,8 +82,8 @@ def _build_weighted_run(tmp_path, with_config=True):
     (tmp_path / "stages" / "03_structural_filters_post").mkdir(parents=True)
     (tmp_path / "stages" / "04_synthesis").mkdir(parents=True)
     (tmp_path / "stages" / "06_docking_filters").mkdir(parents=True)
-    (tmp_path / "stages" / "01_descriptors_initial" / "filtered").mkdir(parents=True)
-    (tmp_path / "stages" / "01_descriptors_initial" / "metrics").mkdir(parents=True)
+    (tmp_path / "stages" / "02_descriptors_initial" / "filtered").mkdir(parents=True)
+    (tmp_path / "stages" / "02_descriptors_initial" / "metrics").mkdir(parents=True)
     (tmp_path / "stages" / "07_descriptors_final" / "filtered").mkdir(parents=True)
     (tmp_path / "stages" / "07_descriptors_final" / "metrics").mkdir(parents=True)
 
@@ -122,7 +122,7 @@ def _build_weighted_run(tmp_path, with_config=True):
         }
     )
     initial_pass_flags.to_csv(
-        tmp_path / "stages" / "01_descriptors_initial" / "filtered" / "pass_flags.csv",
+        tmp_path / "stages" / "02_descriptors_initial" / "filtered" / "pass_flags.csv",
         index=False,
     )
     pd.DataFrame(
@@ -137,7 +137,7 @@ def _build_weighted_run(tmp_path, with_config=True):
     ).to_csv(
         tmp_path
         / "stages"
-        / "01_descriptors_initial"
+        / "02_descriptors_initial"
         / "metrics"
         / "descriptors_all.csv",
         index=False,

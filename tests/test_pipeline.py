@@ -171,7 +171,7 @@ class TestDataChecker:
 
     def test_check_stage_data_descriptors(self, tmp_path):
         """Check stage data for descriptors output."""
-        desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         output_file = desc_dir / FILE_FILTERED_MOLECULES
         output_file.write_text(
@@ -185,7 +185,7 @@ class TestDataChecker:
 
     def test_check_stage_data_mol_prep(self, tmp_path):
         """Check stage data for MolPrep output."""
-        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir = tmp_path / "stages" / "01_mol_prep"
         prep_dir.mkdir(parents=True)
         (prep_dir / FILE_FILTERED_MOLECULES).write_text(
             f"{COL_SMILES},{COL_MODEL_NAME}\n{SMILES_ETHANOL},{MODEL_TEST}"
@@ -217,7 +217,7 @@ class TestPipelineStageRunner:
 
     def test_find_latest_data_source_with_descriptors(self, tmp_path):
         """Find latest data source when only descriptors output exists."""
-        desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         (desc_dir / FILE_FILTERED_MOLECULES).write_text(
             f"{COL_SMILES}\n{SMILES_ETHANOL}"
@@ -232,7 +232,7 @@ class TestPipelineStageRunner:
 
     def test_find_latest_data_source_with_mol_prep(self, tmp_path):
         """Find latest data source when only MolPrep output exists."""
-        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir = tmp_path / "stages" / "01_mol_prep"
         prep_dir.mkdir(parents=True)
         (prep_dir / FILE_FILTERED_MOLECULES).write_text(
             f"{COL_SMILES}\n{SMILES_ETHANOL}"
@@ -263,7 +263,7 @@ class TestPipelineStageRunner:
             f"{COL_SMILES}\n{SMILES_ETHANOL}"
         )
 
-        desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         (desc_dir / FILE_FILTERED_MOLECULES).write_text(
             f"{COL_SMILES}\n{SMILES_ETHANOL}"
@@ -598,7 +598,7 @@ class TestStageLoggingCanonicalFormat:
         output_path = (
             tmp_path
             / "stages"
-            / "01_descriptors_initial"
+            / "02_descriptors_initial"
             / "filtered"
             / FILE_FILTERED_MOLECULES
         )
@@ -729,7 +729,7 @@ class TestStageLoggingCanonicalFormat:
         output_path = (
             tmp_path
             / "stages"
-            / "01_descriptors_initial"
+            / "02_descriptors_initial"
             / "filtered"
             / FILE_FILTERED_MOLECULES
         )

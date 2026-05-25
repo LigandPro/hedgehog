@@ -57,12 +57,12 @@ def run(data, config, subfolder=None, reporter=None):
     Args:
         data: DataFrame with molecules (must have 'smiles' column)
         config: Configuration file
-        subfolder: Optional subfolder for output (e.g., 'stages/01_descriptors_initial'
+        subfolder: Optional subfolder for output (e.g., 'stages/02_descriptors_initial'
                    or 'stages/07_descriptors_final')
         reporter: Optional progress reporter instance
     """
     folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
-    subfolder = subfolder or str(Path("stages") / "01_descriptors_initial")
+    subfolder = subfolder or str(Path("stages") / "02_descriptors_initial")
     descriptors_folder = folder_to_save / subfolder
 
     metrics_folder = descriptors_folder / "metrics"
