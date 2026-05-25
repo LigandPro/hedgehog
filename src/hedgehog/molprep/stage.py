@@ -29,7 +29,7 @@ def run(data, config: dict, subfolder: str | None = None, reporter=None):
       - duplicates_removed.csv (optional)
     """
     folder_to_save = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
-    subfolder = subfolder or str(Path("stages") / "00_mol_prep")
+    subfolder = subfolder or str(Path("stages") / "01_mol_prep")
     out_dir = folder_to_save / subfolder
     out_dir.mkdir(parents=True, exist_ok=True)
 

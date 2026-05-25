@@ -14,7 +14,7 @@ def base_path(tmp_path):
     # Create stage directories
     stages_dir = tmp_path / "stages"
     for d in [
-        "01_descriptors_initial",
+        "02_descriptors_initial",
         "06_docking_filters",
         "07_descriptors_final",
     ]:
@@ -355,7 +355,7 @@ class TestParametrizedDescriptors:
 
     def test_get_descriptor_stats_initial(self, report_gen, base_path):
         """Should read from initial descriptors directory."""
-        desc_dir = base_path / "stages" / "01_descriptors_initial" / "metrics"
+        desc_dir = base_path / "stages" / "02_descriptors_initial" / "metrics"
         desc_dir.mkdir(parents=True, exist_ok=True)
 
         df = pd.DataFrame(
@@ -417,7 +417,7 @@ class TestParametrizedDescriptors:
         self, report_gen, base_path
     ):
         """Should summarize descriptor threshold failures from pass_flags.csv."""
-        desc_dir = base_path / "stages" / "01_descriptors_initial"
+        desc_dir = base_path / "stages" / "02_descriptors_initial"
         metrics_dir = desc_dir / "metrics"
         filtered_dir = desc_dir / "filtered"
         metrics_dir.mkdir(parents=True, exist_ok=True)
@@ -477,7 +477,7 @@ class TestParametrizedDescriptors:
         self, report_gen, base_path
     ):
         """Rendered report should show why molecules were rejected by descriptors."""
-        desc_dir = base_path / "stages" / "01_descriptors_initial"
+        desc_dir = base_path / "stages" / "02_descriptors_initial"
         metrics_dir = desc_dir / "metrics"
         filtered_dir = desc_dir / "filtered"
         metrics_dir.mkdir(parents=True, exist_ok=True)

@@ -36,8 +36,8 @@ def _resolve_hedgehog_version() -> str:
 
 # Stage directory names
 STAGE_DIRS = {
-    "mol_prep": "stages/00_mol_prep",
-    "descriptors_initial": "stages/01_descriptors_initial",
+    "mol_prep": "stages/01_mol_prep",
+    "descriptors_initial": "stages/02_descriptors_initial",
     "struct_filters_post": "stages/03_structural_filters_post",
     "synthesis": "stages/04_synthesis",
     "docking": "stages/05_docking",
@@ -3297,10 +3297,10 @@ class ReportGenerator:
         # Stage checkpoints to analyze
         stage_paths = [
             ("Input", "input/sampled_molecules.csv"),
-            ("MolPrep", "stages/00_mol_prep/filtered_molecules.csv"),
+            ("MolPrep", "stages/01_mol_prep/filtered_molecules.csv"),
             (
                 "Descriptors",
-                "stages/01_descriptors_initial/filtered/filtered_molecules.csv",
+                "stages/02_descriptors_initial/filtered/filtered_molecules.csv",
             ),
             (
                 "StructFilters",
@@ -3360,8 +3360,8 @@ class ReportGenerator:
             stages_dir = self.base_path / "stages"
             if stages_dir.exists():
                 stage_names = {
-                    "00_mol_prep": "Mol Prep",
-                    "01_descriptors_initial": "Descriptors (Initial)",
+                    "01_mol_prep": "Mol Prep",
+                    "02_descriptors_initial": "Descriptors (Initial)",
                     "03_structural_filters_post": "Structural Filters (Post)",
                     "04_synthesis": "Synthesis Analysis",
                     "05_docking": "Molecular Docking",

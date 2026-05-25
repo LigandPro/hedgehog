@@ -1277,7 +1277,7 @@ class TestGetInputPath:
 
     def test_finds_descriptors_output(self, tmp_path):
         """Should find descriptors output if no struct filters."""
-        desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         (desc_dir / FILE_FILTERED_MOLECULES).write_text(
             f"{COL_SMILES}\n{SMILES_ETHANOL}"

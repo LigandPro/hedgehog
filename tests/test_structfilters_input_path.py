@@ -17,7 +17,7 @@ def test_single_stage_struct_filters_falls_back_to_mol_prep_when_descriptors_mis
     descriptors_cfg = tmp_path / "config_descriptors.yml"
     _write_yaml(descriptors_cfg, {"run": True})
 
-    mol_prep_output = tmp_path / "stages" / "00_mol_prep" / "filtered_molecules.csv"
+    mol_prep_output = tmp_path / "stages" / "01_mol_prep" / "filtered_molecules.csv"
     mol_prep_output.parent.mkdir(parents=True, exist_ok=True)
     mol_prep_output.write_text(
         "smiles,model_name,mol_idx\nCCO,m1,0\n", encoding="utf-8"

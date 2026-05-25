@@ -41,8 +41,8 @@ DIR_OUTPUT = "output"
 DIR_CONFIGS = "configs"
 
 # Stage subdirectories
-DIR_MOL_PREP = "stages/00_mol_prep"
-DIR_DESCRIPTORS_INITIAL = "stages/01_descriptors_initial"
+DIR_MOL_PREP = "stages/01_mol_prep"
+DIR_DESCRIPTORS_INITIAL = "stages/02_descriptors_initial"
 DIR_STRUCT_FILTERS_POST = "stages/03_structural_filters_post"
 DIR_SYNTHESIS = "stages/04_synthesis"
 DIR_DOCKING = "stages/05_docking"

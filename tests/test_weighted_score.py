@@ -277,7 +277,7 @@ def test_compute_weighted_scores_respects_run_false(tmp_path):
 
 
 def test_physchem_prefers_initial_descriptor_flags(tmp_path):
-    initial_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+    initial_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
     final_dir = tmp_path / "stages" / "07_descriptors_final" / "filtered"
     initial_dir.mkdir(parents=True)
     final_dir.mkdir(parents=True)
@@ -304,7 +304,7 @@ def test_physchem_prefers_initial_descriptor_flags(tmp_path):
 
 
 def test_physchem_falls_back_when_initial_flags_are_empty(tmp_path):
-    initial_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+    initial_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
     final_dir = tmp_path / "stages" / "07_descriptors_final" / "filtered"
     initial_dir.mkdir(parents=True)
     final_dir.mkdir(parents=True)
@@ -328,7 +328,7 @@ def test_physchem_falls_back_when_initial_flags_are_empty(tmp_path):
 
 
 def test_physchem_filters_initial_flags_by_model(tmp_path):
-    initial_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+    initial_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
     initial_dir.mkdir(parents=True)
     pd.DataFrame(
         {

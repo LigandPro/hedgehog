@@ -149,8 +149,8 @@ def stage_directories(tmp_path):
     stages.mkdir()
 
     dirs = {
-        "mol_prep": stages / "00_mol_prep",
-        "descriptors": stages / "01_descriptors_initial",
+        "mol_prep": stages / "01_mol_prep",
+        "descriptors": stages / "02_descriptors_initial",
         "struct_post": stages / "03_structural_filters_post",
         "synthesis": stages / "04_synthesis",
         "docking": stages / "05_docking",

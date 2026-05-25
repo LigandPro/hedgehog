@@ -282,7 +282,7 @@ def moleval_base_path(tmp_path):
     ).to_csv(input_dir / "sampled_molecules.csv", index=False)
 
     # Descriptors stage
-    desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+    desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
     desc_dir.mkdir(parents=True)
     pd.DataFrame(
         {

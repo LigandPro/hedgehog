@@ -57,7 +57,7 @@ class TestFindLatestInputSource:
 
     def test_descriptors_output(self, tmp_path):
         """Should find descriptors output."""
-        desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         (desc_dir / FILE_FILTERED_MOLECULES).write_text(
             f"{COL_SMILES}\n{SMILES_ETHANOL}"
@@ -69,7 +69,7 @@ class TestFindLatestInputSource:
 
     def test_mol_prep_output(self, tmp_path):
         """Should find MolPrep output."""
-        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir = tmp_path / "stages" / "01_mol_prep"
         prep_dir.mkdir(parents=True)
         (prep_dir / FILE_FILTERED_MOLECULES).write_text(
             f"{COL_SMILES}\n{SMILES_ETHANOL}"
@@ -77,7 +77,7 @@ class TestFindLatestInputSource:
 
         result = _find_latest_input_source(tmp_path)
         assert result is not None
-        assert "mol_prep" in str(result).lower() or "00_mol_prep" in str(result)
+        assert "mol_prep" in str(result).lower() or "01_mol_prep" in str(result)
 
     def test_sampled_molecules_input(self, tmp_path):
         """Should find sampled molecules in input directory."""
@@ -100,11 +100,11 @@ class TestFindLatestInputSource:
             f"{COL_SMILES}\n{SMILES_ETHANOL}"
         )
 
-        desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         (desc_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCC")
 
-        prep_dir = tmp_path / "stages" / "00_mol_prep"
+        prep_dir = tmp_path / "stages" / "01_mol_prep"
         prep_dir.mkdir(parents=True)
         (prep_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCCC")
 
@@ -240,7 +240,7 @@ class TestFindLatestInputSourcePriority:
         sf_dir.mkdir(parents=True)
         (sf_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
 
-        desc_dir = tmp_path / "stages" / "01_descriptors_initial" / "filtered"
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial" / "filtered"
         desc_dir.mkdir(parents=True)
         (desc_dir / FILE_FILTERED_MOLECULES).write_text(f"{COL_SMILES}\nCC")
 

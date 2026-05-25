@@ -1,22 +1,24 @@
-"""Centralized input path resolution for pipeline stages.
-
-This module provides consistent input file discovery across all pipeline stages,
-supporting both new hierarchical structure and legacy flat structure.
-"""
+"""Centralized input path resolution for pipeline stages."""
 
 from collections.abc import Sequence
 from pathlib import Path
 
-# Priority order for input sources (new hierarchical structure)
+# Stage directory basenames (under stages/)
+_STAGE_SYNTHESIS = "04_synthesis"
+_STAGE_STRUCT_FILTERS_POST = "03_structural_filters_post"
+_STAGE_DESCRIPTORS_INITIAL = "02_descriptors_initial"
+_STAGE_MOL_PREP = "01_mol_prep"
+
+# Priority order for input sources (hierarchical structure)
 INPUT_SOURCE_PRIORITY_NEW = [
-    ("stages", "04_synthesis", "filtered_molecules.csv"),
-    ("stages", "03_structural_filters_post", "filtered_molecules.csv"),
-    ("stages", "01_descriptors_initial", "filtered", "filtered_molecules.csv"),
-    ("stages", "00_mol_prep", "filtered_molecules.csv"),
+    ("stages", _STAGE_SYNTHESIS, "filtered_molecules.csv"),
+    ("stages", _STAGE_STRUCT_FILTERS_POST, "filtered_molecules.csv"),
+    ("stages", _STAGE_DESCRIPTORS_INITIAL, "filtered", "filtered_molecules.csv"),
+    ("stages", _STAGE_MOL_PREP, "filtered_molecules.csv"),
     ("input", "sampled_molecules.csv"),
 ]
 
-# Priority order for input sources (legacy flat structure)
+# Flat layout (pre-stages/ hierarchy)
 INPUT_SOURCE_PRIORITY_LEGACY = [
     ("Synthesis", "passSynthesisSMILES.csv"),
     ("StructFilters", "passStructFiltersSMILES.csv"),
@@ -24,28 +26,20 @@ INPUT_SOURCE_PRIORITY_LEGACY = [
     ("sampled_molecules.csv",),
 ]
 
-# Stage name to directory mapping for skip logic
 STAGE_DIRECTORIES = {
     "synthesis": ["stages/04_synthesis", "Synthesis"],
     "struct_filters": [
         "stages/03_structural_filters_post",
         "StructFilters",
     ],
-    "descriptors": ["stages/01_descriptors_initial", "Descriptors"],
+    "descriptors": ["stages/02_descriptors_initial", "Descriptors"],
     "docking": ["stages/05_docking"],
-    "mol_prep": ["stages/00_mol_prep"],
+    "mol_prep": ["stages/01_mol_prep"],
 }
 
 
 def get_all_input_candidates(base_folder: Path) -> list[Path]:
-    """Get all potential input file paths in priority order.
-
-    Args:
-        base_folder: Base results folder path
-
-    Returns:
-        List of Path objects for all candidate input files (new + legacy)
-    """
+    """Get all potential input file paths in priority order."""
     base = Path(base_folder)
     candidates = []
 
@@ -62,22 +56,10 @@ def find_latest_input_source(
     base_folder: Path,
     skip_stages: Sequence[str] | None = None,
 ) -> Path | None:
-    """Find the most recent input source file.
-
-    Searches through predefined priority order of stage outputs to find
-    the first existing non-empty file.
-
-    Args:
-        base_folder: Base results folder path
-        skip_stages: Optional list of stage names to skip (e.g., ['descriptors'])
-
-    Returns:
-        Path to the found input file, or None if not found
-    """
+    """Find the most recent input source file."""
     base = Path(base_folder)
     skip_stages = set(skip_stages or [])
 
-    # Build list of directories to skip
     skip_dirs = set()
     for stage in skip_stages:
         for dir_path in STAGE_DIRECTORIES.get(stage, []):
@@ -86,7 +68,6 @@ def find_latest_input_source(
     candidates = get_all_input_candidates(base)
 
     for candidate in candidates:
-        # Check if this path should be skipped
         rel_path = str(candidate.relative_to(base)).lower()
         should_skip = any(skip_dir in rel_path for skip_dir in skip_dirs)
 
@@ -100,16 +81,7 @@ def find_latest_input_source(
 
 
 def find_sampled_molecules(base_folder: Path) -> Path | None:
-    """Find the sampled molecules file.
-
-    Checks both new and legacy locations.
-
-    Args:
-        base_folder: Base results folder path
-
-    Returns:
-        Path to sampled_molecules.csv or None if not found
-    """
+    """Find the sampled molecules file."""
     base = Path(base_folder)
     candidates = [
         base / "input" / "sampled_molecules.csv",
@@ -124,14 +96,7 @@ def find_sampled_molecules(base_folder: Path) -> Path | None:
 
 
 def _file_exists_and_not_empty(file_path: Path) -> bool:
-    """Check if a file exists and is not empty.
-
-    Args:
-        file_path: Path to check
-
-    Returns:
-        True if file exists and has size > 0
-    """
+    """Check if a file exists and is not empty."""
     try:
         return file_path.exists() and file_path.stat().st_size > 0
     except OSError:

@@ -33,7 +33,7 @@ from hedgehog.utils.paths import process_path
 def _descriptor_input_chunks(config: dict, chunk_rows: int):
     base = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     molprep_output = resolve_large_output(
-        base, "stages", "00_mol_prep", "filtered_molecules.csv"
+        base, "stages", "01_mol_prep", "filtered_molecules.csv"
     )
     if molprep_output is not None:
         yield from iter_csv_parts(molprep_output, chunk_rows=chunk_rows)

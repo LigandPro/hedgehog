@@ -219,7 +219,7 @@ def test_struct_filters_respect_empty_descriptor_output(tmp_path):
         descriptor_csv, index=False
     )
 
-    molprep_csv = tmp_path / "stages" / "00_mol_prep" / FILE_FILTERED_MOLECULES
+    molprep_csv = tmp_path / "stages" / "01_mol_prep" / FILE_FILTERED_MOLECULES
     writer = ShardedCsvWriter(
         parts_dir_for_csv(molprep_csv), {"large_dataset_output_format": "csv.gz"}
     )

@@ -109,7 +109,8 @@ def _get_unique_results_folder(base_folder) -> Path:
     """
     Generate a unique folder name with sequential number suffix.
 
-    Creates folders like: results/run_1, results/run_2, etc.
+    Always creates numbered folders starting at 1, e.g. results/run_1,
+    results/run_2. The configured path (e.g. results/run) is the base stem only.
 
     Parameters
     ----------
@@ -124,25 +125,23 @@ def _get_unique_results_folder(base_folder) -> Path:
     import re
 
     base_folder = Path(base_folder)
-    if _folder_is_empty(base_folder):
-        return base_folder
     parent = base_folder.parent
     base_name = base_folder.name
 
-    # Find existing folders matching pattern {base_name}_N
     max_number = 0
     pattern = re.compile(rf"^{re.escape(base_name)}_(\d+)$")
 
     if parent.exists():
         for item in parent.iterdir():
-            if item.is_dir():
-                match = pattern.match(item.name)
-                if match:
-                    number = int(match.group(1))
-                    max_number = max(max_number, number)
+            if not item.is_dir():
+                continue
+            match = pattern.match(item.name)
+            if match:
+                max_number = max(max_number, int(match.group(1)))
+            elif item.name == base_name and not _folder_is_empty(item):
+                max_number = max(max_number, 1)
 
-    new_folder = parent / f"{base_name}_{max_number + 1}"
-    return new_folder
+    return parent / f"{base_name}_{max_number + 1}"
 
 
 def _canonicalize_smiles(smi: str) -> str | None:
