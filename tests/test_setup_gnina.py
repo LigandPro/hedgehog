@@ -17,6 +17,7 @@ from hedgehog.setup._gnina import (
     collect_matcha_library_paths,
     collect_nvidia_library_paths,
     ensure_gnina,
+    ensure_gnina_runtime_dependencies,
 )
 
 
@@ -98,6 +99,14 @@ class TestEnsureGnina:
             raise AssertionError(f"unexpected subprocess command: {cmd}")
 
         monkeypatch.setattr("hedgehog.setup._gnina.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._cuda_runtime_libraries_available",
+            lambda *_args, **_kwargs: state["runtime_installed"],
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._is_working_gnina",
+            lambda path: path == "/usr/bin/gnina" and state["runtime_installed"],
+        )
 
         assert ensure_gnina() == "/usr/bin/gnina"
         assert state["sync_calls"] == 1
@@ -138,6 +147,77 @@ class TestEnsureGnina:
 
         with pytest.raises(RuntimeError, match="declined"):
             ensure_gnina()
+
+    def test_ensure_runtime_dependencies_syncs_when_missing(self, monkeypatch, tmp_path):
+        """Run uv sync --extra docking-gpu when CUDA runtime libs are absent."""
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._cuda_runtime_libraries_available",
+            lambda *_args, **_kwargs: False,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.resolve_uv_binary", lambda: "/usr/bin/uv"
+        )
+
+        sync_calls: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            sync_calls.append(list(cmd))
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("hedgehog.setup._gnina.subprocess.run", fake_run)
+
+        available = {"value": False}
+
+        def mark_available(*_args, **_kwargs):
+            if sync_calls:
+                available["value"] = True
+                return True
+            return False
+
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._cuda_runtime_libraries_available",
+            mark_available,
+        )
+
+        assert ensure_gnina_runtime_dependencies(tmp_path, auto_install=True) is True
+        assert sync_calls == [["/usr/bin/uv", "sync", "--extra", "docking-gpu"]]
+
+    def test_ensure_runtime_dependencies_skips_without_auto_install(
+        self, monkeypatch, tmp_path
+    ):
+        """Do not sync when runtime libs are missing and auto_install is disabled."""
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._cuda_runtime_libraries_available",
+            lambda *_args, **_kwargs: False,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.subprocess.run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("uv sync should not run")
+            ),
+        )
+
+        assert (
+            ensure_gnina_runtime_dependencies(tmp_path, auto_install=False) is False
+        )
+
+    def test_ensure_runtime_dependencies_raises_when_still_missing(
+        self, monkeypatch, tmp_path
+    ):
+        """Raise a clear error when sync does not provide CUDA runtime libraries."""
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._cuda_runtime_libraries_available",
+            lambda *_args, **_kwargs: False,
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._install_gnina_runtime_dependencies",
+            lambda *_args, **_kwargs: None,
+        )
+
+        with pytest.raises(RuntimeError, match="still missing after"):
+            ensure_gnina_runtime_dependencies(
+                tmp_path, auto_install=True, raise_on_failure=True
+            )
 
     def test_found_in_cache(self, monkeypatch, tmp_path):
         """If gnina is cached at ~/.hedgehog/bin/gnina, return it."""
