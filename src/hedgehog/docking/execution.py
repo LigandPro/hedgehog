@@ -85,13 +85,14 @@ def _run_smina(ligands_dir, background, job_id, tick=None):
     if job_id:
         status["job_id"] = job_id
 
-    # Aggregate per-molecule results if they exist
     results_dir = workdir / "smina" / "results"
     output_sdf = ligands_dir / "smina" / "smina_out.sdf"
 
     if not background and results_dir.exists():
         try:
-            count = _aggregate_docking_results(results_dir, output_sdf)
+            count = _aggregate_docking_results(
+                results_dir, output_sdf, model_name=TOOL_SMINA
+            )
             status["aggregated_molecules"] = count
             logger.info("Aggregated %d SMINA docking results", count)
         except Exception as e:
@@ -111,12 +112,13 @@ def _run_gnina(ligands_dir, output_sdf, background, job_id, tick=None):
     if job_id:
         status["job_id"] = job_id
 
-    # Aggregate per-molecule results if they exist
     results_dir = workdir / "gnina" / "results"
 
     if not background and results_dir.exists():
         try:
-            count = _aggregate_docking_results(results_dir, output_sdf)
+            count = _aggregate_docking_results(
+                results_dir, output_sdf, model_name=TOOL_GNINA
+            )
             status["aggregated_molecules"] = count
             logger.info("Aggregated %d GNINA docking results", count)
         except Exception as e:
@@ -144,7 +146,9 @@ def _run_matcha(ligands_dir, cfg, background, job_id, tick=None):
 
     if not background and best_dir.exists():
         try:
-            count = _aggregate_matcha_results(best_dir, output_sdf)
+            count = _aggregate_matcha_results(
+                best_dir, output_sdf, ligands_csv=ligands_dir / "ligands.csv"
+            )
             status["aggregated_molecules"] = count
             logger.info("Aggregated %d Matcha docking results", count)
         except Exception as e:
