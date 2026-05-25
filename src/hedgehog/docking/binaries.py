@@ -34,14 +34,9 @@ def _validate_optional_tool_path(tool_path, tool_label):
     return None
 
 
-def _is_real_binary(path: str) -> bool:
-    """Check if a file is a real compiled binary (ELF), not a script wrapper."""
-    try:
-        with open(path, "rb") as f:
-            header = f.read(4)
-        return header == b"\x7fELF"
-    except Exception:
-        return False
+def _is_executable_file(path: str) -> bool:
+    """Return True when path points to an executable file."""
+    return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
 def _is_path_like(path_value: str) -> bool:
@@ -98,35 +93,19 @@ def _resolve_docking_binary(
     Raises:
         FileNotFoundError: If the binary cannot be found.
     """
-    resolved_config_dir: Path | None = None
-    if config_dir is not None:
-        resolved_config_dir = Path(config_dir).expanduser().resolve()
+    config_candidate = str(config_path or "").strip()
+    if config_candidate:
+        expanded = os.path.expanduser(config_candidate)
+        if _is_executable_file(expanded):
+            return expanded
 
-    configured_value = str(config_path).strip() if config_path is not None else ""
-    configured_override = bool(configured_value and configured_value != tool_name)
-
-    if configured_override:
-        if _is_path_like(configured_value):
-            return _resolve_configured_binary_path(
-                configured_value, tool_name, resolved_config_dir
-            )
-
-        resolved = shutil.which(configured_value)
-        if resolved:
-            return resolved
-        raise FileNotFoundError(
-            f"Configured {tool_name} binary '{configured_value}' was not found on PATH."
-        )
+        resolved_cfg = shutil.which(config_candidate)
+        if resolved_cfg and _is_executable_file(resolved_cfg):
+            return resolved_cfg
 
     found = shutil.which(tool_name)
-    if found and _is_real_binary(found):
+    if found and _is_executable_file(found):
         return found
-    elif found:
-        logger.debug(
-            "%s found at %s but is a script wrapper, not a real binary — skipping",
-            tool_name,
-            found,
-        )
 
     if tool_name == TOOL_GNINA:
         from hedgehog.setup import ensure_gnina

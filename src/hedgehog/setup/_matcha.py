@@ -136,6 +136,25 @@ def _checkout_pr_head(checkout_dir: Path, pr: dict[str, Any]) -> None:
     )
 
 
+def _has_matcha_cli(checkout_dir: Path) -> bool:
+    """Return True when the expected Matcha CLI module exists."""
+    return (checkout_dir / "matcha" / "cli.py").exists()
+
+
+def _checkout_main_head(checkout_dir: Path) -> None:
+    """Fallback to repository main branch HEAD."""
+    _run_git(["git", "fetch", "origin", "main"], cwd=checkout_dir)
+    _run_git(["git", "checkout", "--detach", "origin/main"], cwd=checkout_dir)
+    metadata = {
+        "source": "origin/main",
+        "note": "fallback because selected PR checkout lacked matcha/cli.py",
+    }
+    (checkout_dir / ".hedgehog_matcha_pr.json").write_text(
+        json.dumps(metadata, indent=2),
+        encoding="utf-8",
+    )
+
+
 def ensure_matcha_checkout(
     project_root: Path,
     *,
@@ -169,4 +188,13 @@ def ensure_matcha_checkout(
     )
     _clone_or_refresh_repo(target_dir, repo_url)
     _checkout_pr_head(target_dir, pr)
+    if not _has_matcha_cli(target_dir):
+        logger.warning(
+            "Selected Matcha PR checkout is missing matcha/cli.py. Falling back to origin/main."
+        )
+        _checkout_main_head(target_dir)
+        if not _has_matcha_cli(target_dir):
+            raise RuntimeError(
+                "Matcha checkout is missing matcha/cli.py after fallback to origin/main."
+            )
     return target_dir

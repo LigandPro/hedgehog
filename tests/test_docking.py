@@ -890,7 +890,7 @@ class TestMatchaCommand:
             lambda value: f"/resolved/{value}",
         )
 
-        command, run_name = _build_matcha_command(
+        command, run_name, checkout = _build_matcha_command(
             cfg,
             tmp_path,
             receptor="/tmp/receptor.pdb",
@@ -898,6 +898,7 @@ class TestMatchaCommand:
         )
 
         assert run_name == "matcha_run"
+        assert checkout == managed_repo
         assert command[:5] == [
             "/resolved/uv",
             "run",
