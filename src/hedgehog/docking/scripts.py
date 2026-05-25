@@ -401,7 +401,6 @@ def _build_matcha_command(
     matcha_repo = ensure_matcha_checkout(
         _project_root(),
         checkout_dir=matcha_cfg.get("checkout_dir"),
-        pr_number=matcha_cfg.get("pr_number"),
     )
     uv_bin = str(matcha_cfg.get("uv_bin") or "uv").strip() or "uv"
     resolved_uv = _resolve_executable(uv_bin)
@@ -482,11 +481,6 @@ def _build_matcha_command(
     else:
         command.append("--no-scorer-minimize")
 
-    if _parse_bool_config(matcha_cfg.get("physical_only", False), False):
-        command.append("--physical-only")
-    else:
-        command.append("--keep-all-poses")
-
     if _parse_bool_config(matcha_cfg.get("keep_workdir", False), False):
         command.append("--keep-workdir")
 
@@ -514,13 +508,24 @@ def _build_matcha_command(
 
 
 def _get_matcha_ld_library_path(matcha_repo: Path) -> str | None:
-    """Build LD_LIBRARY_PATH for Matcha from its managed virtualenv."""
+    """Build LD_LIBRARY_PATH for Matcha and its GNINA scorer subprocesses."""
     try:
-        from hedgehog.setup._gnina import collect_matcha_library_paths
+        from hedgehog.setup._gnina import (
+            collect_matcha_library_paths,
+            collect_nvidia_library_paths,
+            ensure_gnina_runtime_dependencies,
+        )
     except Exception:
         return None
 
-    return _join_existing_library_paths(collect_matcha_library_paths(matcha_repo))
+    project_root = _project_root()
+    ensure_gnina_runtime_dependencies(project_root, auto_install=True)
+
+    library_dirs = collect_matcha_library_paths(matcha_repo)
+    library_dirs.extend(
+        collect_nvidia_library_paths(project_root=_project_root())
+    )
+    return _join_existing_library_paths(library_dirs)
 
 
 def _create_matcha_script(

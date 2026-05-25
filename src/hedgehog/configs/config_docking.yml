@@ -31,5 +31,4 @@ matcha_config:
   n_samples: 20
   scorer: gnina
   scorer_minimize: true
-  physical_only: false
   keep_workdir: false
