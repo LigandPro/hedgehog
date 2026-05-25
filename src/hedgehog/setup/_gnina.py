@@ -13,7 +13,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from hedgehog.setup._download import confirm_download, download_with_progress
+from hedgehog.configs.logger import logger
+from hedgehog.setup._download import (
+    confirm_download,
+    download_with_progress,
+    resolve_uv_binary,
+)
 
 _GNINA_CACHE_DIR = Path.home() / ".hedgehog" / "bin"
 _GNINA_RELEASES_API_LATEST = "https://api.github.com/repos/gnina/gnina/releases/latest"
@@ -21,6 +26,7 @@ _GNINA_RELEASES_API_TAG = "https://api.github.com/repos/gnina/gnina/releases/tag
 _GNINA_FALLBACK_TAG = "v1.3.2"
 _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES = 800 * 1024 * 1024
 _GNINA_DEFAULT_MAX_DOWNLOAD_BYTES_GPU = 3 * 1024 * 1024 * 1024
+_GNINA_RUNTIME_EXTRA = "docking-gpu"
 _GNINA_ARCHIVE_SUFFIXES = (
     ".tar.gz",
     ".tgz",
@@ -50,17 +56,22 @@ def ensure_gnina() -> str:
     """
     # 1. Check PATH
     path_binary = shutil.which("gnina")
-    if path_binary and _is_working_gnina(path_binary):
-        return path_binary
+    if path_binary:
+        if _is_working_gnina(path_binary):
+            return path_binary
+        if _maybe_auto_install_runtime_dependencies(path_binary):
+            return path_binary
 
     # 2. Check cache
     cached = _GNINA_CACHE_DIR / "gnina"
     if (
         cached.is_file()
         and cached.stat().st_size > 1_000_000
-        and _is_working_gnina(str(cached))
     ):
-        return str(cached)
+        if _is_working_gnina(str(cached)):
+            return str(cached)
+        if _maybe_auto_install_runtime_dependencies(str(cached)):
+            return str(cached)
 
     # 3. Platform gate
     if sys.platform != "linux":
@@ -83,6 +94,8 @@ def ensure_gnina() -> str:
     )  # World-readable+executable: shared binary on multi-user systems
 
     if not _is_working_gnina(str(cached)):
+        if _maybe_auto_install_runtime_dependencies(str(cached)):
+            return str(cached)
         cached.unlink(missing_ok=True)
         raise RuntimeError(
             "Downloaded GNINA binary failed verification (--version check). "
@@ -92,18 +105,85 @@ def ensure_gnina() -> str:
     return str(cached)
 
 
-def _is_working_gnina(path: str) -> bool:
-    """Return True if *path* runs ``gnina --version`` successfully."""
+def _probe_gnina_version(path: str) -> subprocess.CompletedProcess[str] | None:
+    """Run ``gnina --version`` and return the result, or ``None`` on launch errors."""
     try:
-        result = subprocess.run(
+        return subprocess.run(
             [path, "--version"],
             capture_output=True,
+            text=True,
             timeout=10,
             env=_gnina_env(),
         )
-        return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _is_working_gnina(path: str) -> bool:
+    """Return True if *path* runs ``gnina --version`` successfully."""
+    result = _probe_gnina_version(path)
+    return result is not None and result.returncode == 0
+
+
+def _auto_install_enabled() -> bool:
+    """Return True when optional tool bootstrapping is enabled for this run."""
+    return os.environ.get("HEDGEHOG_AUTO_INSTALL") == "1"
+
+
+def _looks_like_missing_runtime_libraries(
+    result: subprocess.CompletedProcess[str] | None,
+) -> bool:
+    """Detect GNINA launch failures caused by missing shared libraries."""
+    if result is None:
         return False
+    text = " ".join(part for part in (result.stdout, result.stderr) if part).lower()
+    if "error while loading shared libraries" in text:
+        return True
+    return any(
+        token in text
+        for token in (
+            "libcudart.so.12",
+            "libcublas.so.12",
+            "libcublaslt.so.12",
+            "libcusparse.so.12",
+            "libcufft.so.11",
+            "libcusolver.so.11",
+        )
+    )
+
+
+def _install_gnina_runtime_dependencies(project_root: Path) -> None:
+    """Install CUDA runtime packages needed by GPU GNINA into the project env."""
+    uv_bin = resolve_uv_binary()
+    logger.info(
+        "Installing GNINA runtime dependencies into project environment "
+        "(uv sync --extra %s)...",
+        _GNINA_RUNTIME_EXTRA,
+    )
+    subprocess.run(
+        [uv_bin, "sync", "--extra", _GNINA_RUNTIME_EXTRA],
+        cwd=project_root,
+        check=True,
+        timeout=1800,
+    )
+    logger.info("GNINA runtime dependencies installed successfully")
+
+
+def _maybe_auto_install_runtime_dependencies(path: str) -> bool:
+    """Bootstrap missing CUDA runtime libs for GNINA when auto-install is enabled."""
+    if not _auto_install_enabled():
+        return False
+
+    project_root = _hedgehog_project_root()
+    if project_root is None or not project_root.is_dir():
+        return False
+
+    result = _probe_gnina_version(path)
+    if not _looks_like_missing_runtime_libraries(result):
+        return False
+
+    _install_gnina_runtime_dependencies(project_root)
+    return _is_working_gnina(path)
 
 
 def _raise_no_asset_error(select_mode, query_errors, release_urls):

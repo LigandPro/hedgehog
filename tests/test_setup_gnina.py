@@ -59,6 +59,86 @@ class TestEnsureGnina:
         assert result == str(cached)
         assert call_count["n"] == 2  # Called once for PATH, once for cache
 
+    def test_path_binary_auto_installs_runtime_dependencies(self, monkeypatch, tmp_path):
+        """Auto-install CUDA runtime deps when GNINA fails from missing libs."""
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.shutil.which",
+            lambda name: "/usr/bin/gnina" if name == "gnina" else None,
+        )
+        monkeypatch.setenv("HEDGEHOG_AUTO_INSTALL", "1")
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._GNINA_CACHE_DIR", tmp_path / "missing-cache"
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._hedgehog_project_root", lambda: tmp_path
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.resolve_uv_binary", lambda: "/usr/bin/uv"
+        )
+
+        state = {"runtime_installed": False, "sync_calls": 0}
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[:3] == ["/usr/bin/uv", "sync", "--extra"]:
+                assert cmd[3] == "docking-gpu"
+                state["runtime_installed"] = True
+                state["sync_calls"] += 1
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if cmd == ["/usr/bin/gnina", "--version"]:
+                if state["runtime_installed"]:
+                    return MagicMock(returncode=0, stdout="gnina 1.3.2", stderr="")
+                return MagicMock(
+                    returncode=127,
+                    stdout="",
+                    stderr=(
+                        "error while loading shared libraries: libcudart.so.12: "
+                        "cannot open shared object file"
+                    ),
+                )
+            raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+        monkeypatch.setattr("hedgehog.setup._gnina.subprocess.run", fake_run)
+
+        assert ensure_gnina() == "/usr/bin/gnina"
+        assert state["sync_calls"] == 1
+
+    def test_path_binary_non_runtime_failure_does_not_sync_extra(
+        self, monkeypatch, tmp_path
+    ):
+        """Do not run uv sync when GNINA is broken for unrelated reasons."""
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.shutil.which",
+            lambda name: "/usr/bin/gnina" if name == "gnina" else None,
+        )
+        monkeypatch.setenv("HEDGEHOG_AUTO_INSTALL", "1")
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._GNINA_CACHE_DIR", tmp_path / "missing-cache"
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina._hedgehog_project_root", lambda: tmp_path
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.resolve_uv_binary", lambda: "/usr/bin/uv"
+        )
+        monkeypatch.setattr(
+            "hedgehog.setup._gnina.sys", MagicMock(platform="linux")
+        )
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd == ["/usr/bin/gnina", "--version"]:
+                return MagicMock(
+                    returncode=1,
+                    stdout="",
+                    stderr="usage error: invalid option",
+                )
+            raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+        monkeypatch.setattr("hedgehog.setup._gnina.subprocess.run", fake_run)
+        monkeypatch.setattr("hedgehog.setup._gnina.confirm_download", lambda *a: False)
+
+        with pytest.raises(RuntimeError, match="declined"):
+            ensure_gnina()
+
     def test_found_in_cache(self, monkeypatch, tmp_path):
         """If gnina is cached at ~/.hedgehog/bin/gnina, return it."""
         monkeypatch.setattr("hedgehog.setup._gnina.shutil.which", lambda _: None)
