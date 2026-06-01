@@ -17,7 +17,6 @@ from rdkit import Chem, RDConfig, RDLogger, rdBase
 from rdkit.Chem import (
     QED,
     ChemicalFeatures,
-    Crippen,
     Descriptors,
     Lipinski,
     rdMolDescriptors,
@@ -219,13 +218,7 @@ def drop_false_rows(df, borders):
     Returns:
         pd.DataFrame: Filtered dataframe with only passed molecules
     """
-    passed_cols = []
-    filter_charged_mol = borders.get("filter_charged_mol", False)
-    for col in df.columns:
-        if col.endswith("_pass") or col == "pass":
-            if "charged_mol" in col and not filter_charged_mol:
-                continue
-            passed_cols.append(col)
+    passed_cols = [col for col in df.columns if col.endswith("_pass") or col == "pass"]
     mask = df[passed_cols].all(axis=1)
     return df[mask].copy()
 
@@ -243,7 +236,7 @@ def _parse_literal_list(value, label):
 
     Args:
         value: Value to parse (string representation of a list or list itself)
-        label: Label for error messages (e.g., "chars", "ring sizes")
+        label: Label for error messages (e.g., "ring sizes", "type limits")
 
     Returns:
         Parsed list, or empty list if parsing fails
@@ -260,14 +253,6 @@ def _parse_literal_list(value, label):
             return []
     logger.error("Error parsing %s: %s, unsupported type", label, value)
     return []
-
-
-def _parse_chars_in_mol_column(series):
-    """Parse character lists from series for plotting."""
-    parsed = []
-    for val in series.dropna():
-        parsed.extend(_parse_literal_list(val, "chars"))
-    return parsed
 
 
 def _parse_ring_size_column(series):
@@ -295,7 +280,6 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     """
     mol = Chem.AddHs(mol_n)
 
-    symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
     ring_info = mol.GetRingInfo()
     rings = [len(x) for x in ring_info.AtomRings()]
 
@@ -307,7 +291,6 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     )
     mol_wt = Descriptors.ExactMolWt(mol_n)
     log_p = Descriptors.MolLogP(mol_n)
-    clog_p = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
     n_O_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 8)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
@@ -319,7 +302,6 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     return {
         "model_name": model_name,
         "mol_idx": mol_idx,
-        "chars": symbols,
         "n_atoms": mol.GetNumAtoms(),
         "n_heavy_atoms": n_heavy_atoms,
         "n_het_atoms": sum(
@@ -335,7 +317,6 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         else 0,
         "molWt": mol_wt,
         "logP": log_p,
-        "clogP": clog_p,
         "sw": 0.16
         - 0.63 * log_p
         - 0.0062 * mol_wt
@@ -362,7 +343,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
 
 
 def _compute_descriptors_for_row(args):
-    smiles, model_name, mol_idx, remove_charges, remove_radicals, remove_stereo = args
+    smiles, model_name, mol_idx, remove_radicals, remove_stereo = args
     if not isinstance(smiles, str):
         if pd.isna(smiles):
             return None, ("", model_name, mol_idx)
@@ -385,27 +366,13 @@ def _compute_descriptors_for_row(args):
         if has_radical:
             return None, (smiles, model_name, mol_idx)
 
-    if remove_charges:
-        try:
-            from rdkit.Chem.MolStandardize import rdMolStandardize
-
-            uncharger = rdMolStandardize.Uncharger()
-            mol_n = uncharger.uncharge(mol_n)
-        except Exception:
-            # Best-effort: if uncharger isn't available, fall back to charge check only.
-            pass
-
-        still_charged = any(atom.GetFormalCharge() != 0 for atom in mol_n.GetAtoms())
-        if still_charged:
-            return None, (smiles, model_name, mol_idx)
-
     if remove_stereo:
         try:
             Chem.RemoveStereochemistry(mol_n)
         except Exception:
             pass
 
-    if remove_charges or remove_radicals or remove_stereo:
+    if remove_radicals or remove_stereo:
         try:
             smiles = Chem.MolToSmiles(mol_n, canonical=True, isomericSmiles=False)
         except Exception:
@@ -426,7 +393,7 @@ def compute_metrics(
     progress_completed_base: int = 0,
     progress_completed_span: int | None = None,
 ):
-    """Compute 22 physicochemical descriptors for each molecule.
+    """Compute 28 base physicochemical descriptors for each molecule.
 
     model_name and mol_idx are already in df from sampled_molecules.csv.
 
@@ -451,10 +418,9 @@ def compute_metrics(
     if isinstance(config_descriptors, dict):
         preprocess_cfg = config_descriptors.get("preprocess", {}) or {}
 
-    remove_charges = bool(preprocess_cfg.get("remove_charges", False))
     remove_radicals = bool(preprocess_cfg.get("remove_radicals", False))
     remove_stereo = bool(preprocess_cfg.get("remove_stereochemistry", False))
-    do_preprocess = remove_charges or remove_radicals or remove_stereo
+    do_preprocess = remove_radicals or remove_stereo
 
     n_jobs = resolve_n_jobs(config_descriptors, config)
     logger.info("Descriptors workers: %d", n_jobs)
@@ -467,7 +433,7 @@ def compute_metrics(
         )
     )
     items = [
-        (s, m, idx, remove_charges, remove_radicals, remove_stereo)
+        (s, m, idx, remove_radicals, remove_stereo)
         for (s, m, idx) in items
     ]
 
@@ -545,7 +511,7 @@ def _get_border_values(col, borders):
     """Get min and max border values for a column from borders config.
 
     Uses explicit key mapping to prevent case-insensitive confusion between
-    similar descriptor names (e.g., logP vs clogP).
+    similar descriptor names with different casing.
 
     Args:
         col: Column name
@@ -607,15 +573,6 @@ def _apply_column_filter(df, col, borders):
     min_border = _normalize_border_value(min_border)
     max_border = _normalize_border_value(max_border)
 
-    if col == "chars":
-        allowed_chars = borders["allowed_chars"]
-        return df[col].apply(
-            lambda x: all(
-                str(char).strip() in allowed_chars
-                for char in _parse_literal_list(x, "chars")
-            )
-        )
-
     if col == "ring_size":
         # Missing bounds mean "no bound" on that side.
         if min_border is None:
@@ -628,12 +585,6 @@ def _apply_column_filter(df, col, borders):
                 for ring_size in _parse_literal_list(x, "ring sizes")
             )
         )
-
-    if col in ("charged_mol", "is_neutral"):
-        charged_allowed = borders.get("charged_mol_allowed", True)
-        if charged_allowed:
-            return pd.Series(True, index=df.index)
-        return df[col] == True  # noqa: E712
 
     # Generic numeric range filter.
     #
@@ -833,15 +784,6 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
         col_in_borders = any(
             v is not None for v in _get_border_values(col, effective_borders)
         )
-        # Some filters are configured without *_min/*_max keys.
-        # Treat them as "in borders" if their controlling keys exist.
-        if col == "chars" and "allowed_chars" in effective_borders:
-            col_in_borders = True
-        if (
-            col in ("charged_mol", "is_neutral")
-            and "charged_mol_allowed" in effective_borders
-        ):
-            col_in_borders = True
         if col_in_borders:
             filtered_data[col] = df[col]
             filtered_data[f"{col}_pass"] = _apply_column_filter(
@@ -956,8 +898,6 @@ def _get_column_values(model_df, col):
     Returns:
         list: Extracted values
     """
-    if col == "chars":
-        return _parse_chars_in_mol_column(model_df[col].dropna())
     if col == "ring_size":
         return _parse_ring_size_column(model_df[col].dropna())
     return model_df[col].dropna().tolist()
@@ -980,37 +920,6 @@ def _filter_values_by_bounds(values, min_val, max_val):
     if max_val is not None and max_val != "inf":
         result = [v for v in result if v <= max_val]
     return result
-
-
-def _plot_discrete_chars(
-    ax, values, offset, bar_width, color, label, borders, model_index
-):
-    """Plot discrete character counts as bar chart."""
-    value_counts = pd.Series(values).value_counts()
-    desired_order = ["C", "N", "S", "O", "F", "Cl", "Br", "H"]
-    all_chars = borders.get("allowed_chars", desired_order)
-    sorted_chars = [c for c in desired_order if c in all_chars] + [
-        c for c in all_chars if c not in desired_order
-    ]
-
-    complete_counts = pd.Series(0, index=sorted_chars)
-    complete_counts.update(value_counts)
-    x_positions = [i + offset for i in range(len(complete_counts.index))]
-    ax.bar(
-        x_positions,
-        complete_counts.values,
-        width=bar_width,
-        alpha=0.4,
-        color=color,
-        edgecolor="black",
-        linewidth=0.3,
-        label=label,
-    )
-
-    if model_index == 0:
-        ax.set_xticks(list(range(len(complete_counts.index))))
-        ax._discrete_tick_values = complete_counts.index
-        ax.set_xticklabels(complete_counts.index)
 
 
 def _plot_discrete_numeric(
@@ -1238,35 +1147,23 @@ def _plot_single_column(
                 color=color,
             )
         elif col in discrete_feats:
-            if col == "chars":
-                _plot_discrete_chars(
-                    ax,
-                    values_before,
-                    offset,
-                    bar_width,
-                    color,
-                    label,
-                    borders,
-                    model_index,
-                )
-            else:
-                _plot_discrete_numeric(
-                    ax,
-                    values_before,
-                    col,
-                    offset,
-                    bar_width,
-                    color,
-                    label,
-                    max_val,
-                    model_index,
-                )
+            _plot_discrete_numeric(
+                ax,
+                values_before,
+                col,
+                offset,
+                bar_width,
+                color,
+                label,
+                max_val,
+                model_index,
+            )
         else:
             _plot_continuous(ax, values_before, col, color, label)
 
     # Set title and labels
     display_name = renamer.get(col, col)
-    title = display_name if col == "chars" else f"{display_name} ({minmax_str})"
+    title = f"{display_name} ({minmax_str})"
     ax.set_title(title, fontsize=12)
     ax.set_xlabel(display_name, fontsize=10)
 

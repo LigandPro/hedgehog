@@ -32,7 +32,7 @@ def _parse_literal_list(value, label):
 
     Args:
         value: Value to parse (string representation of a list or list itself)
-        label: Label for error messages (e.g., "chars", "ring sizes")
+        label: Label for error messages (e.g., "ring sizes", "type limits")
 
     Returns:
         Parsed list, or empty list if parsing fails
@@ -49,14 +49,6 @@ def _parse_literal_list(value, label):
             return []
     logger.error("Error parsing %s: %s, unsupported type", label, value)
     return []
-
-
-def _parse_chars_in_mol_column(series):
-    """Parse character lists from series for plotting."""
-    parsed = []
-    for val in series.dropna():
-        parsed.extend(_parse_literal_list(val, "chars"))
-    return parsed
 
 
 def _parse_ring_size_column(series):
@@ -81,16 +73,7 @@ def drop_false_rows(df, borders):
     Returns:
         pd.DataFrame: Filtered dataframe with only passed molecules
     """
-    passed_cols = []
-    filter_charged_mol = borders.get("filter_charged_mol", False)
-    for col in df.columns:
-        if col.endswith("_pass") or col == "pass":
-            if (
-                col in {"charged_mol_pass", "is_neutral_pass"}
-                and not filter_charged_mol
-            ):
-                continue
-            passed_cols.append(col)
+    passed_cols = [col for col in df.columns if col.endswith("_pass") or col == "pass"]
     mask = df[passed_cols].all(axis=1)
     return df[mask].copy()
 
@@ -99,7 +82,7 @@ def _get_border_values(col, borders):
     """Get min and max border values for a column from borders config.
 
     Uses explicit key mapping to prevent case-insensitive confusion between
-    similar descriptor names (e.g., logP vs clogP).
+    similar descriptor names with different casing.
 
     Args:
         col: Column name
@@ -161,15 +144,6 @@ def _apply_column_filter(df, col, borders):
     min_border = _normalize_border_value(min_border)
     max_border = _normalize_border_value(max_border)
 
-    if col == "chars":
-        allowed_chars = borders["allowed_chars"]
-        return df[col].apply(
-            lambda x: all(
-                str(char).strip() in allowed_chars
-                for char in _parse_literal_list(x, "chars")
-            )
-        )
-
     if col == "ring_size":
         # Missing bounds mean "no bound" on that side.
         if min_border is None:
@@ -182,12 +156,6 @@ def _apply_column_filter(df, col, borders):
                 for ring_size in _parse_literal_list(x, "ring sizes")
             )
         )
-
-    if col in ("charged_mol", "is_neutral"):
-        charged_allowed = borders.get("charged_mol_allowed", True)
-        if charged_allowed:
-            return pd.Series(True, index=df.index)
-        return df[col] == True  # noqa: E712
 
     # Generic numeric range filter.
     #
@@ -301,15 +269,6 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
         col_in_borders = any(
             v is not None for v in _get_border_values(col, effective_borders)
         )
-        # Some filters are configured without *_min/*_max keys.
-        # Treat them as "in borders" if their controlling keys exist.
-        if col == "chars" and "allowed_chars" in effective_borders:
-            col_in_borders = True
-        if (
-            col in ("charged_mol", "is_neutral")
-            and "charged_mol_allowed" in effective_borders
-        ):
-            col_in_borders = True
         if col_in_borders:
             filtered_data[col] = df[col]
             filtered_data[f"{col}_pass"] = _apply_column_filter(

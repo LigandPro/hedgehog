@@ -14,7 +14,6 @@ from hedgehog.descriptors.filtering import (
     _build_structural_constraint_borders,
     _extract_borders_and_constraints,
     _get_border_values,
-    _parse_chars_in_mol_column,
     _parse_ring_size_column,
 )
 from hedgehog.descriptors.io import process_path
@@ -60,8 +59,6 @@ def _get_column_values(model_df, col):
     Returns:
         list: Extracted values
     """
-    if col == "chars":
-        return _parse_chars_in_mol_column(model_df[col].dropna())
     if col == "ring_size":
         return _parse_ring_size_column(model_df[col].dropna())
     return model_df[col].dropna().tolist()
@@ -84,37 +81,6 @@ def _filter_values_by_bounds(values, min_val, max_val):
     if max_val is not None and max_val != "inf":
         result = [v for v in result if v <= max_val]
     return result
-
-
-def _plot_discrete_chars(
-    ax, values, offset, bar_width, color, label, borders, model_index
-):
-    """Plot discrete character counts as bar chart."""
-    value_counts = pd.Series(values).value_counts()
-    desired_order = ["C", "N", "S", "O", "F", "Cl", "Br", "H"]
-    all_chars = borders.get("allowed_chars", desired_order)
-    sorted_chars = [c for c in desired_order if c in all_chars] + [
-        c for c in all_chars if c not in desired_order
-    ]
-
-    complete_counts = pd.Series(0, index=sorted_chars)
-    complete_counts.update(value_counts)
-    x_positions = [i + offset for i in range(len(complete_counts.index))]
-    ax.bar(
-        x_positions,
-        complete_counts.values,
-        width=bar_width,
-        alpha=0.4,
-        color=color,
-        edgecolor="black",
-        linewidth=0.3,
-        label=label,
-    )
-
-    if model_index == 0:
-        ax.set_xticks(list(range(len(complete_counts.index))))
-        ax._discrete_tick_values = complete_counts.index
-        ax.set_xticklabels(complete_counts.index)
 
 
 def _plot_discrete_numeric(
@@ -342,35 +308,23 @@ def _plot_single_column(
                 color=color,
             )
         elif col in discrete_feats:
-            if col == "chars":
-                _plot_discrete_chars(
-                    ax,
-                    values_before,
-                    offset,
-                    bar_width,
-                    color,
-                    label,
-                    borders,
-                    model_index,
-                )
-            else:
-                _plot_discrete_numeric(
-                    ax,
-                    values_before,
-                    col,
-                    offset,
-                    bar_width,
-                    color,
-                    label,
-                    max_val,
-                    model_index,
-                )
+            _plot_discrete_numeric(
+                ax,
+                values_before,
+                col,
+                offset,
+                bar_width,
+                color,
+                label,
+                max_val,
+                model_index,
+            )
         else:
             _plot_continuous(ax, values_before, col, color, label)
 
     # Set title and labels
     display_name = renamer.get(col, col)
-    title = display_name if col == "chars" else f"{display_name} ({minmax_str})"
+    title = f"{display_name} ({minmax_str})"
     ax.set_title(title, fontsize=12)
     ax.set_xlabel(display_name, fontsize=10)
 

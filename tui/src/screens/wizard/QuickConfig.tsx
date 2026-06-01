@@ -52,8 +52,6 @@ const DESCRIPTORS_PARAMS: ParamDef[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable descriptors calculation' },
   { key: 'batch_size', label: 'Batch Size', type: 'number', description: 'Molecules per batch for memory efficiency' },
   { key: 'filter_data', label: 'Filter Data', type: 'boolean', description: 'Filter molecules outside border ranges' },
-  { key: 'allowed_chars', label: 'Allowed Atoms', type: 'text', configPath: ['borders'], description: 'Allowed atom types (C, N, O, S, F, Cl, Br)' },
-  { key: 'charged_mol_allowed', label: 'Charged Allowed', type: 'boolean', configPath: ['borders'], description: 'Allow charged molecules' },
   // Descriptor ranges
   { key: 'molWt', label: 'Molecular Weight', type: 'range', minKey: 'molWt_min', maxKey: 'molWt_max', configPath: ['borders'], description: 'Molecular weight range (Da)' },
   { key: 'logP', label: 'logP', type: 'range', minKey: 'logP_min', maxKey: 'logP_max', configPath: ['borders'], description: 'Lipophilicity (partition coefficient)' },
@@ -377,7 +375,6 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
             setValue(param, numValue);
           }
         } else if (param.type === 'text') {
-          // For array values like allowed_chars
           const value = getValue(param);
           if (Array.isArray(value)) {
             setValue(param, editValue.split(',').map(s => s.trim()));

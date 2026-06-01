@@ -50,9 +50,8 @@ def _prepare_identity_columns(data, run_base):
 def run(data, config, subfolder=None, reporter=None):
     """Compute physicochemical descriptors, filter, and plot distributions.
 
-    Computes default set of 22 physicochemical descriptors per molecule using RDKit,
-    filters molecules based on configurable thresholds, and generates
-    distribution plots.
+    Computes 28 base physicochemical descriptors per molecule using RDKit,
+    filters molecules based on configurable thresholds and generates distribution plots.
 
     Args:
         data: DataFrame with molecules (must have 'smiles' column)

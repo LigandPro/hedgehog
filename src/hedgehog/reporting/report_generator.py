@@ -311,7 +311,6 @@ KEY_DESCRIPTORS = [
 DESCRIPTOR_ALIASES = {
     "molwt": "MolWt",
     "logp": "LogP",
-    "clogp": "cLogP",
     "tpsa": "TPSA",
     "numhdonors": "NumHDonors",
     "numhacceptors": "NumHAcceptors",
@@ -326,7 +325,6 @@ DESCRIPTOR_ALIASES = {
     "n_het_atoms": "n_het_atoms",
     "n_n_atoms": "n_N_atoms",
     "fn_atoms": "fN_atoms",
-    "charged_mol": "charged_mol",
     "sw": "SW",
     "ring_size": "ring_size",
     "n_rings": "n_rings",
@@ -337,7 +335,7 @@ DESCRIPTOR_ALIASES = {
 }
 
 # Columns to exclude from descriptor analysis (not numeric descriptors)
-DESCRIPTOR_EXCLUDE_COLS = {"smiles", "model_name", "mol_idx", "chars", "name", "id"}
+DESCRIPTOR_EXCLUDE_COLS = {"smiles", "model_name", "mol_idx", "name", "id"}
 
 
 def _try_read_csv(*paths: Path) -> pd.DataFrame | None:
@@ -1608,7 +1606,6 @@ class ReportGenerator:
         thresholds = {
             "MolWt": {"min": 100, "max": 500},
             "LogP": {"min": -2, "max": 5},
-            "cLogP": {"min": -2, "max": 5},
             "TPSA": {"min": 20, "max": 140},
             "NumHDonors": {"min": 0, "max": 5},
             "NumHAcceptors": {"min": 0, "max": 10},
