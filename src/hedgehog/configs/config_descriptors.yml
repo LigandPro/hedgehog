@@ -90,7 +90,6 @@ borders:
   qed_min: 0.3
   qed_max: 1
 filtered_cols_to_plot:
-- chars
 - n_atoms
 - n_heavy_atoms
 - n_het_atoms
@@ -135,7 +134,6 @@ filtered_cols_to_plot:
 - tpsa
 - qed
 discrete_features_to_plot:
-- chars
 - n_het_atoms
 - n_N_atoms
 - n_O_atoms
@@ -178,7 +176,6 @@ not_to_smooth_plot_by_sides:
 - tpsa
 - qed
 renamer:
-  chars: Chars in molecules
   n_atoms: Number of Atoms
   n_heavy_atoms: Number of Heavy Atoms
   n_het_atoms: Number of heteroatoms

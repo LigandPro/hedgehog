@@ -12,10 +12,6 @@ STALE_PATTERNS = {
     "sa_score_min: 0": "Use sa_score_min: 1 from config_synthesis.yml.",
     "mce18_min: 45": "Use mce18_min: 20 from config_descriptors.yml.",
     "mce18_max: 100": "Use mce18_max: 140 from config_descriptors.yml.",
-    "charged_mol_allowed": "Do not document charged_mol_allowed as a default descriptor filter key.",
-    "filter_charged_mol": "Do not document filter_charged_mol as a default descriptor filter key.",
-    "clogP_min": "Do not document clogP_min as a default descriptor filter key.",
-    "clogP_max": "Do not document clogP_max as a default descriptor filter key.",
     "nibr_scheduler: threads": "Use nibr_scheduler: processes from config_structFilters.yml.",
     "required_residues: []": "Use required_residues: ['ASP12'] from config_docking_filters.yml.",
 }
