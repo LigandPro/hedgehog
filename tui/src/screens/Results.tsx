@@ -119,14 +119,14 @@ export function Results(): React.ReactElement {
             key: 'mol_prep',
             label: 'Mol Prep',
             candidates: [
-              'stages/00_mol_prep/filtered_molecules.csv',
+              'stages/01_mol_prep/filtered_molecules.csv',
             ],
           },
           {
             key: 'descriptors',
             label: 'Descriptors',
             candidates: [
-              'stages/01_descriptors_initial/filtered/filtered_molecules.csv',
+              'stages/02_descriptors_initial/filtered/filtered_molecules.csv',
               'Descriptors/passDescriptorsSMILES.csv',
             ],
           },
