@@ -177,7 +177,7 @@ class TestMCE18Integration:
 
     def test_mce18_in_descriptors(self):
         """MCE-18 should be computed alongside other descriptors."""
-        from hedgehog.descriptors.utils import (
+        from hedgehog.descriptors.compute import (
             _compute_single_molecule_descriptors,
         )
 
@@ -189,7 +189,7 @@ class TestMCE18Integration:
 
     def test_mce18_in_descriptor_key_map(self):
         """MCE-18 should be in the descriptor key map."""
-        from hedgehog.descriptors.utils import _DESCRIPTOR_KEY_MAP
+        from hedgehog.descriptors.constants import _DESCRIPTOR_KEY_MAP
 
         assert "mce18" in _DESCRIPTOR_KEY_MAP
         assert _DESCRIPTOR_KEY_MAP["mce18"] == "mce18"
