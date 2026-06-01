@@ -52,7 +52,9 @@ def _build_molprep_detail(
                 success_src[dst_col] = success_union[src_col]
         if all(col in success_src.columns for col in key_cols):
             success_src = success_src.drop_duplicates(subset=key_cols, keep="first")
-            detail = detail.merge(success_src, on=key_cols, how="left", suffixes=("", "_ok"))
+            detail = detail.merge(
+                success_src, on=key_cols, how="left", suffixes=("", "_ok")
+            )
             if "smiles_ok" in detail.columns:
                 detail["smiles"] = detail["smiles_ok"].combine_first(detail["smiles"])
                 detail = detail.drop(columns=["smiles_ok"])
@@ -78,7 +80,9 @@ def _build_molprep_detail(
 
     passed_keys = set()
     dup_keys = set()
-    if not passed_df.empty and all(col in passed_df.columns for col in ["model_name", "mol_idx", smiles_raw_col]):
+    if not passed_df.empty and all(
+        col in passed_df.columns for col in ["model_name", "mol_idx", smiles_raw_col]
+    ):
         passed_keys = set(
             zip(
                 passed_df["model_name"].astype(str),
@@ -87,7 +91,10 @@ def _build_molprep_detail(
                 strict=False,
             )
         )
-    if not duplicates_df.empty and all(col in duplicates_df.columns for col in ["model_name", "mol_idx", smiles_raw_col]):
+    if not duplicates_df.empty and all(
+        col in duplicates_df.columns
+        for col in ["model_name", "mol_idx", smiles_raw_col]
+    ):
         dup_keys = set(
             zip(
                 duplicates_df["model_name"].astype(str),
@@ -127,7 +134,9 @@ def _build_molprep_detail(
         {"standardize_smiles_failed", "post_standardize_parse_failed"}
     )
 
-    filters_reached = detail["pre_dedup_pass"] | (detail["fail_step"].astype(str) == "filters")
+    filters_reached = detail["pre_dedup_pass"] | (
+        detail["fail_step"].astype(str) == "filters"
+    )
     for col in (
         "filter_allowed_atoms_pass",
         "filter_radicals_pass",
@@ -136,10 +145,20 @@ def _build_molprep_detail(
     ):
         detail[col] = pd.NA
         detail.loc[filters_reached, col] = True
-    detail.loc[detail["fail_reason"].astype(str) == "disallowed_atoms", "filter_allowed_atoms_pass"] = False
-    detail.loc[detail["fail_reason"].astype(str) == "radicals", "filter_radicals_pass"] = False
-    detail.loc[detail["fail_reason"].astype(str) == "isotopes", "filter_isotopes_pass"] = False
-    detail.loc[detail["fail_reason"].astype(str) == "multifragment", "filter_single_fragment_pass"] = False
+    detail.loc[
+        detail["fail_reason"].astype(str) == "disallowed_atoms",
+        "filter_allowed_atoms_pass",
+    ] = False
+    detail.loc[
+        detail["fail_reason"].astype(str) == "radicals", "filter_radicals_pass"
+    ] = False
+    detail.loc[
+        detail["fail_reason"].astype(str) == "isotopes", "filter_isotopes_pass"
+    ] = False
+    detail.loc[
+        detail["fail_reason"].astype(str) == "multifragment",
+        "filter_single_fragment_pass",
+    ] = False
 
     # If reason_detail stores independent filter outcomes (JSON), use them.
     for idx, raw in detail["fail_reason_detail"].items():

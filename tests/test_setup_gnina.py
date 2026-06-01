@@ -60,7 +60,9 @@ class TestEnsureGnina:
         assert result == str(cached)
         assert call_count["n"] == 2  # Called once for PATH, once for cache
 
-    def test_path_binary_auto_installs_runtime_dependencies(self, monkeypatch, tmp_path):
+    def test_path_binary_auto_installs_runtime_dependencies(
+        self, monkeypatch, tmp_path
+    ):
         """Auto-install CUDA runtime deps when GNINA fails from missing libs."""
         monkeypatch.setattr(
             "hedgehog.setup._gnina.shutil.which",
@@ -129,9 +131,7 @@ class TestEnsureGnina:
         monkeypatch.setattr(
             "hedgehog.setup._gnina.resolve_uv_binary", lambda: "/usr/bin/uv"
         )
-        monkeypatch.setattr(
-            "hedgehog.setup._gnina.sys", MagicMock(platform="linux")
-        )
+        monkeypatch.setattr("hedgehog.setup._gnina.sys", MagicMock(platform="linux"))
 
         def fake_run(cmd, *args, **kwargs):
             if cmd == ["/usr/bin/gnina", "--version"]:
@@ -148,7 +148,9 @@ class TestEnsureGnina:
         with pytest.raises(RuntimeError, match="declined"):
             ensure_gnina()
 
-    def test_ensure_runtime_dependencies_syncs_when_missing(self, monkeypatch, tmp_path):
+    def test_ensure_runtime_dependencies_syncs_when_missing(
+        self, monkeypatch, tmp_path
+    ):
         """Run uv sync --extra docking-gpu when CUDA runtime libs are absent."""
         monkeypatch.setattr(
             "hedgehog.setup._gnina._cuda_runtime_libraries_available",
@@ -197,9 +199,7 @@ class TestEnsureGnina:
             ),
         )
 
-        assert (
-            ensure_gnina_runtime_dependencies(tmp_path, auto_install=False) is False
-        )
+        assert ensure_gnina_runtime_dependencies(tmp_path, auto_install=False) is False
 
     def test_ensure_runtime_dependencies_raises_when_still_missing(
         self, monkeypatch, tmp_path
@@ -888,9 +888,7 @@ class TestGninaEnvDiscovery:
     def test_collect_matcha_library_paths_from_checkout_venv(self, tmp_path):
         """Matcha-specific helper should read CUDA libs from checkout .venv."""
         matcha_repo = tmp_path / "matcha_remote"
-        site_packages = (
-            matcha_repo / ".venv" / "lib" / "python3.11" / "site-packages"
-        )
+        site_packages = matcha_repo / ".venv" / "lib" / "python3.11" / "site-packages"
         nvrtc_lib = site_packages / "nvidia" / "cuda_nvrtc" / "lib"
         nvrtc_lib.mkdir(parents=True)
 

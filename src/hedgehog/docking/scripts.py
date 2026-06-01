@@ -522,9 +522,7 @@ def _get_matcha_ld_library_path(matcha_repo: Path) -> str | None:
     ensure_gnina_runtime_dependencies(project_root, auto_install=True)
 
     library_dirs = collect_matcha_library_paths(matcha_repo)
-    library_dirs.extend(
-        collect_nvidia_library_paths(project_root=_project_root())
-    )
+    library_dirs.extend(collect_nvidia_library_paths(project_root=_project_root()))
     return _join_existing_library_paths(library_dirs)
 
 
@@ -825,9 +823,13 @@ def _create_gnina_per_molecule_script(
             '    output_file=$(awk -F"=" \'/^out[[:space:]]*=/{sub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}\' "${config}")\n'
         )
         f.write('    if [ -z "${output_file}" ]; then\n')
-        f.write('      echo "[${TOTAL}] ${mol_id} failed: output path missing in config"\n')
+        f.write(
+            '      echo "[${TOTAL}] ${mol_id} failed: output path missing in config"\n'
+        )
         f.write('      echo "${mol_id}" >> "${STATUS_DIR}/failed.txt"\n')
-        f.write('      echo "${mol_id}:missing_out_path" >> "${STATUS_DIR}/failed_with_code.txt"\n')
+        f.write(
+            '      echo "${mol_id}:missing_out_path" >> "${STATUS_DIR}/failed_with_code.txt"\n'
+        )
         f.write("      exit 0\n")
         f.write("    fi\n")
         f.write('    echo "[${TOTAL}] Processing ${mol_id}..."\n')
@@ -841,7 +843,9 @@ def _create_gnina_per_molecule_script(
             '        echo "[${TOTAL}] ${mol_id} produced invalid/empty SDF: ${output_file}"\n'
         )
         f.write('        echo "${mol_id}" >> "${STATUS_DIR}/failed.txt"\n')
-        f.write('        echo "${mol_id}:invalid_output" >> "${STATUS_DIR}/failed_with_code.txt"\n')
+        f.write(
+            '        echo "${mol_id}:invalid_output" >> "${STATUS_DIR}/failed_with_code.txt"\n'
+        )
         f.write("      fi\n")
         f.write("    else\n")
         f.write("      exit_code=$?\n")

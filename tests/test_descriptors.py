@@ -630,5 +630,3 @@ class TestDescriptorValues:
         result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert result["qed"] > 0.3
-
-

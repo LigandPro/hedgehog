@@ -175,13 +175,23 @@ def _molprep_one(
         else True,
     }
     if not filter_flags["filter_allowed_atoms_pass"]:
-        return None, "disallowed_atoms", "filters", json.dumps(filter_flags, ensure_ascii=False)
+        return (
+            None,
+            "disallowed_atoms",
+            "filters",
+            json.dumps(filter_flags, ensure_ascii=False),
+        )
     if not filter_flags["filter_radicals_pass"]:
         return None, "radicals", "filters", json.dumps(filter_flags, ensure_ascii=False)
     if not filter_flags["filter_isotopes_pass"]:
         return None, "isotopes", "filters", json.dumps(filter_flags, ensure_ascii=False)
     if not filter_flags["filter_single_fragment_pass"]:
-        return None, "multifragment", "filters", json.dumps(filter_flags, ensure_ascii=False)
+        return (
+            None,
+            "multifragment",
+            "filters",
+            json.dumps(filter_flags, ensure_ascii=False),
+        )
 
     # Normalize final SMILES once more after filters (canonical, no stereo)
     try:
@@ -196,7 +206,12 @@ def _molprep_one(
     if "." in smiles_final and bool(
         _get_cfg(cfg, ["filters", "require_single_fragment"], True)
     ):
-        return None, "multifragment", "filters", json.dumps(filter_flags, ensure_ascii=False)
+        return (
+            None,
+            "multifragment",
+            "filters",
+            json.dumps(filter_flags, ensure_ascii=False),
+        )
 
     return smiles_final, None, None, json.dumps(filter_flags, ensure_ascii=False)
 

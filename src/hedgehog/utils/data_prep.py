@@ -280,7 +280,7 @@ def _detect_mode_and_paths(
         elif path_obj.exists() and path_obj.is_dir():
             # Handle directory: find all supported files in the directory
             all_extensions = SUPPORTED_EXTENSIONS
-            
+
             matched = [
                 str(p)
                 for p in path_obj.iterdir()

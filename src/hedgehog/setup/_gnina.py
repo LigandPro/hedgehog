@@ -64,10 +64,7 @@ def ensure_gnina() -> str:
 
     # 2. Check cache
     cached = _GNINA_CACHE_DIR / "gnina"
-    if (
-        cached.is_file()
-        and cached.stat().st_size > 1_000_000
-    ):
+    if cached.is_file() and cached.stat().st_size > 1_000_000:
         if _is_working_gnina(str(cached)):
             return str(cached)
         if _maybe_auto_install_runtime_dependencies(str(cached)):
@@ -576,9 +573,7 @@ def _iter_venv_site_packages_roots(venv_root: Path) -> list[Path]:
     if not lib_dir.is_dir():
         return []
     return sorted(
-        path
-        for path in lib_dir.glob("python*/site-packages")
-        if path.is_dir()
+        path for path in lib_dir.glob("python*/site-packages") if path.is_dir()
     )
 
 
