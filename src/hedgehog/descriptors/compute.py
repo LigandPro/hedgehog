@@ -351,10 +351,7 @@ def compute_metrics(
             strict=False,
         )
     )
-    items = [
-        (s, m, idx, remove_radicals, remove_stereo)
-        for (s, m, idx) in items
-    ]
+    items = [(s, m, idx, remove_radicals, remove_stereo) for (s, m, idx) in items]
 
     progress_cb = None
     if reporter is not None:

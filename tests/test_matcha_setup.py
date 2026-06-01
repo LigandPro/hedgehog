@@ -1,7 +1,5 @@
 """Tests for Matcha checkout bootstrap."""
 
-import pytest
-
 import hedgehog.setup as setup_pkg
 from hedgehog.setup._matcha import ensure_matcha_checkout
 
@@ -26,7 +24,12 @@ def test_ensure_matcha_checkout_clones_and_checks_out_main(monkeypatch, tmp_path
     result = ensure_matcha_checkout(tmp_path)
 
     assert result == target.resolve()
-    assert ["git", "clone", "https://github.com/LigandPro/Matcha.git", str(target)] in calls
+    assert [
+        "git",
+        "clone",
+        "https://github.com/LigandPro/Matcha.git",
+        str(target),
+    ] in calls
     assert ["git", "checkout", "--detach", "origin/main"] in calls
     assert not any(cmd[:3] == ["git", "fetch", "origin"] for cmd in calls)
 
