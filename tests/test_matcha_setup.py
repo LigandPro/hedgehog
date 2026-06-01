@@ -1,7 +1,5 @@
 """Tests for Matcha checkout bootstrap."""
 
-import pytest
-
 import hedgehog.setup as setup_pkg
 from hedgehog.setup._matcha import ensure_matcha_checkout
 
