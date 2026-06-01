@@ -50,6 +50,7 @@ const DESCRIPTOR_NAMES: Record<string, string> = {
   'fN_atoms': 'Fraction N Atoms',
   'molWt': 'Molecular Weight',
   'logP': 'logP',
+  'clogP': 'clogP',
   'sw': 'Water Solubility (Sw)',
   'ring_size': 'Ring Size',
   'n_rings': 'Number of Rings',
@@ -88,6 +89,9 @@ const settingsFields: SettingField[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable descriptors calculation stage' },
   { key: 'batch_size', label: 'Batch Size', type: 'number', description: 'Molecules per batch for memory efficiency' },
   { key: 'filter_data', label: 'Filter Data', type: 'boolean', description: 'Apply descriptor borders to filter molecules' },
+  { key: 'allowed_chars', label: 'Allowed Atoms', type: 'text', path: ['borders', 'allowed_chars'], description: 'Allowed atom types (e.g., C, N, O, S, F, Cl, Br)' },
+  { key: 'charged_mol_allowed', label: 'Charged Allowed', type: 'boolean', path: ['borders', 'charged_mol_allowed'], description: 'Allow charged molecules to pass' },
+  { key: 'filter_charged_mol', label: 'Filter Charged', type: 'boolean', path: ['borders', 'filter_charged_mol'], description: 'Remove molecules with formal charges' },
   {
     key: 'enabled',
     label: 'Enable Structural Constraints',
@@ -184,6 +188,9 @@ function parseSettingsEditValue(
   if (field.type === 'number') {
     const parsed = Number.parseInt(value, 10);
     return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (field.key === 'allowed_chars') {
+    return value.split(',').map((part) => part.trim());
   }
   if (field.type === 'map') {
     return parseMapInput(value);

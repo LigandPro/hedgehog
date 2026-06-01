@@ -1395,7 +1395,7 @@ def plot_descriptors_violin_by_model(
 
 
 def plot_descriptors_hbd_hba_box(data: list[dict[str, Any]]) -> str:
-    """Create box plots comparing H-bond donors and acceptors by model.
+    """Create box plots comparing HBD/HBA by model.
 
     Args:
         data: List of dicts with model_name, NumHDonors, NumHAcceptors
@@ -1404,7 +1404,7 @@ def plot_descriptors_hbd_hba_box(data: list[dict[str, Any]]) -> str:
         HTML string of the plotly figure
     """
     if not data:
-        return _empty_plot("No H-bond donor/acceptor data available")
+        return _empty_plot("No HBD/HBA data available")
 
     fig = make_subplots(
         rows=1,
@@ -1416,7 +1416,7 @@ def plot_descriptors_hbd_hba_box(data: list[dict[str, Any]]) -> str:
     models = sorted(set(row.get("model_name", "Unknown") for row in data))
 
     for j, model in enumerate(models):
-        # HBDs
+        # HBD
         hbd_values = [
             row.get("NumHDonors")
             for row in data
@@ -1435,7 +1435,7 @@ def plot_descriptors_hbd_hba_box(data: list[dict[str, Any]]) -> str:
                 col=1,
             )
 
-        # HBAs
+        # HBA
         hba_values = [
             row.get("NumHAcceptors")
             for row in data
@@ -1493,11 +1493,10 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
     readable_names = {
         "MolWt": "MolWt",
         "LogP": "LogP",
+        "cLogP": "cLogP",
         "TPSA": "TPSA",
-        "NumHDonors": "HBDs",
-        "NumHAcceptors": "HBAs",
-        "hbd": "HBDs",
-        "hba": "HBAs",
+        "NumHDonors": "HBD",
+        "NumHAcceptors": "HBA",
         "QED": "QED",
         "Fsp3": "Fsp3",
         "n_atoms": "Atoms",
@@ -1511,6 +1510,7 @@ def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
         "n_N_atoms": "N atoms",
         "fN_atoms": "fN",
         "n_fused_aromatic_rings": "FusedAro",
+        "charged_mol": "Charged",
         "ring_size": "RingSize",
     }
 

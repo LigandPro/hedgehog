@@ -3,6 +3,7 @@
 from rdkit import RDLogger, rdBase
 
 # Canonical mapping for descriptor keys (lowercase -> canonical case)
+# Used to prevent confusion between similar names like logP and clogP
 _DESCRIPTOR_KEY_MAP = {
     "logp": "logP",
     "molwt": "molWt",

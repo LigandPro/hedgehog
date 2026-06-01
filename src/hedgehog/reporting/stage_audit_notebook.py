@@ -382,6 +382,24 @@ def build_stage_audit_notebook() -> dict[str, Any]:
                                 "config_key": f"borders.{metric}_{bound}",
                             }
                         )
+                if "allowed_chars" in borders:
+                    rows.append(
+                        {
+                            "metric": "allowed_chars",
+                            "bound": "allowed",
+                            "value": ",".join(map(str, borders["allowed_chars"])),
+                            "config_key": "borders.allowed_chars",
+                        }
+                    )
+                if "charged_mol_allowed" in borders:
+                    rows.append(
+                        {
+                            "metric": "charged_mol_allowed",
+                            "bound": "allowed",
+                            "value": borders["charged_mol_allowed"],
+                            "config_key": "borders.charged_mol_allowed",
+                        }
+                    )
                 return pd.DataFrame(rows)
 
 

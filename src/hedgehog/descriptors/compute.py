@@ -13,6 +13,7 @@ from rdkit import Chem, RDConfig
 from rdkit.Chem import (
     QED,
     ChemicalFeatures,
+    Crippen,
     Descriptors,
     Lipinski,
     rdMolDescriptors,
@@ -199,6 +200,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     """
     mol = Chem.AddHs(mol_n)
 
+    symbols = list({atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol()})
     ring_info = mol.GetRingInfo()
     rings = [len(x) for x in ring_info.AtomRings()]
 
@@ -210,6 +212,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     )
     mol_wt = Descriptors.ExactMolWt(mol_n)
     log_p = Descriptors.MolLogP(mol_n)
+    clog_p = Crippen.MolLogP(mol_n)
     n_N_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 7)
     n_O_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 8)
     n_S_atoms = sum(1 for atom in mol_n.GetAtoms() if atom.GetAtomicNum() == 16)
@@ -221,6 +224,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
     return {
         "model_name": model_name,
         "mol_idx": mol_idx,
+        "chars": symbols,
         "n_atoms": mol.GetNumAtoms(),
         "n_heavy_atoms": n_heavy_atoms,
         "n_het_atoms": sum(
@@ -236,6 +240,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
         else 0,
         "molWt": mol_wt,
         "logP": log_p,
+        "clogP": clog_p,
         "sw": 0.16
         - 0.63 * log_p
         - 0.0062 * mol_wt
@@ -262,7 +267,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
 
 
 def _compute_descriptors_for_row(args):
-    smiles, model_name, mol_idx, remove_radicals, remove_stereo = args
+    smiles, model_name, mol_idx, remove_charges, remove_radicals, remove_stereo = args
     if not isinstance(smiles, str):
         if pd.isna(smiles):
             return None, ("", model_name, mol_idx)
@@ -285,13 +290,27 @@ def _compute_descriptors_for_row(args):
         if has_radical:
             return None, (smiles, model_name, mol_idx)
 
+    if remove_charges:
+        try:
+            from rdkit.Chem.MolStandardize import rdMolStandardize
+
+            uncharger = rdMolStandardize.Uncharger()
+            mol_n = uncharger.uncharge(mol_n)
+        except Exception:
+            # Best-effort: if uncharger isn't available, fall back to charge check only.
+            pass
+
+        still_charged = any(atom.GetFormalCharge() != 0 for atom in mol_n.GetAtoms())
+        if still_charged:
+            return None, (smiles, model_name, mol_idx)
+
     if remove_stereo:
         try:
             Chem.RemoveStereochemistry(mol_n)
         except Exception:
             pass
 
-    if remove_radicals or remove_stereo:
+    if remove_charges or remove_radicals or remove_stereo:
         try:
             smiles = Chem.MolToSmiles(mol_n, canonical=True, isomericSmiles=False)
         except Exception:
@@ -312,7 +331,7 @@ def compute_metrics(
     progress_completed_base: int = 0,
     progress_completed_span: int | None = None,
 ):
-    """Compute 28 physicochemical descriptors for each molecule.
+    """Compute 22 physicochemical descriptors for each molecule.
 
     model_name and mol_idx are already in df from sampled_molecules.csv.
 
@@ -337,9 +356,10 @@ def compute_metrics(
     if isinstance(config_descriptors, dict):
         preprocess_cfg = config_descriptors.get("preprocess", {}) or {}
 
+    remove_charges = bool(preprocess_cfg.get("remove_charges", False))
     remove_radicals = bool(preprocess_cfg.get("remove_radicals", False))
     remove_stereo = bool(preprocess_cfg.get("remove_stereochemistry", False))
-    do_preprocess = remove_radicals or remove_stereo
+    do_preprocess = remove_charges or remove_radicals or remove_stereo
 
     n_jobs = resolve_n_jobs(config_descriptors, config)
     logger.info("Descriptors workers: %d", n_jobs)
@@ -352,7 +372,7 @@ def compute_metrics(
         )
     )
     items = [
-        (s, m, idx, remove_radicals, remove_stereo)
+        (s, m, idx, remove_charges, remove_radicals, remove_stereo)
         for (s, m, idx) in items
     ]
 

@@ -1642,6 +1642,7 @@
                     var readableNames = {
                         'MolWt': 'Molecular Weight',
                         'LogP': 'LogP',
+                        'cLogP': 'cLogP',
                         'TPSA': 'TPSA',
                         'NumHDonors': 'H-Bond Donors',
                         'NumHAcceptors': 'H-Bond Acceptors',
@@ -1658,6 +1659,7 @@
                         'n_N_atoms': 'Nitrogen Atoms',
                         'fN_atoms': 'Nitrogen Fraction',
                         'n_fused_aromatic_rings': 'Fused Arom. Rings',
+                        'charged_mol': 'Charged Molecule',
                         'ring_size': 'Ring Size'
                     };
 
@@ -2919,7 +2921,7 @@
                     if (!descs.length) return;
 
                     var readableNames = {
-                        'MolWt': 'Molecular Weight', 'LogP': 'LogP',
+                        'MolWt': 'Molecular Weight', 'LogP': 'LogP', 'cLogP': 'cLogP',
                         'TPSA': 'TPSA', 'NumHDonors': 'H-Bond Donors', 'NumHAcceptors': 'H-Bond Acceptors',
                         'QED': 'QED Score', 'Fsp3': 'Fsp³ Fraction', 'n_atoms': 'Total Atoms',
                         'n_heavy_atoms': 'Heavy Atoms', 'n_rings': 'Ring Count', 'n_aroma_rings': 'Aromatic Rings',
