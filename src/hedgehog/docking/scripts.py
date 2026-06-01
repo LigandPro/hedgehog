@@ -1117,7 +1117,9 @@ def _setup_smina(
         smina_config = cfg.get("smina_config", {})
 
         smina_bin_cfg = smina_config.get("bin") or cfg.get("smina_bin", TOOL_SMINA)
-        smina_bin = _resolve_docking_binary(smina_bin_cfg, TOOL_SMINA)
+        smina_bin = _resolve_docking_binary(
+            smina_bin_cfg, TOOL_SMINA, config_dir=config_dir
+        )
         parallel_jobs = _resolve_smina_parallel_jobs(cfg, smina_config)
 
         ligands_path, prep_cmd = _prepare_ligands_for_docking(

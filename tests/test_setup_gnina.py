@@ -570,7 +570,7 @@ class TestResolveGninaDownload:
             url = getattr(req, "full_url", str(req))
             if url.endswith("/latest"):
                 return FakeResponse(latest_response)
-            if url.endswith("/tags/v1.1"):
+            if url.endswith("/tags/v1.3.2"):
                 return FakeResponse(fallback_response)
             raise AssertionError(f"Unexpected URL: {url}")
 
@@ -653,7 +653,7 @@ class TestResolveGninaDownload:
             url = getattr(req, "full_url", str(req))
             if url.endswith("/latest"):
                 return FakeResponse(latest_response)
-            if url.endswith("/tags/v1.1"):
+            if url.endswith("/tags/v1.3.2"):
                 return FakeResponse(fallback_response)
             raise AssertionError(f"Unexpected URL: {url}")
 
