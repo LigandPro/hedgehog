@@ -891,7 +891,9 @@ class Stage(str, Enum):
                 "Standardize molecules (salts/fragments removal, uncharge, "
                 "tautomer canonicalization, stereo removal)"
             ),
-            Stage.descriptors: "Compute 22 physicochemical descriptors per molecule",
+            Stage.descriptors: (
+                "Compute 28 base physicochemical descriptors per molecule"
+            ),
             Stage.struct_filters: "Apply structural filters (Lilly, NIBR, PAINS, etc.)",
             Stage.synthesis: (
                 "Evaluate synthetic accessibility using retrosynthesis "
