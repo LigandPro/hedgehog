@@ -94,7 +94,15 @@ def _resolve_docking_binary(
         FileNotFoundError: If the binary cannot be found.
     """
     config_candidate = str(config_path or "").strip()
+    resolved_config_dir = Path(config_dir) if config_dir is not None else None
     if config_candidate:
+        if _is_path_like(config_candidate):
+            return _resolve_configured_binary_path(
+                config_candidate,
+                tool_name,
+                config_dir=resolved_config_dir,
+            )
+
         expanded = os.path.expanduser(config_candidate)
         if _is_executable_file(expanded):
             return expanded
