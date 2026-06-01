@@ -940,6 +940,9 @@ def _run_pipeline_command(
     config_dict = load_config(config_path)
     _resolve_config_paths(config_dict, config_path)
     _apply_cli_overrides(config_dict, generated_mols_path, stage)
+    run_input_molecules_path = (
+        config_dict.get("generated_mols_path") or generated_mols_path
+    )
     if large_dataset:
         config_dict[LARGE_DATASET_MODE_KEY] = True
     if is_large_dataset_mode(config_dict):
@@ -985,6 +988,9 @@ def _run_pipeline_command(
         data = None
     else:
         _preprocess_input(config_dict, folder_to_save)
+        run_input_molecules_path = (
+            config_dict.get("generated_mols_path") or run_input_molecules_path
+        )
 
         data = prepare_input_data(config_dict, logger)
 
@@ -1007,6 +1013,8 @@ def _run_pipeline_command(
     if not success:
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)
+    if run_input_molecules_path:
+        logger.info("Run completed, examined csv: %s", run_input_molecules_path)
     logger.info("Ligand Pro thanks you for using HEDGEHOG!")
 
 
