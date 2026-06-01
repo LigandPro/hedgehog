@@ -319,11 +319,17 @@ class TestReadSmi:
 
         pd.testing.assert_frame_equal(
             result,
-            pd.DataFrame({"smiles": ["CCO", "CCN"], "model_name": ["mols", "mols"]}),
+            pd.DataFrame(
+                {
+                    "smiles": ["CCO", "CCN"],
+                    "model_name": ["mols", "mols"],
+                    "mol_idx": ["1", "2"],
+                }
+            ),
         )
 
     def test_headerless_smi_with_names(self, tmp_path):
-        """Second whitespace token in SMI files should become model_name."""
+        """Second whitespace token in SMI files should become mol_idx."""
         test_file = tmp_path / "mols.smi"
         test_file.write_text("CCO mol_1\nCCN mol_2\n", encoding="utf-8")
 
@@ -331,7 +337,13 @@ class TestReadSmi:
 
         pd.testing.assert_frame_equal(
             result,
-            pd.DataFrame({"smiles": ["CCO", "CCN"], "model_name": ["mol_1", "mol_2"]}),
+            pd.DataFrame(
+                {
+                    "smiles": ["CCO", "CCN"],
+                    "model_name": ["mols", "mols"],
+                    "mol_idx": ["mol_1", "mol_2"],
+                }
+            ),
         )
 
 
@@ -365,9 +377,13 @@ def test_prepare_input_data_accepts_headerless_smi(tmp_path):
 
     pd.testing.assert_frame_equal(
         prepared,
-        pd.DataFrame({"smiles": ["CCO", "CCN"], "model_name": ["mols", "mols"]}).astype(
-            "string"
-        ),
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN"],
+                "model_name": ["mols", "mols"],
+                "mol_idx": ["1", "2"],
+            }
+        ).astype("string"),
     )
 
 

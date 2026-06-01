@@ -81,7 +81,6 @@ class TestComputeSingleMoleculeDescriptors:
         expected_keys = [
             "model_name",
             "mol_idx",
-            "chars",
             "n_atoms",
             "n_heavy_atoms",
             "n_het_atoms",
@@ -91,11 +90,8 @@ class TestComputeSingleMoleculeDescriptors:
             "n_NO_atoms",
             "fN_atoms",
             "fNS_atoms",
-            "is_neutral",
-            "charged_mol",
             "molWt",
             "logP",
-            "clogP",
             "sw",
             "ring_size",
             "n_rings",
@@ -382,24 +378,6 @@ class TestComputeMetrics:
         assert len(result) == 1
         assert "@" not in result.iloc[0][COL_SMILES]
 
-    def test_compute_metrics_remove_charges_best_effort(self, tmp_path):
-        """When enabled, charged molecules should be neutralized or skipped."""
-        df = pd.DataFrame(
-            {
-                COL_SMILES: ["C[NH3+]"],
-                COL_MODEL_NAME: [MODEL_TEST],
-                COL_MOL_IDX: ["t-0"],
-            }
-        )
-        cfg = {"preprocess": {"remove_charges": True}}
-        result = compute_metrics(df, str(tmp_path) + "/", config_descriptors=cfg)
-
-        # Best-effort behavior: if neutralization succeeds, '+' is removed.
-        if len(result) == 1:
-            assert "+" not in result.iloc[0][COL_SMILES]
-        else:
-            assert (tmp_path / "skipped_molecules.csv").exists()
-
     def test_compute_metrics_reject_radicals(self, tmp_path):
         """When enabled, radicals should be skipped."""
         df = pd.DataFrame(
@@ -467,7 +445,6 @@ class TestDescriptorsStage:
                     "n_jobs": 1,
                     "batch_size": 1000,
                     "preprocess": {
-                        "remove_charges": False,
                         "remove_radicals": False,
                         "remove_stereochemistry": False,
                     },
@@ -510,54 +487,6 @@ class TestDescriptorsStage:
 
 class TestFilterMolecules:
     """Tests for descriptor-based filtering."""
-
-    def test_allowed_chars_filters_out_salts(self, tmp_path):
-        mol_ok = Chem.MolFromSmiles(SMILES_ETHANOL)
-        mol_salt = Chem.MolFromSmiles("CCO.[Na+]")
-
-        row_ok = _compute_single_molecule_descriptors(mol_ok, "m", "ok-0")
-        row_ok[COL_SMILES] = SMILES_ETHANOL
-        row_salt = _compute_single_molecule_descriptors(mol_salt, "m", "salt-0")
-        row_salt[COL_SMILES] = "CCO.[Na+]"
-
-        df = pd.DataFrame([row_ok, row_salt])
-
-        borders = {
-            "allowed_chars": ["C", "N", "O", "S", "F", "Cl", "Br", "H"],
-        }
-        filter_molecules(df, borders, str(tmp_path))
-
-        passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
-        assert len(passed) == 1
-        assert passed.iloc[0][COL_SMILES] == SMILES_ETHANOL
-
-        flags = pd.read_csv(tmp_path / "pass_flags.csv")
-        assert "chars_pass" in flags.columns
-
-    def test_charged_mol_filter_applies_when_enabled(self, tmp_path):
-        mol_neutral = Chem.MolFromSmiles(SMILES_ETHANOL)
-        mol_charged = Chem.MolFromSmiles("CC(=O)[O-]")
-
-        row_neutral = _compute_single_molecule_descriptors(mol_neutral, "m", "n-0")
-        row_neutral[COL_SMILES] = SMILES_ETHANOL
-        row_charged = _compute_single_molecule_descriptors(mol_charged, "m", "c-0")
-        row_charged[COL_SMILES] = "CC(=O)[O-]"
-
-        df = pd.DataFrame([row_neutral, row_charged])
-
-        borders = {
-            "charged_mol_allowed": False,
-            "filter_charged_mol": True,
-        }
-        filter_molecules(df, borders, str(tmp_path))
-
-        passed = pd.read_csv(tmp_path / FILE_FILTERED_MOLECULES)
-        assert len(passed) == 1
-        assert passed.iloc[0][COL_SMILES] == SMILES_ETHANOL
-
-        flags = pd.read_csv(tmp_path / "pass_flags.csv")
-        assert "charged_mol_pass" in flags.columns
-        assert "is_neutral_pass" in flags.columns
 
     def test_structural_constraints_nested_block(self, tmp_path):
         """Nested structural_constraints should be applied via generic pass flags."""
@@ -695,20 +624,6 @@ class TestDescriptorValues:
 
         assert result["hbd"] == 1
 
-    def test_charged_molecule_detection(self):
-        """Charged molecule should be detected."""
-        # Uncharged benzene
-        mol = Chem.MolFromSmiles("c1ccccc1")
-        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
-        assert result["is_neutral"] is True
-        assert result["charged_mol"] is True  # Deprecated alias: neutral=True
-
-        # Carboxylate ion (charged)
-        mol = Chem.MolFromSmiles("CC(=O)[O-]")
-        result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
-        assert result["is_neutral"] is False
-        assert result["charged_mol"] is False  # Deprecated alias: neutral=False
-
     def test_qed_drug_like(self):
         """Drug-like molecules should have QED > 0.3."""
         mol = Chem.MolFromSmiles("CC(=O)Nc1ccc(O)cc1")  # paracetamol
@@ -717,47 +632,3 @@ class TestDescriptorValues:
         assert result["qed"] > 0.3
 
 
-class TestDropFalseRowsAdvanced:
-    """Additional tests for drop_false_rows function."""
-
-    def test_charged_mol_filtering_enabled(self):
-        """When filter_charged_mol is True, should filter by charged_mol_pass."""
-        df = pd.DataFrame(
-            {
-                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
-                "molWt_pass": [True, True, True],
-                "charged_mol_pass": [True, False, True],
-            }
-        )
-        borders = {"filter_charged_mol": True}
-        result = drop_false_rows(df, borders)
-
-        assert len(result) == 2
-
-    def test_charged_mol_filtering_disabled(self):
-        """When filter_charged_mol is False, should not filter by charged_mol_pass."""
-        df = pd.DataFrame(
-            {
-                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
-                "molWt_pass": [True, True, True],
-                "charged_mol_pass": [True, False, True],
-            }
-        )
-        borders = {"filter_charged_mol": False}
-        result = drop_false_rows(df, borders)
-
-        assert len(result) == 3  # All pass because charged_mol not considered
-
-    def test_is_neutral_filtering_disabled(self):
-        """When filter_charged_mol is False, should also ignore is_neutral_pass."""
-        df = pd.DataFrame(
-            {
-                COL_SMILES: [SMILES_ETHANOL, "CC", "CCC"],
-                "molWt_pass": [True, True, True],
-                "is_neutral_pass": [True, False, True],
-            }
-        )
-        borders = {"filter_charged_mol": False}
-        result = drop_false_rows(df, borders)
-
-        assert len(result) == 3
