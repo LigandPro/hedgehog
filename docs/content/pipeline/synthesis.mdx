@@ -81,6 +81,7 @@ uv run hedgehog setup nonpher-check --python /mnt/ligandpro/shared_storage/data/
 - **How it works**: GASA supports three local adapters: `gasa.command` / `HEDGEHOG_GASA_COMMAND`, `gasa.executable` / `HEDGEHOG_GASA_EXECUTABLE`, and `gasa.api_url` / `HEDGEHOG_GASA_API_URL` (loopback URLs only).
 - **Auto-install behavior**: with `--auto-install` / `HEDGEHOG_AUTO_INSTALL=1`, if no backend is configured, HEDGEHOG bootstraps an isolated `uv` runtime in `$HEDGEHOG_OPTIONAL_ENV_ROOT/gasa` (or `.venv-gasa-worker`) and injects a local `hedgehog.workers.gasa_worker` command automatically.
 - **Missing backend behavior**: if auto-setup is unavailable and no backend is configured, HEDGEHOG logs a clear warning and returns `NaN` for `gasa_score`.
+- **Setup helper**: run `uv run hedgehog setup gasa --yes` to create the worker environment and print a ready-to-copy `HEDGEHOG_GASA_COMMAND` template.
 - **Portability requirement**: set `HEDGEHOG_OPTIONAL_ENV_ROOT` to a writable host-local path (for example `~/work/hedgehog_optional_envs`), while keeping run outputs in shared storage.
 
 ## AiZynthFinder Retrosynthesis
