@@ -31,12 +31,14 @@
             color: var(--text);
             background: var(--bg);
             -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 48px 24px;
+            width: 100%;
         }
 
         header {
@@ -102,6 +104,8 @@
             border-radius: 12px;
             margin-bottom: 24px;
             border: 1px solid var(--border);
+            min-width: 0;
+            overflow-x: auto;
         }
 
         section h2 {
@@ -141,18 +145,41 @@
 
         .plot-container {
             margin: 16px 0;
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .plot-container .js-plotly-plot,
+        .plot-container .plotly-graph-div {
+            width: 100% !important;
+            max-width: 100%;
         }
 
         .two-col {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
             gap: 24px;
+            min-width: 0;
         }
 
-        .three-col {
+        .three-col,
+        .plot-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+            gap: 24px;
+            min-width: 0;
+        }
+
+        .two-col > *,
+        .three-col > *,
+        .plot-grid > *,
+        .plot-grid > div {
+            width: 100%;
+            min-width: 0;
         }
 
         .status-completed {
@@ -200,7 +227,7 @@
         }
 
         @media (max-width: 768px) {
-            .two-col, .three-col {
+            .two-col, .three-col, .plot-grid {
                 grid-template-columns: 1fr;
             }
             .summary-grid {
@@ -383,8 +410,8 @@
 
         .weighted-score-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+            gap: 20px;
         }
 
         .weighted-score-card {
@@ -392,6 +419,7 @@
             border-radius: 8px;
             padding: 18px;
             background: white;
+            min-width: 0;
         }
 
         .weighted-score-card h3 {
@@ -411,7 +439,7 @@
 
         .weighted-score-stats {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 12px;
             margin-bottom: 12px;
         }
@@ -431,19 +459,49 @@
             text-transform: uppercase;
         }
 
-        .weighted-evidence-table {
-            font-size: 0.78rem;
+        .weighted-evidence-scroll {
+            overflow-x: auto;
             margin-top: 12px;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .weighted-evidence-table {
+            width: 100%;
+            min-width: 520px;
+            font-size: 0.78rem;
+            table-layout: fixed;
         }
 
         .weighted-evidence-table th,
         .weighted-evidence-table td {
             padding: 8px 10px;
+            vertical-align: top;
         }
 
-        .weighted-evidence-table td:not(:first-child),
-        .weighted-evidence-table th:not(:first-child) {
+        .weighted-evidence-table th:nth-child(1),
+        .weighted-evidence-table td:nth-child(1) {
+            width: 22%;
+        }
+
+        .weighted-evidence-table th:nth-child(2),
+        .weighted-evidence-table td:nth-child(2) {
+            width: 12%;
             text-align: right;
+        }
+
+        .weighted-evidence-table th:nth-child(3),
+        .weighted-evidence-table td:nth-child(3) {
+            width: 12%;
+            text-align: right;
+        }
+
+        .weighted-evidence-table th:nth-child(4),
+        .weighted-evidence-table td:nth-child(4) {
+            width: 54%;
+            text-align: left;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .weighted-score-card .evidence-empty {
@@ -465,8 +523,148 @@
             color: var(--text-secondary);
         }
     </style>
+    <script>
+        function plotlyGridCols(container, minCellWidth) {
+            minCellWidth = minCellWidth || 380;
+            if (!container) return 1;
+            var width = container.clientWidth || container.offsetWidth || 0;
+            if (width < minCellWidth) return 1;
+            if (width < minCellWidth * 2) return 2;
+            return 3;
+        }
+
+        function resizeAllPlotlyPlots() {
+            if (typeof Plotly === 'undefined') return;
+            document.querySelectorAll('.plot-container .js-plotly-plot, .plot-container .plotly-graph-div').forEach(function(el) {
+                if (el && el.offsetParent !== null) {
+                    try { Plotly.Plots.resize(el); } catch (e) {}
+                }
+            });
+        }
+
+        var plotlyResizeTimer;
+        window.addEventListener('resize', function() {
+            clearTimeout(plotlyResizeTimer);
+            plotlyResizeTimer = setTimeout(resizeAllPlotlyPlots, 150);
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            window.setTimeout(resizeAllPlotlyPlots, 0);
+        });
+
+        function detectPlotlyHeadroomOpts(traces) {
+            var opts = { outsideLabels: false };
+            var list = Array.isArray(traces) ? traces : [traces];
+            for (var i = 0; i < list.length; i++) {
+                var trace = list[i];
+                if (!trace) continue;
+                var textposition = trace.textposition;
+                var orientation = trace.orientation || 'v';
+                if ((textposition === 'outside' || textposition === 'auto') && orientation !== 'h') {
+                    opts.outsideLabels = true;
+                }
+            }
+            return opts;
+        }
+
+        function applyPlotlyHeadroom(layout, traces) {
+            if (!layout) return layout;
+            var opts = detectPlotlyHeadroomOpts(traces);
+            layout.autosize = true;
+            var margin = layout.margin || {};
+            var minTop = 70;
+            if (layout.title) minTop = Math.max(minTop, 85);
+            if (layout.showlegend) minTop = Math.max(minTop, 95);
+            if (opts.outsideLabels) minTop = Math.max(minTop, 105);
+            if (layout.annotations && layout.annotations.length) {
+                for (var i = 0; i < layout.annotations.length; i++) {
+                    if ((layout.annotations[i].y || 0) > 1) {
+                        minTop = Math.max(minTop, 90);
+                        break;
+                    }
+                }
+            }
+            layout.margin = {
+                l: margin.l != null ? margin.l : 55,
+                r: margin.r != null ? margin.r : 30,
+                t: Math.max(margin.t || 0, minTop),
+                b: Math.max(margin.b || 0, 55),
+                pad: 4
+            };
+            if (opts.outsideLabels) {
+                var axisMax = {};
+                var traceList = Array.isArray(traces) ? traces : [traces];
+                for (var j = 0; j < traceList.length; j++) {
+                    var tr = traceList[j];
+                    if (!tr) continue;
+                    if (tr.textposition !== 'outside' && tr.textposition !== 'auto') continue;
+                    if (tr.orientation === 'h') continue;
+                    if (!tr.y || !tr.y.length) continue;
+                    var axisKey = tr.yaxis || 'y';
+                    var axisName = axisKey === 'y' ? 'yaxis' : 'yaxis' + axisKey.slice(1);
+                    var localMax = Math.max.apply(null, tr.y);
+                    axisMax[axisName] = Math.max(axisMax[axisName] || 0, localMax);
+                }
+                Object.keys(axisMax).forEach(function(axisName) {
+                    var axis = layout[axisName] || (layout[axisName] = {});
+                    var ymin = 0;
+                    var ymax = axisMax[axisName];
+                    if (axis.range && axis.range.length === 2) {
+                        ymin = axis.range[0];
+                        ymax = Math.max(axis.range[1], ymax);
+                    }
+                    var extra = Math.max((ymax - ymin) * 0.2, 10);
+                    axis.range = [ymin, ymax + extra];
+                });
+            }
+            return layout;
+        }
+
+        (function patchPlotlyLayoutHeadroom() {
+            if (typeof Plotly === 'undefined') return;
+            var react = Plotly.react.bind(Plotly);
+            var newPlot = Plotly.newPlot.bind(Plotly);
+            Plotly.react = function(el, data, layout, config) {
+                return react(el, data, applyPlotlyHeadroom(layout, data), config);
+            };
+            Plotly.newPlot = function(el, data, layout, config) {
+                return newPlot(el, data, applyPlotlyHeadroom(layout, data), config);
+            };
+        })();
+
+        function reportBrowserData(key, fallback) {
+            var payload = window.__REPORT_BROWSER_DATA__ || {};
+            if (!key) return payload;
+            return Object.prototype.hasOwnProperty.call(payload, key) ? payload[key] : fallback;
+        }
+
+        function setupLazyPlotInit(containerId, initFn) {
+            var container = document.getElementById(containerId);
+            if (!container || typeof initFn !== 'function') return;
+            var started = false;
+            var start = function() {
+                if (started) return;
+                started = true;
+                initFn();
+            };
+            if (!('IntersectionObserver' in window)) {
+                start();
+                return;
+            }
+            var observer = new IntersectionObserver(function(entries) {
+                if (entries.some(function(entry) { return entry.isIntersecting; })) {
+                    observer.disconnect();
+                    start();
+                }
+            }, { rootMargin: '240px 0px' });
+            observer.observe(container);
+        }
+    </script>
 </head>
 <body>
+    {% if has_browser_data %}
+    <script src="report_browser_data.js"></script>
+    {% endif %}
     <div class="container">
         <header>
             <h1>HEDGEHOG Pipeline Report</h1>
@@ -605,6 +803,7 @@
 
                     <h4>Generator Component Evidence</h4>
                     {% if model.components %}
+                    <div class="weighted-evidence-scroll">
                     <table class="weighted-evidence-table">
                         <thead>
                             <tr>
@@ -631,6 +830,7 @@
                             {% endfor %}
                         </tbody>
                     </table>
+                    </div>
                     {% else %}
                     <p class="evidence-empty">No component evidence available.</p>
                     {% endif %}
@@ -661,7 +861,7 @@
             {% endif %}
 
             <script>
-                var sankeyDataByModel = {{ (plots.sankey_data or {}) | tojson }};
+                var sankeyDataByModel = {% if has_browser_data %}reportBrowserData('sankey_data', {}){% else %}{{ (plots.sankey_data or {}) | tojson }}{% endif %};
                 var currentModel = 'all';
 
                 function selectModel(model, btn) {
@@ -740,13 +940,13 @@
                         }
                     }
 
-                    Plotly.react('sankey-container', [trace], layout, {displayModeBar: true});
+                    Plotly.react('sankey-container', [trace], layout, {displayModeBar: true, responsive: true});
                 }
 
                 // =====================================================
                 // Synthesis Analysis - Model Filtering
                 // =====================================================
-                var synthesisDataByModel = {{ (plots.synthesis_data or {}) | tojson }};
+                var synthesisDataByModel = {% if has_browser_data %}reportBrowserData('synthesis_data', {}){% else %}{{ (plots.synthesis_data or {}) | tojson }}{% endif %};
                 var synthesisScoreMeta = {{ (plots.synthesis_score_meta or []) | tojson }};
                 var currentSynthesisModel = 'all';
 
@@ -834,6 +1034,12 @@
                     if (!grid.children.length) {
                         showEmptyState(grid);
                     }
+
+                    window.setTimeout(function() {
+                        grid.querySelectorAll('.js-plotly-plot, .plotly-graph-div').forEach(function(plot) {
+                            try { Plotly.Plots.resize(plot); } catch (e) {}
+                        });
+                    }, 0);
                 }
 
                 function updateSynthesisMetrics(data) {
@@ -935,11 +1141,12 @@
                     });
 
                     var layout = {
+                        autosize: true,
                         title: title ? { text: title, font: { size: 14 } } : undefined,
                         xaxis: {},
                         yaxis: { title: 'Count' },
                         height: 380,
-                        margin: { l: 50, r: 25, t: title ? 40 : 25, b: 30 },
+                        margin: { l: 55, r: 25, t: title ? 40 : 25, b: 30 },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
                         font: plotFont,
@@ -951,7 +1158,11 @@
                         }]
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: false});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: false, responsive: true})
+                        .then(function() {
+                            var el = document.getElementById(containerId);
+                            if (el) Plotly.Plots.resize(el);
+                        });
                 }
 
                 function drawCompareHistogram(containerId, data, scoreKey, xLabel, title) {
@@ -1005,7 +1216,7 @@
                         shapes: shapes
                     };
 
-                    Plotly.react(containerId, traces, layout, {displayModeBar: false});
+                    Plotly.react(containerId, traces, layout, {displayModeBar: false, responsive: true});
                 }
 
                 function drawScatter(containerId, saScores, sybaScores) {
@@ -1036,7 +1247,7 @@
                         font: plotFont
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true, responsive: true});
                 }
 
                 function drawCompareScatter(containerId, data) {
@@ -1083,7 +1294,7 @@
                         legend: { orientation: 'h', y: 1.1, x: 0 }
                     };
 
-                    Plotly.react(containerId, traces, layout, {displayModeBar: true});
+                    Plotly.react(containerId, traces, layout, {displayModeBar: true, responsive: true});
                 }
 
                 function drawPie(containerId, solved, unsolved) {
@@ -1123,7 +1334,7 @@
                         }]
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true, responsive: true});
                 }
 
                 function drawComparePie(containerId, data) {
@@ -1177,14 +1388,14 @@
                         font: plotFont
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true, responsive: true});
                 }
 
                 // =====================================================
                 // Docking Results - Model Filtering
                 // =====================================================
-                var dockingGninaData = {{ (plots.docking_gnina_data or {}) | tojson }};
-                var dockingSminaData = {{ (plots.docking_smina_data or {}) | tojson }};
+                var dockingGninaData = {% if has_browser_data %}reportBrowserData('docking_gnina_data', {}){% else %}{{ (plots.docking_gnina_data or {}) | tojson }}{% endif %};
+                var dockingSminaData = {% if has_browser_data %}reportBrowserData('docking_smina_data', {}){% else %}{{ (plots.docking_smina_data or {}) | tojson }}{% endif %};
                 var currentDockingModel = 'all';
 
                 function selectDockingModel(model, btn) {
@@ -1292,7 +1503,7 @@
                         ]
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true, responsive: true});
                 }
 
                 function drawDockingCompareHistogram(containerId, data, tool) {
@@ -1337,7 +1548,7 @@
                         legend: { orientation: 'h', y: 1.12, x: 0 }
                     };
 
-                    Plotly.react(containerId, traces, layout, {displayModeBar: true});
+                    Plotly.react(containerId, traces, layout, {displayModeBar: true, responsive: true});
                 }
 
                 function drawDockingTopMolecules(containerId, topMolecules) {
@@ -1385,7 +1596,7 @@
                         yaxis: { categoryorder: 'total descending' }
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true, responsive: true});
                 }
 
                 function drawDockingCompareTopMolecules(containerId, data) {
@@ -1437,7 +1648,7 @@
                         yaxis: { categoryorder: 'total descending' }
                     };
 
-                    Plotly.react(containerId, [trace], layout, {displayModeBar: true});
+                    Plotly.react(containerId, [trace], layout, {displayModeBar: true, responsive: true});
                 }
             </script>
         </section>
@@ -1580,13 +1791,14 @@
                         hovertemplate: '<b>%{y}</b><br>Rejected: %{x}<br>Rejected share: %{text}<br>Threshold: %{customdata}<extra></extra>',
                         marker: { color: 'rgba(168, 85, 247, 0.75)', line: { color: 'rgba(126, 34, 206, 1)', width: 1 } }
                     }], {
+                        autosize: true,
                         height: Math.max(280, 30 * labels.length + 90),
                         margin: { l: 140, r: 40, t: 24, b: 50 },
                         xaxis: { title: 'Rejected molecules' },
                         paper_bgcolor: 'white',
                         plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
-                    }, {displayModeBar: true});
+                    }, {displayModeBar: true, responsive: true});
                 })();
             </script>
             {% endif %}
@@ -1616,7 +1828,7 @@
             </div>
 
             <script>
-                var descriptorsData = {{ (plots.descriptors_data or {}) | tojson }};
+                var descriptorsData = reportBrowserData('descriptors_data', {});
                 var currentDescriptorModel = 'all';
 
                 function selectDescriptorModel(model, btn) {
@@ -1666,7 +1878,7 @@
                         return;
                     }
 
-                    var nCols = 3;
+                    var nCols = plotlyGridCols(container, 380);
                     var nRows = Math.ceil(descriptors.length / nCols);
                     var traces = [];
                     var shapes = [];
@@ -1834,8 +2046,9 @@
                     var totalHeight = model === '__compare__' ? 260 * nRows : 240 * nRows;
                     var topMargin = model === '__compare__' ? 60 : 40;
                     var layout = {
+                        autosize: true,
                         height: totalHeight,
-                        margin: { l: 50, r: 30, t: topMargin, b: 50 },
+                        margin: { l: 60, r: 30, t: topMargin, b: 50 },
                         paper_bgcolor: 'white', plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
                         showlegend: (model === '__compare__'),
@@ -1865,18 +2078,27 @@
                         });
 
                         layout['xaxis' + axisNum] = { showgrid: false, zeroline: false, tickfont: { size: 10 } };
-                        layout['yaxis' + axisNum] = { showgrid: true, gridcolor: '#e5e7eb', zeroline: false, showticklabels: false };
+                        layout['yaxis' + axisNum] = {
+                            showgrid: true,
+                            gridcolor: '#e5e7eb',
+                            zeroline: false,
+                            showticklabels: (i % nCols === 0),
+                            tickfont: { size: 9 },
+                            title: (i % nCols === 0) ? { text: 'Count', font: { size: 9 }, standoff: 4 } : undefined
+                        };
                     }
 
                     layout.annotations = annotations;
-                    Plotly.newPlot(container, traces, layout, { displayModeBar: true });
+                    Plotly.newPlot(container, traces, layout, { displayModeBar: true, responsive: true })
+                        .then(function() { Plotly.Plots.resize(container); });
                 }
 
-                // Initialize on page load
                 document.addEventListener('DOMContentLoaded', function() {
-                    if (document.getElementById('descriptor-histograms-container')) {
-                        updateDescriptorPlots();
-                    }
+                    setupLazyPlotInit('descriptor-histograms-container', function() {
+                        if (document.getElementById('descriptor-histograms-container')) {
+                            updateDescriptorPlots();
+                        }
+                    });
                 });
             </script>
 
@@ -1960,7 +2182,7 @@
             </div>
 
             <script>
-                var filtersData = {{ (plots.filters_data or {}) | tojson }};
+                var filtersData = {% if has_browser_data %}reportBrowserData('filters_data', {}){% else %}{{ (plots.filters_data or {}) | tojson }}{% endif %};
                 var currentFilterChartType = 'overview';
 
                 // Filter descriptions for tooltips
@@ -2052,7 +2274,7 @@
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
                     };
 
-                    Plotly.react('filter-overview-container', [trace], layout, {displayModeBar: true});
+                    Plotly.react('filter-overview-container', [trace], layout, {displayModeBar: true, responsive: true});
                 }
 
                 function renderFilterHeatmaps() {
@@ -2153,7 +2375,7 @@
                             font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 }
                         };
 
-                        Plotly.react(divId, [trace], layout, {displayModeBar: true});
+                        Plotly.react(divId, [trace], layout, {displayModeBar: true, responsive: true});
                     }
                 }
 
@@ -2211,7 +2433,7 @@
                 <div id="common-alert-overlap" class="plot-container" style="display:none;"></div>
                 <div id="common-alert-whatif" class="plot-container" style="display:none;"></div>
                 <div id="common-alert-molecules" style="display:none;">
-                    {% if ca.examples %}
+                    {% if ca.has_examples %}
                     <div class="molecule-card-controls">
                         <label>
                             Show
@@ -2235,22 +2457,7 @@
                         </label>
                         <span id="common-alert-card-status"></span>
                     </div>
-                    <div id="common-alert-card-grid" class="molecule-card-grid">
-                        {% for mol in ca.examples %}
-                        <div class="molecule-card" data-card-index="{{ loop.index }}">
-                            {{ mol.svg | safe }}
-                            <dl>
-                                <dt>mol_idx</dt><dd>{{ mol.mol_idx }}</dd>
-                                <dt>ruleset</dt><dd>{{ mol.ruleset }}</dd>
-                                <dt>description</dt><dd>{{ mol.description }}</dd>
-                                <dt>rule_id</dt><dd>{{ mol.rule_id }}</dd>
-                                <dt>SMARTS</dt><dd><code>{{ mol.smarts }}</code></dd>
-                                <dt>matches</dt><dd>{{ mol.n_matches }}</dd>
-                                <dt>rescue</dt><dd>{{ "yes" if mol.would_rescue else "no" }}</dd>
-                            </dl>
-                        </div>
-                        {% endfor %}
-                    </div>
+                    <div id="common-alert-card-grid" class="molecule-card-grid"></div>
                     {% else %}
                     <p class="empty-state">No atom-level hit examples available. Run Common Alerts with hits_long.csv diagnostics enabled.</p>
                     {% endif %}
@@ -2279,7 +2486,32 @@
                         if (view === 'molecules') updateCommonAlertMoleculeCards();
                     }
 
+                    function renderCommonAlertMoleculeCards() {
+                        var grid = document.getElementById('common-alert-card-grid');
+                        if (!grid || grid.dataset.rendered === 'true') return;
+                        var examples = reportBrowserData('common_alert_examples', []);
+                        examples.forEach(function(mol, index) {
+                            var card = document.createElement('div');
+                            card.className = 'molecule-card';
+                            card.dataset.cardIndex = String(index + 1);
+                            card.innerHTML =
+                                (mol.svg || '') +
+                                '<dl>' +
+                                '<dt>mol_idx</dt><dd>' + (mol.mol_idx ?? '') + '</dd>' +
+                                '<dt>ruleset</dt><dd>' + (mol.ruleset ?? '') + '</dd>' +
+                                '<dt>description</dt><dd>' + (mol.description ?? '') + '</dd>' +
+                                '<dt>rule_id</dt><dd>' + (mol.rule_id ?? '') + '</dd>' +
+                                '<dt>SMARTS</dt><dd><code>' + (mol.smarts ?? '') + '</code></dd>' +
+                                '<dt>matches</dt><dd>' + (mol.n_matches ?? '') + '</dd>' +
+                                '<dt>rescue</dt><dd>' + (mol.would_rescue ? 'yes' : 'no') + '</dd>' +
+                                '</dl>';
+                            grid.appendChild(card);
+                        });
+                        grid.dataset.rendered = 'true';
+                    }
+
                     function updateCommonAlertMoleculeCards() {
+                        renderCommonAlertMoleculeCards();
                         var grid = document.getElementById('common-alert-card-grid');
                         if (!grid) return;
 
@@ -2316,7 +2548,7 @@
                             margin: { l: 70, r: 30, t: 50, b: 60 },
                             paper_bgcolor: 'white',
                             plot_bgcolor: 'white'
-                        }, {displayModeBar: true});
+                        }, {displayModeBar: true, responsive: true});
                     }
 
                     function renderCommonAlertRulesets() {
@@ -2345,7 +2577,7 @@
                             margin: { l: 180, r: 30, t: 50, b: 50 },
                             paper_bgcolor: 'white',
                             plot_bgcolor: 'white'
-                        }, {displayModeBar: true});
+                        }, {displayModeBar: true, responsive: true});
                     }
 
                     function renderCommonAlertDescriptions() {
@@ -2375,7 +2607,7 @@
                             margin: { l: 260, r: 30, t: 50, b: 50 },
                             paper_bgcolor: 'white',
                             plot_bgcolor: 'white'
-                        }, {displayModeBar: true});
+                        }, {displayModeBar: true, responsive: true});
                     }
 
                     function renderCommonAlertOverlap() {
@@ -2409,7 +2641,7 @@
                             xaxis: { tickangle: -45 },
                             paper_bgcolor: 'white',
                             plot_bgcolor: 'white'
-                        }, {displayModeBar: true});
+                        }, {displayModeBar: true, responsive: true});
                     }
 
                     function renderCommonAlertWhatif() {
@@ -2442,7 +2674,7 @@
                             margin: { l: 70, r: 30, t: 50, b: 60 },
                             paper_bgcolor: 'white',
                             plot_bgcolor: 'white'
-                        }, {displayModeBar: true});
+                        }, {displayModeBar: true, responsive: true});
                     }
 
                     document.addEventListener('DOMContentLoaded', function() {
@@ -2494,12 +2726,7 @@
             </div>
 
             <!-- Score histograms (dynamic) -->
-            <div class="three-col" id="synthesis-score-grid"></div>
-            <div style="text-align: center; margin-top: 8px;">
-                {% for item in plots.synthesis_score_meta or [] %}
-                <p style="color: #6b7280; font-size: 12px; margin: 2px 0;">{{ item.label }}</p>
-                {% endfor %}
-            </div>
+            <div class="plot-grid" id="synthesis-score-grid"></div>
             </div>
 
             {% if plots.synthesis_aligned_dist %}
@@ -2680,56 +2907,59 @@
                 {% endif %}
             </div>
 
-            <!-- GNINA Results -->
-            {% if data.docking_detailed.gnina.raw_data or plots.docking_gnina %}
-            <div id="docking-gnina-section">
-                <h3 style="margin-top: 30px; margin-bottom: 15px;">GNINA Results</h3>
-
-                <div class="two-col">
-                    <div>
-                        <div id="docking-gnina-hist" class="plot-container">
-                            {% if plots.docking_gnina_affinity_hist %}{{ plots.docking_gnina_affinity_hist | safe }}
-                            {% elif plots.docking_gnina %}{{ plots.docking_gnina | safe }}{% endif %}
-                        </div>
-                    </div>
-                    <div>
-                        <div id="docking-gnina-top" class="plot-container">
-                            {% if plots.docking_gnina_top_molecules %}{{ plots.docking_gnina_top_molecules | safe }}{% endif %}
-                        </div>
+            {% if (data.docking_detailed.gnina.raw_data or plots.docking_gnina) or (data.docking_detailed.smina.raw_data or plots.docking_smina) %}
+            <div class="two-col" style="margin-top: 30px;">
+                {% if data.docking_detailed.gnina.raw_data or plots.docking_gnina %}
+                <div id="docking-gnina-section">
+                    <h3 style="margin-bottom: 15px;">GNINA Results</h3>
+                    <div id="docking-gnina-hist" class="plot-container">
+                        {% if plots.docking_gnina_affinity_hist %}{{ plots.docking_gnina_affinity_hist | safe }}
+                        {% elif plots.docking_gnina %}{{ plots.docking_gnina | safe }}{% endif %}
                     </div>
                 </div>
+                {% endif %}
+                {% if data.docking_detailed.smina.raw_data or plots.docking_smina %}
+                <div id="docking-smina-section">
+                    <h3 style="margin-bottom: 15px;">SMINA Results</h3>
+                    <div id="docking-smina-hist" class="plot-container">
+                        {% if plots.docking_smina_affinity_hist %}{{ plots.docking_smina_affinity_hist | safe }}
+                        {% elif plots.docking_smina %}{{ plots.docking_smina | safe }}{% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
 
+            <div class="two-col" style="margin-top: 20px;">
+                <div>
+                    <h4 style="margin-bottom: 12px;">GNINA Top Molecules</h4>
+                    <div id="docking-gnina-top" class="plot-container">
+                        {% if plots.docking_gnina_top_molecules %}{{ plots.docking_gnina_top_molecules | safe }}{% endif %}
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 12px;">SMINA Top Molecules</h4>
+                    <div id="docking-smina-top" class="plot-container">
+                        {% if plots.docking_smina_top_molecules %}{{ plots.docking_smina_top_molecules | safe }}{% endif %}
+                    </div>
+                </div>
+            </div>
+
+            {% if plots.docking_gnina_affinity_box or plots.docking_smina_affinity_box %}
+            <div class="two-col" style="margin-top: 20px;">
                 {% if plots.docking_gnina_affinity_box %}
-                <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
-                <div class="plot-container">{{ plots.docking_gnina_affinity_box | safe }}</div>
+                <div>
+                    <h4 style="margin-bottom: 12px;">GNINA Binding Affinity by Model</h4>
+                    <div class="plot-container">{{ plots.docking_gnina_affinity_box | safe }}</div>
+                </div>
+                {% endif %}
+                {% if plots.docking_smina_affinity_box %}
+                <div>
+                    <h4 style="margin-bottom: 12px;">SMINA Binding Affinity by Model</h4>
+                    <div class="plot-container">{{ plots.docking_smina_affinity_box | safe }}</div>
+                </div>
                 {% endif %}
             </div>
             {% endif %}
-
-            <!-- SMINA Results -->
-            {% if data.docking_detailed.smina.raw_data or plots.docking_smina %}
-            <div id="docking-smina-section">
-                <h3 style="margin-top: 30px; margin-bottom: 15px;">SMINA Results</h3>
-
-                <div class="two-col">
-                    <div>
-                        <div id="docking-smina-hist" class="plot-container">
-                            {% if plots.docking_smina_affinity_hist %}{{ plots.docking_smina_affinity_hist | safe }}
-                            {% elif plots.docking_smina %}{{ plots.docking_smina | safe }}{% endif %}
-                        </div>
-                    </div>
-                    <div>
-                        <div id="docking-smina-top" class="plot-container">
-                            {% if plots.docking_smina_top_molecules %}{{ plots.docking_smina_top_molecules | safe }}{% endif %}
-                        </div>
-                    </div>
-                </div>
-
-                {% if plots.docking_smina_affinity_box %}
-                <h4 style="margin-top: 20px; margin-bottom: 15px;">Binding Affinity by Model</h4>
-                <div class="plot-container">{{ plots.docking_smina_affinity_box | safe }}</div>
-                {% endif %}
-            </div>
             {% endif %}
         </section>
         {% endif %}
@@ -2834,7 +3064,7 @@
             {% endif %}
 
             <script>
-                var dockingFiltersData = {{ (plots.docking_filters_data or {}) | tojson }};
+                var dockingFiltersData = {% if has_browser_data %}reportBrowserData('docking_filters_data', {}){% else %}{{ (plots.docking_filters_data or {}) | tojson }}{% endif %};
                 var currentDockingFiltersModel = 'all';
 
                 function selectDockingFiltersModel(model, btn) {
@@ -2908,7 +3138,7 @@
             <div id="descriptors-comparison-container" class="plot-container"></div>
 
             <script>
-                var descriptorsComparisonData = {{ (plots.descriptors_comparison_data or {}) | tojson }};
+                var descriptorsComparisonData = reportBrowserData('descriptors_comparison_data', {});
 
                 function drawDescriptorsComparison() {
                     var container = document.getElementById('descriptors-comparison-container');
@@ -2926,7 +3156,7 @@
                         'n_rot_bonds': 'Rotatable Bonds'
                     };
 
-                    var nCols = 3;
+                    var nCols = plotlyGridCols(container, 380);
                     var nRows = Math.ceil(descs.length / nCols);
                     var traces = [];
                     var shapes = [];
@@ -2987,8 +3217,9 @@
                     }
 
                     var layout = {
+                        autosize: true,
                         height: 240 * nRows,
-                        margin: { l: 50, r: 30, t: 60, b: 50 },
+                        margin: { l: 60, r: 30, t: 60, b: 50 },
                         paper_bgcolor: 'white', plot_bgcolor: 'white',
                         font: { family: '-apple-system, BlinkMacSystemFont, sans-serif', size: 11 },
                         showlegend: true,
@@ -3002,16 +3233,26 @@
                     for (var i = 0; i < descs.length; i++) {
                         var axisNum = i + 1;
                         layout['xaxis' + axisNum] = { showgrid: false, zeroline: false, tickfont: { size: 10 } };
-                        layout['yaxis' + axisNum] = { showgrid: true, gridcolor: '#e5e7eb', zeroline: false, showticklabels: true, tickfont: { size: 9 }, title: i % 3 === 0 ? { text: 'Density', font: { size: 9 }, standoff: 4 } : undefined };
+                        layout['yaxis' + axisNum] = {
+                            showgrid: true,
+                            gridcolor: '#e5e7eb',
+                            zeroline: false,
+                            showticklabels: (i % nCols === 0),
+                            tickfont: { size: 9 },
+                            title: (i % nCols === 0) ? { text: 'Density', font: { size: 9 }, standoff: 4 } : undefined
+                        };
                     }
 
-                    Plotly.newPlot(container, traces, layout, { displayModeBar: true });
+                    Plotly.newPlot(container, traces, layout, { displayModeBar: true, responsive: true })
+                        .then(function() { Plotly.Plots.resize(container); });
                 }
 
                 document.addEventListener('DOMContentLoaded', function() {
-                    if (document.getElementById('descriptors-comparison-container')) {
-                        drawDescriptorsComparison();
-                    }
+                    setupLazyPlotInit('descriptors-comparison-container', function() {
+                        if (document.getElementById('descriptors-comparison-container')) {
+                            drawDescriptorsComparison();
+                        }
+                    });
                 });
             </script>
             {% endif %}

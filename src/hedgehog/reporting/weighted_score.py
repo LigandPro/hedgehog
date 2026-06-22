@@ -10,6 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from hedgehog.reporting.model_scope import filter_df_by_model
+
 COMPONENT_ORDER = [
     "yield",
     "physchem",
@@ -217,8 +219,8 @@ def collect_yield_evidence(
         warnings,
     )
 
-    n_initial = _filtered_count(input_df, model_name)
-    n_final = _filtered_count(final_df, model_name)
+    n_initial = _filtered_count(input_df, model_name, base_path)
+    n_final = _filtered_count(final_df, model_name, base_path)
 
     if n_initial is None and model_name == "__all__" and initial_count is not None:
         n_initial = initial_count
@@ -262,8 +264,8 @@ def collect_physchem_evidence(base_path: Path, model_name: str) -> dict[str, Any
         warnings,
     )
 
-    flags = _filter_model(flags, model_name)
-    descriptors = _filter_model(descriptors, model_name)
+    flags = _filter_model(flags, model_name, base_path)
+    descriptors = _filter_model(descriptors, model_name, base_path)
     pass_cols = _pass_columns(flags, suffix="_pass") if flags is not None else []
     pass_rates = {
         col: _mean_bool(flags[col])
@@ -312,8 +314,8 @@ def collect_structural_evidence(base_path: Path, model_name: str) -> dict[str, A
         warnings,
     )
 
-    filtered = _filter_model(filtered, model_name)
-    failed = _filter_model(failed, model_name)
+    filtered = _filter_model(filtered, model_name, base_path)
+    failed = _filter_model(failed, model_name, base_path)
     if filtered is not None and not filtered.empty and failed is not None:
         for col in STRUCTURAL_PASS_COLUMNS:
             if col in failed.columns and col not in filtered.columns:
@@ -368,7 +370,7 @@ def collect_synthesis_evidence(base_path: Path, model_name: str) -> dict[str, An
         ],
         warnings,
     )
-    df = _filter_model(df, model_name)
+    df = _filter_model(df, model_name, base_path)
     if df is None or df.empty:
         return {"available": False, "metrics": {}, "warnings": warnings}
 
@@ -415,7 +417,7 @@ def collect_docking_pose_evidence(base_path: Path, model_name: str) -> dict[str,
         ],
         warnings,
     )
-    df = _filter_model(df, model_name)
+    df = _filter_model(df, model_name, base_path)
     if df is None or df.empty:
         return {"available": False, "metrics": {}, "warnings": warnings}
 
@@ -1021,16 +1023,22 @@ def _read_csv(path: Path) -> pd.DataFrame | None:
         return None
 
 
-def _filter_model(df: pd.DataFrame | None, model_name: str) -> pd.DataFrame | None:
+def _filter_model(
+    df: pd.DataFrame | None,
+    model_name: str,
+    base_path: Path,
+) -> pd.DataFrame | None:
     if df is None:
         return None
-    if model_name != "__all__" and "model_name" in df.columns:
-        return df[df["model_name"] == model_name]
-    return df
+    if model_name == "__all__":
+        return df
+    return filter_df_by_model(df, model_name, base_path)
 
 
-def _filtered_count(df: pd.DataFrame | None, model_name: str) -> int | None:
-    df = _filter_model(df, model_name)
+def _filtered_count(
+    df: pd.DataFrame | None, model_name: str, base_path: Path
+) -> int | None:
+    df = _filter_model(df, model_name, base_path)
     if df is None:
         return None
     return int(len(df))

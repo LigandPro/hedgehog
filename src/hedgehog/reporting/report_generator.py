@@ -1,9 +1,11 @@
 """Report generator for HEDGEHOG pipeline results."""
 
 import base64
+import copy
 import html as html_lib
 import json
 import logging
+import re
 import statistics
 from collections.abc import Callable
 from datetime import datetime
@@ -19,9 +21,29 @@ from rdkit.Chem.Draw import rdMolDraw2D
 
 from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
+from hedgehog.reporting.model_scope import (
+    filter_df_by_model,
+    load_input_molecules_df,
+    load_model_index_map,
+)
+from hedgehog.reporting.model_scope import (
+    get_available_models as get_generative_models,
+)
 from hedgehog.reporting.stage_audit_notebook import write_stage_audit_notebook
 from hedgehog.reporting.weighted_score import compute_weighted_scores, first_existing
 from hedgehog.utils.parallel import resolve_n_jobs
+
+BROWSER_DATA_PLOT_KEYS = (
+    "descriptors_data",
+    "descriptors_comparison_data",
+    "filters_data",
+    "sankey_data",
+    "synthesis_data",
+    "synthesis_aligned_data",
+    "docking_gnina_data",
+    "docking_smina_data",
+    "docking_filters_data",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -438,11 +460,18 @@ class ReportGenerator:
         self._emit_progress(82, 100, "Rendering HTML")
 
         # Render HTML
-        html_content = self._render_template(data, plot_htmls)
+        browser_payload = self._build_browser_payload(data, plot_htmls)
+        template_data = self._data_for_html_template(data)
+        html_content = self._render_template(
+            template_data,
+            plot_htmls,
+            has_browser_data=bool(browser_payload),
+        )
         self._emit_progress(90, 100, "Saving report")
 
         # Save report
         report_path = self._save_report(html_content)
+        self._save_browser_data_js(browser_payload)
         self._emit_progress(94, 100, "Saving report data")
 
         # Save JSON data
@@ -772,48 +801,60 @@ class ReportGenerator:
         df = _try_read_csv(*paths_to_try)
         if df is None:
             return None
-        if model_name and "model_name" in df.columns:
-            df = df[df["model_name"] == model_name]
+        if model_name:
+            df = filter_df_by_model(df, model_name, self.base_path)
         return len(df)
 
+    def _load_model_index_map(self) -> dict[str, int]:
+        return load_model_index_map(self.base_path)
+
     def _get_available_models(self) -> list[str]:
-        """Get list of available model names from input or output files.
+        return get_generative_models(self.base_path)
 
-        Returns:
-            List of unique model names
-        """
-        models = set()
+    def _load_input_molecules_df(self) -> pd.DataFrame | None:
+        return load_input_molecules_df(self.base_path)
 
-        # Try input file first
-        input_path = self.base_path / "input" / "sampled_molecules.csv"
-        if input_path.exists():
-            try:
-                df = pd.read_csv(input_path)
-                if "model_name" in df.columns:
-                    models.update(df["model_name"].dropna().unique())
-            except Exception as e:
-                logger.debug("Could not read %s: %s", input_path, e)
+    def _filter_df_by_model(self, df: pd.DataFrame, model: str) -> pd.DataFrame:
+        filtered = filter_df_by_model(df, model, self.base_path)
+        return filtered if filtered is not None else df.iloc[0:0]
 
-        # Try final output files. Pipeline runs store final output under output/,
-        # while some older report paths used the run root.
-        output_path = first_existing(
-            self.base_path,
-            [
-                "output/final_molecules.csv",
-                "final_molecules.csv",
-                "stages/07_descriptors_final/filtered/filtered_molecules.csv",
-                "stages/06_docking_filters/filtered_molecules.csv",
-            ],
-        )
-        if output_path is not None:
-            try:
-                df = pd.read_csv(output_path)
-                if "model_name" in df.columns:
-                    models.update(df["model_name"].dropna().unique())
-            except Exception as e:
-                logger.debug("Could not read %s: %s", output_path, e)
+    def _build_pass_stats_by_model(self, df: pd.DataFrame) -> dict[str, dict[str, Any]]:
+        """Aggregate pass stats per generative model from docking-filter pose rows."""
+        by_model: dict[str, dict[str, Any]] = {}
+        models = self._get_available_models()
+        if models:
+            for model in models:
+                model_df = self._filter_df_by_model(df, model)
+                if model_df.empty:
+                    continue
+                m_total = len(model_df)
+                m_passed = (
+                    int(model_df["pass"].sum()) if "pass" in model_df.columns else 0
+                )
+                by_model[model] = {
+                    "total": m_total,
+                    "passed": m_passed,
+                    "pass_rate": round(100.0 * m_passed / m_total, 1)
+                    if m_total > 0
+                    else 0.0,
+                }
+            return by_model
 
-        return sorted(models)
+        if "model_name" not in df.columns:
+            return by_model
+
+        for model in df["model_name"].dropna().unique():
+            model_df = df[df["model_name"] == model]
+            m_total = len(model_df)
+            m_passed = int(model_df["pass"].sum()) if "pass" in model_df.columns else 0
+            by_model[str(model)] = {
+                "total": m_total,
+                "passed": m_passed,
+                "pass_rate": round(100.0 * m_passed / m_total, 1)
+                if m_total > 0
+                else 0.0,
+            }
+        return by_model
 
     def _get_initial_count_by_model(self, model_name: str | None = None) -> int:
         """Get initial molecule count, optionally filtered by model.
@@ -948,20 +989,22 @@ class ReportGenerator:
         except Exception:
             return []
 
-        if "model_name" not in df.columns:
+        if "model_name" not in df.columns and "mol_idx" not in df.columns:
+            return []
+
+        available_models = self._get_available_models()
+        if not available_models:
             return []
 
         model_stats = []
-        for model in df["model_name"].unique():
-            final_count = len(df[df["model_name"] == model])
-
-            # Try to get initial count from input
+        for model in available_models:
+            final_count = len(self._filter_df_by_model(df, model))
             initial_count = self._get_initial_model_count(model)
 
             model_stats.append(
                 {
                     "model_name": model,
-                    "initial": initial_count or final_count,
+                    "initial": initial_count if initial_count is not None else 0,
                     "final": final_count,
                     "losses": self._get_model_losses(model),
                 }
@@ -1011,10 +1054,7 @@ class ReportGenerator:
             if failed_path.exists():
                 try:
                     df = pd.read_csv(failed_path)
-                    if "model_name" in df.columns:
-                        losses[loss_key] = len(df[df["model_name"] == model])
-                    else:
-                        losses[loss_key] = 0
+                    losses[loss_key] = len(self._filter_df_by_model(df, model))
                 except Exception:
                     losses[loss_key] = 0
             else:
@@ -2066,13 +2106,69 @@ class ReportGenerator:
         if mol is None:
             return ""
         rdDepictor.Compute2DCoords(mol)
-        drawer = rdMolDraw2D.MolDraw2DSVG(260, 190)
+        drawer = rdMolDraw2D.MolDraw2DSVG(220, 160)
         options = drawer.drawOptions()
         options.clearBackground = False
         drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightBonds=bond_ids)
         drawer.FinishDrawing()
         svg = drawer.GetDrawingText()
-        return svg.replace("svg:", "")
+        return ReportGenerator._minify_svg(svg.replace("svg:", ""))
+
+    @staticmethod
+    def _minify_svg(svg: str) -> str:
+        """Compress SVG text without changing the depicted structure."""
+        if not svg:
+            return ""
+        compact = re.sub(r">\s+<", "><", svg.strip())
+        compact = re.sub(r"\s{2,}", " ", compact)
+        return compact
+
+    def _build_browser_payload(
+        self, data: dict[str, Any], plot_htmls: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Collect large interactive payloads for external browser-side loading."""
+        payload: dict[str, Any] = {}
+        for key in BROWSER_DATA_PLOT_KEYS:
+            value = plot_htmls.get(key)
+            if value:
+                payload[key] = value
+
+        examples = (data.get("common_alert_diagnostics") or {}).get("examples") or []
+        if examples:
+            payload["common_alert_examples"] = [
+                {
+                    **example,
+                    "svg": self._minify_svg(str(example.get("svg", ""))),
+                }
+                for example in examples
+            ]
+        return payload
+
+    def _save_browser_data_js(self, payload: dict[str, Any]) -> Path | None:
+        """Save browser-only report payload beside report.html."""
+        if not payload:
+            return None
+        path = self.output_dir / "report_browser_data.js"
+        clean_payload = self._make_json_serializable(payload)
+        encoded = json.dumps(clean_payload, separators=(",", ":"), ensure_ascii=False)
+        path.write_text(
+            f"window.__REPORT_BROWSER_DATA__={encoded};\n", encoding="utf-8"
+        )
+        return path
+
+    @staticmethod
+    def _data_for_html_template(data: dict[str, Any]) -> dict[str, Any]:
+        """Strip bulky fields from template data while preserving availability flags."""
+        template_data = copy.deepcopy(data)
+        common_alerts = template_data.get("common_alert_diagnostics")
+        if isinstance(common_alerts, dict) and common_alerts:
+            has_examples = bool(common_alerts.get("examples"))
+            slim_common_alerts = {
+                key: value for key, value in common_alerts.items() if key != "examples"
+            }
+            slim_common_alerts["has_examples"] = has_examples
+            template_data["common_alert_diagnostics"] = slim_common_alerts
+        return template_data
 
     def _build_common_alert_examples(
         self, hits_long: pd.DataFrame, limit: int = 72
@@ -3074,21 +3170,7 @@ class ReportGenerator:
                     numeric_metrics[col] = values
 
         # Per-model breakdown
-        by_model = {}
-        if "model_name" in df.columns:
-            for model in df["model_name"].dropna().unique():
-                model_df = df[df["model_name"] == model]
-                m_total = len(model_df)
-                m_passed = (
-                    int(model_df["pass"].sum()) if "pass" in model_df.columns else 0
-                )
-                by_model[str(model)] = {
-                    "total": m_total,
-                    "passed": m_passed,
-                    "pass_rate": round(100.0 * m_passed / m_total, 1)
-                    if m_total > 0
-                    else 0.0,
-                }
+        by_model = self._build_pass_stats_by_model(df)
 
         # Extract thresholds from config for display
         thresholds = {}
@@ -3783,7 +3865,13 @@ class ReportGenerator:
 
         return plot_htmls
 
-    def _render_template(self, data: dict[str, Any], plot_htmls: dict[str, Any]) -> str:
+    def _render_template(
+        self,
+        data: dict[str, Any],
+        plot_htmls: dict[str, Any],
+        *,
+        has_browser_data: bool = False,
+    ) -> str:
         """Render the HTML template with data and plots.
 
         Args:
@@ -3807,6 +3895,7 @@ class ReportGenerator:
             data=data,
             plots=plot_htmls,
             generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            has_browser_data=has_browser_data,
         )
 
     def _build_model_options(self, models: list[str]) -> str:

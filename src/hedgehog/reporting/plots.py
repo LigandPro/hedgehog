@@ -262,7 +262,7 @@ def plot_funnel(funnel_data: list[dict[str, Any]]) -> str:
         paper_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
@@ -334,7 +334,7 @@ def plot_sankey(funnel_data: list[dict[str, Any]]) -> str:
         margin={"l": 5, "r": 5, "t": 20, "b": 20},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_sankey_json(funnel_data: list[dict[str, Any]]) -> dict:
@@ -535,7 +535,7 @@ def plot_model_comparison(model_stats: list[dict[str, Any]]) -> str:
         },
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_weighted_score_components(weighted_scores: dict[str, Any]) -> str:
@@ -666,7 +666,7 @@ def plot_weighted_score_components(weighted_scores: dict[str, Any]) -> str:
                 "size": 11,
             },
         )
-        return fig.to_html(full_html=False, include_plotlyjs=False)
+        return _fig_to_html(fig)
 
     fig = go.Figure()
     for idx, (model_name, model_payload) in enumerate(model_items):
@@ -719,7 +719,7 @@ def plot_weighted_score_components(weighted_scores: dict[str, Any]) -> str:
         },
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_model_stacked_losses(model_stats: list[dict[str, Any]]) -> str:
@@ -778,7 +778,7 @@ def plot_model_stacked_losses(model_stats: list[dict[str, Any]]) -> str:
         },
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_descriptor_distributions(
@@ -833,7 +833,7 @@ def plot_descriptor_distributions(
         showlegend=False,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_descriptor_by_model(
@@ -868,7 +868,7 @@ def plot_descriptor_by_model(
         height=350,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_filter_heatmap(filter_data: dict[str, dict[str, int]]) -> str:
@@ -922,7 +922,7 @@ def plot_filter_heatmap(filter_data: dict[str, dict[str, int]]) -> str:
         height=max(300, 40 * len(filters)),
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_top_filter_failures(filter_totals: dict[str, int], top_n: int = 10) -> str:
@@ -963,7 +963,7 @@ def plot_top_filter_failures(filter_totals: dict[str, int], top_n: int = 10) -> 
         yaxis={"categoryorder": "total ascending"},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_synthesis_distributions(synthesis_data: dict[str, list[float]]) -> str:
@@ -1007,7 +1007,7 @@ def plot_synthesis_distributions(synthesis_data: dict[str, list[float]]) -> str:
         height=350,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_synthesis_scatter(
@@ -1041,7 +1041,7 @@ def plot_synthesis_scatter(
         height=400,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def _synthesis_meta_label(meta: list[dict[str, Any]]) -> dict[str, str]:
@@ -1090,7 +1090,7 @@ def plot_synthesis_aligned_distributions(
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         showlegend=False,
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_synthesis_aligned_correlation(
@@ -1130,7 +1130,7 @@ def plot_synthesis_aligned_correlation(
         plot_bgcolor="white",
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_synthesis_aligned_route_comparison(
@@ -1178,7 +1178,7 @@ def plot_synthesis_aligned_route_comparison(
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
         legend={"orientation": "h", "y": 1.12, "x": 0.5, "xanchor": "center"},
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_distribution(scores: list[float], tool: str = "gnina") -> str:
@@ -1222,7 +1222,7 @@ def plot_docking_distribution(scores: list[float], tool: str = "gnina") -> str:
         height=350,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_stage_summary(stage_stats: list[dict[str, Any]]) -> str:
@@ -1276,7 +1276,145 @@ def plot_stage_summary(stage_stats: list[dict[str, Any]]) -> str:
         },
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
+
+
+def _margin_component(fig: go.Figure, key: str, default: float = 0.0) -> float:
+    margin = fig.layout.margin
+    if margin is None:
+        return default
+    val = getattr(margin, key, None)
+    if val is None:
+        return default
+    return float(val)
+
+
+def _trace_has_outside_text(fig: go.Figure) -> bool:
+    for trace in fig.data:
+        textposition = getattr(trace, "textposition", None)
+        if textposition in {"outside", "auto"}:
+            orientation = getattr(trace, "orientation", "v")
+            if orientation in ("v", None):
+                return True
+    return False
+
+
+def _legend_needs_headroom(fig: go.Figure) -> bool:
+    if fig.layout.showlegend is False:
+        return False
+    if not fig.data:
+        return False
+    legend = fig.layout.legend
+    if legend is None:
+        return bool(fig.layout.showlegend)
+    y = getattr(legend, "y", None)
+    if y is not None and float(y) > 1.0:
+        return True
+    orientation = getattr(legend, "orientation", None)
+    return orientation == "h" or fig.layout.showlegend is True
+
+
+def _iter_yaxis_names(fig: go.Figure) -> list[str]:
+    layout = fig.layout
+    axis_names: list[str] = []
+    for index in range(1, 10):
+        axis_name = "yaxis" if index == 1 else f"yaxis{index}"
+        if getattr(layout, axis_name, None) is not None:
+            axis_names.append(axis_name)
+    return axis_names or ["yaxis"]
+
+
+def _extend_yaxis_headroom(
+    fig: go.Figure, *, fraction: float = 0.2, min_extra: float = 10.0
+) -> None:
+    for axis_name in _iter_yaxis_names(fig):
+        axis = getattr(fig.layout, axis_name, None)
+        if axis is None:
+            continue
+        y_range = getattr(axis, "range", None)
+        if y_range is None or len(y_range) != 2:
+            continue
+        ymin, ymax = float(y_range[0]), float(y_range[1])
+        span = ymax - ymin
+        if span <= 0:
+            continue
+        extra = max(span * fraction, min_extra)
+        fig.update_layout(**{f"{axis_name}_range": [ymin, ymax + extra]})
+
+
+def _ensure_yaxis_room_for_outside_text(fig: go.Figure) -> None:
+    axis_max: dict[str, float] = {}
+    for trace in fig.data:
+        if getattr(trace, "textposition", None) not in {"outside", "auto"}:
+            continue
+        if getattr(trace, "orientation", "v") == "h":
+            continue
+        y_vals = trace.y
+        if y_vals is None:
+            continue
+        axis_key = getattr(trace, "yaxis", "y") or "y"
+        axis_name = "yaxis" if axis_key == "y" else f"yaxis{axis_key[1:]}"
+        ymax = max(float(value) for value in y_vals)
+        axis_max[axis_name] = max(axis_max.get(axis_name, float("-inf")), ymax)
+
+    for axis_name, ymax in axis_max.items():
+        axis = getattr(fig.layout, axis_name, None)
+        existing = getattr(axis, "range", None) if axis is not None else None
+        if existing is not None and len(existing) == 2:
+            ymin, current_max = float(existing[0]), float(existing[1])
+        else:
+            ymin, current_max = 0.0, ymax
+        target_max = max(current_max, ymax)
+        extra = max((target_max - ymin) * 0.2, 10.0)
+        fig.update_layout(**{f"{axis_name}_range": [ymin, target_max + extra]})
+
+
+def _finalize_figure_layout(fig: go.Figure) -> None:
+    """Ensure enough margin/axis headroom for legends and outside bar labels."""
+    min_top = 70.0
+    min_bottom = 55.0
+    min_left = 50.0
+    min_right = 25.0
+
+    if getattr(fig.layout, "title", None):
+        min_top = max(min_top, 85.0)
+
+    if _legend_needs_headroom(fig):
+        min_top = max(min_top, 95.0)
+
+    if _trace_has_outside_text(fig):
+        min_top = max(min_top, 105.0)
+        _ensure_yaxis_room_for_outside_text(fig)
+        _extend_yaxis_headroom(fig)
+
+    annotations = fig.layout.annotations
+    if annotations:
+        for ann in annotations:
+            y = getattr(ann, "y", None)
+            if y is not None and float(y) > 1.0:
+                min_top = max(min_top, 90.0)
+                break
+
+    fig.update_layout(
+        autosize=True,
+        margin={
+            "l": max(_margin_component(fig, "l", 50), min_left),
+            "r": max(_margin_component(fig, "r", 30), min_right),
+            "t": max(_margin_component(fig, "t", 40), min_top),
+            "b": max(_margin_component(fig, "b", 50), min_bottom),
+            "pad": 4,
+        },
+    )
+
+
+def _fig_to_html(fig: go.Figure, *, display_mode_bar: bool = True) -> str:
+    """Export a Plotly figure as responsive embedded HTML."""
+    _finalize_figure_layout(fig)
+    return fig.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        config={"responsive": True, "displayModeBar": display_mode_bar},
+    )
 
 
 def _empty_plot(message: str) -> str:
@@ -1303,7 +1441,7 @@ def _empty_plot(message: str) -> str:
         yaxis={"visible": False},
         height=200,
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 # =============================================================================
@@ -1391,7 +1529,7 @@ def plot_descriptors_violin_by_model(
         violinmode="group",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_descriptors_hbd_hba_box(data: list[dict[str, Any]]) -> str:
@@ -1470,7 +1608,7 @@ def plot_descriptors_hbd_hba_box(data: list[dict[str, Any]]) -> str:
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_descriptors_summary_table(summary: dict[str, dict[str, float]]) -> str:
@@ -1603,7 +1741,7 @@ def plot_filter_stacked_bar(filter_data: dict[str, dict[str, int]]) -> str:
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_filter_banned_ratio_heatmap(
@@ -1664,7 +1802,7 @@ def plot_filter_banned_ratio_heatmap(
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_filter_top_reasons_bar(reasons_data: dict[str, int], top_n: int = 10) -> str:
@@ -1714,7 +1852,7 @@ def plot_filter_top_reasons_bar(reasons_data: dict[str, int], top_n: int = 10) -
         margin={"l": 150},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 # =============================================================================
@@ -1768,11 +1906,7 @@ def _plot_synthesis_score_histogram(
         margin={"l": 45, "r": 10, "t": 30, "b": 40},
     )
 
-    return fig.to_html(
-        full_html=False,
-        include_plotlyjs=False,
-        config={"responsive": True},
-    )
+    return _fig_to_html(fig, display_mode_bar=True)
 
 
 def plot_synthesis_sa_histogram(scores: list[float]) -> str:
@@ -1857,7 +1991,7 @@ def plot_synthesis_solved_pie(solved_count: int, unsolved_count: int) -> str:
         showlegend=False,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_synthesis_time_box(data: list[dict[str, Any]]) -> str:
@@ -1900,7 +2034,7 @@ def plot_synthesis_time_box(data: list[dict[str, Any]]) -> str:
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 # =============================================================================
@@ -1963,7 +2097,7 @@ def plot_docking_affinity_histogram(scores: list[float], tool: str = "gnina") ->
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_top_molecules(
@@ -2029,7 +2163,7 @@ def plot_docking_top_molecules(
         margin={"l": 10, "r": 20},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_affinity_box(
@@ -2075,7 +2209,7 @@ def plot_docking_affinity_box(
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 # =============================================================================
@@ -2127,7 +2261,7 @@ def plot_retrosynthesis_route_score_histogram(scores: list[float]) -> str:
         font={"family": "-apple-system, BlinkMacSystemFont, sans-serif", "size": 11},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_retrosynthesis_steps_histogram(steps: list[int]) -> str:
@@ -2180,7 +2314,7 @@ def plot_retrosynthesis_steps_histogram(steps: list[int]) -> str:
         xaxis={"dtick": 1},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 # =============================================================================
@@ -2247,7 +2381,7 @@ def plot_docking_filters_pass_fail_bar(
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_filters_metric_histograms(
@@ -2341,7 +2475,7 @@ def plot_docking_filters_metric_histograms(
         showlegend=False,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_filters_by_model_bar(
@@ -2390,7 +2524,7 @@ def plot_docking_filters_by_model_bar(
         plot_bgcolor="white",
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_filters_interaction_top_residues_bar(
@@ -2440,7 +2574,7 @@ def plot_docking_filters_interaction_top_residues_bar(
         paper_bgcolor="white",
         plot_bgcolor="white",
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_filters_interaction_type_distribution_bar(
@@ -2490,7 +2624,7 @@ def plot_docking_filters_interaction_type_distribution_bar(
         paper_bgcolor="white",
         plot_bgcolor="white",
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_docking_filters_interaction_matrix_heatmap(
@@ -2555,7 +2689,7 @@ def plot_docking_filters_interaction_matrix_heatmap(
         paper_bgcolor="white",
         plot_bgcolor="white",
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 # =========================================================================
@@ -2617,7 +2751,7 @@ def plot_moleval_heatmap(
         xaxis={"side": "bottom"},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
 
 
 def plot_moleval_stage_lines(
@@ -2685,4 +2819,4 @@ def plot_moleval_stage_lines(
         yaxis={"showgrid": True, "gridcolor": "#e5e7eb"},
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    return _fig_to_html(fig)
