@@ -19,7 +19,7 @@ def run(data, config: dict, subfolder: str | None = None, reporter=None):
     - uncharging + normalization/reionization
     - tautomer canonicalization (standardize_smiles)
     - stereochemistry removal
-    - strict filtering (allowed atoms, radicals, isotopes, single-fragment, neutrality)
+    - strict filtering (allowed atoms, radicals, isotopes, single-fragment)
 
     Output:
       - filtered_molecules.csv
