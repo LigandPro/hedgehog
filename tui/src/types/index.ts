@@ -93,7 +93,6 @@ export interface MolPrepConfig {
   filters: {
     allowed_atoms?: string[];
     reject_radicals?: boolean;
-    require_neutral?: boolean;
     reject_isotopes?: boolean;
     require_single_fragment?: boolean;
   };

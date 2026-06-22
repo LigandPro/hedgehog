@@ -38,7 +38,6 @@ export const STAGE_METADATA: Record<WizardStageName, StageMetadata> = {
     heavyLevel: 'medium',
     keyParamsMap: {
       n_jobs: 'Parallel jobs',
-      require_neutral: 'Require neutral',
       require_single_fragment: 'Single fragment only',
     },
     configScreen: 'wizardConfigMolPrep',

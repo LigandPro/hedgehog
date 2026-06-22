@@ -41,7 +41,6 @@ const MOL_PREP_PARAMS: ParamDef[] = [
   { key: 'stereo', label: 'Standardize Stereo', type: 'boolean', configPath: ['steps', 'standardize_mol'], description: 'Canonicalize stereochemistry during standardization' },
   { key: 'remove_stereochemistry', label: 'Drop Stereo', type: 'boolean', configPath: ['steps'], description: 'Remove stereochemistry in final standardized molecules' },
   { key: 'allowed_atoms', label: 'Allowed Atoms', type: 'text', configPath: ['filters'], description: 'Comma-separated whitelist of allowed atom symbols' },
-  { key: 'require_neutral', label: 'Require Neutral', type: 'boolean', configPath: ['filters'], description: 'Reject molecules with formal charge after prep' },
   { key: 'reject_radicals', label: 'Reject Radicals', type: 'boolean', configPath: ['filters'], description: 'Reject molecules containing radicals' },
   { key: 'reject_isotopes', label: 'Reject Isotopes', type: 'boolean', configPath: ['filters'], description: 'Reject isotopically labelled molecules' },
   { key: 'require_single_fragment', label: 'Single Fragment', type: 'boolean', configPath: ['filters'], description: 'Reject molecules with multiple fragments' },
