@@ -37,6 +37,8 @@ with the safe smoke run below to verify the Python environment, bundled example
 molecules, descriptor calculation, and structural filters before enabling
 retrosynthesis or docking.
 
+[Public documentation](https://hedgehog.ligandpro.ru)
+
 ### Recommended install: source checkout
 
 ```bash
