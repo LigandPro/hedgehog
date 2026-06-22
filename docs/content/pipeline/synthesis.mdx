@@ -1,8 +1,8 @@
 ---
-title: Synthesis
+title: Synthesis Feasibility
 ---
 
-# Synthesis
+# Synthesis Feasibility
 
 The synthesis stage evaluates whether generated molecules can be practically synthesized. It computes registry-enabled accessibility scores and optionally runs full retrosynthetic route analysis using AiZynthFinder.
 
@@ -15,19 +15,19 @@ The synthesis stage evaluates whether generated molecules can be practically syn
 - **How it works**: Combines fragment contributions (from a frequency analysis of molecules in PubChem) with a complexity penalty. Molecules built from common fragments score low; molecules requiring unusual substructures score high.
 - **Default threshold**: 1--4.5
 
-### SYBA Score (SYnthetic Bayesian Accessibility)
-
-- **Range**: unbounded (higher is better; typically -100 to +300)
-- **Method**: SYBA package
-- **How it works**: A Bayesian classifier trained on easily synthesizable molecules (from the ZINC database) vs. hard-to-synthesize molecules. Positive scores indicate likely synthesizability.
-- **Default threshold**: 0--inf (no upper bound)
-
 ### RA Score (Retrosynthetic Accessibility Score)
 
 - **Range**: 0--1 (higher is better)
 - **Method**: XGBoost model trained on ECFP6 count fingerprints (from MolScore RAScore)
 - **How it works**: An XGBoost classifier trained on the output of a retrosynthesis tool. Predicts the probability that a retrosynthesis planner can find a valid route to the molecule. Faster than running actual retrosynthesis but less precise.
 - **Default threshold**: 0.5--1
+
+### SYBA Score (SYnthetic Bayesian Accessibility)
+
+- **Range**: higher is better
+- **Method**: SYBA package
+- **How it works**: A Bayesian classifier trained on easily synthesizable molecules (from the ZINC database) vs hard-to-synthesize molecules. Positive scores indicate likely synthesizability.
+- **Default threshold**: 0--inf (no upper bound)
 
 ### SYNC Score (3D Synthesizability Classifier)
 
@@ -95,65 +95,6 @@ When `run_retrosynthesis: true`, the pipeline runs AiZynthFinder to search for a
 If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept. This is the strictest synthesis filter but also the most computationally expensive.
 
 Setting `run_retrosynthesis: false` skips AiZynthFinder entirely and only computes the enabled scores above, which is significantly faster.
-
-## Configuration
-
-Full configuration in `config_synthesis.yml`:
-
-```yaml
-run: true
-n_jobs: -1                # Workers for scoring + AiZynthFinder (--nproc)
-enabled_scores:
-  - sa
-  - syba
-  - rascore
-  - sync
-  - scscore
-  - nonpher
-  - fsscore
-  - gasa
-run_retrosynthesis: true     # Run AiZynthFinder route search
-filter_solved_only: true     # Keep only molecules with found routes
-
-# Legacy score thresholds
-sa_score_min: 1
-sa_score_max: 4.5
-syba_score_min: 0
-syba_score_max: inf
-ra_score_min: 0.5
-ra_score_max: 1
-sync_auto_install: true
-sync_device: cpu
-sync_conformer_seed: 61453
-
-# Optional FSScore isolated worker configuration.
-# fsscore_python: /abs/path/to/fsscore-env/bin/python
-# fsscore_model_path: /abs/path/to/pretrain_graph_GGLGGL_ep242_best_valloss.ckpt
-# fsscore_repo_path: /abs/path/to/fsscore
-
-# Optional score filters for new or experimental scorers.
-score_filters:
-  sync_score:
-    min: 0.5
-    max: 1
-  sc_score:
-    min:
-    max:
-  nonpher_complexity_score:
-    min:
-    max:
-  fs_score:
-    min:
-    max:
-  gasa_score:
-    min:
-    max:
-gasa:
-  command:
-  executable:
-  api_url:
-  timeout_seconds: 30
-```
 
 ## Filtering Logic
 

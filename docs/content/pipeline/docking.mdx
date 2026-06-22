@@ -1,23 +1,25 @@
 ---
-title: Docking
+title: Molecular Docking 
 ---
 
-# Docking
+# Molecular Docking
 
-The docking stage writes ligand SDFs and runs molecular docking simulations against a target protein structure. HEDGEHOG supports three docking engines (SMINA, GNINA, and Matcha). The default config keeps `prepare_ligands: false`, which uses input molecules directly where possible and preserves a near 1:1 mapping from input rows to docking ligands.
+The docking stage writes ligand SDFs and runs molecular docking simulations against a target protein structure. HEDGEHOG supports three docking engines, including SMINA, GNINA, and Matcha. The default config keeps `prepare_ligands: false`, which uses input molecules directly where possible and preserves a near 1:1 mapping from input rows to docking ligands.
+
+Set `auto_run: false` to generate docking scripts without executing them.
+
 
 ## Docking Engines
 
 | Feature | SMINA | GNINA | Matcha |
 |---------|-------|-------|--------|
-| Scoring | Empirical (Vina-based) | CNN-based + empirical | Learned pose generation + optional GNINA scoring |
-| Speed | Fast | Slower (GPU-accelerated) | Slower (ML inference) |
-| Output scores | `minimizedAffinity` | `minimizedAffinity`, `CNNscore`, `CNNaffinity` | `minimizedAffinity` when GNINA scoring is enabled |
-| GPU support | No | Yes (CUDA) | Yes (recommended) |
+| Scoring | Empirical (Vina-based) | CNN-based + empirical | Learned pose generation and GNINA scoring |
+| Output scores | `minimizedAffinity` | `minimizedAffinity`, `CNNscore`, `CNNaffinity` | `minimizedAffinity`|
+| GPU support | No | Yes | Yes |
 | Output format | SDF | SDF | SDF |
 | Best for | Large-scale virtual screening | Accurate pose prediction | ML-based pose generation with optional rescoring |
 
-SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA extends SMINA with convolutional neural network (CNN) scoring functions trained on protein-ligand complexes from the PDB.
+SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA extends SMINA with convolutional neural network (CNN) scoring functions trained on protein-ligand complexes from the PDB. Matcha is a recent neural docking method based on multi-stage Riemannian flow matching.
 
 Select the tool in the docking config:
 
@@ -27,66 +29,24 @@ tools: gnina    # Options: all, gnina, smina, matcha, or a comma-separated list
 
 Use `tools: all` to run SMINA, GNINA, and Matcha together. For subsets, provide a comma-separated YAML value such as `gnina,matcha` or `smina,gnina`.
 
-## Ligand Preparation
+## Data Preparation
 
-Docking requires 3D molecular structures in SDF format.
+### Ligand Preparation
 
-### Default Path: Direct RDKit SDF Generation
+Docking requires 3D molecular structures in SDF format. Molecules are automatically converted while previous stages are run, or yuo can manually convert examining molecules into SDF format to run this stage independently.
 
-With `prepare_ligands: false` (the shipped default), the docking stage uses built-in RDKit conversion:
+#### Default Path: Direct RDKit SDF Generation
+
+With `prepare_ligands: false`, the docking stage uses built-in RDKit conversion:
 
 1. Parse SMILES with `Chem.MolFromSmiles()`
 2. Add explicit hydrogens with `Chem.AddHs()`
 3. Generate 3D coordinates with `AllChem.EmbedMolecule()` (ETKDG method)
 4. Optimize geometry with `AllChem.UFFOptimizeMolecule()` (UFF force field)
 
-This produces reasonable starting geometries and keeps row counts predictable, but it does not handle tautomer enumeration or stereoisomer expansion.
+This produces reasonable starting geometries and keeps row counts predictable.
 
-### External Ligand Preparation Tool (Optional)
-
-For production-quality ligand preparation, configure an external tool path in `config.yml`:
-
-```yaml
-ligand_preparation_tool: /path/to/ligand_prep_tool
-```
-
-An external preparation tool can provide:
-- Tautomer enumeration
-- Stereoisomer expansion
-- Ionization state prediction at physiological pH
-- Optimized 3D geometry with OPLS force field
-
-The pipeline auto-detects the input format (CSV or SMI) and calls the tool accordingly.
-
-#### Custom Handler Support
-
-`ligand_preparation_tool` and `protein_preparation_tool` can point to any executable (absolute path or command available in `PATH`).
-
-External handlers are optional:
-
-- If no external tool is configured, HEDGEHOG uses built-in behavior.
-- Ligands fall back to RDKit preparation.
-- Protein input is used as-is when no protein handler is configured.
-
-For custom handlers, ensure they run non-interactively and produce valid output files expected by the docking stage.
-
-External ligand preparation is controlled by `prepare_ligands` in `config_docking.yml`:
-
-```yaml
-prepare_ligands: false
-```
-
-Set it to `true` only when you explicitly want to run the configured external
-ligand preparation path. One input molecule may produce multiple prepared
-ligands, which can change row counts and downstream mapping.
-
-For pipeline input preprocessing before stages:
-
-- CSV input always uses built-in RDKit preprocessing.
-- SMI-like input may use `ligand_preparation_tool`.
-- The produced CSV must contain a `smiles` column (case-insensitive).
-
-## Protein Preparation
+### Protein Preparation
 
 The receptor PDB file is specified in the docking config:
 
@@ -99,6 +59,19 @@ For best results, prepare the receptor with a dedicated structure-preparation to
 - Adding hydrogens at physiological pH
 - Optimizing hydrogen-bond networks
 - Minimizing heavy-atom positions (restrained)
+
+
+### Custom Handler Support
+
+`ligand_preparation_tool` and `protein_preparation_tool` can point to any executable (absolute path or command available in `PATH`).
+
+External handlers are optional:
+
+- If no external tool is configured, HEDGEHOG uses built-in behavior.
+- Ligands fall back to RDKit preparation.
+- Protein input is used as-is when no protein handler is configured.
+
+For custom handlers, ensure they run non-interactively and produce valid output files expected by the docking stage.
 
 ## Autobox Configuration
 
@@ -113,57 +86,6 @@ gnina_config:
 The search box is computed as the bounding box of the reference ligand's atoms, expanded by `autobox_add` Angstroms in each direction.
 
 **Important**: The reference ligand SDF must be in the same coordinate frame as the receptor PDB. If using an apo (unbound) structure, you may need to superimpose the reference ligand from a holo (bound) structure onto the apo receptor coordinates.
-
-## Configuration
-
-Full configuration in `config_docking.yml`:
-
-```yaml
-run: true
-tools: gnina                              # all, gnina, smina, matcha, or a comma-separated list
-receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
-auto_run: true                            # Execute scripts after generation
-run_in_background: false
-prepare_ligands: false                    # Keep input-to-ligand mapping near 1:1
-gnina_per_process_cpu: 8                  # CPU threads per GNINA process
-gnina_parallel_jobs_max: 6                # Cap auto parallel jobs
-
-smina_config:
-  bin: smina                              # Binary name or path
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
-  autobox_add: 4
-  cpu: 32
-  seed: 42
-  exhaustiveness: 8                       # Search thoroughness
-  num_modes: 1                            # Max poses per molecule in the default config
-
-gnina_config:
-  bin: gnina
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
-  autobox_add: 4
-  cpu: 8
-  seed: 42
-  no_gpu: false                          # Use GPU when available
-  num_modes: 1                           # Max poses per molecule in the default config
-
-matcha_config:
-  checkout_dir: modules/matcha_remote    # Managed git checkout created from GitHub PR head
-  uv_bin: uv                             # Launcher used for `uv run --project`
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
-  device: auto
-  n_samples: 20
-  scorer: gnina
-  scorer_minimize: true
-  physical_only: false
-  keep_workdir: false
-```
-
-By default, Matcha is fetched from the remote `LigandPro/Matcha` repository and checked out at the head SHA of the latest open PR without approvals. The managed checkout is stored under `modules/matcha_remote/`.
-
-For production runs, prefer a controlled Matcha checkout or an explicitly pinned
-setup path instead of relying on dynamically selected development code.
-
-Set `auto_run: false` to generate docking scripts without executing them. This is useful for running docking on a cluster or GPU node separately.
 
 ## Batch Docking Workflow
 
@@ -180,23 +102,26 @@ The docking stage processes molecules individually:
 
 ```
 stages/05_docking/
-+-- ligands.csv                Prepared ligands
-+-- job_meta.json              Job metadata
-+-- gnina/
-|   +-- gnina_out.sdf          Aggregated GNINA results
-+-- smina/
-|   +-- smina_out.sdf          Aggregated SMINA results
-+-- matcha/
-|   +-- matcha_out.sdf         Aggregated Matcha results
-+-- _workdir/
-    +-- molecules/             Per-molecule SDF files
-    +-- configs/               Per-molecule docking configs
-    +-- gnina/                 GNINA per-molecule results & logs
-    +-- smina/                 SMINA per-molecule results & logs
-    +-- run_matcha.sh
-    +-- run_gnina.sh
-    +-- run_smina.sh
+┌── _workdir/
+|   ├── configs/               # Per-molecule docking configs
+|   ├── gnina/                 # GNINA per-molecule results & logs
+|   ├── molecules/             # Per-molecule SDF files
+|   ├── smina/                 # SMINA per-molecule results & logs
+|   ├── run_gnina.sh
+|   ├── run_matcha.sh
+|   └── run_smina.sh
+├── checkpoints/               # Matcha per stage results 
+├── gnina/
+|   └── gnina_out.sdf          # Aggregated GNINA results
+├── matcha/
+|   └── matcha_out.sdf         # Aggregated Matcha results
+├── smina/
+|   └── smina_out.sdf          # Aggregated SMINA results
+├── job_ids.txt                # Docking job ids 
+├── job_meta.json              # Job metadata
+└── ligands.csv                # Prepared ligands
 ```
+
 
 ## Usage
 
@@ -209,13 +134,12 @@ uv run hedgehog --stage docking
 
 # Short alias
 uv run hedge --stage docking
-```
 
-To run the generated scripts manually (e.g., on a GPU node):
 
-```bash
+# To run the generated scripts manually:
 cd results/stages/05_docking/_workdir
 ./run_matcha.sh
 ./run_gnina.sh
 ./run_smina.sh
 ```
+
