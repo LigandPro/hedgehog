@@ -343,3 +343,49 @@ def test_physchem_filters_initial_flags_by_model(tmp_path):
 
     assert score_physchem(model_a, BASE_CONFIG) == pytest.approx(0.0)
     assert score_physchem(model_b, BASE_CONFIG) == pytest.approx(100.0)
+
+
+def test_yield_uses_model_index_map_when_final_model_name_is_corrupted(tmp_path):
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir()
+    (configs_dir / "model_index_map.json").write_text(
+        '{"model_A": 1, "model_B": 2}',
+        encoding="utf-8",
+    )
+
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCN", "CCC", "CCCC"],
+            "model_name": ["model_A", "model_A", "model_B", "model_B"],
+            "mol_idx": [
+                "LP-0001-00001",
+                "LP-0001-00002",
+                "LP-0002-00001",
+                "LP-0002-00002",
+            ],
+        }
+    ).to_csv(input_dir / "sampled_molecules.csv", index=False)
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCC"],
+            "model_name": ["smina", "smina"],
+            "mol_idx": ["LP-0001-00001", "LP-0002-00001"],
+            "gnina_affinity": [-9.0, -8.5],
+        }
+    ).to_csv(output_dir / "final_molecules.csv", index=False)
+
+    from hedgehog.reporting.weighted_score import collect_yield_evidence
+
+    model_a = collect_yield_evidence(tmp_path, "model_A")
+    model_b = collect_yield_evidence(tmp_path, "model_B")
+
+    assert model_a["metrics"]["initial_count"] == 2
+    assert model_a["metrics"]["final_count"] == 1
+    assert model_a["metrics"]["final_retention_rate"] == pytest.approx(0.5)
+    assert model_b["metrics"]["initial_count"] == 2
+    assert model_b["metrics"]["final_count"] == 1

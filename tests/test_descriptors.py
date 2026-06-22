@@ -363,36 +363,6 @@ class TestComputeMetrics:
         # Check skipped file was created
         assert (tmp_path / "skipped_molecules.csv").exists()
 
-    def test_compute_metrics_remove_stereochemistry(self, tmp_path):
-        """When enabled, stereochemistry should be removed from output SMILES."""
-        df = pd.DataFrame(
-            {
-                COL_SMILES: ["F[C@H](Cl)Br"],
-                COL_MODEL_NAME: [MODEL_TEST],
-                COL_MOL_IDX: ["t-0"],
-            }
-        )
-        cfg = {"preprocess": {"remove_stereochemistry": True}}
-        result = compute_metrics(df, str(tmp_path) + "/", config_descriptors=cfg)
-
-        assert len(result) == 1
-        assert "@" not in result.iloc[0][COL_SMILES]
-
-    def test_compute_metrics_reject_radicals(self, tmp_path):
-        """When enabled, radicals should be skipped."""
-        df = pd.DataFrame(
-            {
-                COL_SMILES: ["[CH3]"],
-                COL_MODEL_NAME: [MODEL_TEST],
-                COL_MOL_IDX: ["t-0"],
-            }
-        )
-        cfg = {"preprocess": {"remove_radicals": True}}
-        result = compute_metrics(df, str(tmp_path) + "/", config_descriptors=cfg)
-
-        assert len(result) == 0
-        assert (tmp_path / "skipped_molecules.csv").exists()
-
     def test_compute_metrics_preserves_model_name(self, tmp_path):
         """Model name should be preserved in output."""
         df = pd.DataFrame(

@@ -54,7 +54,6 @@ def _cfg():
         "filters": {
             "allowed_atoms": ["C", "N", "O", "S", "F", "Cl", "Br", "I", "P", "H"],
             "reject_radicals": True,
-            "require_neutral": True,
             "reject_isotopes": True,
             "require_single_fragment": True,
         },

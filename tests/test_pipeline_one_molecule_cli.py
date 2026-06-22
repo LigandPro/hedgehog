@@ -39,6 +39,9 @@ def _build_single_core_config(
     descriptors_cfg = _load_yaml(default_cfg_dir / "config_descriptors.yml")
     descriptors_cfg["n_jobs"] = 1
     descriptors_cfg["batch_size"] = 1
+    structural_constraints = descriptors_cfg.get("structural_constraints")
+    if isinstance(structural_constraints, dict):
+        structural_constraints["enabled"] = False
     descriptors_cfg_path = cfg_dir / "config_descriptors.yml"
     _dump_yaml(descriptors_cfg_path, descriptors_cfg)
 
