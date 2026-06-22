@@ -343,7 +343,7 @@ def _compute_single_molecule_descriptors(mol_n, model_name, mol_idx):
 
 
 def _compute_descriptors_for_row(args):
-    smiles, model_name, mol_idx, remove_radicals, remove_stereo = args
+    smiles, model_name, mol_idx = args
     if not isinstance(smiles, str):
         if pd.isna(smiles):
             return None, ("", model_name, mol_idx)
@@ -356,27 +356,6 @@ def _compute_descriptors_for_row(args):
     mol_n = Chem.MolFromSmiles(smiles)
     if not mol_n:
         return None, (smiles, model_name, mol_idx)
-
-    # Descriptor-level preprocessing is kept as an optional fallback.
-    # Prefer MolPrep stage for standardization to avoid double-processing.
-    if remove_radicals:
-        has_radical = any(
-            atom.GetNumRadicalElectrons() > 0 for atom in mol_n.GetAtoms()
-        )
-        if has_radical:
-            return None, (smiles, model_name, mol_idx)
-
-    if remove_stereo:
-        try:
-            Chem.RemoveStereochemistry(mol_n)
-        except Exception:
-            pass
-
-    if remove_radicals or remove_stereo:
-        try:
-            smiles = Chem.MolToSmiles(mol_n, canonical=True, isomericSmiles=False)
-        except Exception:
-            return None, (smiles, model_name, mol_idx)
 
     row_metrics = _compute_single_molecule_descriptors(mol_n, model_name, mol_idx)
     row_metrics["smiles"] = smiles
@@ -414,14 +393,6 @@ def compute_metrics(
     metrics = []
     skipped_molecules = []
 
-    preprocess_cfg = {}
-    if isinstance(config_descriptors, dict):
-        preprocess_cfg = config_descriptors.get("preprocess", {}) or {}
-
-    remove_radicals = bool(preprocess_cfg.get("remove_radicals", False))
-    remove_stereo = bool(preprocess_cfg.get("remove_stereochemistry", False))
-    do_preprocess = remove_radicals or remove_stereo
-
     n_jobs = resolve_n_jobs(config_descriptors, config)
     logger.info("Descriptors workers: %d", n_jobs)
     items = list(
@@ -432,7 +403,6 @@ def compute_metrics(
             strict=False,
         )
     )
-    items = [(s, m, idx, remove_radicals, remove_stereo) for (s, m, idx) in items]
 
     progress_cb = None
     if reporter is not None:
@@ -467,15 +437,10 @@ def compute_metrics(
 
     save_path = Path(process_path(save_path))
     if skipped_molecules:
-        if do_preprocess:
-            logger.warning(
-                "Skipped %d molecules during preprocessing or SMILES parsing",
-                len(skipped_molecules),
-            )
-        else:
-            logger.warning(
-                "Skipped %d molecules that failed to parse", len(skipped_molecules)
-            )
+        logger.warning(
+            "Skipped %d molecules that failed to parse",
+            len(skipped_molecules),
+        )
         skipped_df = pd.DataFrame(
             {
                 "smiles": [s for s, _, _ in skipped_molecules],
