@@ -5,13 +5,6 @@ batch_size: 1000
 # either borders or structural_constraints.
 filter_data: true
 
-preprocess:
-  # MolPrep stage owns molecule standardization. Keep these disabled to avoid
-  # double-processing the same transformations. If you disable MolPrep, you can
-  # enable these as a fallback (but MolPrep is recommended).
-  remove_radicals: false
-  remove_stereochemistry: false
-
 structural_constraints:
   # Adds these structural caps to descriptor filtering when filter_data is true.
   # If false, the full structural_constraints block is ignored.
