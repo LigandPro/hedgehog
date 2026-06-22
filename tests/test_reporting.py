@@ -950,3 +950,130 @@ class TestSynthesisAlignedScores:
         assert plots["synthesis_aligned_dist"]
         assert plots["synthesis_aligned_corr"]
         assert plots["synthesis_aligned_route"]
+
+
+class TestModelIndexMapReporting:
+    """Reports should compare generative models from model_index_map.json."""
+
+    def test_available_models_come_from_model_index_map(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        configs_dir.mkdir()
+        (configs_dir / "model_index_map.json").write_text(
+            json.dumps({"model_A": 1, "model_B": 2}),
+            encoding="utf-8",
+        )
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={},
+            initial_count=0,
+            final_count=0,
+        )
+
+        assert gen._get_available_models() == ["model_A", "model_B"]
+
+    def test_model_stats_ignore_corrupted_model_name_via_mol_idx(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        configs_dir.mkdir()
+        (configs_dir / "model_index_map.json").write_text(
+            json.dumps({"model_A": 1, "model_B": 2}),
+            encoding="utf-8",
+        )
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN", "CCC", "CCCC"],
+                "model_name": ["model_A", "model_A", "model_B", "model_B"],
+                "mol_idx": [
+                    "LP-0001-00001",
+                    "LP-0001-00002",
+                    "LP-0002-00001",
+                    "LP-0002-00002",
+                ],
+            }
+        ).to_csv(input_dir / "sampled_molecules.csv", index=False)
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCC"],
+                "model_name": ["smina", "smina"],
+                "mol_idx": ["LP-0001-00001", "LP-0002-00001"],
+            }
+        ).to_csv(output_dir / "final_molecules.csv", index=False)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={},
+            initial_count=4,
+            final_count=2,
+        )
+        stats = {row["model_name"]: row for row in gen._get_model_stats()}
+
+        assert set(stats) == {"model_A", "model_B"}
+        assert stats["model_A"]["final"] == 1
+        assert stats["model_B"]["final"] == 1
+        assert "smina" not in stats
+
+    def test_docking_filters_by_model_uses_model_index_map(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        configs_dir.mkdir()
+        (configs_dir / "model_index_map.json").write_text(
+            json.dumps({"model_A": 1, "model_B": 2}),
+            encoding="utf-8",
+        )
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN", "CCC", "CCCC"],
+                "model_name": ["model_A", "model_A", "model_B", "model_B"],
+                "mol_idx": [
+                    "LP-0001-00001",
+                    "LP-0001-00002",
+                    "LP-0002-00001",
+                    "LP-0002-00002",
+                ],
+            }
+        ).to_csv(input_dir / "sampled_molecules.csv", index=False)
+
+        df_dir = tmp_path / "stages" / "06_docking_filters"
+        df_dir.mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "mol_idx": [0, 1, 2, 3],
+                "model_name": ["smina", "smina", "smina", "smina"],
+                "source_mol_idx": [
+                    "LP-0001-00001",
+                    "LP-0001-00002",
+                    "LP-0002-00001",
+                    "LP-0002-00002",
+                ],
+                "pass_search_box": [True, True, True, False],
+                "pass_pose_quality": [True, False, True, True],
+                "pass_conformer_deviation": [True, True, True, True],
+                "pass": [True, False, True, False],
+            }
+        ).to_csv(df_dir / "metrics.csv", index=False)
+
+        gen = ReportGenerator(
+            base_path=tmp_path,
+            stages=[],
+            config={},
+            initial_count=4,
+            final_count=2,
+        )
+        result = gen._get_docking_filters_detailed()
+
+        assert set(result["by_model"].keys()) == {"model_A", "model_B"}
+        assert result["by_model"]["model_A"]["total"] == 2
+        assert result["by_model"]["model_A"]["passed"] == 1
+        assert result["by_model"]["model_B"]["total"] == 2
+        assert result["by_model"]["model_B"]["passed"] == 1
+        assert "smina" not in result["by_model"]
