@@ -198,7 +198,7 @@ Best-performing generators within each model class, ranked by the number of mole
 
 ## Documentation
 
-![HEDGEHOG Pipeline](docs/public/pipeline_structure_v3.png)
+![HEDGEHOG Pipeline](docs/public/hedgehog.png)
 
 For full details, use the documentation instead of this README:
 

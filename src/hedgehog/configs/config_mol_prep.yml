@@ -49,7 +49,6 @@ steps:
 filters:
   allowed_atoms: [C, N, O, S, F, Cl, Br, I, P, H]
   reject_radicals: true
-  require_neutral: true
   reject_isotopes: true
   require_single_fragment: true
 

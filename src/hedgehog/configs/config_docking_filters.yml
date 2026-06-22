@@ -8,7 +8,7 @@ run_after_docking: true  # Run automatically after docking stage
 input_sdf: null  # If null, uses docking output (smina_out.sdf or gnina_out.sdf)
 receptor_pdb: null  # If null, uses receptor from docking config
 
-# Filter 0: Search Box (Fast)
+# Filter 1: Search Box (Fast)
 # Ensures the final docked pose is inside the configured docking search box.
 # The box is resolved from docking config (center/size) or autobox_ligand + autobox_add.
 search_box:
@@ -16,7 +16,7 @@ search_box:
   max_outside_fraction: 0.0  # 0.0 = all atoms must be inside the box
   short_circuit: true  # When aggregation.mode == "all", skip heavy filters for failed poses
 
-# Filter 1: Pose Quality
+# Filter 2: Pose Quality
 # backend: "posebusters_fast" (fast, default) or "posecheck" (legacy, ~100x slower)
 pose_quality:
   enabled: true
@@ -31,7 +31,7 @@ pose_quality:
   strain_forcefield: "UFF"
   clash_tolerance: 0.5
 
-# Filter 2: Interactions (ProLIF)
+# Filter 3: Interactions (ProLIF)
 # Checks for required protein-ligand interactions
 interactions:
   enabled: true
@@ -49,7 +49,7 @@ interactions:
   similarity_threshold: 0.0  # Tanimoto to reference (0 = disabled)
   # Note: FaceToFace interaction excluded due to edge cases causing errors
 
-# Filter 3: Shepherd-Score (3D Similarity)
+# Filter 4: Shepherd-Score (3D Similarity)
 # Compares molecular shape to reference ligand
 # backend: "auto" (worker -> in-process -> skip), "worker", or "inprocess"
 # shepherd-score is optional and should be installed in isolated worker venv:
@@ -64,7 +64,7 @@ shepherd_score:
   alpha: 0.81  # Gaussian width parameter (default from paper)
   align_before_scoring: true  # Reserved for compatibility
 
-# Filter 4: Conformer Deviation
+# Filter 5: Conformer Deviation
 # backend: "symmetry_rmsd" (correct, default) or "naive" (legacy)
 conformer_deviation:
   enabled: true
