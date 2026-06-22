@@ -3,12 +3,12 @@ import type { MetaRecord } from 'nextra'
 const meta: MetaRecord = {
   index: 'Overview',
   'data-contract': 'Data Contract',
-  'mol-prep': 'Mol Prep',
+  'mol-prep': 'Preprocessing',
   descriptors: 'Descriptors',
   'structural-filters': 'Structural Filters',
-  synthesis: 'Synthesis',
+  synthesis: 'Synthesis Feasibility',
   docking: 'Docking',
-  'docking-filters': 'Docking Filters',
+  'docking-filters': '3D Filters',
   'final-descriptors': 'Final Descriptors'
 }
 

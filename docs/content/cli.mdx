@@ -15,12 +15,20 @@ uv run hedge --help
 
 | Command   | Description                                           |
 |-----------|-------------------------------------------------------|
-| `run`     | Run the pipeline explicitly as a subcommand           |
-| `report`  | Regenerate the HTML report from an existing run       |
 | `info`    | Display pipeline information and available stages     |
-| `version` | Display version information                           |
+| `report`  | Regenerate the HTML report from an existing run       |
+| `run`     | Run the pipeline explicitly as a subcommand           |
 | `setup`   | Install optional external tools and assets            |
-| `tui`     | Launch the interactive TUI (Terminal User Interface)   |
+| `tui`     | Launch the interactive TUI (Terminal User Interface)  |
+| `version` | Display version information                           |
+
+
+`hedge` is a short alias for `hedgehog`. All commands work identically with either name:
+
+```bash
+uv run hedge --stage docking
+uv run hedgehog --stage docking
+```
 
 ## `hedgehog` (default pipeline command)
 
@@ -45,7 +53,7 @@ uv run hedgehog run [OPTIONS]
 | `--out` | `-o` | `TEXT` | `None` | Output directory override (`folder_to_save`). |
 | `--stage` | `-s` | `STAGE` | `None` | Run one or more stages only. Repeat `--stage` to select multiple stages. Uses config molecules unless `--mols` is provided. See `hedgehog info` for stage descriptions. |
 | `--reuse` | | `FLAG` | `False` | Reuse existing results folder. |
-| `--force-new` | | `FLAG` | `False` | Always create a new results folder. |
+| `--force-new` | | `FLAG` | `False` | Create a new results folder. |
 | `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools without prompts. |
 | `--progress` | | `FLAG` | `False` | Show live progress bar. |
 | `--large-dataset` | | `FLAG` | `False` | Stream large molecule libraries in chunks, write row-level `.parts` shards, and skip plots/report-heavy outputs. Filters are calculated by default but do not remove molecules unless `large_dataset_filter_data: true`. |
@@ -58,7 +66,9 @@ The progress bar is disabled by default in CLI runs. Use `--progress` when you w
 
 Use `--large-dataset` for PubChem/Enamine-scale statistics runs. It stores intermediate row-level tables as compressed shard directories such as `filtered_molecules.parts/` and `descriptors_all.parts/`, uses `large_dataset_chunk_rows` from the master config, and skips plots plus HTML report generation. Without an explicit `--stage` selection, large-dataset mode runs the scalable statistics path: `mol_prep`, `descriptors`, `struct_filters`, and `synthesis`. Descriptor, structural, and synthesis filters are calculated by default, but downstream large-mode outputs keep all molecules unless `large_dataset_filter_data: true`. The synthesis stage skips AiZynthFinder retrosynthesis in large-dataset mode.
 
-When you request any stage other than `mol_prep`, the pipeline may still run `mol_prep` first if the Mol Prep stage is enabled in `config_mol_prep.yml`. This is intentional: downstream stages operate on standardized molecules when that preprocessing stage is active.
+When you request any stage other than `mol_prep`, the pipeline run `mol_prep` first if the Mol Prep stage is enabled in `config_mol_prep.yml`. This is intentional because downstream stages operate on standardized molecules when that preprocessing stage is active.
+
+Every run writes a transient `.RUN_INCOMPLETE` marker in the results folder. The marker is removed on successful completion. If it remains present, the run was interrupted or failed and the run log should be checked.
 
 ### Available Stages
 
@@ -66,59 +76,13 @@ Each `--stage` occurrence accepts one of the following values:
 
 | Stage | Description |
 |-------|-------------|
-| `mol_prep` | Standardize and filter molecules (salts/fragments, metals, charges, tautomers, stereo) |
-| `descriptors` | Compute 22 physicochemical descriptors per molecule |
-| `struct_filters` | Apply structural filters (Lilly, NIBR, PAINS, etc.) |
+| `mol_prep` | Standardize and filter molecules |
+| `descriptors` | Compute 28 physicochemical descriptors per molecule |
+| `struct_filters` | Apply structural filters |
 | `synthesis` | Evaluate synthetic accessibility using retrosynthesis (AiZynthFinder) and other metrics |
-| `docking` | Calculate docking scores with SMINA/GNINA/Matcha |
+| `docking` | Calculate docking and binding affinity scores |
 | `docking_filters` | Filter docking poses by quality and interactions |
 | `final_descriptors` | Recompute descriptors on the final filtered set |
-
-When running `--stage struct_filters`, input resolution is:
-1. Existing descriptors output (if present in the run folder)
-2. MolPrep output
-3. Sampled molecules input
-
-### Input File Contract
-
-Recommended input is CSV/TSV with a `smiles` header:
-
-```csv
-smiles,model_name
-CCO,demo
-CCN,demo
-```
-
-Required:
-
-- `smiles`
-
-Optional:
-
-- `model_name` or `name`
-- `mol_idx`
-
-If `mol_idx` is missing, HEDGEHOG assigns it automatically. Headerless
-`.smi`-style files are supported for simple one-SMILES-per-line inputs, but
-CSV/TSV is the clearest format for production runs.
-
-To run multiple stages in a single invocation, repeat `--stage`:
-
-```bash
-uv run hedgehog --stage descriptors --stage struct_filters
-```
-
-### Folder Behavior
-
-The output folder strategy depends on what you are running:
-
-- **Full pipeline** — a new numbered folder (`results/run_N/`) is created automatically.
-- **Single stage rerun** (`--stage` without `--mols`) — the existing folder is reused so the stage output is updated in place.
-- **Single stage with new molecules** (`--stage` + `--mols`) — a new folder is created since the input changed.
-- **`--reuse`** — always reuses the configured folder, regardless of what exists.
-- **`--force-new`** — always creates a new numbered folder, regardless of context.
-
-Every run also writes a transient `.RUN_INCOMPLETE` marker in the results folder. The marker is removed on successful completion. If it remains present, the run was interrupted or failed and the run log should be checked.
 
 ### Stage Failure and Skip Semantics
 
@@ -126,10 +90,6 @@ Stage completion is not binary "success or crash" across the whole pipeline. Som
 
 - **Early exit with a completed upstream pipeline state**: if `mol_prep` finishes but leaves zero molecules, the pipeline stops immediately.
 - **Hard failure / early stop**: structural filters stop the run if they do not complete successfully.
-- **Conditional continuation**: synthesis can continue the pipeline when the stage failed but still produced usable output, or when no output file was created and downstream stages can continue without synthesis results.
-- **Soft skip**: docking, docking filters, and final descriptors can be skipped when their required upstream data does not exist or contains no molecules.
-
-This matters when interpreting stage counts in the log and the final report: a missing stage output does not always mean the whole run failed in the same way.
 
 ### Examples
 
@@ -171,37 +131,6 @@ uv run hedge --progress
 uv run hedge --large-dataset --mols input/pubchem.csv
 ```
 
-## `hedgehog report`
-
-Regenerates the reporting artifacts from an existing pipeline run directory without re-running any pipeline stages. Useful when report templates, plotting logic, or the stage-audit notebook have been updated.
-
-```bash
-uv run hedgehog report <RESULTS_DIR>
-```
-
-### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `RESULTS_DIR` | `TEXT` | Yes | Path to an existing pipeline results directory (e.g., `results/run_10`). |
-
-The command loads the saved configuration from `configs/master_config_resolved.yml` inside the results directory and regenerates:
-
-- `report.html`
-- `report_data.json`
-- `RUN_INFO.md`
-- `stage_filter_audit.ipynb`
-
-### Examples
-
-```bash
-# Regenerate report for a specific run
-uv run hedgehog report results/run_10
-
-# Using the short alias
-uv run hedge report results/run_5
-```
-
 ## `hedgehog info`
 
 Displays a table of all available pipeline stages with their descriptions. Useful for checking stage names before using `--stage`.
@@ -210,27 +139,30 @@ Displays a table of all available pipeline stages with their descriptions. Usefu
 uv run hedgehog info
 ```
 
-## `hedgehog version`
 
-Prints the current HEDGEHOG version and project tagline.
+## `hedgehog report`
+
+Regenerates the reporting artifacts from an existing pipeline run directory without re-running any pipeline stages. Useful when report templates, plotting logic, or the stage-audit notebook have been updated.
 
 ```bash
-uv run hedgehog version
+uv run hedgehog report <RESULTS_DIR>
 ```
+
+RESULTS_DIR` is a required argument. Set a path to an existing pipeline results directory (e.g., `results/run_10`).
+
+The command loads the saved configuration from `configs/master_config_resolved.yml` inside the results directory and regenerates:
+
+- `report.html`
+- `report_data.json`
+- `stage_filter_audit.ipynb`
+
 
 ## `hedgehog setup aizynthfinder`
 
 Installs the upstream `aizynthfinder` package into the project environment and downloads its public data into `modules/aizynthfinder/`.
-Downloads are auto-accepted by default.
 
 ```bash
 uv run hedgehog setup aizynthfinder
-```
-
-If you explicitly want interactive confirmation:
-
-```bash
-uv run hedgehog setup aizynthfinder --no-yes
 ```
 
 ## `hedgehog setup sync`
@@ -241,12 +173,6 @@ Downloads the SYNC 3D synthesizability classifier checkpoint to `modules/sync/cl
 uv run hedgehog setup sync
 ```
 
-Use `--no-yes` to prompt before download:
-
-```bash
-uv run hedgehog setup sync --no-yes
-```
-
 ## `hedgehog setup fsscore`
 
 Clones upstream FSScore checkout into `modules/fsscore` so you can point synthesis
@@ -254,19 +180,23 @@ configuration to the pretrained checkpoint without adding heavy torch dependenci
 to the base HEDGEHOG environment.
 
 ```bash
-uv run hedgehog setup fsscore --yes
+uv run hedgehog setup fsscore 
 ```
-
-Options:
-
-| Option | Short | Type | Default | Description |
-|--------|-------|------|---------|-------------|
-| `--yes` | `-y` | `FLAG` | `False` | Auto-accept checkout prompt. |
 
 After checkout, configure:
 
 - `HEDGEHOG_FSSCORE_PYTHON` to an isolated FSScore environment
 - `HEDGEHOG_FSSCORE_MODEL_PATH` (or `HEDGEHOG_FSSCORE_REPO_PATH`)
+
+## `hedgehog setup gasa`
+
+Installs the optional GASA scorer checkout and an isolated worker environment used by the synthesis stage.
+
+```bash
+uv run hedgehog setup gasa 
+```
+
+After setup, configure `HEDGEHOG_GASA_COMMAND` or `synthesis.gasa.command` with the printed worker command template, or use `gasa.executable` / `gasa.api_url` in `config_synthesis.yml`.
 
 ## `hedgehog setup nonpher-check`
 
@@ -289,9 +219,6 @@ Options:
 Examples:
 
 ```bash
-# Probe current uv environment
-uv run hedgehog setup nonpher-check
-
 # Probe uv-only isolated Nonpher env
 uv run hedgehog setup nonpher-check --python ~/work/hedgehog_optional_envs/nonpher/bin/python
 
@@ -307,46 +234,12 @@ Creates an isolated virtual environment at `.venv-nvmolkit-worker` and installs 
 uv run hedgehog setup nvmolkit-worker
 ```
 
-Options:
-
-| Option | Short | Type | Default | Description |
-|--------|-------|------|---------|-------------|
-| `--yes/--no-yes` | `-y` | `FLAG` | `True` | Auto-accept dependency download prompt. |
-| `--python` | | `TEXT` | `None` | Python interpreter for worker venv. Resolution order: explicit value, then `python3.12`, `python3.11`, `python3.10`. |
-
-Examples:
-
-```bash
-# Auto-install worker dependencies (default)
-uv run hedgehog setup nvmolkit-worker
-
-# Force worker venv to use Python 3.11
-uv run hedgehog setup nvmolkit-worker --python python3.11
-```
-
 ## `hedgehog setup shepherd-worker`
 
 Creates an isolated virtual environment at `.venv-shepherd-worker` and installs the optional Shepherd-Score backend there.
 
 ```bash
 uv run hedgehog setup shepherd-worker
-```
-
-Options:
-
-| Option | Short | Type | Default | Description |
-|--------|-------|------|---------|-------------|
-| `--yes` | `-y` | `FLAG` | `False` | Auto-accept dependency download prompt. |
-| `--python` | | `TEXT` | `None` | Python interpreter for worker venv. Resolution order: explicit value, then `python3.12`, `python3.11`, `python3.10`. |
-
-Examples:
-
-```bash
-# Auto-install worker dependencies
-uv run hedgehog setup shepherd-worker --yes
-
-# Force worker venv to use Python 3.11
-uv run hedgehog setup shepherd-worker --python python3.11 --yes
 ```
 
 ## Environment Variables
@@ -363,7 +256,7 @@ The CLI supports a few environment variables that are useful in automation and C
 
 ## `hedgehog tui`
 
-Launches the interactive Terminal User Interface for visual pipeline configuration and management.
+Launches the interactive Terminal User Interface (TUI) for visual pipeline configuration and management.
 
 Requirements and behavior:
 
@@ -400,18 +293,10 @@ cd tui
 npm run tui
 ```
 
-## Alias
+## `hedgehog version`
 
-`hedge` is a short alias for `hedgehog`. All commands work identically with either name:
+Prints the current HEDGEHOG version and project tagline.
 
 ```bash
-uv run hedge --stage docking
-uv run hedgehog --stage docking
+uv run hedgehog version
 ```
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0`  | Pipeline completed successfully |
-| `1`  | Pipeline completed with failures, conflicting flags (`--reuse` + `--force-new`, or `--out` with `--reuse/--force-new`), TUI directory not found, or Node.js not available |

@@ -8,17 +8,19 @@ HEDGEHOG implements a sequential molecular filtering pipeline that progressively
 
 ## Pipeline Stages
 
+Retention rates are approximate and depend heavily on the input molecule set and configuration thresholds.
+
+
 | # | Stage | Purpose | Typical Retention |
 |---|-------|---------|-------------------|
-| 1 | Mol Prep (Datamol) | Standardize molecules and remove salts/fragments/charges/stereochemistry; canonicalize tautomers | 70--95% |
-| 2 | Molecular Descriptors | Compute 22 physicochemical descriptors and filter by threshold ranges | 40--80% |
-| 3 | Structural Filters | Apply medicinal chemistry alerts, complexity checks, and structural rules | 50--90% |
-| 4 | Synthesis Analysis | Evaluate synthetic accessibility (SA Score, SYBA, RA Score) and retrosynthesis feasibility | 30--70% |
-| 5 | Molecular Docking | Dock surviving molecules into the target protein binding site | ~100% (scoring, not filtering) |
-| 6 | Docking Filters | Filter docked poses by search-box containment, clashes, interactions, and conformer deviation | 20--70% |
-| 7' | Final Descriptors | Recompute descriptors on the final molecule set for reporting | 100% (no filtering) |
+| 1 | [Preprocessing](/pipeline/mol-prep.mdx) | Standardize molecules and remove salts/fragments/charges/stereochemistry; canonicalize tautomers | 70--95% |
+| 2 | [Descriptors](/pipeline/descriptors.mdx) | Compute 28 physicochemical descriptors and filter by threshold ranges | 25--40% |
+| 3 | [Structural Filters](/pipeline/structural-filters.mdx) | Apply medicinal chemistry alerts, complexity checks, and structural rules | 15--30% |
+| 4 | [Synthesis Feasibility](/pipeline/synthesis.mdx) | Evaluate synthetic accessibility (SA, SYBA, RA scores) and retrosynthesis feasibility | 35--60% |
+| 5 | [Molecular Docking](/pipeline/docking.mdx) | Dock surviving molecules into the target protein binding site | 50--75% |
+| 6 | [Three-Dimensional Filters](/pipeline/docking-filters.mdx) | Filter docked poses by search-box containment, clashes, interactions, and conformer deviation | 35--60% |
+| 7' | [Final Descriptors](/pipeline/final-descriptors.mdx) | Recompute descriptors on the final molecule set for reporting | 100% (no filtering) |
 
-Retention rates are approximate and depend heavily on the input molecule set and configuration thresholds.
 
 ## Data Flow
 
@@ -27,10 +29,10 @@ input/sampled_molecules.csv
         |
         v
  [Stage 1: Mol Prep]
-        |
+        |  filtered_molecules.csv
         v
  [Stage 2: Descriptors]
-        |  filtered_molecules.csv
+        |  filtered/filtered_molecules.csv
         v
  [Stage 3: Structural Filters]
         |  filtered_molecules.csv
@@ -39,7 +41,7 @@ input/sampled_molecules.csv
         |  filtered_molecules.csv
         v
  [Stage 5: Molecular Docking]
-        |  gnina_out.sdf / smina_out.sdf / matcha_out.sdf
+        |  gnina/gnina_out.sdf, smina/smina_out.sdf, matcha/matcha_out.sdf
         v
  [Stage 6: Docking Filters]
         |  filtered_molecules.csv
@@ -50,60 +52,31 @@ input/sampled_molecules.csv
  output/final_molecules.csv
 ```
 
-Most stages write a stable `filtered_molecules.csv`, but input resolution is not a strict "previous directory only" rule. When a downstream stage runs, HEDGEHOG prefers the latest usable upstream artifact and can fall back to earlier filtered outputs in the same run folder. This is what enables targeted stage reruns.
-
 ## Sequential Filtering Approach
 
-The pipeline is designed as a funnel: cheap, fast filters run first (descriptors, structural alerts), and expensive operations (docking, retrosynthesis) run later on a smaller molecule set. This ordering minimizes computational cost while maximizing coverage.
+The pipeline is designed as a funnel: cheap, fast filters run first (descriptors, structural alerts), and expensive operations (retrosynthesis, docking) run later on a smaller molecule set. This ordering minimizes computational cost while maximizing coverage.
 
-Key design decisions:
+Any stage can be requested with `--stage <name>`, which is useful for debugging or re-running a single step. When you request any stage other than `mol_prep`, HEDGEHOG  still run `mol_prep` first, so downstream stages operate on standardized molecules. All configuration files are snapshotted into a `configs/` directory at the start of each run, and a `RUN_INFO.md` is generated at completion.
 
-- **Early exit and skips**: Mol Prep stops downstream execution when it completes with zero molecules. Other stages may complete with empty CSVs or be reported as skipped when their required input is missing or empty.
-- **Single-stage mode**: any stage can be requested with `--stage <name>`, which is useful for debugging or re-running a single step. When you request any stage other than `mol_prep`, HEDGEHOG may still run `mol_prep` first if it is enabled in `config_mol_prep.yml`, so downstream stages operate on standardized molecules.
-- **Provenance**: all configuration files are snapshotted into a `configs/` directory at the start of each run, and a `RUN_INFO.md` is generated at completion.
+Every stage config includes a `run: true/false` flag that controls whether it executes. See the [Configuration Reference](/configuration/reference) for full details.
 
-## Input Data Contract
+`output/final_molecules.csv` is the final filtered output file. 
 
-Recommended molecule input is CSV/TSV with a `smiles` header:
+`.RUN_INCOMPLETE` is a transient marker file written at the start of a run. It is removed on successful completion. If it remains in the run folder, the pipeline was interrupted or failed and the run log should be reviewed.
 
-```csv
-smiles,model_name
-CCO,baseline
-CCN,baseline
-c1ccccc1,baseline
-```
-
-Required:
-
-- `smiles`
-
-Optional:
-
-- `model_name` or `name`
-- `mol_idx`
-
-Generated:
-
-- `mol_idx` is assigned automatically if missing and is used to join
-  descriptors, filters, docking scores, and report data.
-
-Headerless `.smi` files are supported by extension for simple one-SMILES-per-line
-inputs, with an optional second whitespace token used as `model_name`. CSV/TSV
-with a `smiles` header remains the recommended production format.
-
-## Stage Dependencies
+### Stage Dependencies
 
 | Stage | Needs | Reads From by Default | Writes |
 |-------|-------|-----------------------|--------|
-| `mol_prep` | Raw molecule table | `generated_mols_path` / sampled input | `stages/00_mol_prep/filtered_molecules.csv` |
-| `descriptors` | Molecule table | Mol Prep output when enabled, otherwise sampled input | `stages/01_descriptors_initial/metrics/` and `filtered/filtered_molecules.csv` |
-| `struct_filters` | Descriptor or molecule table | Descriptors output, then Mol Prep/sample fallback | `stages/03_structural_filters_post/filtered_molecules.csv` |
-| `synthesis` | Filtered molecules | Structural filters, descriptors, or Mol Prep output | `stages/04_synthesis/filtered_molecules.csv` |
-| `docking` | Molecules plus receptor/reference ligand | Latest usable filtered table | `stages/05_docking/{tool}/{tool}_out.sdf` |
+| `mol_prep` | Raw molecule table | `generated_mols_path` or sampled input | `stages/01_mol_prep/filtered_molecules.csv` |
+| `descriptors` | Molecule table | preprocessing output, sampled input | `stages/02_descriptors_initial/metrics/` and `filtered/filtered_molecules.csv` |
+| `struct_filters` | Descriptor or molecule table | Descriptors output, then prerpocessing or sample fallback | `stages/03_structural_filters_post/filtered_molecules.csv` |
+| `synthesis` | Molecule table | Structural filters, descriptors, preprocessing output, or sampled input | `stages/04_synthesis/filtered_molecules.csv` |
+| `docking` | Molecules plus receptor or reference ligand | Latest usable filtered table | `stages/05_docking/{tool}/{tool}_out.sdf` |
 | `docking_filters` | Docking poses | `stages/05_docking/...` | `stages/06_docking_filters/filtered_molecules.csv` |
 | `final_descriptors` | Final survivor table | Docking filters or latest usable filtered table | `stages/07_descriptors_final/...` |
 
-## Stage Configuration
+### Stage Configuration
 
 Each stage has its own YAML configuration file referenced from the master `config.yml`:
 
@@ -114,41 +87,6 @@ config_structFilters: src/hedgehog/configs/config_structFilters.yml
 config_synthesis: src/hedgehog/configs/config_synthesis.yml
 config_docking: src/hedgehog/configs/config_docking.yml
 config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
+config_moleval: src/hedgehog/configs/config_moleval.yml
+config_weighted_score: src/hedgehog/configs/config_weighted_score.yml
 ```
-
-Every stage config includes a `run: true/false` flag that controls whether it executes. See the [Configuration Reference](/configuration/reference) for full details.
-
-## Output Structure
-
-Each pipeline run writes into the configured output directory. By default, fresh
-runs use an auto-numbered run directory derived from `results/run` (for example
-`results/run`, `results/run_1`, `results/run_2`, ...). `--out` can override the
-directory and `--reuse` can intentionally reuse an existing one.
-
-```
-results/run_N/
-+-- input/
-|   +-- sampled_molecules.csv
-+-- stages/
-|   +-- 00_mol_prep/
-|   +-- 01_descriptors_initial/
-|   +-- 03_structural_filters_post/
-|   +-- 04_synthesis/
-|   +-- 05_docking/
-|   +-- 06_docking_filters/
-|   +-- 07_descriptors_final/
-+-- output/
-|   +-- final_molecules.csv
-+-- configs/
-|   +-- master_config_resolved.yml
-|   +-- config_*.yml
-+-- report.html
-+-- report_data.json
-+-- stage_filter_audit.ipynb
-+-- RUN_INFO.md
-+-- run_YYYYMMDD_HHMMSS.log
-```
-
-`output/final_molecules.csv` is the canonical final artifact. It preserves all columns from the latest filtered dataset and includes aggregated docking score columns (`gnina_affinity`, `gnina_cnnscore`, `gnina_cnnaffinity`, `gnina_cnn_vs`, `smina_affinity`, `matcha_affinity`) when docking outputs are available.
-
-`.RUN_INCOMPLETE` is a transient marker file written at the start of a run. It is removed on successful completion. If it remains in the run folder, the pipeline was interrupted or failed and the run log should be reviewed.

@@ -14,15 +14,71 @@ The report uses [Plotly.js](https://plotly.com/javascript/) for interactive char
 filter dropdown that lets you view metrics for individual generative models or compare all models
 side-by-side.
 
-Each run also writes a companion Jupyter notebook, `stage_filter_audit.ipynb`, for deeper stage-by-stage inspection. The notebook uses `mols2grid` to review molecules that passed or dropped at each stage and to compare them against descriptor, synthesis, or docking-filter thresholds.
-
 ## Report Sections
+
+
+### Generator Reality Assessment
+
+**Generator Reality Assessment** scorecard in `RUN_INFO.md` is an optional chart in the HTML report when scoring data is available.
+
+It summarizes each model with:
+
+- `Generator Reality Score` (0.0–100.0) used for ranking how well the model's initial generated set survives the pipeline gates.
+- `Final Candidate Pool Quality` (0.0–100.0), a secondary survivor-pool score for the molecules that already passed the pipeline.
+- `Grade` (`Excellent`, `Strong`, `Moderate`, `Weak`) for quick triage.
+- `Confidence` (`High`, `Medium`, `Low`) for reliability assessment.
+- `Main Bottleneck` list to show the weakest components.
+
+#### How the score is assembled
+
+The score is collected per `model_name`. If a CSV does not have `model_name`, HEDGEHOG treats it as an aggregate `__all__` model. This is an explainable ranking scorecard to compare models inside the same experiment and then validate best candidates with the underlying stage level reports. Component scores are normalized to `0..100`. 
+
+![Pipeline Flow](/gra_example.png)
+
+
+The report generator reads these sources:
+
+| Component | Weight| Source files | Evidence collected |
+|-----------| ------|--------------|--------------------|
+| `yield` | 0.30 | `input/sampled_molecules.csv`, `output/final_molecules.csv`, root `final_molecules.csv`, final descriptor or docking-filter fallback CSVs | Initial count, final count, final retention rate, clipped to `0..1`.|
+| `physchem` | 0.15 | `stages/02_descriptors_initial/filtered/pass_flags.csv`, `stages/02_descriptors_initial/metrics/descriptors_all.csv`, with final descriptor files only as fallback | Descriptor all-pass rate, mean flag pass rate for evidence, worst flag |
+| `structural` | 0.25 | `stages/03_structural_filters_post/filtered_molecules.csv`, `stages/03_structural_filters_post/failed_molecules.csv` | Stage pass rate, weakest structural flag, mean flag pass rate for evidence, filtered/failed counts. `0.80 * structural_stage_pass_rate + 0.20 * worst_filter_pass_rate` by default. |
+| `synthesis` | 0.10 | `stages/04_synthesis/synthesis_extended.csv`, `synthesis_scores.csv`, with `filtered_molecules.csv` only as fallback | Solve rate, median scores and search time across molecules evaluated by synthesis |
+| `docking_pose` | 0.15 | `stages/06_docking_filters/metrics.csv`, `filtered_poses.csv`, with final molecule files only as fallback | Median affinity, median CNNscore, median CNNaffinity, pose pass rates across docking-filter input poses |
+| `diversity` | 0.05 | Already computed `moleval.by_stage.Input` in `report_data.json`, with `DockingFilters` only as fallback | IntDiv1, IntDiv2, ScaffDiv, ScaffUniqueness, SEDiv for the model input set |
+
+
+The final model score is:
+
+```text
+overall = sum(component_weight * component_score) / sum(available_component_weights)
+```
+
+Missing components are not scored as zero. They are marked `available: false`, excluded from the denominator, and recorded as warnings where appropriate, and the remaining weights are renormalized automatically.  `Confidence` drops when too few components or final molecules are available. If evidence is sparse (`final molecules` is low and/or several components are missing), `Confidence` drops from `High` to `Medium` or `Low`.
+
+The generator score also supports hard caps for critical funnel failures. By default, a structural stage pass rate below `0.20` caps the score at `60`, a descriptor all-pass rate below `0.50` caps it at `70`, and a final retention rate below `0.05` caps it at `70`. These caps prevent a model from looking strong when an AND-gate stage rejects most of its generated molecules.
+
+`Final Candidate Pool Quality` inspect the final pool: yield uses final-count saturation, physchem uses the mean descriptor flag pass rate, structural uses the mean structural flag pass rate, and synthesis/docking/diversity use the same component formulas. 
+
+To configure or disable this section, use:
+
+```yaml
+config_weighted_score: src/hedgehog/configs/config_weighted_score.yml
+```
+
+Set `run: false` in that file to remove the generator reality assessment from the report.
+
+You can tune docking/synthesis behavior in this config to move rankings toward affinity-rich or synthetic tractability-focused models:
+
+- Docking thresholds are configured under `docking` (`bad_affinity`/`good_affinity`, `bad_cnnscore`/`good_cnnscore`, `bad_cnnaffinity`/`good_cnnaffinity`).
+- Synthesis thresholds are configured under `synthesis` (`sa_*`, `ra_*`, `syba_*`, `target_search_time_sec`).
+
 
 ### Pipeline Flow (Sankey Diagram)
 
-The top of the report displays a **Sankey diagram** showing how molecules flow through the pipeline.
-Each node represents a pipeline stage, and the width of each link is proportional to the number of
-molecules that survive that transition.
+Report displays a **Sankey diagram** showing how molecules flow through the pipeline. Each node represents a pipeline stage, and the width of each link is proportional to the number of molecules that survive that transition.
+
+![Pipeline Flow](/sankey_diagram.png)
 
 - **Purple links** represent molecules that pass to the next stage.
 - **Gray "Lost" nodes** branch off at each transition, showing how many molecules were filtered out.
@@ -30,6 +86,7 @@ molecules that survive that transition.
 
 A classic **funnel chart** is also included, showing the absolute molecule count at each stage with
 percentage-of-initial annotations.
+
 
 ### Executive Summary
 
@@ -52,141 +109,12 @@ When the input contains molecules from multiple generative models, the report in
 - **Stacked bar chart** showing where molecules were lost (by stage) for each model.
 - A **model dropdown** at the top of the report to filter all sections by a single model or compare all.
 
-### Generator Reality Assessment
-
-The reporting layer adds a **Generator Reality Assessment** scorecard in `RUN_INFO.md` and an optional chart in the HTML report when scoring data is available.
-
-It summarizes each model with:
-
-- `Generator Reality Score` (0.0–100.0) used for ranking how well the model's initial generated set survives the pipeline gates.
-- `Final Candidate Pool Quality` (0.0–100.0), a secondary survivor-pool score for the molecules that already passed the pipeline.
-- `Grade` (`Excellent`, `Strong`, `Moderate`, `Weak`) for quick triage.
-- `Confidence` (`High`, `Medium`, `Low`) for reliability assessment.
-- `Main Bottleneck` list to show the weakest components.
-
-The default component weights are:
-
-| Component | Default Weight |
-|-----------|----------------|
-| `yield` | 0.30 |
-| `physchem` | 0.15 |
-| `structural` | 0.25 |
-| `synthesis` | 0.10 |
-| `docking_pose` | 0.15 |
-| `diversity` | 0.05 |
-
-Each component is built from stage outputs already produced by the pipeline (descriptors, structural filters, docking, synthesis, and MolEval diversity metrics). In short:
-
-- `yield`: final retention against `target_final_retention`
-- `physchem`: all-pass rate across early descriptor gates
-- `structural`: structural stage survival plus the weakest structural gate
-- `synthesis`: synthesis solvability, SA/RA/SYBA/search-time profile
-- `docking_pose`: docking scores and pose quality pass rates
-- `diversity`: MolEval diversity split across internal, scaffold, and sphere-exclusion metrics
-
-#### How the score is assembled
-
-The score is collected per `model_name`. If a CSV does not have `model_name`, HEDGEHOG treats it as an aggregate `__all__` model.
-
-The report generator reads these sources:
-
-| Component | Source files | Evidence collected |
-|-----------|--------------|--------------------|
-| `yield` | `input/sampled_molecules.csv`, `output/final_molecules.csv`, root `final_molecules.csv`, final descriptor or docking-filter fallback CSVs | Initial count, final count, final retention rate |
-| `physchem` | `stages/01_descriptors_initial/filtered/pass_flags.csv`, `stages/01_descriptors_initial/metrics/descriptors_all.csv`, with final descriptor files only as fallback | Descriptor all-pass rate, mean flag pass rate for evidence, worst flag, QED, MolWt, LogP, TPSA, Fsp3 summaries |
-| `structural` | `stages/03_structural_filters_post/filtered_molecules.csv`, `stages/03_structural_filters_post/failed_molecules.csv` | Stage pass rate, weakest structural flag, mean flag pass rate for evidence, filtered/failed counts |
-| `synthesis` | `stages/04_synthesis/synthesis_extended.csv`, `synthesis_scores.csv`, with `filtered_molecules.csv` only as fallback | Solve rate, median SA, median RA, median SYBA, median search time across molecules evaluated by synthesis |
-| `docking_pose` | `stages/06_docking_filters/metrics.csv`, `filtered_poses.csv`, with final molecule files only as fallback | Median affinity, median CNNscore, median CNNaffinity, pose pass rates across docking-filter input poses |
-| `diversity` | Already computed `moleval.by_stage.Input` in `report_data.json`, with `DockingFilters` only as fallback | IntDiv1, IntDiv2, ScaffDiv, ScaffUniqueness, SEDiv for the model input set |
-
-Component scores are normalized to `0..100`:
-
-- `yield` is `final_retention_rate / target_final_retention`, clipped to `0..1`.
-- `physchem` is the fraction of early descriptor rows that pass every descriptor flag simultaneously.
-- `structural` is `0.80 * structural_stage_pass_rate + 0.20 * worst_filter_pass_rate` by default.
-- `synthesis` combines solve rate, normalized SA, normalized RA, sigmoid-normalized SYBA, and normalized search time across synthesis-evaluated molecules, not only solved survivors.
-- `docking_pose` combines normalized affinity, CNNscore, CNNaffinity, and pose pass rate across docking-filter input poses, not only final accepted molecules.
-- `diversity` combines IntDiv1, IntDiv2, ScaffDiv, ScaffUniqueness, and SEDiv from the model input set when available.
-
-The final model score is:
-
-```text
-overall = sum(component_weight * component_score) / sum(available_component_weights)
-```
-
-Missing components are not scored as zero. They are marked `available: false`, excluded from the denominator, and recorded as warnings where appropriate. This keeps report generation robust for partial runs, but `Confidence` drops when too few components or final molecules are available.
-
-The generator score also supports hard caps for critical funnel failures. By default, a structural stage pass rate below `0.20` caps the score at `60`, a descriptor all-pass rate below `0.50` caps it at `70`, and a final retention rate below `0.05` caps it at `70`. These caps prevent a model from looking strong when an AND-gate stage rejects most of its generated molecules.
-
-`Final Candidate Pool Quality` keeps the older survivor-pool view: yield uses final-count saturation, physchem uses the mean descriptor flag pass rate, structural uses the mean structural flag pass rate, and synthesis/docking/diversity use the same component formulas. Use it to inspect the final pool, not to judge the generator itself.
-
-Important caveat: this is an explainable ranking scorecard, not a calibrated probability of biological success. Use it to compare models inside the same experiment and then validate best candidates with the underlying stage-level reports.
-
-If a component is missing (for example, docking or synthesis is not available for that run), its value is dropped from the denominator and the remaining weights are renormalized automatically. This changes the effective contribution of surviving components and may reduce interpretability across runs with different enabled stages.
-
-If evidence is sparse (`final molecules` is low and/or several components are missing), `Confidence` drops from `High` to `Medium` or `Low`.
-
-To configure or disable this section, use:
-
-```yaml
-config_weighted_score: src/hedgehog/configs/config_weighted_score.yml
-```
-
-Set `run: false` in that file to remove the generator reality assessment from the report.
-
-You can tune docking/synthesis behavior in this config to move rankings toward affinity-rich or synthetic tractability-focused models:
-
-- Docking thresholds are configured under `docking` (`bad_affinity`/`good_affinity`, `bad_cnnscore`/`good_cnnscore`, `bad_cnnaffinity`/`good_cnnaffinity`).
-- Synthesis thresholds are configured under `synthesis` (`sa_*`, `ra_*`, `syba_*`, `target_search_time_sec`).
-
-### Structural Filters
-
-This section covers the structural filtering stages (pre-descriptor and post-descriptor filters):
-
-- **Stacked bar chart** of molecules passed vs. banned per filter, grouped by model.
-- **Heatmap** of banned ratios (fraction of molecules failing each filter) by model.
-- **Top failure reasons** bar chart showing the most common structural alerts.
-- A summary table of pass/fail counts per filter.
-
-### Synthesis Analysis
-
-The synthesis section presents scores from SA Score, SYBA Score, and RA Score computations:
-
-- **Histograms** for each score distribution (SA, SYBA, RA).
-- **SA vs. SYBA scatter plot** colored by model, showing the trade-off between synthetic accessibility
-  and synthesizability.
-- **Retrosynthesis route score histogram** and **step count histogram** from AiZynthFinder results.
-- **Pie chart** showing solved vs. unsolved retrosynthesis targets.
-
-### Docking
-
-The docking section reports binding affinity results from GNINA, SMINA, and/or Matcha:
-
-- **Affinity distribution histogram** for each docking tool (kcal/mol scale, lower is better).
-- **Box plots** of affinity scores grouped by model.
-- **Top molecules table** listing the best-scoring compounds with their affinities and CNN scores
-  (for GNINA) and Matcha affinity when Matcha outputs are present.
-
-### Docking Filters
-
-If docking filters are enabled, this section shows:
-
-- **Per-filter pass/fail stats** for each enabled filter (search box, pose quality, interactions, conformer deviation, shepherd score).
-- **Histograms** of numeric metrics (clashes, strain energy, conformer RMSD, shape score, etc.) with threshold lines.
-- **Per-model breakdown** of total poses, passed poses, and pass rates.
-- **Interaction analytics (ProLIF)** when interaction reporting is enabled: top-contact residues, interaction type distribution, and residue × interaction-type heatmap.
-- The aggregation mode (`all` or `any`) and overall pass rate.
-
-### Descriptors
+### Descriptor Analysis
 
 Two descriptor sections appear in the report -- one for initial descriptors (computed early in the
-pipeline) and one for final descriptors (recomputed on surviving molecules):
+pipeline) and one for final descriptors (recomputed on surviving molecules). **Bar plots** and **Summary table** are broken down by model.
 
-- **Violin plots** of key molecular descriptors (MolWt, LogP, TPSA, QED) grouped by model.
-- **Box plots** comparing H-bond donors and acceptors across models.
-- **Summary table** with mean values for all computed descriptors, broken down by model.
-
-Drug-likeness threshold lines (e.g., Lipinski's Rule of Five boundaries) are included as reference
+Drug-likeness threshold lines are included as reference
 markers in the interactive histograms.
 
 #### Interpreting Comparison Histograms
@@ -196,19 +124,43 @@ When comparing generated molecules against reference sets:
 - **Overlapping distributions** indicate that generated molecules match the reference property profile.
 - **Shifted distributions** highlight systematic differences (e.g., generated molecules are heavier or
   more lipophilic than references).
-- Use the model dropdown to isolate individual models and see which generator best matches the target
+- Use the model list to isolate individual models and see which generator best matches the target
   property space.
+
+
+### Structural Filters Analysis
+
+This section covers the structural filtering stages. 
+- **Heatmap** of banned ratios (fraction of molecules failing each filter) by model. 
+- **Common Alerts** breakdown with detailed pass rates per rule set.
+
+
+### Synthesis Analysis
+
+The synthesis section presents scores from calculated scores with **Bar plots** for each score distribution.
+
+
+### Docking Results
+
+The docking section reports binding affinity results from GNINA, SMINA, and Matcha:
+
+- **Box plots** of affinity scores grouped by model.
+- **Top molecules table** listing the best-scoring compounds with their affinities.
+
+### Docking Filters
+
+If docking filters are enabled, this section shows:
+
+- **Per-filter pass/fail stats** for each enabled filter .
+- **Histograms** of numeric metrics with threshold lines.
+- **Pass rate by model** of total poses and pass rates.
+- **Interaction profile (ProLIF)** when interaction reporting is enabled: top-contact residues, interaction type distribution, and residue × interaction-type heatmap.
+
 
 ### Generative Metrics (MolEval)
 
 This section reports intrinsic distribution quality metrics computed by the vendored
-[MolEval](/reporting/moleval) library at five pipeline checkpoints. It includes:
-
-- **Line chart** tracking all active metrics across stages.
-- **Heatmap** with exact metric values (rows = metrics, columns = stages).
-- **Data table** in `RUN_INFO.md` appended after the run.
-
-See the [MolEval Metrics](/reporting/moleval) page for detailed metric definitions.
+[MolEval](/reporting/moleval) library. See the [MolEval Metrics](/reporting/moleval) page for detailed metric definitions.
 
 ## Output Files
 
@@ -216,12 +168,10 @@ After report generation, the run directory contains:
 
 | File | Description |
 |------|-------------|
-| `report.html` | Self-contained interactive HTML report |
 | `report_data.json` | Raw JSON data used to build the report |
-| `stage_filter_audit.ipynb` | Jupyter notebook for molecule-level stage audit with `mols2grid` |
+| `report.html` | Self-contained interactive HTML report |
 | `RUN_INFO.md` | Markdown summary with MolEval metrics table |
-| `stages/06_docking_filters/interaction_*.csv` | Interaction reporting artifacts (events, residue summary, type summary, matrix) produced by docking filters |
-| `stages/06_docking_filters/interaction_report_meta.json` | Metadata summary for interaction reporting totals used by report visualizations |
+| `stage_filter_audit.ipynb` | Jupyter notebook for molecule-level stage audit with `mols2grid` |
 
 ## Configuration
 

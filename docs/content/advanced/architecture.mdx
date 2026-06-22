@@ -12,17 +12,17 @@ HEDGEHOG is a sequential molecular analysis pipeline that filters drug candidate
 
 ```
 Input CSV
-  → Mol Prep (standardization and strict cleanup)
+  → Preprocessing (standardization and strict cleanup)
     → Descriptors (physicochemical properties)
       → Structural Filters (PAINS, Lilly, NIBR, medchem)
-        → Synthesis (retrosynthesis feasibility)
+        → Synthesis Feasibility (synthetic scores, retrosynthesis)
           → Docking (binding affinity scoring)
-            → Docking Filters (pose quality)
+            → 3D Filters (pose quality)
               → Final Descriptors (recalculation on survivors)
                 → HTML Report
 ```
 
-Each stage writes stable artifacts, usually including `filtered_molecules.csv`.
+Each stage writes stable artifacts, including `filtered_molecules.csv`.
 Downstream stages prefer the latest usable upstream artifact and can fall back to
 earlier filtered outputs in the same run folder. Stages can be independently
 enabled or disabled via YAML configuration files.
@@ -31,10 +31,9 @@ enabled or disabled via YAML configuration files.
 
 ```
 src/hedgehog/
-├── main.py                  # CLI entry point (Typer app)
-├── pipeline.py              # Pipeline orchestration
 ├── configs/
 │   ├── config.yml           # Master configuration
+│   ├── config_mol_prep.yml
 │   ├── config_descriptors.yml
 │   ├── config_structFilters.yml
 │   ├── config_synthesis.yml
@@ -52,15 +51,17 @@ src/hedgehog/
 │   ├── report_generator.py  # HTML report generation (Jinja2)
 │   ├── plots.py             # Matplotlib/Plotly visualizations
 │   └── moleval_metrics.py   # MolEval generative quality metrics
+├── setup/                   # Optional dependency installers
 ├── tui_backend/
 │   ├── server.py            # JSON-RPC server (stdio)
 │   ├── validators.py        # Configuration validation
 │   └── handlers/            # RPC method handlers
-├── setup/                   # Optional dependency installers
-├── workers/                 # Optional worker integrations
 ├── utils/                   # Shared utilities
-└── vendor/
+├── vendor/
     └── moleval/             # Vendored MolEval from MolScore v1.9.5
+├── workers/                 # Optional worker integrations
+├── main.py                  # CLI entry point (Typer app)
+└──  pipeline.py              # Pipeline orchestration
 ```
 
 ## Key Classes
@@ -110,15 +111,7 @@ The priority list determines which stage's output is preferred when looking for 
 
 ### ReportGenerator
 
-Defined in `src/hedgehog/reporting/report_generator.py`. Uses Jinja2 templates to produce a self-contained HTML report with embedded plots and data tables. The report includes:
-
-- Pipeline summary (molecule counts, retention rates, stage timings)
-- Per-stage descriptor distributions
-- Structural filter breakdowns
-- Synthesis score distributions
-- Docking score analysis
-- MolEval generative quality metrics
-- MCE-18 molecular complexity (reported alongside MolEval metrics)
+Defined in `src/hedgehog/reporting/report_generator.py`. Uses Jinja2 templates to produce a self-contained HTML report with embedded plots and data tables. 
 
 ### LoggerSingleton
 
@@ -195,7 +188,7 @@ At pipeline start, all config files are snapshotted into the output directory un
 
 ## TUI Backend
 
-The TUI (Text User Interface) is a Node.js application (in `tui/`) that communicates with a Python backend over stdio using JSON-RPC 2.0.
+The Text User Interface (TUI) is a Node.js application (in `tui/`) that communicates with a Python backend over stdio using JSON-RPC 2.0.
 
 ### Communication Protocol
 

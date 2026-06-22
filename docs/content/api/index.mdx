@@ -1,11 +1,11 @@
 ---
 title: API Overview
-timestamp: 1776848830296
+timestamp: 1781676399965
 ---
 
 # API Overview
 
-Generated automatically at build time by `scripts/generate_api_docs.py` (2026-04-22 09:07:10 UTC).
+Generated automatically at build time by `scripts/generate_api_docs.py` (2026-06-17 06:06:39 UTC).
 
 This page is intentionally high-level and reflects the current runtime API surface.
 
@@ -26,8 +26,12 @@ uv run hedgehog --help
 | `run` | command | Run the molecular analysis pipeline as an explicit subcommand. |
 | `setup` | group | Install optional external tools and assets. |
 | `setup aizynthfinder` | command | Install AiZynthFinder into the project env and modules/aizynthfinder/. |
+| `setup fsscore` | command | Download FSScore source checkout into modules/fsscore. |
+| `setup gasa` | command | Install optional GASA scorer checkout + isolated worker environment. |
+| `setup nonpher-check` | command | Validate optional Nonpher runtime without modifying the main uv env. |
 | `setup nvmolkit-worker` | command | Install isolated nvMolKit worker environment in .venv-nvmolkit-worker. |
 | `setup shepherd-worker` | command | Install isolated Shepherd-Score worker environment in .venv-shepherd-worker. |
+| `setup sync` | command | Download the SYNC 3D synthesizability classifier checkpoint. |
 | `tui` | command | Launch the interactive TUI (Text User Interface). |
 | `version` | command | Display version information. |
 
@@ -59,6 +63,7 @@ Run the molecular analysis pipeline as an explicit subcommand.
 | `force_new_folder` | option | `--force-new` | `BOOL` | no | `False` | Always create a new results folder. |
 | `auto_install` | option | `--auto-install` | `BOOL` | no | `False` | Install missing optional tools automatically. |
 | `show_progress` | option | `--progress` | `BOOL` | no | `False` | Show live progress bar. |
+| `large_dataset` | option | `--large-dataset` | `BOOL` | no | `False` | Stream large libraries in chunks and write row-level shard outputs. |
 
 ### `hedgehog setup`
 
@@ -73,6 +78,32 @@ Install AiZynthFinder into the project env and modules/aizynthfinder/.
 | Parameter | Kind | Flags | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | `yes` | option | `--yes, -y, --no-yes, -n` | `BOOL` | no | `True` | Auto-accept downloads (default: yes). Use --no-yes to prompt. |
+
+### `hedgehog setup fsscore`
+
+Download FSScore source checkout into modules/fsscore.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `yes` | option | `--yes, -y` | `BOOL` | no | `False` | Auto-accept checkout prompt. |
+
+### `hedgehog setup gasa`
+
+Install optional GASA scorer checkout + isolated worker environment.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `yes` | option | `--yes, -y` | `BOOL` | no | `False` | Auto-accept checkout/dependency installs. |
+| `python_bin` | option | `--python` | `STRING` | no | `None` | Python interpreter for worker venv (default: python3.10 -> 3.11). |
+
+### `hedgehog setup nonpher-check`
+
+Validate optional Nonpher runtime without modifying the main uv env.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `python_bin` | option | `--python` | `STRING` | no | `None` | Optional Python interpreter for an isolated Nonpher environment (for example, ~/work/hedgehog_optional_envs/nonpher/bin/python). |
+| `probe_smiles` | option | `--probe-smiles` | `STRING` | no | `CCO` | SMILES used for runtime probe. |
 
 ### `hedgehog setup nvmolkit-worker`
 
@@ -91,6 +122,14 @@ Install isolated Shepherd-Score worker environment in .venv-shepherd-worker.
 | --- | --- | --- | --- | --- | --- | --- |
 | `yes` | option | `--yes, -y` | `BOOL` | no | `False` | Auto-accept downloads (no prompt). |
 | `python_bin` | option | `--python` | `STRING` | no | `None` | Python interpreter for worker venv (default: python3.12 -> 3.11 -> 3.10). |
+
+### `hedgehog setup sync`
+
+Download the SYNC 3D synthesizability classifier checkpoint.
+
+| Parameter | Kind | Flags | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `yes` | option | `--yes, -y, --no-yes, -n` | `BOOL` | no | `True` | Auto-accept downloads (default: yes). Use --no-yes to prompt. |
 
 ### `hedgehog tui`
 
@@ -163,6 +202,7 @@ Modules under `hedgehog.vendor.*` and `hedgehog.workers.*` are intentionally exc
 | `hedgehog.descriptors` | `run` | function | - |
 | `hedgehog.descriptors.waves` | `register` | function | - |
 | `hedgehog.descriptors.waves` | `run_waves` | function | - |
+| `hedgehog.docking` | `run` | function | - |
 | `hedgehog.docking_filters` | `apply_conformer_deviation_filter` | function | - |
 | `hedgehog.docking_filters` | `apply_interaction_filter` | function | - |
 | `hedgehog.docking_filters` | `apply_pose_quality_filter` | function | - |
@@ -170,11 +210,28 @@ Modules under `hedgehog.vendor.*` and `hedgehog.workers.*` are intentionally exc
 | `hedgehog.docking_filters` | `docking_filters_main` | function | - |
 | `hedgehog.molprep` | `run` | function | - |
 | `hedgehog.reporting` | `ReportGenerator` | class | - |
+| `hedgehog.setup` | `FSScoreRuntime` | class | - |
+| `hedgehog.setup` | `GasaSetupResult` | class | - |
+| `hedgehog.setup` | `NONPHER_PYTHON_ENV_VAR` | other | - |
+| `hedgehog.setup` | `NonpherCheckResult` | class | - |
+| `hedgehog.setup` | `NonpherEnsureResult` | class | - |
+| `hedgehog.setup` | `check_nonpher_runtime` | function | - |
+| `hedgehog.setup` | `create_nonpher_complexity_filter` | function | - |
 | `hedgehog.setup` | `ensure_aizynthfinder` | function | - |
+| `hedgehog.setup` | `ensure_fsscore_checkout` | function | - |
+| `hedgehog.setup` | `ensure_fsscore_runtime` | function | - |
+| `hedgehog.setup` | `ensure_gasa_worker` | function | - |
 | `hedgehog.setup` | `ensure_gnina` | function | - |
 | `hedgehog.setup` | `ensure_matcha_checkout` | function | - |
+| `hedgehog.setup` | `ensure_nonpher_external_runtime` | function | - |
+| `hedgehog.setup` | `ensure_nonpher_uv_runtime` | function | - |
 | `hedgehog.setup` | `ensure_nvmolkit_worker` | function | - |
 | `hedgehog.setup` | `ensure_rascore_model` | function | - |
+| `hedgehog.setup` | `ensure_scscore_model` | function | - |
 | `hedgehog.setup` | `ensure_shepherd_worker` | function | - |
+| `hedgehog.setup` | `ensure_sync_model` | function | - |
+| `hedgehog.setup` | `nonpher_lobachevsky_setup_commands` | function | - |
+| `hedgehog.setup` | `resolve_nonpher_python` | function | - |
+| `hedgehog.setup` | `run_nonpher_batch_external` | function | - |
 | `hedgehog.utils` | `assign_mol_idx` | function | - |
 | `hedgehog.utils` | `prepare_input_data` | function | - |

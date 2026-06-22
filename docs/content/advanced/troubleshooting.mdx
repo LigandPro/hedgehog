@@ -41,12 +41,6 @@ gnina_config:
   bin: /path/to/gnina
 ```
 
-2. For descriptor/filter-only runs, disable docking or run only the safe stages:
-
-```bash
-uv run hedgehog --stage descriptors --stage struct_filters --force-new
-```
-
 ## No Docking Output Found
 
 **Symptom:** logs report that docking finished but no results were detected.
@@ -59,9 +53,8 @@ uv run hedgehog --stage descriptors --stage struct_filters --force-new
 4. binary path and executable permissions
 5. `auto_run` setting
 
-The expected final artifacts are tool-specific SDF files such as
-`stages/05_docking/gnina/gnina_out.sdf` or
-`stages/05_docking/smina/smina_out.sdf`.
+The expected final artifacts are tool-specific SDF files such as`stages/05_docking/smina/smina_out.sdf`, `stages/05_docking/gnina/gnina_out.sdf`, or `stages/05_docking/matcha/matcha_out.sdf`.
+
 
 ## Docking Script Path Issues
 

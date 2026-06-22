@@ -6,18 +6,21 @@ title: HEDGEHOG
 
 **Hierarchical Evaluation of Drug GEnerators tHrOugh riGorous filtration**
 
-HEDGEHOG is a comprehensive benchmark pipeline for evaluating generative models in molecular design. It takes a set of generated SMILES strings and progressively filters them through physicochemical descriptors, structural alerts, synthetic accessibility checks, molecular docking, and post-docking pose analysis — producing a detailed HTML report with per-stage statistics, interactive visualizations, and generative quality metrics.
+HEDGEHOG is a comprehensive benchmark pipeline for evaluating generative models in molecular design. It takes a set of generated SMILES strings, unify them during preprocessing, and progressively filters through physicochemical descriptors, structural alerts, synthetic accessibility checks, molecular docking, and post-docking pose analysis. It is suggested to run Boltz-2 for more precise binding affinity analysis alongside with docking evaluation. HEDGEHOG produces a detailed HTML report with per stage statistics, interactive visualizations, and generative quality metrics.
 
-![Pipeline Structure](/pipeline_structure_v2.png)
+
+![Pipeline Structure](/hedgehog.png)
 
 ## Key Features
 
-- **7-stage evaluation pipeline** — molecules pass through Mol Prep (Datamol standardization), descriptors, structural filters, synthesis evaluation, docking, docking filters, and final descriptor recalculation.
-- **11 structural filters** — common alerts (PAINS, Glaxo, BMS, Dundee), molecular graph severity, molecular complexity, NIBR, Bredt rule, Lilly MedChem rules, plus 5 medicinal chemistry filters (protecting groups, ring infraction, stereo center, halogenicity, symmetry).
-- **Retrosynthesis analysis** — synthetic accessibility scoring with SA Score, SYBA, and full retrosynthetic route analysis via AiZynthFinder.
-- **Molecular docking** — binding affinity scoring and pose generation with SMINA, GNINA, and/or Matcha, followed by pose quality filtering.
-- **Automated reporting** — interactive HTML report with molecule retention funnel, descriptor distributions (with reference threshold lines), filter breakdowns, docking results, and MolEval generative metrics.
-- **CLI and TUI interfaces** — a Typer-based command-line interface (`hedgehog` / `hedge`) for scripted workflows, plus an interactive terminal UI built with Node.js for visual configuration and pipeline management.
+- **6-stage evaluation pipeline**: molecules pass through (i) preprocessing, (ii) descriptors, (iii) structural filters, (iv) synthesis evaluation, (v) docking, and (vi) post-docking three-dimensional (3D) filters. 
+- **28 physicochemical dscriptors**: size- and composition-related descriptors, lipophilicity and polarity descriptors, hydrogen bond features, ring statistics, fraction of sp<sup>3</sup>-hybridized carbon atoms, and additional medicinal chemistry checks. 
+- **11 structural filters**: 2,458 SMART patterns for common alerts, including PAINS, Glaxo, BMS, Dundee filters, and others related, molecular graph severity, molecular complexity, NIBR, Bredt rule, Lilly MedChem rules, and five medicinal chemistry check, including protecting groups, ring infraction, stereo center, halogenicity, and symmetry.
+- **Retrosynthesis analysis**: synthetic accessibility evaluation with SA, RA, SYBA, and others related scores, and retrosynthetic route analysis via AiZynthFinder.
+- **Molecular docking**: binding affinity scoring and pose generation with SMINA, GNINA, and Matcha.
+- **3D post-docung checks**: search-box containment, pose quality assessment, protein-ligand interaction checks, and a conformer-deviation analysis.
+- **Automated reporting**: interactive HTML report with molecule retention funnel, descriptor distributions (with reference threshold lines), filter breakdowns, docking results, and MolEval generative metrics.
+- **CLI and TUI interfaces**: a Typer-based command-line interface (`hedgehog` / `hedge`) for scripted workflows, plus an interactive terminal UI built with Node.js for visual configuration and pipeline management.
 
 ## Quick Example
 
@@ -28,13 +31,4 @@ uv sync
 
 # First safe run: descriptors + structural filters only
 uv run hedgehog --stage descriptors --stage struct_filters --force-new
-```
-
-This smoke run avoids docking and retrosynthesis. For the full pipeline, install
-AiZynthFinder and make sure the selected docking tools, receptor, and reference
-ligand paths are valid:
-
-```bash
-uv run hedgehog setup aizynthfinder
-uv run hedgehog --auto-install
 ```

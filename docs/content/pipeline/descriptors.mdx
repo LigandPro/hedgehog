@@ -4,7 +4,7 @@ title: Descriptors
 
 # Descriptors
 
-The descriptors stage computes physicochemical descriptors for each molecule using RDKit (including an optional MCE-18 complexity score) and can filter molecules whose descriptor values fall outside configurable threshold ranges.
+The descriptors stage computes physicochemical descriptors for each molecule using RDKit and including an optional MCE-18 complexity score and can filter molecules whose descriptor values fall outside configurable threshold ranges.
 
 This stage runs twice in the pipeline: once early (initial filtering) and once at the end (recompute descriptors on the surviving molecule set). Filtering behavior is controlled by `filter_data` in `config_descriptors.yml` and applies to both runs unless you disable it.
 
@@ -20,13 +20,26 @@ motifs that can be underconstrained by broad descriptors alone, such as aromatic
 carbon load, neutral donor nitrogens, sulfonyl sulfur motifs, strained small
 rings, or long non-ring appendages.
 
-## Descriptor Reference
 
-The stage computes more columns than it filters by default. The tables below
-separate configured default filters from computed-only columns so the docs match
-`config_descriptors.yml`.
+## Configuration
+
+The full configuration lives in `config_descriptors.yml`:
+
+```yaml
+run: true           # Enable/disable this stage
+batch_size: 1000    # Molecules processed per batch
+filter_data: true   # Apply threshold filtering (false = compute only)
+structural_constraints:
+  enabled: true
+  # See the configuration reference for the full nested schema and defaults
+borders:
+  # ... threshold values for each descriptor
+```
+
+Set `filter_data: false` to compute descriptors without filtering, which is useful for analysis-only runs.
 
 ### Molecular Properties
+
 
 | Descriptor | Config Key | Description | Default Min | Default Max |
 |-----------|------------|-------------|-------------|-------------|
@@ -35,52 +48,25 @@ separate configured default filters from computed-only columns so the docs match
 | Heavy Atoms | `n_heavy_atoms` | Non-hydrogen atom count | 10 | 50 |
 | Heteroatoms | `n_het_atoms` | Count of non-carbon, non-hydrogen atoms | 2 | 15 |
 | Nitrogen Atoms | `n_N_atoms` | Count of nitrogen atoms | 0 | 12 |
-| Nitrogen Fraction | `fN_atoms` | Fraction of heavy atoms that are nitrogen | 0 | 0.22 |
-| Nitrogen+Sulfur Fraction | `fNS_atoms` | Fraction of heavy atoms that are nitrogen or sulfur | 0 | 0.3 |
-
-### Chemical Features
-
-| Descriptor | Config Key | Description | Default Min | Default Max |
-|-----------|------------|-------------|-------------|-------------|
+| Nitrogen Fraction | `fN_atoms` | Fraction of nitrogen atoms | 0 | 0.22 |
+| Nitrogen+Sulfur Fraction | `fNS_atoms` | Fraction of nitrogen and sulfur atoms | 0 | 0.3 |
 | Molecular Weight | `molWt` | Daltons | 200 | 550 |
 | logP | `logP` | Octanol-water partition coefficient (Wildman-Crippen) | -0.4 | 5.6 |
 | Sw | `sw` | Water solubility estimate | -20 | 1 |
-
-### Structural
-
-| Descriptor | Config Key | Description | Default Min | Default Max |
-|-----------|------------|-------------|-------------|-------------|
 | Ring Size | `ring_size` | List of all ring sizes (each must fall within min--max) | 3 | 12 |
 | Number of Rings | `n_rings` | Total ring count | 0 | 6 |
 | Aromatic Rings | `n_aroma_rings` | Count of aromatic rings | 0 | 5 |
-| Small 3/4-Membered Rings | `n_small_rings_3_4` | Count of 3- or 4-membered rings | 0 | via `structural_constraints.max_small_rings_3_4` |
-| Max Acyclic Chain Length | `max_acyclic_chain_length` | Length of the longest acyclic chain | 0 | via `structural_constraints.max_acyclic_chain_length` |
 | Fused Aromatic Rings | `n_fused_aromatic_rings` | Count of fused aromatic ring systems | 0 | 2 |
 | Rigid Bonds | `n_rigid_bonds` | Non-rotatable bonds | 0 | 30 |
 | Rotatable Bonds | `n_rot_bonds` | Freely rotatable bonds | 0 | 8 |
-| H-Bond Donors | `hbd` | Hydrogen bond donor count | 0 | 4 |
-| H-Bond Acceptors | `hba` | Hydrogen bond acceptor count | 1 | 9 |
-| Fraction sp3 | `fsp3` | Fraction of sp3-hybridized carbons | 0.15 | 0.8 |
+| H-Bond Donors | `hbd` | Hydrogen bond donors count | 0 | 4 |
+| H-Bond Acceptors | `hba` | Hydrogen bond acceptors count | 1 | 9 |
+| Fraction sp<sup>3</sup> | `fsp3` | Fraction of sp<sup>3</sup>-hybridized carbons | 0.15 | 0.8 |
 | Spider Side Chains | `has_spider_side_chains` | `1` when a molecule has at least two long scaffold appendages | 0 | 0 |
 | Fraction Ring System | `fraction_ring_system` | Fraction of heavy atoms in the Murcko scaffold | 0.25 | 1 |
-| TPSA | `tpsa` | Topological Polar Surface Area (A^2) | 20 | 140 |
-
-### Drug-likeness
-
-| Descriptor | Config Key | Description | Default Min | Default Max |
-|-----------|------------|-------------|-------------|-------------|
-| QED | `qed` | Quantitative Estimation of Drug-likeness (0--1) | 0.3 | 1 |
 | MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 20 | 140 |
-
-### Computed-Only Columns
-
-Some descriptor columns may be computed for reporting or backward compatibility
-but are not active filter keys in the shipped `config_descriptors.yml`.
-
-| Column | Meaning |
-|--------|---------|
-| `charged_mol` / `is_neutral` | Boolean neutral-molecule flag; legacy `charged_mol=true` means neutral |
-| `clogP` | Additional calculated logP-style descriptor |
+| TPSA | `tpsa` | Topological Polar Surface Area (Å) | 20 | 140 |
+| QED | `qed` | Quantitative Estimation of Drug-likeness (0--1) | 0.3 | 1 |
 
 ### Structural Constraints
 
@@ -96,21 +82,6 @@ All structural constraints behave as upper bounds. A molecule passes a
 constraint only if the computed count is less than or equal to the configured
 value.
 
-### Why These Constraints Exist
-
-- `type_limits` control specific atom-level motifs that can remain hidden behind
-  acceptable global descriptors. For example, two molecules can have similar
-  `TPSA` and `hba`, but very different counts of aromatic carbons, sulfonyl
-  sulfur atoms, or protonated donor nitrogens.
-- `element_limits` and `max_n_or_o_atoms` put a direct cap on heteroatom load.
-  This is useful when you want to constrain polarity and heteroatom density with
-  a hard ceiling instead of relying only on aggregate properties.
-- `max_small_rings_3_4` controls strained ring systems. A value of `0`
-  disallows all 3- and 4-membered rings; higher values allow a limited number
-  of such motifs.
-- `max_acyclic_chain_length` controls the longest simple chain in the non-ring
-  heavy-atom graph. It is useful for reducing long linear appendages and
-  excessive flexibility.
 
 ### Typed Atom Alias Glossary
 
@@ -176,23 +147,6 @@ structural_constraints:
     Hal: 3
 ```
 
-### How Structural Constraints Combine with Borders
-
-`structural_constraints` do not replace `borders`; they add another filtering
-layer.
-
-- `borders` apply range-based filtering to descriptor columns such as
-  `molWt`, `logP`, `TPSA`, `hbd`, `hba`, and `n_rings`.
-- `structural_constraints` are translated internally into additional `*_max`
-  checks on derived columns such as `n_O_atoms`, `n_NO_atoms`, `Car`,
-  `n_small_rings_3_4`, and `max_acyclic_chain_length`.
-- `element_limits.N`, `element_limits.O`, and `element_limits.S` map directly to
-  `n_N_atoms`, `n_O_atoms`, and `n_S_atoms`.
-- `max_n_or_o_atoms` is a separate cap on `n_NO_atoms`, so it complements
-  per-element limits rather than replacing them.
-- `type_limits` are orthogonal to aggregate atom counts: they constrain
-  subtypes, not just total `N`, `O`, `S`, or carbon counts.
-
 ## How Threshold Filtering Works
 
 Each descriptor has a `_min` and `_max` threshold defined in `config_descriptors.yml`. A molecule passes the descriptor filter only if **all** of its descriptor values fall within their respective `[min, max]` ranges.
@@ -224,29 +178,8 @@ emit `fraction_ring_system_pass` and `has_spider_side_chains_pass`. This is
 useful when generic descriptors are acceptable but a structural cap is
 intentionally stricter.
 
-## Configuration
 
-The full configuration lives in `config_descriptors.yml`:
-
-```yaml
-run: true           # Enable/disable this stage
-batch_size: 1000    # Molecules processed per batch
-filter_data: true   # Apply threshold filtering (false = compute only)
-preprocess:
-  # Descriptor-level preprocessing (fallback). Prefer MolPrep stage.
-  remove_charges: false
-  remove_radicals: false
-  remove_stereochemistry: false
-structural_constraints:
-  enabled: true
-  # See the configuration reference for the full nested schema and defaults
-borders:
-  # ... threshold values for each descriptor
-```
-
-Set `filter_data: false` to compute descriptors without filtering, which is useful for analysis-only runs.
-
-### Starter Profiles
+## Starter Profiles
 
 These example snippets are not presets in the codebase; they are starting
 points for tuning the `structural_constraints` block.
@@ -289,12 +222,13 @@ structural_constraints:
   max_acyclic_chain_length: 5
 ```
 
+
 ## Output Files
 
 | File | Description |
 |------|-------------|
 | `metrics/descriptors_all.csv` | All computed descriptor values for every molecule |
-| `metrics/skipped_molecules.csv` | Molecules skipped during preprocessing or SMILES parsing |
+| `metrics/skipped_molecules.csv` | Molecules skipped due to SMILES parsing failures |
 | `filtered/filtered_molecules.csv` | Molecules passing all descriptor thresholds |
 | `filtered/failed_molecules.csv` | Molecules failing one or more thresholds |
 | `filtered/descriptors_passed.csv` | Detailed descriptor values for passed molecules |

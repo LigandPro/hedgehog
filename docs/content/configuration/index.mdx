@@ -4,19 +4,19 @@ title: Configuration Overview
 
 # Configuration Overview
 
-Hedgehog uses a hierarchical YAML configuration system. A single **main config file** (`config.yml`) controls global settings and references separate per-stage config files. Each pipeline stage reads its own configuration independently, making it easy to tune individual stages without touching the rest.
+Hedgehog uses a hierarchical YAML configuration system. The **main config file** (`config.yml`) controls global settings and references separate per-stage config files. Each pipeline stage reads its own configuration independently, making it easy to tune individual stages without touching the rest.
 
 ## Config File Hierarchy
 
 ```
-config.yml                  (main — global settings + paths to stage configs)
-  ├── config_mol_prep.yml          (Datamol molecule standardization)
-  ├── config_descriptors.yml       (molecular descriptor calculation)
-  ├── config_structFilters.yml     (structural / medchem filters)
-  ├── config_synthesis.yml         (retrosynthesis scoring)
-  ├── config_docking.yml           (molecular docking — SMINA / GNINA / Matcha)
-  ├── config_docking_filters.yml   (post-docking pose filters)
-  └── config_moleval.yml           (generative metrics & reporting)
+config.yml                         # Global settings
+  ├── config_mol_prep.yml          # Molecule preprocessing 
+  ├── config_descriptors.yml       # Physicochemical descriptor calculation
+  ├── config_structFilters.yml     # Structural filters
+  ├── config_synthesis.yml         # Synthesis evaluation
+  ├── config_docking.yml           # Molecular docking with SMINA, GNINA, and Matcha
+  ├── config_docking_filters.yml   # Post-docking pose filters
+  └── config_moleval.yml           # Generative metrics and reporting
 ```
 
 ## How Configs Are Loaded
@@ -33,30 +33,26 @@ You can override the master config path at runtime with `--config/-c`:
 uv run hedgehog --config path/to/config.yml
 ```
 
-You can also override the output directory (`folder_to_save`) with `--out/-o`:
-
-```bash
-uv run hedgehog --out results/my_run
-```
 
 Filesystem paths in the master config are resolved in this order:
 
 1. absolute paths are used as-is
 2. relative to the master config file location
-3. relative to the source/package root for bundled `src/hedgehog/...` paths
+3. relative to the source root for bundled `src/hedgehog/...` paths
 4. relative to the current working directory as a final fallback
 
 For example:
 
 ```yaml
+# Absolute — used as-is
+config_descriptors: /opt/hedgehog/configs/config_descriptors.yml
+
 # Relative to the master config file when that file lives beside configs/
 config_descriptors: config_descriptors.yml
 
 # Bundled source-checkout path
 config_descriptors: src/hedgehog/configs/config_descriptors.yml
 
-# Absolute — used as-is
-config_descriptors: /opt/hedgehog/configs/config_descriptors.yml
 ```
 
 ## Overriding Parameters
@@ -74,73 +70,22 @@ There are three common ways to customise the pipeline:
    - `--mols/-m` to override `generated_mols_path`
    - `--out/-o` to override `folder_to_save`
 
-3. **For quick experiments in a source checkout, edit copied config files.** Do not edit configs inside an installed package in `site-packages`; copy them into your project directory and pass the copied master config with `--config`.
+3. For quick experiments in a source checkout, edit copied config files. If installed via `PyPi` do not edit configs inside an installed package in `site-packages`; copy them into your project directory and pass the copied master config with `--config`.
 
-For example, to run only descriptors and skip all other stages:
-
-```yaml
-# my_config.yml
-generated_mols_path: input/my_molecules.csv
-target_mols_path: input/my_targets.csv
-folder_to_save: results/my_run
-n_jobs: 8
-sample_size: 500
-config_descriptors: configs/config_descriptors.yml
-config_mol_prep: configs/config_mol_prep.yml
-config_structFilters: configs/config_structFilters.yml
-config_synthesis: configs/config_synthesis.yml
-config_docking: configs/config_docking.yml
-config_docking_filters: configs/config_docking_filters.yml
-config_moleval: configs/config_moleval.yml
-```
-
-To use a custom configuration today, pass it explicitly with `--config`:
 
 ```bash
 uv run hedgehog --config my_config.yml
 ```
 
-Then in `config_synthesis.yml`, set `run: false` to skip that stage entirely. The same `run` flag is available in every stage config.
-
-## Config Files at a Glance
+## Config Files
 
 | File | Purpose |
 |------|---------|
 | `config.yml` | Global paths, parallelism, sample size, and references to all stage configs |
-| `config_mol_prep.yml` | Datamol-based molecule standardization and strict filtering |
+| `config_mol_prep.yml` | Datamol-based molecule preprocessing and standardization |
 | `config_descriptors.yml` | Descriptor borders, filtering flags, plotting options |
-| `config_structFilters.yml` | Structural alerts, medchem filters (Bredt, NIBR, Lilly, etc.) |
-| `config_synthesis.yml` | Retrosynthesis toggle, enabled synthesis scorers, score thresholds (including optional `sync`, `nonpher`, `fsscore`, and `gasa`) |
-| `config_docking.yml` | Docking tool selection (GNINA/SMINA/Matcha), receptor, autobox settings |
-| `config_docking_filters.yml` | Post-docking filters: search box, pose quality, interactions, shape, conformer deviation |
-| `config_moleval.yml` | Generative evaluation metrics: diversity, scaffolds, filter pass rates |
-
-## Main Config Structure
-
-Below is the full default `config.yml`:
-
-```yaml
-generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
-target_mols_path: src/hedgehog/configs/examples/target_mols.csv
-folder_to_save: results/run
-n_jobs: -1
-sample_size: 10000
-batch_size: 512
-save_sampled_mols: true
-pains_file_path: src/hedgehog/vendor/moleval/metrics/wehi_pains.csv
-mcf_file_path: src/hedgehog/vendor/moleval/metrics/mcf.csv
-ligand_preparation_tool: /opt/proprietary_tools/ligand_prep/bin/ligand_prep
-protein_preparation_tool: /opt/proprietary_tools/protein_prep/bin/protein_prep
-config_mol_prep: src/hedgehog/configs/config_mol_prep.yml
-config_descriptors: src/hedgehog/configs/config_descriptors.yml
-config_structFilters: src/hedgehog/configs/config_structFilters.yml
-config_synthesis: src/hedgehog/configs/config_synthesis.yml
-config_docking: src/hedgehog/configs/config_docking.yml
-config_docking_filters: src/hedgehog/configs/config_docking_filters.yml
-config_moleval: src/hedgehog/configs/config_moleval.yml
-```
-
-`n_jobs: -1` means use all available cores. For laptops, shared servers, CI, or
-notebooks, set an explicit smaller value such as `4` or `8`.
-
-For a complete description of every parameter, see the [Parameter Reference](/configuration/reference).
+| `config_structFilters.yml` | Structural alerts, medchem filters, rulesets, SMARTS patterns inclusion/exclusion control |
+| `config_synthesis.yml` | Retrosynthesis toggle, enabled synthesis scorers, score thresholds |
+| `config_docking.yml` | Docking tool selection, receptor, autobox settings |
+| `config_docking_filters.yml` | Post-docking filters |
+| `config_moleval.yml` | Generative evaluation metrics |

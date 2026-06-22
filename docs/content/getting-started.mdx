@@ -10,7 +10,6 @@ This guide covers installation, running your first pipeline, and understanding t
 
 - **Python 3.10+** — HEDGEHOG requires Python 3.10 or later.
 - **uv** — used for dependency management and running the CLI. Install from [astral.sh/uv](https://astral.sh/uv).
-- **git** — to clone the repository.
 
 For the retrosynthesis (AiZynthFinder) part of the synthesis stage, you need the upstream `aizynthfinder` package and its public data. Use the built-in CLI setup command to install the optional dependency into the project environment and download the data into `modules/aizynthfinder/`.
 
@@ -50,7 +49,7 @@ run, use:
 uv run hedgehog --auto-install
 ```
 
-Legacy/manual fallback:
+Legacy and manual fallback:
 
 ```bash
 ./modules/install_aizynthfinder.sh
@@ -58,7 +57,7 @@ Legacy/manual fallback:
 
 ## First Safe Run
 
-From a source checkout, start with the descriptor/filter-only smoke run:
+From a source checkout, start with the descriptor and structural filters smoke run. Use `--force_new` to write resilts to a new numbered output folder:
 
 ```bash
 uv run hedgehog --stage descriptors --stage struct_filters --force-new
@@ -70,7 +69,7 @@ Or using the short alias:
 uv run hedge --stage descriptors --stage struct_filters --force-new
 ```
 
-This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `src/hedgehog/configs/examples/`, but it avoids docking and retrosynthesis. Use this run to verify that the Python environment, bundled examples, descriptor calculation, and structural filters work.
+This uses the default configuration at `src/hedgehog/configs/config.yml` and the test molecules in `src/hedgehog/configs/examples/`, but it avoids docking and retrosynthesis.
 
 ## Full Pipeline Run
 
@@ -82,12 +81,12 @@ uv run hedgehog setup aizynthfinder
 uv run hedgehog --auto-install
 ```
 
-Full pipeline execution may require AiZynthFinder, GNINA/SMINA/Matcha, valid
-receptor structures, reference ligands, and enough CPU/GPU resources.
+Full pipeline execution may require AiZynthFinder, GNINA, SMINA, and Matcha, valid
+receptor structures, reference ligands, and enough CPU and GPU resources.
 
 If you installed from PyPI instead of cloning the repository, do not rely on this default sample workflow. Pass your own `--config` and input paths, or use a source checkout.
 
-Note: the default `config.yml` contains absolute paths for optional external preparation tools. If you do not have these tools, set `ligand_preparation_tool` / `protein_preparation_tool` to empty values (or disable the affected stages) before your first run.
+Note: the default `config.yml` contains absolute paths for optional external preparation tools for proteins and ligands. If you do not have these tools, set `ligand_preparation_tool` and/or `protein_preparation_tool` to empty values before your first run.
 
 ## Input Data Contract
 
@@ -127,55 +126,37 @@ Headerless `.smi` files are supported by extension for simple one-SMILES-per-lin
 inputs, with an optional second whitespace token used as `model_name`. CSV/TSV
 with a `smiles` header remains the most explicit format for production runs.
 
-## Expected Output
 
-When you run the pipeline, you will see:
+## Output structure
 
-1. **Banner** — the HEDGEHOG banner with version information.
-2. **Mol Prep** — Datamol-based standardization and strict filtering (salts/fragments cleanup, uncharging, tautomer canonicalization, stereo removal).
-3. **Stage execution** — each enabled stage runs in order, logging progress and molecule counts. Stages that are disabled in the configuration are skipped.
-4. **Report generation** — an HTML report, report data, and a stage-audit Jupyter notebook are generated automatically at the end of a successful run.
-
-Typical console output looks like:
-
-```
-🦔 HEDGEHOG
-Starting pipeline...
-Stage 1: Mol Prep (Datamol) — 500 molecules processed, 451 passed
-Stage 2: Molecular Descriptors — 451 molecules processed, 423 passed
-Stage 3: Structural Filters — 423 molecules processed, 387 passed
-Stage 4: Synthesis Analysis — 387 molecules processed, 312 passed
-...
-Pipeline completed: 7/7 stages successful
-```
-
-## Understanding Results
-
-Results are saved to an auto-numbered directory under the configured output path (default: `results/run_N/`). Each run creates a new numbered folder unless you use the `--reuse` flag.
+Results are saved to an auto-numbered directory under the configured output path (default: `results/run_N/`). Each run creates a new numbered folder unless you use the `--reuse` flag. Each stage directory contains a `filtered_molecules.csv` file with the molecules that passed that stage, along with any stage-specific outputs (plots, intermediate files).
 
 The output directory structure:
 
 ```
-results/run_1/
+results/run_N/
+┌── configs/                        # Configuration snapshots
+│   ├── master_config_resolved.yml
+│   ├── config_*.yml
+│   └── run_models_mapping.csv
 ├── input/
 │   └── sampled_molecules.csv       # Input molecules (sampled)
+├── output/
+│   └── final_molecules.csv         # Final filtered molecules
 ├── stages/
-│   ├── 00_mol_prep/               # Datamol-based standardization + strict filtering
-│   ├── 01_descriptors_initial/     # Physicochemical descriptors
+│   ├── 01_mol_prep/                # Datamol-based standardization + strict filtering
+│   ├── 02_descriptors_initial/     # Physicochemical descriptors
 │   ├── 03_structural_filters_post/ # Post-descriptors structural filters
 │   ├── 04_synthesis/               # Retrosynthesis analysis
 │   ├── 05_docking/                 # Molecular docking (SMINA/GNINA/Matcha)
 │   ├── 06_docking_filters/         # Post-docking pose & interaction filters
 │   └── 07_descriptors_final/       # Final descriptor recalculation
-├── output/
-│   └── final_molecules.csv         # Final filtered molecules
-├── configs/                        # Configuration snapshots
-│   ├── master_config_resolved.yml
-│   └── config_*.yml
-├── report.html                     # Interactive HTML report
 ├── report_data.json                # Report data
-├── stage_filter_audit.ipynb        # Jupyter notebook for stage-by-stage molecule audit
-└── RUN_INFO.md                     # Run summary with MolEval metrics table
+├── report.html                     # Interactive HTML report.
+│                                     Primary deliverable for a browser-based overview
+├── run_YYYYMMDD_HHMMSS.log         # Run logger
+├── RUN_INFO.md                     # Run summary with MolEval metrics table
+└── stage_filter_audit.ipynb        # Jupyter notebook for stage-by-stage molecule audit.
+                                      Inspect passed or dropped molecules per stage in `mols2grid` and compare them 
+                                      durig stages
 ```
-
-Each stage directory contains a `filtered_molecules.csv` file with the molecules that passed that stage, along with any stage-specific outputs (plots, intermediate files). The `report.html` file is the primary deliverable for a browser-based overview, while `stage_filter_audit.ipynb` lets you inspect passed or dropped molecules per stage in `mols2grid` and compare them against descriptor, synthesis, or docking-filter thresholds.

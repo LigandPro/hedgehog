@@ -38,7 +38,8 @@ outputs, descriptor tables, docking scores, docking-filter results, and report
 data.
 
 If you provide `mol_idx`, keep it unique within the input set. If you omit it,
-HEDGEHOG creates IDs in the form `LP-0001-00001`, scoped by `model_name`.
+HEDGEHOG creates IDs in the form `LP-000M-0000N`, scoped by `model_name`, with `M` for *model name* and `N` for *molecule number*.
+
 
 ## Multi-Model Inputs
 
@@ -70,7 +71,7 @@ format because it makes identity and model labels explicit.
 
 ## Stage Outputs
 
-Most filtering stages write a stable `filtered_molecules.csv`:
+Filtering stages write a stable `filtered_molecules.csv`:
 
 ```csv
 smiles,model_name,mol_idx
