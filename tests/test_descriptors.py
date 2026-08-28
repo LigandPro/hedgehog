@@ -445,14 +445,16 @@ class TestDescriptorsStage:
 
         descriptors_stage.run(data, config)
 
-        passed = pd.read_csv(
-            tmp_path
-            / "stages"
-            / "02_descriptors_initial"
-            / "filtered"
-            / FILE_FILTERED_MOLECULES
-        )
+        stage_dir = tmp_path / "stages" / "02_descriptors_initial"
+        passed = pd.read_csv(stage_dir / FILE_FILTERED_MOLECULES)
+        failed = pd.read_csv(stage_dir / "failed_molecules.csv")
         assert passed[COL_SMILES].tolist() == [SMILES_ETHANOL]
+        assert failed[COL_SMILES].tolist() == ["CS(=O)(=O)C"]
+        assert not (stage_dir / "filtered" / FILE_FILTERED_MOLECULES).exists()
+        assert not (stage_dir / "filtered" / "failed_molecules.csv").exists()
+        assert (stage_dir / "filtered" / "descriptors_passed.csv").exists()
+        assert (stage_dir / "filtered" / "descriptors_failed.csv").exists()
+        assert (stage_dir / "filtered" / "pass_flags.csv").exists()
 
 
 class TestFilterMolecules:

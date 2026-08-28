@@ -174,13 +174,22 @@ def _finalize_identity_columns(df: pd.DataFrame, path: str) -> pd.DataFrame:
 
 
 def _read_csv_with_fallback(path: str) -> pd.DataFrame:
-    """Read CSV, falling back to headerless format if parsing fails."""
+    """Read CSV, recognizing a one-column headerless SMILES file."""
     try:
-        return pd.read_csv(path)
+        df = pd.read_csv(path)
     except (pd.errors.ParserError, ValueError):
         df = pd.read_csv(path, header=None)
         df.columns = [SMILES_COLUMN] + [f"col_{i}" for i in range(1, len(df.columns))]
         return df
+
+    if (
+        _find_column_case_insensitive(df, SMILES_COLUMN) is None
+        and len(df.columns) == 1
+    ):
+        headerless = pd.read_csv(path, header=None)
+        headerless.columns = [SMILES_COLUMN]
+        return headerless
+    return df
 
 
 def _read_sdf(path: str) -> pd.DataFrame:
@@ -193,12 +202,13 @@ def _read_sdf(path: str) -> pd.DataFrame:
     model_name_default = _extract_model_name_from_path(path)
     rows: list[dict] = []
     supplier = Chem.SDMolSupplier(path, removeHs=False)
-    for idx, mol in enumerate(supplier):
+    for mol in supplier:
         if mol is None:
             continue
 
         try:
-            smiles = Chem.MolToSmiles(mol)
+            bare = Chem.RemoveHs(mol)
+            smiles = Chem.MolToSmiles(bare)
         except Exception:
             continue
         if not smiles:
@@ -217,7 +227,8 @@ def _read_sdf(path: str) -> pd.DataFrame:
         mol_idx_val = row.get(MOL_IDX_COLUMN)
         if mol_idx_val is None or str(mol_idx_val).strip() == "":
             title = mol.GetProp("_Name") if mol.HasProp("_Name") else ""
-            row[MOL_IDX_COLUMN] = title if title else f"{idx + 1}"
+            if title:
+                row[MOL_IDX_COLUMN] = title
 
         rows.append(row)
 
@@ -306,6 +317,31 @@ def _detect_mode_and_paths(
         return MODE_MULTI, [single_path]
 
     return MODE_SINGLE, [single_path]
+
+
+def resolve_molecule_input_paths(
+    generated_mols_path: str | None,
+    generated_mols_paths: list[str] | None = None,
+) -> tuple[str, list[str]]:
+    """Resolve molecule inputs from an explicit path list or a path/glob/dir."""
+    explicit_paths = [
+        str(Path(path).expanduser())
+        for path in (generated_mols_paths or [])
+        if str(path).strip()
+    ]
+    if explicit_paths:
+        missing = [path for path in explicit_paths if not Path(path).exists()]
+        if missing:
+            raise FileNotFoundError(
+                "No such molecule input file(s): " + ", ".join(missing)
+            )
+        if len(explicit_paths) == 1:
+            return _detect_mode_and_paths(explicit_paths[0])
+        return MODE_MULTI, explicit_paths
+
+    if not generated_mols_path:
+        raise FileNotFoundError("No molecule input path provided")
+    return _detect_mode_and_paths(generated_mols_path)
 
 
 def _file_has_multiple_models(path: str) -> bool:
@@ -438,11 +474,20 @@ def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     Detects single vs multi-model comparison modes, loads and normalizes data,
     applies sampling if configured, and assigns molecular indices.
     """
-    generated_mols_path = config["generated_mols_path"]
+    generated_mols_path = config.get("generated_mols_path")
     folder_to_save = Path(config[KEY_FOLDER_TO_SAVE])
     sample_size = cast(int | None, config.get("sample_size"))
 
-    detected_mode, matched_paths = _detect_mode_and_paths(generated_mols_path)
+    detected_mode, matched_paths = resolve_molecule_input_paths(
+        generated_mols_path,
+        config.get("generated_mols_paths"),
+    )
+    config["generated_mols_paths"] = matched_paths
+    if not generated_mols_path:
+        config["generated_mols_path"] = (
+            matched_paths[0] if len(matched_paths) == 1 else str(Path(matched_paths[0]).parent)
+        )
+        generated_mols_path = config["generated_mols_path"]
 
     logger.info("Loading generated molecules from %s...", generated_mols_path)
 
@@ -479,3 +524,79 @@ def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     _save_run_model_mapping(data, folder_to_save)
 
     return data
+
+
+def materialize_named_sdf_from_sources(
+    source_paths: list[str],
+    identity_df: pd.DataFrame,
+    output_sdf: Path,
+) -> Path:
+    """Write a combined SDF preserving source coordinates and LP molecule names."""
+    try:
+        from rdkit import Chem
+    except ImportError as err:
+        raise RuntimeError(
+            "RDKit is required to materialize docking SDF inputs"
+        ) from err
+
+    if identity_df.empty:
+        raise ValueError("Cannot materialize SDF from an empty identity table")
+
+    required = {SMILES_COLUMN, MODEL_NAME_COLUMN, MOL_IDX_COLUMN}
+    missing = required.difference(identity_df.columns)
+    if missing:
+        raise ValueError(
+            "Identity table is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    from collections import defaultdict, deque
+
+    pools: dict[tuple[str, str], deque] = defaultdict(deque)
+    for path in source_paths:
+        if Path(path).suffix.lower() != ".sdf":
+            raise ValueError(f"Expected SDF source path, got: {path}")
+        model_name = _extract_model_name_from_path(path)
+        for mol in Chem.SDMolSupplier(path, removeHs=False):
+            if mol is None:
+                continue
+            try:
+                bare = Chem.RemoveHs(mol)
+            except Exception:
+                bare = mol
+            try:
+                smiles = Chem.MolToSmiles(bare)
+            except Exception:
+                continue
+            if not smiles:
+                continue
+            pools[(model_name, smiles)].append(mol)
+
+    output_sdf.parent.mkdir(parents=True, exist_ok=True)
+    writer = Chem.SDWriter(str(output_sdf))
+    written = 0
+    try:
+        for _, row in identity_df.iterrows():
+            smiles = str(row[SMILES_COLUMN]).strip()
+            model_name = str(row[MODEL_NAME_COLUMN]).strip()
+            mol_idx = str(row[MOL_IDX_COLUMN]).strip()
+            pool = pools.get((model_name, smiles))
+            if not pool:
+                raise ValueError(
+                    "Could not rematerialize SDF molecule "
+                    f"model_name={model_name!r} smiles={smiles!r}"
+                )
+            mol = pool.popleft()
+            mol.SetProp("_Name", mol_idx)
+            mol.SetProp("mol_idx", mol_idx)
+            mol.SetProp("model_name", model_name)
+            mol.SetProp("input_smiles", smiles)
+            mol.SetProp("smiles", smiles)
+            writer.write(mol)
+            written += 1
+    finally:
+        writer.close()
+
+    if written == 0:
+        raise ValueError(f"No molecules written to docking SDF: {output_sdf}")
+    return output_sdf

@@ -37,7 +37,7 @@ interactions:
   enabled: true
   reference_ligand: null  # Path to reference SDF for similarity comparison
   min_hbonds: 0  # Minimum H-bonds required (0 = no requirement)
-  required_residues: []  # e.g., ["ASP123", "SER45"] - must have interaction
+  required_residues: ['ASP12']  # e.g., ["ASP123", "SER45"] - must have interaction
   forbidden_residues: []  # e.g., ["CYS200"] - must NOT have interaction
   interaction_types:  # Which types to check
     - HBDonor
@@ -83,4 +83,4 @@ conformer_deviation:
 aggregation:
   mode: "all"  # "all" = pass all filters, "any" = pass at least one
   save_metrics: true  # Save detailed metrics CSV
-  save_failed: false  # Save molecules that failed filtering
+  save_failed: true  # Save molecules that failed filtering

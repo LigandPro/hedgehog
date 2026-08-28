@@ -102,6 +102,7 @@ def _get_input_path(config, stage_dir, folder_to_save):
     if is_post_descriptors:
         base = Path(folder_to_save)
         descriptors_candidates = [
+            str(base / "stages" / "02_descriptors_initial" / "filtered_molecules.csv"),
             str(
                 base
                 / "stages"
@@ -521,6 +522,16 @@ def main(config, stage_dir, reporter=None):
     except Exception as e:
         logger.error("Could not load input data from %s: %s", input_path, e)
         raise
+
+    if input_df.empty:
+        identity_cols = [col for col in IDENTITY_COLUMNS if col in input_df.columns]
+        empty_output = input_df[identity_cols].copy()
+        empty_output.to_csv(output_dir / "filtered_molecules.csv", index=False)
+        empty_output.to_csv(output_dir / "failed_molecules.csv", index=False)
+        logger.info("No molecules available for structural filters; stage is empty.")
+        if reporter is not None:
+            reporter.progress(1, 1, message="StructFilters complete (empty input)")
+        return empty_output
 
     filters_to_calculate = _get_enabled_filters(config_struct_filters)
     opts = _resolve_stage_options(config_struct_filters, config)

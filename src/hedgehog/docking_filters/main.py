@@ -13,6 +13,11 @@ from rdkit import Chem
 
 from hedgehog._constants import CFG_DOCKING, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.docking.identity import (
+    build_canonical_mol_idx_map,
+    build_smiles_lookup,
+    resolve_canonical_mol_idx,
+)
 from hedgehog.utils.parallel import resolve_n_jobs
 
 from .utils import (
@@ -596,6 +601,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     if input_sdf is None:
         # Try to find docking output from known locations
         candidates = [
+            docking_dir / "docking_out.sdf",
             docking_dir / "smina" / "smina_out.sdf",
             docking_dir / "gnina" / "gnina_out.sdf",
             docking_dir / "matcha" / "matcha_out.sdf",
@@ -680,6 +686,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
     # Fallback: try to fill missing model_name and mol_idx from ligands.csv
     ligands_csv = docking_dir / "ligands.csv"
+    canonical_map = build_canonical_mol_idx_map(ligands_csv)
     if ligands_csv.exists():
         try:
             lig_df = pd.read_csv(ligands_csv)
@@ -723,6 +730,11 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                             mol_idxs[i] = name_to_mol_idx[mol_name]
         except Exception as e:
             logger.debug("Could not load model_name/mol_idx from ligands.csv: %s", e)
+
+    if canonical_map:
+        mol_idxs = [
+            resolve_canonical_mol_idx(mol_idx, canonical_map) for mol_idx in mol_idxs
+        ]
 
     # Initialize results DataFrame
     results_df = pd.DataFrame(
@@ -965,14 +977,13 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         # Use original SMILES from ligands.csv (preserves 2D stereochemistry)
         # and fail fast if identity was lost instead of regenerating from 3D poses.
         ligands_path = docking_dir / "ligands.csv"
-        smiles_lookup: dict[str, str] = {}
-        if ligands_path.exists():
-            lig_df = pd.read_csv(ligands_path)
-            smiles_lookup = dict(zip(lig_df["mol_idx"].astype(str), lig_df["smiles"]))
+        canonical_map = build_canonical_mol_idx_map(ligands_path)
+        smiles_lookup = build_smiles_lookup(ligands_path) if ligands_path.exists() else {}
 
-        resolved_smiles = (
-            filtered_df["source_mol_idx"].astype(str).map(smiles_lookup).fillna("")
+        canonical_ids = filtered_df["source_mol_idx"].astype(str).map(
+            lambda dock_id: resolve_canonical_mol_idx(dock_id, canonical_map)
         )
+        resolved_smiles = canonical_ids.map(smiles_lookup).fillna("")
         unresolved_mask = resolved_smiles.eq("")
         if "input_smiles" in filtered_df.columns:
             resolved_smiles.loc[unresolved_mask] = (
@@ -982,9 +993,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
                 .str.strip()
             )
 
-        unresolved_ids = filtered_df.loc[
-            resolved_smiles.eq(""), "source_mol_idx"
-        ].astype(str)
+        unresolved_ids = canonical_ids.loc[resolved_smiles.eq("")].astype(str)
         if not unresolved_ids.empty:
             missing_preview = ", ".join(unresolved_ids.head(5).tolist())
             raise RuntimeError(
@@ -1000,7 +1009,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
         # For downstream pipeline stages, mol_idx should refer to the original molecule id
         # (not the pose index inside the SDF).
-        filtered_df["mol_idx"] = filtered_df["source_mol_idx"]
+        filtered_df["mol_idx"] = canonical_ids
         filtered_df = filtered_df.drop(columns=["source_mol_idx"])
 
         # Save all passing poses to CSV (pose-level detail)

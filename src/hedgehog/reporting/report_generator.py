@@ -977,6 +977,7 @@ class ReportGenerator:
             [
                 "final_molecules.csv",
                 "output/final_molecules.csv",
+                "stages/07_descriptors_final/filtered_molecules.csv",
                 "stages/07_descriptors_final/filtered/filtered_molecules.csv",
                 "stages/06_docking_filters/filtered_molecules.csv",
             ],
@@ -3375,23 +3376,33 @@ class ReportGenerator:
         """
         # Stage checkpoints to analyze
         stage_paths = [
-            ("Input", "input/sampled_molecules.csv"),
-            ("MolPrep", "stages/01_mol_prep/filtered_molecules.csv"),
+            ("Input", ["input/sampled_molecules.csv"]),
+            ("MolPrep", ["stages/01_mol_prep/filtered_molecules.csv"]),
             (
                 "Descriptors",
-                "stages/02_descriptors_initial/filtered/filtered_molecules.csv",
+                [
+                    "stages/02_descriptors_initial/filtered_molecules.csv",
+                    "stages/02_descriptors_initial/filtered/filtered_molecules.csv",
+                ],
             ),
             (
                 "StructFilters",
-                "stages/03_structural_filters_post/filtered_molecules.csv",
+                ["stages/03_structural_filters_post/filtered_molecules.csv"],
             ),
-            ("Synthesis", "stages/04_synthesis/filtered_molecules.csv"),
-            ("DockingFilters", "stages/06_docking_filters/filtered_molecules.csv"),
+            ("Synthesis", ["stages/04_synthesis/filtered_molecules.csv"]),
+            (
+                "DockingFilters",
+                ["stages/06_docking_filters/filtered_molecules.csv"],
+            ),
         ]
 
         result: dict[str, list[str]] = {}
-        for stage_name, rel_path in stage_paths:
-            smiles = self._read_stage_smiles(self.base_path / rel_path)
+        for stage_name, rel_paths in stage_paths:
+            smiles = []
+            for rel_path in rel_paths:
+                smiles = self._read_stage_smiles(self.base_path / rel_path)
+                if smiles:
+                    break
             if smiles:
                 result[stage_name] = smiles
 

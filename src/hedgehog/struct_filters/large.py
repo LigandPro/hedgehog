@@ -57,12 +57,16 @@ def _struct_input_chunks(config: dict, stage_dir: str, chunk_rows: int):
     )
     if is_post_descriptors:
         descriptors_output = stage_output_or_parts(
-            base
-            / "stages"
-            / "02_descriptors_initial"
-            / "filtered"
-            / "filtered_molecules.csv"
+            base / "stages" / "02_descriptors_initial" / "filtered_molecules.csv"
         )
+        if descriptors_output is None:
+            descriptors_output = stage_output_or_parts(
+                base
+                / "stages"
+                / "02_descriptors_initial"
+                / "filtered"
+                / "filtered_molecules.csv"
+            )
         if descriptors_output is not None:
             if descriptors_output.is_file() and descriptors_output.stat().st_size == 0:
                 return

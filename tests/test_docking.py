@@ -8,6 +8,7 @@ import pandas as pd
 from hedgehog.docking.aggregation import (
     _aggregate_docking_results,
     _aggregate_matcha_results,
+    _collect_docking_stage_results,
 )
 from hedgehog.docking.binaries import _validate_optional_tool_path
 from hedgehog.docking.config_writer import _create_per_molecule_configs
@@ -259,6 +260,20 @@ class TestFindLatestInputSourcePriority:
         result = _find_latest_input_source(tmp_path)
         assert result is not None
         assert "sampled_molecules" in str(result)
+
+    def test_docking_does_not_reuse_its_own_filtered_output(self, tmp_path):
+        """A docking rerun should still start from the pre-docking stage."""
+        docking_dir = tmp_path / "stages" / "05_docking"
+        docking_dir.mkdir(parents=True)
+        (docking_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES}\n{SMILES_BENZENE}"
+        )
+        synthesis_dir = tmp_path / "stages" / "04_synthesis"
+        synthesis_dir.mkdir(parents=True)
+        expected = synthesis_dir / FILE_FILTERED_MOLECULES
+        expected.write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
+
+        assert _find_latest_input_source(tmp_path) == expected
 
     def test_legacy_descriptors_structure(self, tmp_path):
         """Should find legacy Descriptors directory."""
@@ -587,6 +602,116 @@ class TestPerMoleculeArchitecture:
         mols = [m for m in suppl if m is not None]
         assert len(mols) == 2
 
+    def test_collects_all_tools_and_writes_stage_pass_fail_files(self, tmp_path):
+        """Docking stage should classify every input using all tool outputs."""
+        from rdkit import Chem
+
+        ligands_dir = tmp_path / "05_docking"
+        ligands_dir.mkdir()
+        inputs = pd.DataFrame(
+            {
+                "smiles": ["CCO", "CC", "CCC"],
+                "name": ["mol-a", "mol-b", "mol-c"],
+                "model_name": ["model", "model", "model"],
+                "mol_idx": ["mol-a", "mol-b", "mol-c"],
+            }
+        )
+        inputs.to_csv(ligands_dir / "ligands.csv", index=False)
+        inputs[["smiles", "model_name", "mol_idx"]].to_csv(
+            ligands_dir / "input_molecules.csv", index=False
+        )
+
+        tool_outputs = {}
+        for tool, molecule_ids in {
+            "smina": ["mol-a"],
+            "gnina": ["mol-b"],
+            "matcha": ["mol-a"],
+        }.items():
+            output = ligands_dir / f"{tool}.sdf"
+            writer = Chem.SDWriter(str(output))
+            for molecule_id in molecule_ids:
+                mol = Chem.MolFromSmiles("CCO")
+                mol.SetProp("mol_idx", molecule_id)
+                writer.write(mol)
+            writer.close()
+            tool_outputs[tool] = output
+
+        passed, failed = _collect_docking_stage_results(
+            ligands_dir, ["smina", "gnina", "matcha"], tool_outputs
+        )
+
+        assert (passed, failed) == (2, 1)
+        filtered = pd.read_csv(ligands_dir / "filtered_molecules.csv")
+        rejected = pd.read_csv(ligands_dir / "failed_molecules.csv")
+        metrics = pd.read_csv(ligands_dir / "docking_results.csv")
+        assert set(filtered["mol_idx"]) == {"mol-a", "mol-b"}
+        assert rejected["mol_idx"].tolist() == ["mol-c"]
+        assert metrics.set_index("mol_idx").loc["mol-a", "pass_matcha"]
+        assert metrics.set_index("mol_idx").loc["mol-b", "pass_gnina"]
+
+        combined = [
+            mol
+            for mol in Chem.SDMolSupplier(str(ligands_dir / "docking_out.sdf"))
+            if mol is not None
+        ]
+        assert len(combined) == 3
+        assert {mol.GetProp("docking_tool") for mol in combined} == {
+            "smina",
+            "gnina",
+            "matcha",
+        }
+
+    def test_all_tool_score_thresholds_use_and_semantics(self, tmp_path):
+        """Every calibrated tool cutoff must pass for the molecule."""
+        from rdkit import Chem
+
+        ligands_dir = tmp_path / "05_docking"
+        ligands_dir.mkdir()
+        inputs = pd.DataFrame(
+            {
+                "smiles": ["CCO", "CC", "CCC"],
+                "model_name": ["model"] * 3,
+                "mol_idx": ["mol-a", "mol-b", "mol-c"],
+            }
+        )
+        inputs.to_csv(ligands_dir / "ligands.csv", index=False)
+        inputs.to_csv(ligands_dir / "input_molecules.csv", index=False)
+
+        scores = {
+            "smina": {"mol-a": -9.0, "mol-b": -9.0, "mol-c": -9.0},
+            "gnina": {"mol-a": -8.0, "mol-b": -8.0, "mol-c": -6.0},
+            "matcha": {"mol-a": -10.0, "mol-b": -5.0, "mol-c": -10.0},
+        }
+        tool_outputs = {}
+        for tool, tool_scores in scores.items():
+            output = ligands_dir / f"{tool}.sdf"
+            writer = Chem.SDWriter(str(output))
+            for molecule_id, score in tool_scores.items():
+                mol = Chem.MolFromSmiles("CCO")
+                mol.SetProp("mol_idx", molecule_id)
+                mol.SetDoubleProp("minimizedAffinity", score)
+                writer.write(mol)
+            writer.close()
+            tool_outputs[tool] = output
+
+        thresholds = {
+            tool: {"score_property": "minimizedAffinity", "max": -7.0}
+            for tool in scores
+        }
+        passed, failed = _collect_docking_stage_results(
+            ligands_dir,
+            ["smina", "gnina", "matcha"],
+            tool_outputs,
+            score_thresholds=thresholds,
+        )
+
+        assert (passed, failed) == (1, 2)
+        metrics = pd.read_csv(ligands_dir / "docking_results.csv").set_index("mol_idx")
+        assert bool(metrics.loc["mol-a", "pass"]) is True
+        assert bool(metrics.loc["mol-b", "pass_matcha"]) is False
+        assert bool(metrics.loc["mol-c", "pass_gnina"]) is False
+        assert metrics.loc["mol-a", "score_smina"] == -9.0
+
     def test_aggregate_empty_results_dir(self, tmp_path):
         """Should handle empty results directory gracefully."""
         results_dir = tmp_path / "empty_results"
@@ -672,6 +797,7 @@ class TestPerMoleculeArchitecture:
         cases = [
             ("000000_LP-0001-00001_out.sdf", "unexpected_pose_name", "LP-0001-00001"),
             ("000001_LP-0002-00005_out.sdf", "other_pose_name", "LP-0002-00005"),
+            ("000002_9487_0_out.sdf", "pose_name", "9487.0"),
         ]
         for filename, pose_name, _ in cases:
             mol = Chem.MolFromSmiles("CCO")
@@ -682,12 +808,24 @@ class TestPerMoleculeArchitecture:
             writer.close()
 
         output_sdf = tmp_path / "aggregated.sdf"
-        count = _aggregate_docking_results(results_dir, output_sdf)
-        assert count == 2
+        ligands_csv = tmp_path / "ligands.csv"
+        pd.DataFrame(
+            {
+                "smiles": ["c1ccccc1", "CCO", "c1ccccc1"],
+                "name": ["LP-0001-00001", "LP-0002-00005", "9487.0"],
+                "model_name": ["m1", "m2", "m3"],
+                "mol_idx": ["LP-0001-00001", "LP-0002-00005", "9487.0"],
+            }
+        ).to_csv(ligands_csv, index=False)
+
+        count = _aggregate_docking_results(
+            results_dir, output_sdf, ligands_csv=ligands_csv
+        )
+        assert count == 3
 
         suppl = Chem.SDMolSupplier(str(output_sdf))
         mols = [m for m in suppl if m is not None]
-        assert len(mols) == 2
+        assert len(mols) == 3
 
         restored = sorted(
             (

@@ -1,7 +1,12 @@
-generated_mols_path: src/hedgehog/configs/examples/moses_1000.csv
-target_mols_path: src/hedgehog/configs/examples/target_mols.csv
-folder_to_save: results/run
-n_jobs: -1
+# generated_mols_path: /home/dorochka/data/sampled_smiles/seed1/pb/result/*
+generated_mols_path: /home/dorochka/data/KRAS_touse.csv
+target_mols_path: /home/dorochka/data/KRAS_touse.csv
+alignment:
+  enabled: true
+  target_coverage_percent: 95
+# folder_to_save: results/seed1_pb_clean_rerun
+folder_to_save: results/KRAS_checker_95
+n_jobs: 96
 sample_size: 10000
 batch_size: 512
 save_sampled_mols: true

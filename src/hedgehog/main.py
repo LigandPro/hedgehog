@@ -27,14 +27,31 @@ from hedgehog._constants import (
     CFG_STRUCT_FILTERS,
     KEY_FOLDER_TO_SAVE,
 )
+from hedgehog.config_alignment import (
+    ALIGNMENT_DIR_NAME,
+    create_aligned_stage_config,
+    create_probe_config,
+    set_probe_molprep_allowed_atoms,
+    validate_target_coverage_percent,
+)
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
 from hedgehog.large_dataset import (
     LARGE_DATASET_MODE_KEY,
     apply_large_dataset_defaults,
     is_large_dataset_mode,
 )
-from hedgehog.pipeline import calculate_metrics
-from hedgehog.utils.data_prep import prepare_input_data
+from hedgehog.pipeline import (
+    CONTINUE_COMPLETED_STAGES_KEY,
+    CONTINUE_MODE_KEY,
+    FILE_RUN_INCOMPLETE,
+    calculate_metrics,
+    resolve_continuation_stages,
+)
+from hedgehog.utils.data_prep import (
+    SUPPORTED_EXTENSIONS,
+    materialize_named_sdf_from_sources,
+    prepare_input_data,
+)
 from hedgehog.utils.mol_index import assign_mol_idx
 
 mpl.use("Agg")
@@ -98,6 +115,82 @@ def _validate_input_path(input_path):
         return None
     input_path_obj = Path(input_path)
     return input_path_obj if input_path_obj.exists() else None
+
+
+def _resolve_cli_mols_paths(
+    primary: str | None,
+    extra_args: list[str] | None = None,
+) -> tuple[str | None, list[str] | None]:
+    """Normalize --mols plus shell-expanded trailing paths into config inputs."""
+    candidates: list[str] = []
+    if primary and str(primary).strip():
+        candidates.append(str(primary).strip())
+    for raw in extra_args or []:
+        text = str(raw).strip()
+        if text:
+            candidates.append(text)
+    if not candidates:
+        return None, None
+
+    if len(candidates) == 1:
+        only = candidates[0]
+        only_path = Path(only)
+        if only_path.exists() and only_path.is_dir():
+            return str(only_path), None
+        return only, None
+
+    supported = set(SUPPORTED_EXTENSIONS)
+    filtered: list[str] = []
+    skipped: list[str] = []
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.is_file() and path.suffix.lower().lstrip(".") in supported:
+            filtered.append(str(path.resolve()))
+        else:
+            skipped.append(candidate)
+
+    if not filtered:
+        raise typer.BadParameter(
+            "No supported molecule files found after --mols. "
+            f"Supported extensions: {', '.join(sorted(supported))}."
+        )
+    if skipped:
+        logger.info(
+            "Ignoring %d non-molecule path(s) after --mols (e.g. README)",
+            len(skipped),
+        )
+    if len(filtered) == 1:
+        return filtered[0], None
+    return str(Path(filtered[0]).parent), filtered
+
+
+def _prepare_docking_source_sdf(
+    config_dict: dict,
+    data: pd.DataFrame,
+    folder_to_save: Path,
+) -> Path | None:
+    """Materialize a named SDF for docking-only runs that start from SDF inputs."""
+    source_paths = [
+        str(path)
+        for path in (config_dict.get("generated_mols_paths") or [])
+        if str(path).strip()
+    ]
+    if not source_paths:
+        raw = config_dict.get("generated_mols_path")
+        if raw:
+            source_paths = [str(raw)]
+
+    sdf_paths = [
+        path for path in source_paths if Path(path).suffix.lower() == ".sdf"
+    ]
+    if not sdf_paths or len(sdf_paths) != len(source_paths):
+        return None
+
+    output_sdf = folder_to_save / "input" / "ligands.sdf"
+    materialize_named_sdf_from_sources(sdf_paths, data, output_sdf)
+    config_dict["docking_source_sdf"] = str(output_sdf)
+    logger.info("Prepared docking ligands SDF with molecule names: %s", output_sdf)
+    return output_sdf
 
 
 def _folder_is_empty(folder: Path) -> bool:
@@ -361,12 +454,25 @@ def _apply_cli_overrides(
     config_dict: dict,
     generated_mols_path: str | None,
     stages: "Stage | list[Stage] | tuple[Stage, ...] | None",
+    generated_mols_paths: list[str] | None = None,
 ) -> None:
     """Apply CLI argument overrides to config dictionary."""
     selected_stages = _normalize_stage_selection(stages)
 
-    if generated_mols_path:
+    if generated_mols_paths:
+        config_dict["generated_mols_paths"] = list(generated_mols_paths)
+        config_dict["generated_mols_path"] = (
+            generated_mols_path
+            or str(Path(generated_mols_paths[0]).parent)
+        )
+        logger.info(
+            "[bold]Override:[/bold] Using molecules from %d file(s) under: %s",
+            len(generated_mols_paths),
+            config_dict["generated_mols_path"],
+        )
+    elif generated_mols_path:
         config_dict["generated_mols_path"] = generated_mols_path
+        config_dict.pop("generated_mols_paths", None)
         logger.info(
             "[bold]Override:[/bold] Using molecules from: %s",
             generated_mols_path,
@@ -455,9 +561,8 @@ def _resolve_output_folder(
     stages: "Stage | list[Stage] | tuple[Stage, ...] | None",
     generated_mols_path: str | None,
 ) -> Path:
-    """Determine and log the appropriate output folder based on CLI flags."""
+    """Resolve a fresh output folder unless explicit reuse was requested."""
     original_folder = Path(config_dict[KEY_FOLDER_TO_SAVE])
-    selected_stages = _normalize_stage_selection(stages)
 
     if reuse_folder:
         logger.info(
@@ -466,31 +571,13 @@ def _resolve_output_folder(
         )
         return original_folder
 
-    if force_new_folder:
-        folder = _get_unique_results_folder(original_folder)
-        if folder != original_folder:
-            logger.info(
-                "[bold]Folder mode:[/bold] Creating new folder '%s' (--force-new flag)",
-                folder,
-            )
-        return folder
-
-    # Auto-mode: reuse for stage reruns, create new otherwise
-    if selected_stages and not generated_mols_path:
-        logger.info(
-            "[bold]Folder mode:[/bold] Reusing folder '%s' for stage execution",
-            original_folder,
-        )
-        return original_folder
-
     folder = _get_unique_results_folder(original_folder)
-    if folder != original_folder:
-        logger.info(
-            "[bold]Folder mode:[/bold] Folder '%s' "
-            "contains results. Using '%s' instead.",
-            original_folder,
-            folder,
-        )
+    reason = " (--force-new flag)" if force_new_folder else ""
+    logger.info(
+        "[bold]Folder mode:[/bold] Creating new folder '%s'%s",
+        folder,
+        reason,
+    )
     return folder
 
 
@@ -529,6 +616,182 @@ def _preprocess_input(
     if prepared_path:
         config_dict["generated_mols_path"] = prepared_path
         logger.info("Using preprocessed input: %s", prepared_path)
+
+
+def _align_config_with_target_molecules(
+    config_dict: dict,
+    folder_to_save: Path,
+    percentile: float,
+) -> dict:
+    """Run target molecules in measurement mode and create aligned configs."""
+    try:
+        percentile = validate_target_coverage_percent(percentile)
+    except (TypeError, ValueError) as exc:
+        logger.error("[red]Error:[/red] %s", exc)
+        raise typer.Exit(code=1) from exc
+
+    target_mols_path = config_dict.get("target_mols_path")
+    if not target_mols_path:
+        logger.error(
+            "[red]Error:[/red] Target alignment requires target_mols_path in the "
+            "master config."
+        )
+        raise typer.Exit(code=1)
+    target_path = _validate_input_path(str(target_mols_path))
+    if target_path is None:
+        logger.error(
+            "[red]Error:[/red] Target molecules file does not exist: %s",
+            target_mols_path,
+        )
+        raise typer.Exit(code=1)
+
+    alignment_root = folder_to_save / ALIGNMENT_DIR_NAME
+    probe_config = create_probe_config(
+        config_dict,
+        str(target_path),
+        alignment_root,
+    )
+    target_run = Path(probe_config[KEY_FOLDER_TO_SAVE])
+
+    logger.info(
+        "[bold]Target alignment:[/bold] Running %s at %.2f%% target coverage.",
+        target_path,
+        percentile,
+    )
+    _preprocess_input(probe_config, target_run)
+    try:
+        target_data = prepare_input_data(probe_config, logger)
+    except Exception as exc:
+        logger.error("[red]Error:[/red] Could not load target molecules: %s", exc)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        set_probe_molprep_allowed_atoms(probe_config, target_data)
+    except (TypeError, ValueError) as exc:
+        logger.error("[red]Error:[/red] Could not align MolPrep atoms: %s", exc)
+        raise typer.Exit(code=1) from exc
+
+    if "mol_idx" not in target_data.columns or target_data["mol_idx"].isna().all():
+        target_data = assign_mol_idx(target_data, run_base=target_run, logger=logger)
+    _save_sampled_molecules(target_data, target_run, should_save=True)
+
+    latest_aligned: tuple[dict, Path, Path] | None = None
+
+    def alignment_progress(event: dict) -> None:
+        nonlocal latest_aligned
+        if event.get("type") != "stage_complete" or event.get("ok") is False:
+            return
+        stage_name = str(event.get("stage", ""))
+        stage_config_key = {
+            "mol_prep": "config_mol_prep",
+            "descriptors": "config_descriptors",
+            "struct_filters": "config_structFilters",
+            "synthesis": "config_synthesis",
+            "docking": "config_docking",
+        }.get(stage_name)
+        try:
+            created = create_aligned_stage_config(
+                config_dict,
+                target_run,
+                alignment_root,
+                str(target_path),
+                percentile,
+                stage_name,
+            )
+            if created is None:
+                return
+            latest_aligned = created
+            _aligned, stage_master, stage_thresholds = created
+            logger.info(
+                "[bold]Created aligned config after %s:[/bold] %s",
+                stage_name,
+                _aligned.get(stage_config_key, stage_master)
+                if stage_config_key
+                else stage_master,
+            )
+            logger.info(
+                "[bold]Alignment thresholds:[/bold] %s",
+                stage_thresholds,
+            )
+        except Exception:
+            logger.exception("Could not create aligned config after target stage.")
+
+    if not calculate_metrics(target_data, probe_config, alignment_progress):
+        logger.error("[red]Error:[/red] Target alignment pipeline failed.")
+        raise typer.Exit(code=1)
+
+    if latest_aligned is None:
+        logger.warning(
+            "Target run completed without an alignable stage; using source configs."
+        )
+        return config_dict
+
+    aligned, master_path, thresholds_path = latest_aligned
+    aligned[KEY_FOLDER_TO_SAVE] = str(folder_to_save)
+    logger.info("[bold]Aligned config:[/bold] %s", master_path)
+    logger.info("[bold]Alignment thresholds:[/bold] %s", thresholds_path)
+    return aligned
+
+
+def _alignment_percentile_value(value: object) -> float | None:
+    """Normalize Typer option defaults when command functions are called directly."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _optional_string_value(value: object) -> str | None:
+    """Normalize optional Typer string defaults for direct function calls."""
+    return value if isinstance(value, str) and value else None
+
+
+def _alignment_target_coverage_from_config(
+    config_dict: dict,
+    cli_percentile: float | None,
+) -> float | None:
+    """Resolve target alignment settings, with the CLI taking precedence."""
+    if cli_percentile is not None:
+        return validate_target_coverage_percent(cli_percentile)
+
+    settings = config_dict.get("alignment")
+    if settings is None:
+        return None
+    if not isinstance(settings, dict):
+        raise ValueError("alignment must be a mapping in the master config")
+
+    enabled = settings.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("alignment.enabled must be true or false")
+    if not enabled:
+        return None
+
+    coverage_key = "target_coverage_percent"
+    legacy_key = "retention_percentile"
+    if coverage_key in settings:
+        coverage = validate_target_coverage_percent(settings[coverage_key])
+        if legacy_key in settings:
+            legacy = validate_target_coverage_percent(settings[legacy_key])
+            if legacy != coverage:
+                raise ValueError(
+                    "alignment.target_coverage_percent conflicts with deprecated "
+                    "alignment.retention_percentile"
+                )
+            logger.warning(
+                "alignment.retention_percentile is deprecated; use "
+                "alignment.target_coverage_percent."
+            )
+        return coverage
+
+    if legacy_key in settings:
+        logger.warning(
+            "alignment.retention_percentile is deprecated; use "
+            "alignment.target_coverage_percent."
+        )
+        return validate_target_coverage_percent(settings[legacy_key])
+
+    raise ValueError(
+        "alignment.target_coverage_percent is required when alignment.enabled is true"
+    )
 
 
 class CliProgressTracker:
@@ -908,7 +1171,7 @@ class Stage(str, Enum):
 
 def _run_pipeline_command(
     *,
-    config_path: str,
+    config_path: str | None,
     generated_mols_path: str | None,
     out_dir: str | None,
     stage: list[Stage] | None,
@@ -917,11 +1180,32 @@ def _run_pipeline_command(
     auto_install: bool,
     show_progress: bool,
     large_dataset: bool,
+    align_config_percentile: float | None = None,
+    continue_folder: str | None = None,
+    generated_mols_paths: list[str] | None = None,
+    _exact_output_folder: Path | None = None,
 ) -> None:
     _display_banner()
 
     if auto_install:
         os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+
+    if continue_folder and any(
+        (
+            generated_mols_path,
+            out_dir,
+            stage,
+            reuse_folder,
+            force_new_folder,
+            large_dataset,
+            align_config_percentile,
+        )
+    ):
+        logger.error(
+            "[red]Error:[/red] --continue cannot be combined with --mols, --out, "
+            "--stage, --reuse, --force-new, --large-dataset, or --align-config."
+        )
+        raise typer.Exit(code=1)
 
     if reuse_folder and force_new_folder:
         logger.error(
@@ -937,14 +1221,80 @@ def _run_pipeline_command(
         )
         raise typer.Exit(code=1)
 
-    config_dict = load_config(config_path)
-    _resolve_config_paths(config_dict, config_path)
-    _apply_cli_overrides(config_dict, generated_mols_path, stage)
+    continue_path = Path(continue_folder).expanduser().resolve() if continue_folder else None
+    alignment_resume_outer: Path | None = None
+    if continue_path is not None:
+        nested_target_run = continue_path / ALIGNMENT_DIR_NAME / "target_run"
+        if (nested_target_run / FILE_RUN_INCOMPLETE).is_file():
+            alignment_resume_outer = continue_path
+            continue_path = nested_target_run
+        elif (
+            continue_path.name == "target_run"
+            and continue_path.parent.name == ALIGNMENT_DIR_NAME
+        ):
+            alignment_resume_outer = continue_path.parent.parent
+    if continue_path is not None:
+        if not continue_path.is_dir():
+            logger.error("[red]Error:[/red] Continue folder does not exist: %s", continue_path)
+            raise typer.Exit(code=1)
+        if not (continue_path / FILE_RUN_INCOMPLETE).is_file():
+            logger.error(
+                "[red]Error:[/red] Run is not marked unfinished: %s", continue_path
+            )
+            raise typer.Exit(code=1)
+        saved_config = continue_path / "configs" / "master_config_resolved.yml"
+        selected_config_path = Path(config_path).expanduser() if config_path else saved_config
+        if not selected_config_path.is_file():
+            logger.error(
+                "[red]Error:[/red] Continuation config does not exist: %s",
+                selected_config_path,
+            )
+            raise typer.Exit(code=1)
+    else:
+        selected_config_path = Path(config_path or DEFAULT_CONFIG_PATH).expanduser()
+
+    config_dict = load_config(str(selected_config_path))
+    _resolve_config_paths(config_dict, str(selected_config_path))
+    if continue_path is not None and config_path is None:
+        run_configs = continue_path / "configs"
+        for key, raw_path in list(config_dict.items()):
+            if not key.startswith("config_") or not isinstance(raw_path, str):
+                continue
+            local_config = run_configs / Path(raw_path).name
+            if local_config.is_file():
+                config_dict[key] = str(local_config.resolve())
+    if continue_path is None:
+        _apply_cli_overrides(
+            config_dict,
+            generated_mols_path,
+            stage,
+            generated_mols_paths=generated_mols_paths,
+        )
+    try:
+        effective_alignment_percentile = (
+            None
+            if continue_path is not None
+            else _alignment_target_coverage_from_config(
+                config_dict,
+                align_config_percentile,
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        logger.error("[red]Error:[/red] Invalid alignment config: %s", exc)
+        raise typer.Exit(code=1) from exc
     run_input_molecules_path = (
         config_dict.get("generated_mols_path") or generated_mols_path
     )
     if large_dataset:
         config_dict[LARGE_DATASET_MODE_KEY] = True
+    if effective_alignment_percentile is not None and is_large_dataset_mode(
+        config_dict
+    ):
+        logger.error(
+            "[red]Error:[/red] Target alignment is not compatible with "
+            "large-dataset mode."
+        )
+        raise typer.Exit(code=1)
     if is_large_dataset_mode(config_dict):
         apply_large_dataset_defaults(config_dict)
         if stage is None:
@@ -968,10 +1318,20 @@ def _run_pipeline_command(
             )
             raise typer.Exit(code=1)
 
-    if out_dir:
-        folder_to_save = Path(out_dir).resolve()
+    if continue_path is not None:
+        folder_to_save = continue_path
+        logger.info("[bold]Continue mode:[/bold] Using unfinished run %s", folder_to_save)
+    elif _exact_output_folder is not None:
+        folder_to_save = _exact_output_folder.resolve()
         logger.info(
-            "[bold]Folder override:[/bold] Using output folder '%s' (--out)",
+            "[bold]Continue mode:[/bold] Starting candidates in original run %s",
+            folder_to_save,
+        )
+    elif out_dir:
+        output_base = Path(out_dir).resolve()
+        folder_to_save = _get_unique_results_folder(output_base)
+        logger.info(
+            "[bold]Folder override:[/bold] Creating new folder '%s' from --out base",
             folder_to_save,
         )
     else:
@@ -981,7 +1341,46 @@ def _run_pipeline_command(
     config_dict[KEY_FOLDER_TO_SAVE] = str(folder_to_save)
     LoggerSingleton().configure_log_directory(folder_to_save)
 
-    if is_large_dataset_mode(config_dict):
+    if continue_path is not None:
+        completed_stages, resume_stages = resolve_continuation_stages(
+            config_dict, folder_to_save
+        )
+        if not resume_stages:
+            logger.error(
+                "[red]Error:[/red] No unfinished enabled stage was found in %s",
+                folder_to_save,
+            )
+            raise typer.Exit(code=1)
+        config_dict[CONTINUE_MODE_KEY] = True
+        config_dict[CONTINUE_COMPLETED_STAGES_KEY] = completed_stages
+        config_dict[STAGE_SELECTION_KEY] = resume_stages
+        config_dict.pop(STAGE_OVERRIDE_KEY, None)
+        logger.info(
+            "[bold]Continue mode:[/bold] completed=%s; resuming=%s",
+            ", ".join(completed_stages) or "none",
+            ", ".join(resume_stages),
+        )
+
+    if effective_alignment_percentile is not None:
+        config_dict = _align_config_with_target_molecules(
+            config_dict,
+            folder_to_save,
+            effective_alignment_percentile,
+        )
+
+    if continue_path is not None:
+        sampled_path = folder_to_save / "input" / SAMPLED_MOLS_FILENAME
+        if not sampled_path.is_file():
+            logger.error(
+                "[red]Error:[/red] Saved run input is missing: %s", sampled_path
+            )
+            raise typer.Exit(code=1)
+        data = pd.read_csv(sampled_path)
+        run_input_molecules_path = str(sampled_path)
+        logger.info(
+            "[bold]Continue mode:[/bold] Loaded %d saved input molecules", len(data)
+        )
+    elif is_large_dataset_mode(config_dict):
         logger.info(
             "[bold]Large dataset mode:[/bold] streaming chunks; plots and report-heavy outputs are disabled."
         )
@@ -994,51 +1393,161 @@ def _run_pipeline_command(
 
         data = prepare_input_data(config_dict, logger)
 
-        if "mol_idx" not in data.columns or data["mol_idx"].isna().all():
+        if "mol_idx" not in data.columns:
             data = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
+        elif data["mol_idx"].isna().any():
+            assigned = assign_mol_idx(data, run_base=folder_to_save, logger=logger)
+            data["mol_idx"] = data["mol_idx"].fillna(assigned["mol_idx"])
 
         should_save = config_dict.get("save_sampled_mols", False) or bool(stage)
         _save_sampled_molecules(data, folder_to_save, should_save)
+        _prepare_docking_source_sdf(config_dict, data, folder_to_save)
 
     logger.info("[bold]Starting pipeline...[/bold]")
 
     shared_console = LoggerSingleton().console
 
+    alignment_resume_callback = None
+    if alignment_resume_outer is not None:
+        alignment_root = alignment_resume_outer / ALIGNMENT_DIR_NAME
+        aligned_master_path = (
+            alignment_root / "aligned_configs" / "aligned_config.yml"
+        )
+        if not aligned_master_path.is_file():
+            logger.error(
+                "[red]Error:[/red] Cannot continue target alignment because the "
+                "partial aligned master is missing: %s",
+                aligned_master_path,
+            )
+            raise typer.Exit(code=1)
+        alignment_resume_master = load_config(str(aligned_master_path))
+        target_path = str(config_dict.get("target_mols_path", ""))
+        alignment_settings = config_dict.get("alignment", {})
+        coverage = validate_target_coverage_percent(
+            alignment_settings.get("target_coverage_percent")
+        )
+
+        def _update_resumed_alignment(event: dict) -> None:
+            nonlocal alignment_resume_master
+            if event.get("type") != "stage_complete" or event.get("ok") is False:
+                return
+            created = create_aligned_stage_config(
+                alignment_resume_master,
+                folder_to_save,
+                alignment_root,
+                target_path,
+                coverage,
+                str(event.get("stage", "")),
+            )
+            if created is not None:
+                alignment_resume_master, master_path, _thresholds_path = created
+                logger.info(
+                    "[bold]Updated aligned config after resumed target stage:[/bold] %s",
+                    master_path,
+                )
+
+        alignment_resume_callback = _update_resumed_alignment
+
+        thresholds_path = (
+            alignment_root / "aligned_configs" / "alignment_thresholds.yml"
+        )
+        threshold_audit = (
+            load_config(str(thresholds_path)) if thresholds_path.is_file() else {}
+        )
+        previous_coverage = threshold_audit.get("target_coverage_percent")
+        if previous_coverage is not None and float(previous_coverage) != coverage:
+            logger.info(
+                "[bold]Continue mode:[/bold] Rebuilding completed alignment "
+                "thresholds from saved metrics at %.2f%% coverage (was %.2f%%).",
+                coverage,
+                float(previous_coverage),
+            )
+            for completed_stage in config_dict.get(
+                CONTINUE_COMPLETED_STAGES_KEY, []
+            ):
+                _update_resumed_alignment(
+                    {
+                        "type": "stage_complete",
+                        "stage": completed_stage,
+                        "ok": True,
+                    }
+                )
+
     if _plain_output_enabled() or not show_progress:
-        success = calculate_metrics(data, config_dict, None)
+        success = calculate_metrics(data, config_dict, alignment_resume_callback)
     else:
         with CliProgressTracker(shared_console) as tracker:
-            success = calculate_metrics(data, config_dict, tracker.handle_event)
+            if alignment_resume_callback is None:
+                progress_callback = tracker.handle_event
+            else:
+
+                def progress_callback(event: dict) -> None:
+                    tracker.handle_event(event)
+                    alignment_resume_callback(event)
+
+            success = calculate_metrics(data, config_dict, progress_callback)
 
     if not success:
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)
+    if alignment_resume_outer is not None:
+        aligned_master_path = (
+            alignment_resume_outer
+            / ALIGNMENT_DIR_NAME
+            / "aligned_configs"
+            / "aligned_config.yml"
+        )
+        logger.info(
+            "[bold]Target continuation completed.[/bold] Starting candidate pipeline."
+        )
+        _run_pipeline_command(
+            config_path=str(aligned_master_path),
+            generated_mols_path=None,
+            out_dir=None,
+            stage=None,
+            reuse_folder=False,
+            force_new_folder=False,
+            auto_install=auto_install,
+            show_progress=show_progress,
+            large_dataset=False,
+            _exact_output_folder=alignment_resume_outer,
+        )
+        return
     if run_input_molecules_path:
         logger.info("Run completed, examined csv: %s", run_input_molecules_path)
     logger.info("Ligand Pro thanks you for using HEDGEHOG!")
 
 
-@app.callback(invoke_without_command=True)
+@app.callback(
+    invoke_without_command=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": False},
+)
 def run(
     ctx: typer.Context = None,
-    config_path: str = typer.Option(
-        DEFAULT_CONFIG_PATH,
+    config_path: str | None = typer.Option(
+        None,
         "--config",
         "-c",
-        help="Master YAML config path (default: src/hedgehog/configs/config.yml).",
+        help=(
+            "Master YAML config path. Defaults to the packaged config, or to "
+            "RUN_FOLDER/configs/master_config_resolved.yml with --continue."
+        ),
         show_default=False,
     ),
     generated_mols_path: str | None = typer.Option(
         None,
         "--mols",
         "-m",
-        help="SMILES file path or glob (overrides config).",
+        help=(
+            "Molecule file, directory, or glob. Shell-expanded SDF/CSV lists after "
+            "--mols are accepted (overrides config)."
+        ),
     ),
     out_dir: str | None = typer.Option(
         None,
         "--out",
         "-o",
-        help="Output directory (overrides config folder_to_save).",
+        help="Output naming base; creates a fresh numbered folder.",
     ),
     stage: list[Stage] | None = typer.Option(
         None,
@@ -1054,10 +1563,16 @@ def run(
         "--reuse",
         help="Reuse existing results folder.",
     ),
+    continue_folder: str | None = typer.Option(
+        None,
+        "--continue",
+        metavar="RUN_FOLDER",
+        help="Continue an unfinished run from its first incomplete stage.",
+    ),
     force_new_folder: bool = typer.Option(
         False,
         "--force-new",
-        help="Always create a new results folder.",
+        help="Explicitly request the default fresh-folder behavior.",
     ),
     auto_install: bool = typer.Option(
         False,
@@ -1073,6 +1588,17 @@ def run(
         False,
         "--large-dataset",
         help="Stream large libraries in chunks and write row-level shard outputs.",
+    ),
+    align_config_percentile: float | None = typer.Option(
+        None,
+        "--align-config",
+        metavar="PERCENT",
+        min=0.000001,
+        max=100.0,
+        help=(
+            "Align thresholds and structural rules to cover this percentage of the "
+            "target_mols_path molecules before running candidates."
+        ),
     ),
 ) -> None:
     """
@@ -1098,6 +1624,9 @@ def run(
       uv run hedgehog --reuse
 
     \b
+      uv run hedgehog --continue results/run_1
+
+    \b
       uv run hedgehog --stage docking --force-new
 
     \b
@@ -1109,41 +1638,62 @@ def run(
     \b
       uv run hedgehog --large-dataset --mols input/pubchem.csv
 
+    \b
+      uv run hedgehog --align-config 95
+
     """
     if ctx is None or ctx.invoked_subcommand is None:
+        alignment_percentile = _alignment_percentile_value(align_config_percentile)
+        resolved_mols, resolved_mols_paths = _resolve_cli_mols_paths(
+            generated_mols_path,
+            list(ctx.args) if ctx is not None else None,
+        )
         _run_pipeline_command(
             config_path=config_path,
-            generated_mols_path=generated_mols_path,
+            generated_mols_path=resolved_mols,
+            generated_mols_paths=resolved_mols_paths,
             out_dir=out_dir,
             stage=stage,
             reuse_folder=reuse_folder,
             force_new_folder=force_new_folder,
+            continue_folder=_optional_string_value(continue_folder),
             auto_install=auto_install,
             show_progress=show_progress,
             large_dataset=large_dataset,
+            align_config_percentile=alignment_percentile,
         )
 
 
-@app.command("run")
+@app.command(
+    "run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": False},
+)
 def run_command(
-    config_path: str = typer.Option(
-        DEFAULT_CONFIG_PATH,
+    ctx: typer.Context,
+    config_path: str | None = typer.Option(
+        None,
         "--config",
         "-c",
-        help="Master YAML config path (default: src/hedgehog/configs/config.yml).",
+        help=(
+            "Master YAML config path. Defaults to the packaged config, or to "
+            "RUN_FOLDER/configs/master_config_resolved.yml with --continue."
+        ),
         show_default=False,
     ),
     generated_mols_path: str | None = typer.Option(
         None,
         "--mols",
         "-m",
-        help="SMILES file path or glob (overrides config).",
+        help=(
+            "Molecule file, directory, or glob. Shell-expanded SDF/CSV lists after "
+            "--mols are accepted (overrides config)."
+        ),
     ),
     out_dir: str | None = typer.Option(
         None,
         "--out",
         "-o",
-        help="Output directory (overrides config folder_to_save).",
+        help="Output naming base; creates a fresh numbered folder.",
     ),
     stage: list[Stage] | None = typer.Option(
         None,
@@ -1159,10 +1709,16 @@ def run_command(
         "--reuse",
         help="Reuse existing results folder.",
     ),
+    continue_folder: str | None = typer.Option(
+        None,
+        "--continue",
+        metavar="RUN_FOLDER",
+        help="Continue an unfinished run from its first incomplete stage.",
+    ),
     force_new_folder: bool = typer.Option(
         False,
         "--force-new",
-        help="Always create a new results folder.",
+        help="Explicitly request the default fresh-folder behavior.",
     ),
     auto_install: bool = typer.Option(
         False,
@@ -1179,11 +1735,27 @@ def run_command(
         "--large-dataset",
         help="Stream large libraries in chunks and write row-level shard outputs.",
     ),
+    align_config_percentile: float | None = typer.Option(
+        None,
+        "--align-config",
+        metavar="PERCENT",
+        min=0.000001,
+        max=100.0,
+        help=(
+            "Align thresholds and structural rules to cover this percentage of the "
+            "target_mols_path molecules before running candidates."
+        ),
+    ),
 ) -> None:
     """Run the molecular analysis pipeline as an explicit subcommand."""
-    _run_pipeline_command(
+    resolved_mols, resolved_mols_paths = _resolve_cli_mols_paths(
+        generated_mols_path,
+        list(ctx.args) if ctx is not None else None,
+    )
+    kwargs = dict(
         config_path=config_path,
-        generated_mols_path=generated_mols_path,
+        generated_mols_path=resolved_mols,
+        generated_mols_paths=resolved_mols_paths,
         out_dir=out_dir,
         stage=stage,
         reuse_folder=reuse_folder,
@@ -1192,6 +1764,13 @@ def run_command(
         show_progress=show_progress,
         large_dataset=large_dataset,
     )
+    normalized_continue_folder = _optional_string_value(continue_folder)
+    if normalized_continue_folder is not None:
+        kwargs["continue_folder"] = normalized_continue_folder
+    alignment_percentile = _alignment_percentile_value(align_config_percentile)
+    if alignment_percentile is not None:
+        kwargs["align_config_percentile"] = alignment_percentile
+    _run_pipeline_command(**kwargs)
 
 
 @app.command()

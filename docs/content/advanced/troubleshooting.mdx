@@ -212,6 +212,23 @@ ls modules/aizynthfinder/aizynthfinder/data/
 
 3. If setup fails during dependency sync, verify your local `uv` installation, Python version compatibility (AiZynthFinder currently supports Python 3.10-3.12), and outbound package-index access.
 
+## AiZynthFinder Worker Failures
+
+**Symptom:** AiZynthFinder reports `Not all output files produced`, or a long synthesis run ends with no combined JSON file.
+
+Hedgehog-managed isolated shards are enabled by default. Successful molecule checkpoints are retained and only failed shards are retried. Inspect `aizynthfinder_run_manifest.json` for failed shard return codes and log paths.
+
+An ONNX Runtime warning about failing to inspect `/sys/class/drm/card0` only means that GPU discovery is unavailable. Hedgehog's AiZynthFinder worker suppresses this warning and continues CPU inference; ONNX errors are still logged.
+
+If the host already has stopped AiZ processes, inspect them before starting another memory-heavy run:
+
+```bash
+ps -eo pid,stat,rss,args | grep aizynth
+free -h
+```
+
+A process state beginning with `T` is suspended, often after Ctrl-Z, and can retain model and search-tree memory. Resume or terminate only the jobs you own. Lower synthesis `n_jobs` when swap usage or per-worker memory is high.
+
 ## Shepherd-Score on Python 3.13
 
 **Symptom:** installing Shepherd dependencies fails on Python 3.13 with wheel or

@@ -92,6 +92,26 @@ def test_charges_removed(tmp_path: Path):
     assert not any(a.GetFormalCharge() != 0 for a in mol.GetAtoms())
 
 
+def test_charges_preserved_when_uncharge_is_omitted(tmp_path: Path):
+    """Charged SMILES should remain charged unless uncharging is enabled."""
+    cfg = _cfg()
+    del cfg["steps"]["standardize_mol"]["uncharge"]
+    df = pd.DataFrame(
+        {
+            "smiles": ["C[NH+](C)C"],
+            "model_name": ["test"],
+            "mol_idx": ["LP-0001-00001"],
+        }
+    )
+
+    out = run_mol_prep(df, cfg, tmp_path)
+
+    assert len(out) == 1
+    mol = dm.to_mol(out["smiles"].iloc[0], sanitize=True)
+    assert mol is not None
+    assert any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
+
+
 def test_stereochemistry_removed(tmp_path: Path):
     """Chiral SMILES should lose stereochemical markers."""
     df = pd.DataFrame(
@@ -104,6 +124,44 @@ def test_stereochemistry_removed(tmp_path: Path):
     out = run_mol_prep(df, _cfg(), tmp_path)
     assert len(out) == 1
     assert "@" not in out["smiles"].iloc[0]
+
+
+def test_stereochemistry_preserved_by_default(tmp_path: Path):
+    """Chiral SMILES should retain stereochemistry when the flag is omitted."""
+    cfg = _cfg()
+    del cfg["steps"]["remove_stereochemistry"]
+    df = pd.DataFrame(
+        {
+            "smiles": ["C[C@H](O)F"],
+            "model_name": ["test"],
+            "mol_idx": ["LP-0001-00001"],
+        }
+    )
+
+    out = run_mol_prep(df, cfg, tmp_path)
+
+    assert len(out) == 1
+    assert "@" in out["smiles"].iloc[0]
+
+
+def test_isotopes_preserved_when_rejection_is_disabled(tmp_path: Path):
+    """Isotope-labelled molecules should remain available to later stages."""
+    cfg = _cfg()
+    cfg["filters"]["reject_isotopes"] = False
+    cfg["steps"]["standardize_mol"]["uncharge"] = False
+    cfg["steps"]["remove_stereochemistry"] = False
+    df = pd.DataFrame(
+        {
+            "smiles": ["C#C[2H]"],
+            "model_name": ["test"],
+            "mol_idx": ["LP-0001-00001"],
+        }
+    )
+
+    out = run_mol_prep(df, cfg, tmp_path)
+
+    assert len(out) == 1
+    assert "[2H]" in out["smiles"].iloc[0]
 
 
 def test_invalid_smiles_reported(tmp_path: Path):

@@ -96,7 +96,11 @@ The docking stage processes molecules individually:
 3. Batch shell scripts (`run_gnina.sh`, `run_smina.sh`, `run_matcha.sh`) are generated
 4. If `auto_run: true`, scripts are executed automatically
 5. Per-molecule results are collected in `_workdir/gnina/`, `_workdir/smina/`, or `matcha/<run_name>/best_poses/`
-6. Results are aggregated into `gnina/gnina_out.sdf`, `smina/smina_out.sdf`, or `matcha/matcha_out.sdf`
+6. For each tool, the pose with the lowest affinity is selected per
+   `(model_name, mol_idx)` pair, so identical molecule IDs from different
+   generator models remain separate
+7. Results are aggregated into `gnina/gnina_out.sdf`, `smina/smina_out.sdf`, or `matcha/matcha_out.sdf`
+8. Each tool writes a `<tool>_best_poses.csv` manifest recording the selected affinity, source file, and source pose index
 
 ## Output Structure
 
@@ -112,11 +116,14 @@ stages/05_docking/
 |   └── run_smina.sh
 ├── checkpoints/               # Matcha per stage results 
 ├── gnina/
+|   ├── gnina_best_poses.csv   # Auditable GNINA pose selection
 |   └── gnina_out.sdf          # Aggregated GNINA results
 ├── matcha/
+|   ├── matcha_best_poses.csv  # Auditable Matcha pose selection
 |   └── matcha_out.sdf         # Aggregated Matcha results
 ├── smina/
-|   └── smina_out.sdf          # Aggregated SMINA results
+|   ├── smina_best_poses.csv   # Auditable Smina pose selection
+|   └── smina_out.sdf          # Aggregated Smina results
 ├── job_ids.txt                # Docking job ids 
 ├── job_meta.json              # Job metadata
 └── ligands.csv                # Prepared ligands
@@ -142,4 +149,3 @@ cd results/stages/05_docking/_workdir
 ./run_gnina.sh
 ./run_smina.sh
 ```
-

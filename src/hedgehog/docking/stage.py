@@ -5,7 +5,7 @@ import pandas as pd
 
 from hedgehog._constants import CFG_DOCKING, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.docking.aggregation import _aggregate_docking_results  # noqa: F401
+from hedgehog.docking.aggregation import _collect_docking_stage_results
 from hedgehog.docking.binaries import _validate_optional_tool_path
 from hedgehog.docking.config_writer import _create_docking_config_file  # noqa: F401
 from hedgehog.docking.execution import _execute_auto_run
@@ -66,6 +66,10 @@ def run(config, reporter=None):
 
     ligands_dir = base_folder / "stages" / "05_docking"
     ligands_csv = ligands_dir / "ligands.csv"
+    ligands_dir.mkdir(parents=True, exist_ok=True)
+    df[["smiles", "model_name", "mol_idx"]].drop_duplicates(
+        subset=["mol_idx"], keep="first"
+    ).to_csv(ligands_dir / "input_molecules.csv", index=False)
     empty_marker = ligands_dir / DOCKING_COMPLETED_EMPTY_MARKER
     if empty_marker.exists():
         try:
@@ -88,6 +92,21 @@ def run(config, reporter=None):
     tools_list = _parse_tools_config(cfg)
     logger.info("Docking tools configured: %s", tools_list)
 
+    source_sdf = None
+    cfg_sdf = config.get("docking_source_sdf")
+    if cfg_sdf:
+        candidate = Path(str(cfg_sdf)).expanduser()
+        if candidate.exists():
+            source_sdf = candidate.resolve()
+    if source_sdf is None:
+        candidate = base_folder / "input" / "ligands.sdf"
+        if candidate.exists():
+            source_sdf = candidate.resolve()
+    if source_sdf is not None:
+        for tool_name in tools_list:
+            cfg[f"{tool_name}_ligands"] = str(source_sdf)
+        logger.info("Using precomputed docking ligands SDF: %s", source_sdf)
+
     if int(ligands_stats.get("written", 0)) == 0:
         marker = _mark_docking_completed_empty(
             ligands_dir, source, ligands_stats, tools_list
@@ -97,6 +116,12 @@ def run(config, reporter=None):
             int(ligands_stats.get("written", 0)),
             int(ligands_stats.get("total", 0)),
             marker,
+        )
+        _collect_docking_stage_results(
+            ligands_dir,
+            tools_list,
+            {},
+            score_thresholds=cfg.get("score_thresholds"),
         )
         return True
 

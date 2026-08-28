@@ -770,6 +770,51 @@ class TestDockingFiltersIdentityRegression:
         assert filtered_df.loc[0, "smiles"] == "c1ccccc1"
         assert filtered_df.loc[0, "smiles"] != "CCO"
 
+    def test_filtered_smiles_resolves_sanitized_numeric_mol_idx(self, tmp_path):
+        """Dock-side ids like 9487_0 should map back to ligands.csv mol_idx 9487.0."""
+        from hedgehog.docking_filters.main import docking_filters_main
+
+        base = tmp_path
+        docking_dir = base / "stages" / "05_docking"
+        smina_dir = docking_dir / "smina"
+        smina_dir.mkdir(parents=True)
+
+        pose_mol = Chem.MolFromSmiles("CCO")
+        pose_mol.SetProp("_Name", "9487_0")
+        pose_mol.SetProp("source_mol_idx", "9487_0")
+        pose_mol.SetProp("mol_idx", "9487_0")
+        pose_mol.SetProp("model_name", "tgmdlm")
+        writer = Chem.SDWriter(str(smina_dir / "smina_out.sdf"))
+        writer.write(pose_mol)
+        writer.close()
+
+        pd.DataFrame(
+            {
+                "smiles": ["c1ccccc1"],
+                "name": ["9487.0"],
+                "model_name": ["tgmdlm"],
+                "mol_idx": ["9487.0"],
+            }
+        ).to_csv(docking_dir / "ligands.csv", index=False)
+
+        filter_cfg = base / "config_docking_filters.yml"
+        _write_minimal_docking_filters_cfg(filter_cfg, save_metrics=False)
+
+        result = docking_filters_main(
+            {
+                "folder_to_save": str(base),
+                "config_docking_filters": str(filter_cfg),
+            }
+        )
+        assert result is not None
+
+        filtered_df = pd.read_csv(
+            base / "stages" / "06_docking_filters" / "filtered_molecules.csv"
+        )
+        assert len(filtered_df) == 1
+        assert str(filtered_df.loc[0, "mol_idx"]) == "9487.0"
+        assert filtered_df.loc[0, "smiles"] == "c1ccccc1"
+
     def test_docking_filters_fails_when_source_identity_is_missing(self, tmp_path):
         """Identity loss must fail stage instead of silently rebuilding SMILES from pose."""
         from hedgehog.docking_filters.main import docking_filters_main

@@ -24,8 +24,8 @@ def ensure_matcha_checkout(
     checkout_dir: str | Path | None = None,
     pr_number: int | None = None,  # noqa: ARG001 — kept for config compatibility
 ) -> Path:
-    """Clone LigandPro/Matcha (or update it) and return the checkout path."""
-    del pr_number  # only origin/main is supported
+    """Clone Matcha or update it to the latest default-branch commit."""
+    del pr_number  # only the remote default branch is supported
 
     target_dir = (
         Path(checkout_dir).expanduser()
@@ -56,9 +56,11 @@ def ensure_matcha_checkout(
         _run_git(["git", "clone", repo_url, str(target_dir)], cwd=target_dir.parent)
     else:
         logger.info("Updating Matcha checkout at %s", target_dir)
-        _run_git(["git", "fetch", "origin", "main"], cwd=target_dir)
 
-    _run_git(["git", "checkout", "--detach", "origin/main"], cwd=target_dir)
+    # Fetch the remote's default branch without assuming it is named ``main``.
+    # FETCH_HEAD is the exact commit returned by the server for its HEAD ref.
+    _run_git(["git", "fetch", "origin", "HEAD"], cwd=target_dir)
+    _run_git(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=target_dir)
 
     if not (target_dir / "matcha" / "cli.py").is_file():
         raise RuntimeError(

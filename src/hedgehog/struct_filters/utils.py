@@ -283,18 +283,28 @@ def camelcase(any_str):
 def build_identity_map_from_descriptors(config):
     """Build a map of (smiles, model_name) -> mol_idx from descriptors output."""
     base_folder = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
-    id_path = base_folder / "Descriptors" / "passDescriptorsSMILES.csv"
+    id_paths = [
+        base_folder / "stages" / "02_descriptors_initial" / "filtered_molecules.csv",
+        base_folder
+        / "stages"
+        / "02_descriptors_initial"
+        / "filtered"
+        / "filtered_molecules.csv",
+        base_folder / "Descriptors" / "passDescriptorsSMILES.csv",
+    ]
 
-    try:
-        if id_path.exists():
+    for id_path in id_paths:
+        try:
+            if not id_path.exists():
+                continue
             id_df = pd.read_csv(id_path)
             identity_map = {
                 (row["smiles"], row["model_name"]): row["mol_idx"]
                 for _, row in id_df.iterrows()
             }
             return identity_map, id_df
-    except Exception:
-        pass
+        except Exception:
+            continue
 
     return {}, None
 
@@ -2335,8 +2345,22 @@ def filter_data(config, stage_dir):
         "03_structural_filters_post" in stage_dir or stage_dir == "StructFilters"
     )
     if is_post_descriptors:
-        descriptors_path = base_folder / "Descriptors" / "passDescriptorsSMILES.csv"
-        if descriptors_path.exists():
+        descriptor_candidates = [
+            base_folder
+            / "stages"
+            / "02_descriptors_initial"
+            / "filtered_molecules.csv",
+            base_folder
+            / "stages"
+            / "02_descriptors_initial"
+            / "filtered"
+            / "filtered_molecules.csv",
+            base_folder / "Descriptors" / "passDescriptorsSMILES.csv",
+        ]
+        descriptors_path = next(
+            (path for path in descriptor_candidates if path.exists()), None
+        )
+        if descriptors_path is not None:
             input_path = str(descriptors_path)
         else:
             sampled_path = base_folder / "sampled_molecules.csv"

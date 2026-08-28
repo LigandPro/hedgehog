@@ -286,6 +286,38 @@ class TestCalculateSynthesisScoresRegistry:
             "fake_batch_score",
         ]
 
+    def test_calculate_synthesis_scores_logs_passed_criterion_count(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        """Score summaries should report criterion passes, not calculation counts."""
+
+        def _fake_batch(smiles_list, config, progress_cb=None):
+            return [1.0, 5.0, np.nan]
+
+        monkeypatch.setitem(
+            synthesis_utils.SYNTHESIS_SCORERS,
+            "fakebatch",
+            synthesis_utils.SynthesisScorer(
+                name="fakebatch",
+                column="fake_batch_score",
+                batch_calculator=_fake_batch,
+            ),
+        )
+
+        with caplog.at_level("INFO"):
+            calculate_synthesis_scores(
+                pd.DataFrame({"smiles": ["a", "b", "c"]}),
+                config={
+                    "enabled_scores": ["fakebatch"],
+                    "score_filters": {
+                        "fake_batch_score": {"min": 0.0, "max": 4.0}
+                    },
+                },
+            )
+
+        assert "fake_batch_score passed: 1/2" in caplog.text
+        assert "calculated for" not in caplog.text
+
     def test_fsscore_external_command_adapter(self):
         """FSScore should read scores from an explicitly configured command."""
         command = (
@@ -1019,6 +1051,38 @@ class TestPrepareInputSmiles:
 class TestRunAizynthfinder:
     """Tests for run_aizynthfinder nproc handling."""
 
+    def test_passes_search_overrides_via_effective_config(
+        self, tmp_path, monkeypatch
+    ):
+        """Synthesis search settings should reach the AiZynthFinder config."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            effective_path = Path(cmd[cmd.index("--config") + 1])
+            captured["config"] = synthesis_utils.yaml.safe_load(
+                effective_path.read_text()
+            )
+            return None
+
+        config = _aizynth_config_path(tmp_path)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("stock:\n  zinc: stock.hdf5\n")
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
+
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            config,
+            synthesis_config={
+                "n_jobs": 1,
+                "aizynthfinder_max_transforms": 10,
+                "aizynthfinder_time_limit": 600,
+            },
+        )
+
+        assert ok is True
+
     def test_uses_uv_binary_from_resolver(self, tmp_path, monkeypatch):
         """run_aizynthfinder should use the binary returned by resolve_uv_binary."""
         captured = {}
@@ -1287,6 +1351,24 @@ class TestGetInputPath:
         result = get_input_path(config, str(tmp_path))
 
         assert "descriptors_initial" in result
+
+    def test_ignores_stale_synthesis_and_docking_outputs(self, tmp_path):
+        """Synthesis must consume the latest pre-synthesis stage output."""
+        mol_prep_dir = tmp_path / "stages" / "01_mol_prep"
+        mol_prep_dir.mkdir(parents=True)
+        expected = mol_prep_dir / FILE_FILTERED_MOLECULES
+        expected.write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
+
+        for stage in ("04_synthesis", "05_docking", "06_docking_filters"):
+            stage_dir = tmp_path / "stages" / stage
+            stage_dir.mkdir(parents=True)
+            (stage_dir / FILE_FILTERED_MOLECULES).write_text(
+                f"{COL_SMILES},{COL_MODEL_NAME},mol_idx\n"
+            )
+
+        config = {"generated_mols_path": "/fallback/path.csv"}
+
+        assert get_input_path(config, str(tmp_path)) == str(expected)
 
     def test_falls_back_to_config(self, tmp_path):
         """Should fall back to config path if no processed data."""

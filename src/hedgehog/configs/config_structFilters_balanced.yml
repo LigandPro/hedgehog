@@ -15,7 +15,7 @@
 run: true
 filter_data: true
 
-parse_input_n_jobs: -1
+parse_input_n_jobs: 48
 write_per_filter_outputs: true
 
 generate_plots: true

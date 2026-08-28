@@ -4,6 +4,7 @@ import json
 
 import pandas as pd
 
+import hedgehog.descriptors.large as descriptors_large
 import hedgehog.struct_filters.large as struct_large
 import hedgehog.synthesis.large as synthesis_large
 from hedgehog.large_dataset import (
@@ -146,9 +147,7 @@ def test_streaming_mol_idx_assigner_persists_counters_across_chunks(tmp_path):
 
 
 def test_data_checker_accepts_large_dataset_parts_output(tmp_path):
-    output_csv = (
-        tmp_path / DIR_DESCRIPTORS_INITIAL / "filtered" / FILE_FILTERED_MOLECULES
-    )
+    output_csv = tmp_path / DIR_DESCRIPTORS_INITIAL / FILE_FILTERED_MOLECULES
     writer = ShardedCsvWriter(
         parts_dir_for_csv(output_csv), {"large_dataset_output_format": "csv.gz"}
     )
@@ -211,9 +210,7 @@ def test_large_synthesis_validation_accepts_generated_input(tmp_path):
 
 
 def test_struct_filters_respect_empty_descriptor_output(tmp_path):
-    descriptor_csv = (
-        tmp_path / DIR_DESCRIPTORS_INITIAL / "filtered" / FILE_FILTERED_MOLECULES
-    )
+    descriptor_csv = tmp_path / DIR_DESCRIPTORS_INITIAL / FILE_FILTERED_MOLECULES
     descriptor_csv.parent.mkdir(parents=True)
     pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]).to_csv(
         descriptor_csv, index=False
@@ -424,3 +421,54 @@ def test_synthesis_large_skips_retrosynthesis_and_keeps_score_failures(
     ]
     assert flags["synthesis_score_pass"].tolist() == [True, False]
     assert not (out_dir / "retrosynthesis_results.json").exists()
+
+
+def test_descriptors_large_writes_molecule_tables_at_stage_root(
+    tmp_path, monkeypatch
+):
+    input_df = pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCCCCCCC"],
+            "model_name": ["model_a", "model_a"],
+            "mol_idx": ["LP-0001-00001", "LP-0001-00002"],
+        }
+    )
+    monkeypatch.setattr(
+        descriptors_large,
+        "_descriptor_input_chunks",
+        lambda *_args, **_kwargs: iter([input_df]),
+    )
+
+    def _fake_compute_metrics(data, output_dir, **_kwargs):
+        metrics = data.copy()
+        metrics["molWt"] = [46.0, 114.0]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        metrics.to_csv(output_dir / "descriptors_all.csv", index=False)
+        return metrics
+
+    monkeypatch.setattr(descriptors_large, "compute_metrics", _fake_compute_metrics)
+
+    stage_dir = tmp_path / DIR_DESCRIPTORS_INITIAL
+    descriptors_large.run_large(
+        None,
+        {
+            "folder_to_save": str(tmp_path),
+            "generated_mols_path": "unused.csv",
+            "large_dataset_filter_data": True,
+            "large_dataset_output_format": "csv.gz",
+        },
+        {"filter_data": True, "borders": {"molWt_max": 100}},
+        stage_dir,
+    )
+
+    assert pd.read_csv(stage_dir / "filtered_molecules.csv")["mol_idx"].tolist() == [
+        "LP-0001-00001"
+    ]
+    assert pd.read_csv(stage_dir / "failed_molecules.csv")["mol_idx"].tolist() == [
+        "LP-0001-00002"
+    ]
+    assert not (stage_dir / "filtered" / "filtered_molecules.csv").exists()
+    assert not (stage_dir / "filtered" / "failed_molecules.csv").exists()
+    assert (stage_dir / "filtered" / "descriptors_passed.csv").exists()
+    assert (stage_dir / "filtered" / "descriptors_failed.csv").exists()
+    assert (stage_dir / "filtered" / "pass_flags.csv").exists()

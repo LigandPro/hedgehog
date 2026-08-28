@@ -159,10 +159,13 @@ def run_large(
         parts_dir_for_csv(filtered_folder / "descriptors_passed.csv"), config
     )
     filtered_writer = ShardedCsvWriter(
-        parts_dir_for_csv(filtered_folder / "filtered_molecules.csv"), config
+        parts_dir_for_csv(descriptors_folder / "filtered_molecules.csv"), config
     )
     failed_writer = ShardedCsvWriter(
         parts_dir_for_csv(filtered_folder / "descriptors_failed.csv"), config
+    )
+    failed_molecules_writer = ShardedCsvWriter(
+        parts_dir_for_csv(descriptors_folder / "failed_molecules.csv"), config
     )
     skipped_writer = ShardedCsvWriter(
         parts_dir_for_csv(metrics_folder / "skipped_molecules.csv"), config
@@ -231,6 +234,10 @@ def run_large(
                     chunk_filtered / "descriptors_failed.csv",
                     failed_writer,
                 ),
+                "failed_molecules": (
+                    chunk_filtered / "failed_molecules.csv",
+                    failed_molecules_writer,
+                ),
             }
             for table, (path, writer) in outputs.items():
                 if path.exists() and path.stat().st_size > 0:
@@ -284,10 +291,15 @@ def run_large(
         (passed_writer.parts_dir, filtered_folder / "descriptors_passed.csv", None),
         (
             filtered_writer.parts_dir,
-            filtered_folder / "filtered_molecules.csv",
+            descriptors_folder / "filtered_molecules.csv",
             ["smiles", "model_name", "mol_idx"],
         ),
         (failed_writer.parts_dir, filtered_folder / "descriptors_failed.csv", None),
+        (
+            failed_molecules_writer.parts_dir,
+            descriptors_folder / "failed_molecules.csv",
+            ["smiles", "model_name", "mol_idx"],
+        ),
         (
             skipped_writer.parts_dir,
             metrics_folder / "skipped_molecules.csv",

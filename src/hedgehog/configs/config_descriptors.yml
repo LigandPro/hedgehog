@@ -1,5 +1,5 @@
 run: true
-n_jobs: -1
+n_jobs: 96
 batch_size: 1000
 # Enables the descriptor filtering step. If false, molecules are not filtered by
 # either borders or structural_constraints.
@@ -8,7 +8,7 @@ filter_data: true
 structural_constraints:
   # Adds these structural caps to descriptor filtering when filter_data is true.
   # If false, the full structural_constraints block is ignored.
-  enabled: true
+  enabled: false
   type_limits:
     ".=O": 4
     C2r: 6
@@ -34,54 +34,121 @@ structural_constraints:
   max_acyclic_chain_length: 4
 
 borders:
+# w.r.t. KRAS inhibs (so KRAS inhibs pass 100%)
   n_atoms_min: 10
+  # n_atoms_max: 104 # prev 100
   n_atoms_max: 100
   n_heavy_atoms_min: 10
+  # n_heavy_atoms_max: 56 # prev 50
   n_heavy_atoms_max: 50
   n_het_atoms_min: 2
   n_het_atoms_max: 15
-  n_N_atoms_min: 0
-  n_N_atoms_max: 12
+  n_N_atoms_min: 0 
+  n_N_atoms_max: 12 
   fN_atoms_min: 0
+  # fN_atoms_max: 0.25 # prev 0.22
   fN_atoms_max: 0.22
 
-  fNS_atoms_min: 0
-  fNS_atoms_max: 0.3
-  molWt_min: 200
+
+  fNS_atoms_min: 0 
+  fNS_atoms_max: 0.3 
+  molWt_min: 200 
+  # molWt_max: 783 # prev 550
   molWt_max: 550
-  logP_min: -0.4
+
+  logP_min: -0.4 
+  # logP_max: 8.16 # prev 5.6
   logP_max: 5.6
 
+  # sw_min: -29 # prev -20
   sw_min: -20
   sw_max: 1
   ring_size_min: 3
   ring_size_max: 12
   n_rings_min: 0
+  # n_rings_max: 10 # prev 6
   n_rings_max: 6
   n_aroma_rings_min: 0
+  # n_aroma_rings_max: 6 # prev 5
   n_aroma_rings_max: 5
   n_fused_aromatic_rings_min: 0
+  # n_fused_aromatic_rings_max: 3 # prev 2
   n_fused_aromatic_rings_max: 2
   n_rigid_bonds_min: 0
+  # n_rigid_bonds_max: 51 # prev 30
   n_rigid_bonds_max: 30
   n_rot_bonds_min: 0
+  # n_rot_bonds_max: 13 # prev 8
   n_rot_bonds_max: 8
-  hbd_min: 0
-  hbd_max: 4
-  hba_min: 1
+  hbd_min: 0 
+  hbd_max: 4 
+  hba_min: 1 
+  # hba_max: 11 # prev 9
   hba_max: 9
-  fsp3_min: 0.15
-  fsp3_max: 0.8
-  has_spider_side_chains_min: 0
-  has_spider_side_chains_max: 0
-  fraction_ring_system_min: 0.25
-  fraction_ring_system_max: 1
-  mce18_min: 20
+  fsp3_min: 0.15 
+  fsp3_max: 0.8 
+  # # has_spider_side_chains_min: 0
+  # # has_spider_side_chains_max: 0
+  # # fraction_ring_system_min: 0.25
+  # # fraction_ring_system_max: 1
+  mce18_min: 20 
+  # mce18_max: 238 # prev 140
   mce18_max: 140
   tpsa_min: 20
+  # tpsa_max: 151  # prev 140
   tpsa_max: 140
+  # qed_min: 0.08  # prev 0.3
   qed_min: 0.3
   qed_max: 1
+# paper style thresholds
+  # n_atoms_min: 10
+  # n_atoms_max: 100
+  # n_heavy_atoms_min: 10
+  # n_heavy_atoms_max: 50
+  # n_het_atoms_min: 2
+  # n_het_atoms_max: 15
+  # n_N_atoms_min: 0
+  # n_N_atoms_max: 12
+  # fN_atoms_min: 0
+  # fN_atoms_max: 0.22
+
+  # fNS_atoms_min: 0
+  # fNS_atoms_max: 0.3
+  # molWt_min: 200
+  # molWt_max: 550
+  # logP_min: -0.4
+  # logP_max: 5.6
+
+  # sw_min: -20
+  # sw_max: 1
+  # ring_size_min: 3
+  # ring_size_max: 12
+  # n_rings_min: 0
+  # n_rings_max: 6
+  # n_aroma_rings_min: 0
+  # n_aroma_rings_max: 5
+  # n_fused_aromatic_rings_min: 0
+  # n_fused_aromatic_rings_max: 2
+  # n_rigid_bonds_min: 0
+  # n_rigid_bonds_max: 30
+  # n_rot_bonds_min: 0
+  # n_rot_bonds_max: 8
+  # hbd_min: 0
+  # hbd_max: 4
+  # hba_min: 1
+  # hba_max: 9
+  # fsp3_min: 0.15
+  # fsp3_max: 0.8
+  # # has_spider_side_chains_min: 0
+  # # has_spider_side_chains_max: 0
+  # # fraction_ring_system_min: 0.25
+  # # fraction_ring_system_max: 1
+  # mce18_min: 20
+  # mce18_max: 140
+  # tpsa_min: 20
+  # tpsa_max: 140
+  # qed_min: 0.3
+  # qed_max: 1
 filtered_cols_to_plot:
 - n_atoms
 - n_heavy_atoms
@@ -93,9 +160,9 @@ filtered_cols_to_plot:
 - fN_atoms
 - fNS_atoms
 - n_small_rings_3_4
-- max_acyclic_chain_length
-- has_spider_side_chains
-- fraction_ring_system
+# - max_acyclic_chain_length
+# - has_spider_side_chains
+# - fraction_ring_system
 - ".=O"
 - C2r
 - C3r

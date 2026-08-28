@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+import yaml
 
 from hedgehog.main import (
     Stage,
@@ -14,6 +15,7 @@ from hedgehog.main import (
     _get_input_format_flag,
     _get_unique_results_folder,
     _resolve_config_paths,
+    _resolve_output_folder,
     _save_sampled_molecules,
     _validate_input_path,
     preprocess_input_with_rdkit,
@@ -176,6 +178,205 @@ class TestGetUniqueResultsFolder:
 
         result = _get_unique_results_folder(tmp_path / "results")
         assert result == tmp_path / "results_6"
+
+
+class TestResolveOutputFolder:
+    """Tests for explicit fresh-run and reuse folder behavior."""
+
+    def test_stage_selection_creates_fresh_folder_by_default(self, tmp_path):
+        """Selecting one stage must not silently reuse an existing run."""
+        base = tmp_path / "run"
+        base.mkdir()
+        (base / "RUN_INFO.md").write_text("existing run\n", encoding="utf-8")
+
+        result = _resolve_output_folder(
+            {"folder_to_save": str(base)},
+            reuse_folder=False,
+            force_new_folder=False,
+            stages=[Stage.docking],
+            generated_mols_path=None,
+        )
+
+        assert result == tmp_path / "run_2"
+
+    def test_reuse_is_the_only_existing_folder_mode(self, tmp_path):
+        """The configured directory is returned only with explicit reuse."""
+        base = tmp_path / "run"
+        base.mkdir()
+
+        result = _resolve_output_folder(
+            {"folder_to_save": str(base)},
+            reuse_folder=True,
+            force_new_folder=False,
+            stages=[Stage.docking],
+            generated_mols_path=None,
+        )
+
+        assert result == base
+
+
+def test_continue_command_loads_saved_input_and_skips_completed_stages(
+    tmp_path, monkeypatch
+):
+    from hedgehog import main as main_mod
+
+    run_dir = tmp_path / "unfinished"
+    configs_dir = run_dir / "configs"
+    input_dir = run_dir / "input"
+    configs_dir.mkdir(parents=True)
+    input_dir.mkdir()
+    (run_dir / ".RUN_INCOMPLETE").write_text("interrupted\n", encoding="utf-8")
+    (input_dir / "sampled_molecules.csv").write_text(
+        "smiles,model_name,mol_idx\nCCO,target,0\n", encoding="utf-8"
+    )
+
+    master = {"folder_to_save": str(run_dir), "generated_mols_path": "unused.csv"}
+    for key in (
+        "config_mol_prep",
+        "config_descriptors",
+        "config_structFilters",
+        "config_synthesis",
+        "config_docking",
+        "config_docking_filters",
+    ):
+        config_path = configs_dir / f"{key}.yml"
+        config_path.write_text("run: true\n", encoding="utf-8")
+        master[key] = str(config_path)
+    (configs_dir / "master_config_resolved.yml").write_text(
+        yaml.safe_dump(master, sort_keys=False), encoding="utf-8"
+    )
+
+    for directory in (
+        "stages/01_mol_prep",
+        "stages/02_descriptors_initial",
+        "stages/03_structural_filters_post",
+    ):
+        stage_dir = run_dir / directory
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "filtered_molecules.csv").write_text(
+            "smiles,model_name,mol_idx\nCCO,target,0\n", encoding="utf-8"
+        )
+
+    captured = {}
+
+    def fake_calculate(data, config, progress_callback):
+        captured["data"] = data
+        captured["config"] = config
+        captured["progress_callback"] = progress_callback
+        return True
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
+    main_mod._run_pipeline_command(
+        config_path=None,
+        generated_mols_path=None,
+        out_dir=None,
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+        show_progress=False,
+        large_dataset=False,
+        continue_folder=str(run_dir),
+    )
+
+    assert len(captured["data"]) == 1
+    assert captured["config"]["folder_to_save"] == str(run_dir.resolve())
+    assert captured["config"]["_continue_mode"] is True
+    assert captured["config"]["_continue_completed_stages"] == [
+        "mol_prep",
+        "descriptors",
+        "struct_filters",
+    ]
+    assert captured["config"]["_run_stage_selection_override"] == [
+        "synthesis",
+        "docking",
+        "docking_filters",
+        "final_descriptors",
+    ]
+
+
+def test_continue_nested_alignment_then_starts_candidates(tmp_path, monkeypatch):
+    """An interrupted target probe should finish alignment and resume its outer run."""
+    from hedgehog import main as main_mod
+
+    outer = tmp_path / "run"
+    target_run = outer / "target_alignment" / "target_run"
+    target_configs = target_run / "configs"
+    target_configs.mkdir(parents=True)
+    (target_run / ".RUN_INCOMPLETE").write_text("unfinished\n", encoding="utf-8")
+    (target_run / "input").mkdir()
+    (target_run / "input" / "sampled_molecules.csv").write_text(
+        "smiles,model_name,mol_idx\nCCO,target,0\n", encoding="utf-8"
+    )
+    target_csv = tmp_path / "targets.csv"
+    target_csv.write_text("smiles\nCCO\n", encoding="utf-8")
+    candidate_csv = tmp_path / "candidates.csv"
+    candidate_csv.write_text("smiles\nCCN\n", encoding="utf-8")
+    docking_config = target_configs / "config_docking.yml"
+    docking_config.write_text("run: true\n", encoding="utf-8")
+    target_master = {
+        "generated_mols_path": str(target_csv),
+        "target_mols_path": str(target_csv),
+        "folder_to_save": str(target_run),
+        "sample_size": None,
+        "save_sampled_mols": True,
+        "alignment": {"enabled": True, "target_coverage_percent": 90},
+        "config_docking": str(docking_config),
+    }
+    (target_configs / "master_config_resolved.yml").write_text(
+        yaml.safe_dump(target_master, sort_keys=False), encoding="utf-8"
+    )
+
+    aligned_dir = outer / "target_alignment" / "aligned_configs"
+    aligned_dir.mkdir(parents=True)
+    aligned_master_path = aligned_dir / "aligned_config.yml"
+    aligned_master = {
+        "generated_mols_path": str(candidate_csv),
+        "target_mols_path": str(target_csv),
+        "folder_to_save": str(outer),
+        "sample_size": None,
+        "save_sampled_mols": True,
+        "alignment": {"enabled": False, "target_coverage_percent": 90},
+        "config_docking": str(docking_config),
+    }
+    aligned_master_path.write_text(
+        yaml.safe_dump(aligned_master, sort_keys=False), encoding="utf-8"
+    )
+
+    calls = []
+
+    def fake_calculate(data, config, progress_callback):
+        calls.append((data.copy(), dict(config)))
+        if config.get("_continue_mode"):
+            assert progress_callback is not None
+            progress_callback(
+                {"type": "stage_complete", "stage": "docking", "ok": True}
+            )
+        return True
+
+    def fake_create(*args, **kwargs):
+        return dict(aligned_master), aligned_master_path, aligned_dir / "thresholds.yml"
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
+    monkeypatch.setattr(main_mod, "create_aligned_stage_config", fake_create)
+
+    main_mod._run_pipeline_command(
+        config_path=None,
+        generated_mols_path=None,
+        out_dir=None,
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+        show_progress=False,
+        large_dataset=False,
+        continue_folder=str(outer),
+    )
+
+    assert len(calls) == 2
+    assert calls[0][1]["folder_to_save"] == str(target_run.resolve())
+    assert calls[1][1]["folder_to_save"] == str(outer.resolve())
+    assert calls[1][0]["smiles"].tolist() == ["CCN"]
 
 
 class TestValidateInputPath:
@@ -349,6 +550,26 @@ def test_apply_cli_overrides_supports_multiple_stage_selection():
         "struct_filters",
     ]
     assert main_mod.STAGE_OVERRIDE_KEY not in config
+
+
+def test_resolve_cli_mols_paths_filters_shell_expanded_sdf_list(tmp_path):
+    """Shell-expanded --mols globs should keep molecule files and drop README."""
+    from hedgehog import main as main_mod
+
+    drugflow = tmp_path / "drugflow.sdf"
+    pocket = tmp_path / "pocket2mol.sdf"
+    readme = tmp_path / "README.md"
+    drugflow.write_text("x")
+    pocket.write_text("y")
+    readme.write_text("docs")
+
+    primary, paths = main_mod._resolve_cli_mols_paths(
+        str(drugflow),
+        [str(pocket), str(readme)],
+    )
+
+    assert primary == str(tmp_path)
+    assert paths == [str(drugflow.resolve()), str(pocket.resolve())]
 
 
 def test_setup_aizynthfinder_auto_accepts_by_default(monkeypatch, tmp_path):
@@ -832,6 +1053,7 @@ def test_large_dataset_defaults_to_compute_only_statistics_path(tmp_path, monkey
     assert config["large_dataset_mode"] is True
     assert config["large_dataset_filter_data"] is False
     assert config["large_dataset_enable_all_filters"] is True
+    assert config["folder_to_save"] == str(tmp_path / "run_1")
 
 
 def test_large_dataset_still_rejects_docking_stage(tmp_path, monkeypatch):

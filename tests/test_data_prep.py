@@ -16,9 +16,12 @@ from hedgehog.utils.data_prep import (
     _normalize_model_name_column,
     _normalize_smiles_column,
     _read_csv_with_fallback,
+    _read_sdf,
     _read_smi,
     _remove_duplicates,
+    materialize_named_sdf_from_sources,
     prepare_input_data,
+    resolve_molecule_input_paths,
 )
 from tests.constants import (
     COL_MODEL_NAME,
@@ -200,6 +203,67 @@ class TestDetectModeAndPaths:
         with pytest.raises(FileNotFoundError):
             _detect_mode_and_paths(str(tmp_path / "*.xyz"))
 
+    def test_explicit_path_list_is_multi(self, tmp_path):
+        """Explicit multi-file lists should bypass glob matching."""
+        a = tmp_path / "drugflow.sdf"
+        b = tmp_path / "targetdiff.sdf"
+        a.write_text("unused")
+        b.write_text("unused")
+
+        mode, paths = resolve_molecule_input_paths(
+            str(tmp_path),
+            [str(a), str(b)],
+        )
+
+        assert mode == MODE_MULTI
+        assert paths == [str(a), str(b)]
+
+
+class TestReadSdfIdentity:
+    """Tests for SDF identity handling."""
+
+    def test_unnamed_sdf_leaves_mol_idx_empty(self, tmp_path):
+        """Unnamed SDF molecules should leave mol_idx for LP assignment."""
+        from rdkit import Chem
+
+        sdf = tmp_path / "model_a.sdf"
+        writer = Chem.SDWriter(str(sdf))
+        for smiles in ("CCO", "CC"):
+            writer.write(Chem.MolFromSmiles(smiles))
+        writer.close()
+
+        df = _read_sdf(str(sdf))
+        assert "mol_idx" not in df.columns
+        assert list(df["model_name"]) == ["model_a", "model_a"]
+
+    def test_materialize_named_sdf_sets_lp_names(self, tmp_path):
+        """Materialized docking SDF should keep coords and use LP names."""
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+
+        sdf = tmp_path / "model_a.sdf"
+        writer = Chem.SDWriter(str(sdf))
+        mol = Chem.MolFromSmiles("CCO")
+        mol = Chem.AddHs(mol)
+        AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+        writer.write(mol)
+        writer.close()
+
+        identity = pd.DataFrame(
+            {
+                "smiles": [Chem.MolToSmiles(Chem.MolFromSmiles("CCO"))],
+                "model_name": ["model_a"],
+                "mol_idx": ["LP-0001-00001"],
+            }
+        )
+        out = tmp_path / "ligands.sdf"
+        materialize_named_sdf_from_sources([str(sdf)], identity, out)
+
+        restored = [m for m in Chem.SDMolSupplier(str(out), removeHs=False) if m]
+        assert len(restored) == 1
+        assert restored[0].GetProp("_Name") == "LP-0001-00001"
+        assert restored[0].GetNumConformers() == 1
+
 
 class TestFileHasMultipleModels:
     """Tests for _file_has_multiple_models function."""
@@ -296,15 +360,14 @@ class TestReadCsvWithFallback:
         assert COL_MODEL_NAME in result.columns
 
     def test_headerless_csv(self, tmp_path):
-        """Read headerless CSV - first row becomes header unless parsing fails."""
+        """Read every row from a one-column headerless SMILES CSV."""
         test_file = tmp_path / "test.csv"
         test_file.write_text("CCO\nCC\nCCC")
 
         result = _read_csv_with_fallback(str(test_file))
 
-        # First row 'CCO' becomes column name
-        assert "CCO" in result.columns
-        assert len(result) == 2  # CC and CCC are data rows
+        assert list(result.columns) == ["smiles"]
+        assert result["smiles"].tolist() == ["CCO", "CC", "CCC"]
 
 
 class TestReadSmi:

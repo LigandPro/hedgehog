@@ -8,6 +8,7 @@ import pytest
 
 from hedgehog.pipeline import (
     DIR_DESCRIPTORS_INITIAL,
+    DIR_DOCKING,
     DIR_MOL_PREP,
     DIR_SYNTHESIS,
     DOCKING_SCORE_COLUMNS,
@@ -124,6 +125,20 @@ class TestDataChecker:
         checker = DataChecker(config)
 
         assert checker.check_stage_data(DIR_SYNTHESIS) is True
+
+    def test_check_stage_data_accepts_docking_filtered_output(self, tmp_path):
+        """Consolidated docking molecules should be available downstream."""
+        docking_dir = tmp_path / DIR_DOCKING
+        docking_dir.mkdir(parents=True)
+        (docking_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME},{COL_MOL_IDX}\n"
+            f"{SMILES_ETHANOL},{MODEL_TEST},mol-1\n"
+        )
+
+        checker = DataChecker({"folder_to_save": str(tmp_path)})
+
+        assert checker.check_stage_data(DIR_DOCKING) is True
+        assert DIR_DOCKING in PipelineStageRunner.DATA_SOURCE_PRIORITY
 
     def test_check_stage_data_missing(self, tmp_path):
         """Check stage data when file doesn't exist."""

@@ -68,6 +68,9 @@ def main(config: dict, reporter=None) -> None:
     output_folder = Path(folder_to_save) / "stages" / "04_synthesis"
     output_folder.mkdir(parents=True, exist_ok=True)
     config_synthesis = load_config(config["config_synthesis"])
+    if config.get("_continue_mode"):
+        config_synthesis = dict(config_synthesis)
+        config_synthesis["_continue_mode"] = True
     filtered_output = output_folder / "filtered_molecules.csv"
 
     if is_large_dataset_mode(config):
@@ -109,7 +112,9 @@ def main(config: dict, reporter=None) -> None:
         progress_cb=_progress_scores if reporter is not None else None,
     )
     _report_progress(0, total_input_mols, "Applying score filters")
-    _save_ordered_csv(scored_df, output_folder / "synthesis_scores.csv")
+    synthesis_scores_output = output_folder / "synthesis_scores.csv"
+    _save_ordered_csv(scored_df, synthesis_scores_output)
+    logger.info("Saved synthesis scores to %s", synthesis_scores_output)
     score_filtered_df = apply_synthesis_score_filters(scored_df, config_synthesis)
     _report_progress(total_input_mols, total_input_mols, "Applying score filters")
 
@@ -195,6 +200,15 @@ def main(config: dict, reporter=None) -> None:
         return
 
     merged_df = merge_retrosynthesis_results(score_filtered_df, retrosynth_df)
+    if "retrosynthesis_status" in merged_df.columns:
+        status_counts = merged_df["retrosynthesis_status"].value_counts(dropna=False)
+        logger.info(
+            "Retrosynthesis statuses: %s",
+            ", ".join(
+                f"{status}={count}"
+                for status, count in status_counts.sort_index().items()
+            ),
+        )
     _save_ordered_csv(merged_df, output_folder / "synthesis_extended.csv")
 
     filter_solved_only = config_synthesis.get("filter_solved_only", True)

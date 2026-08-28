@@ -23,13 +23,14 @@ from urllib import request as urllib_request
 
 import numpy as np
 import pandas as pd
+import yaml
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from hedgehog.configs.logger import logger
 from hedgehog.setup._download import resolve_uv_binary
 from hedgehog.synthesis.sync import calculate_sync_scores_batch
-from hedgehog.utils.input_paths import get_all_input_candidates
+from hedgehog.utils.input_paths import find_latest_input_source
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 from hedgehog.utils.paths import process_path
 
@@ -249,6 +250,41 @@ def _extract_aizynth_progress(
     return done, fallback_total
 
 
+def _prepare_aizynthfinder_config(
+    config_file: Path,
+    output_dir: Path,
+    synthesis_config: dict[str, Any] | None,
+) -> Path:
+    """Create an AiZynthFinder config containing synthesis search overrides."""
+    if not synthesis_config:
+        return config_file
+
+    max_transforms = synthesis_config.get("aizynthfinder_max_transforms")
+    time_limit = synthesis_config.get("aizynthfinder_time_limit")
+    if max_transforms is None and time_limit is None:
+        return config_file
+
+    with config_file.open(encoding="utf-8") as handle:
+        config = yaml.safe_load(handle) or {}
+
+    search = config.setdefault("search", {})
+    if max_transforms is not None:
+        search["max_transforms"] = int(max_transforms)
+
+    if time_limit is not None:
+        search["time_limit"] = float(time_limit)
+
+    effective_config = output_dir / "aizynthfinder_effective_config.yml"
+    with effective_config.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(config, handle, sort_keys=False)
+    logger.info(
+        "AiZynthFinder search settings: max_transforms=%s, time_limit=%ss",
+        search.get("max_transforms", "default"),
+        search.get("time_limit", "default"),
+    )
+    return effective_config
+
+
 def run_aizynthfinder(
     input_smiles_file,
     output_json_file,
@@ -264,7 +300,8 @@ def run_aizynthfinder(
         output_json_file: Path to output JSON file
         config_file: Path to AiZynthFinder config file
         aizynthfinder_dir: Optional working directory for AiZynthFinder CLI
-        synthesis_config: Optional synthesis stage config (supports ``n_jobs``)
+        synthesis_config: Optional synthesis stage config (supports ``n_jobs`` and
+            AiZynthFinder search overrides)
 
     Returns:
         True if successful, False otherwise
@@ -277,7 +314,8 @@ def run_aizynthfinder(
     _ensure_aizynth_logging_config(run_dir)
     input_abs = input_smiles_file.resolve()
     output_abs = output_json_file.resolve()
-    config_abs = config_file.resolve()
+    effective_config = _prepare_aizynthfinder_config(config_file, output_json_file.parent, synthesis_config)
+    config_abs = effective_config.resolve()
 
     try:
         uv_binary = resolve_uv_binary()
@@ -573,11 +611,6 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
     return merged
 
 
-def _get_input_path_candidates(base_folder: str) -> list:
-    """Get ordered list of candidate input paths to check."""
-    return [str(p) for p in get_all_input_candidates(Path(base_folder))]
-
-
 def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
     """Determine input path for synthesis stage.
 
@@ -585,11 +618,13 @@ def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
     Supports both new hierarchical structure and legacy flat structure.
     """
     base_folder = process_path(folder_to_save)
-
-    for candidate in _get_input_path_candidates(base_folder):
-        if Path(candidate).exists():
-            logger.debug("Using input file: %s", candidate)
-            return candidate
+    candidate = find_latest_input_source(
+        Path(base_folder),
+        skip_stages=["synthesis", "docking", "docking_filters"],
+    )
+    if candidate is not None:
+        logger.debug("Using input file: %s", candidate)
+        return str(candidate)
 
     logger.warning("No processed data found, using molecules from config")
     return config.get("generated_mols_path", "")
@@ -2272,17 +2307,28 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
             progress_cb,
         )
 
+    filter_specs = {
+        column: (min_val, max_val)
+        for column, min_val, max_val in _iter_score_filter_specs(runtime_config)
+    }
     for score_name in [scorer.column for scorer in enabled_scorers]:
         valid_scores = result_df[score_name].dropna()
-        if len(valid_scores) > 0:
+        thresholds = filter_specs.get(score_name)
+        if len(valid_scores) > 0 and thresholds is not None:
+            min_val, max_val = thresholds
+            mask = _build_score_filter_mask(result_df, score_name, min_val, max_val)
+            if mask is None:
+                continue
+            evaluated = result_df[score_name].notna()
+            passed = int((mask & evaluated).sum())
             logger.info(
-                "  %s: calculated for %d/%d molecules (mean=%.2f, std=%.2f)",
+                "  %s passed: %d/%d",
                 score_name,
-                len(valid_scores),
-                len(df),
-                valid_scores.mean(),
-                valid_scores.std(),
+                passed,
+                int(evaluated.sum()),
             )
+        elif len(valid_scores) > 0:
+            logger.info("  %s: filter disabled (no criterion configured)", score_name)
         else:
             logger.debug(
                 "  %s: could not be calculated (module not available)", score_name

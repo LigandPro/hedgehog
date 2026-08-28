@@ -41,6 +41,58 @@ def test_single_stage_struct_filters_falls_back_to_mol_prep_when_descriptors_mis
     assert resolved == str(mol_prep_output)
 
 
+def test_struct_filters_reads_descriptor_output_from_stage_root(tmp_path):
+    descriptors_cfg = tmp_path / "config_descriptors.yml"
+    _write_yaml(descriptors_cfg, {"run": True})
+    descriptor_output = (
+        tmp_path / "stages" / "02_descriptors_initial" / "filtered_molecules.csv"
+    )
+    descriptor_output.parent.mkdir(parents=True)
+    descriptor_output.write_text(
+        "smiles,model_name,mol_idx\nCCO,m1,0\n", encoding="utf-8"
+    )
+    config = {
+        "config_descriptors": str(descriptors_cfg),
+        "generated_mols_path": str(tmp_path / "input.csv"),
+    }
+
+    resolved = structfilters_main._get_input_path(
+        config,
+        "stages/03_structural_filters_post",
+        tmp_path,
+    )
+
+    assert resolved == str(descriptor_output)
+
+
+def test_struct_filters_keeps_legacy_nested_descriptor_fallback(tmp_path):
+    descriptors_cfg = tmp_path / "config_descriptors.yml"
+    _write_yaml(descriptors_cfg, {"run": True})
+    descriptor_output = (
+        tmp_path
+        / "stages"
+        / "02_descriptors_initial"
+        / "filtered"
+        / "filtered_molecules.csv"
+    )
+    descriptor_output.parent.mkdir(parents=True)
+    descriptor_output.write_text(
+        "smiles,model_name,mol_idx\nCCO,m1,0\n", encoding="utf-8"
+    )
+    config = {
+        "config_descriptors": str(descriptors_cfg),
+        "generated_mols_path": str(tmp_path / "input.csv"),
+    }
+
+    resolved = structfilters_main._get_input_path(
+        config,
+        "stages/03_structural_filters_post",
+        tmp_path,
+    )
+
+    assert resolved == str(descriptor_output)
+
+
 def test_struct_filters_raises_when_descriptors_enabled_and_output_missing(tmp_path):
     descriptors_cfg = tmp_path / "config_descriptors.yml"
     _write_yaml(descriptors_cfg, {"run": True})

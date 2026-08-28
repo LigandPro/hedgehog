@@ -42,6 +42,7 @@ def _synthesis_input_chunks(config: dict, chunk_rows: int):
     base = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     candidates = [
         base / "stages" / "03_structural_filters_post" / "filtered_molecules.csv",
+        base / "stages" / "02_descriptors_initial" / "filtered_molecules.csv",
         base
         / "stages"
         / "02_descriptors_initial"

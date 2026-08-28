@@ -1,14 +1,14 @@
 run: true
-n_jobs: -1
+n_jobs: 64
 enabled_scores:
-  - sa
-  - syba
-  - rascore
-  - sync
-  - scscore
-  - nonpher
-  - fsscore
-  - gasa
+  # - sa
+  # - syba
+  # - rascore
+  # - sync
+  # - scscore
+  # - nonpher
+  # - fsscore
+  # - gasa
 # Validate optional Nonpher runtime:
 #   uv run hedgehog setup nonpher-check
 # uv-only optional env bootstrap uses HEDGEHOG_OPTIONAL_ENV_ROOT/nonpher.
@@ -17,11 +17,13 @@ enabled_scores:
 #   uv run hedgehog setup nonpher-check --python /abs/path/to/nonpher-hybrid/bin/python
 run_retrosynthesis: true
 filter_solved_only: true
+aizynthfinder_max_transforms: 15  # Maximum retrosynthesis tree depth, > 0
+aizynthfinder_time_limit: 2000  # Search time limit per molecule, in seconds, > 0
 sa_score_min: 1  # SA score scale is 1-10 (1 = easy to synthesize)
-sa_score_max: 4.5
-syba_score_min: 0
+sa_score_max: 10 # prev 4.5
+syba_score_min: -150 # prev 0
 syba_score_max: inf
-ra_score_min: 0.5
+ra_score_min: 0.0 # prev 0.5
 ra_score_max: 1
 # Optional FSScore isolated worker configuration.
 # Leave unset to keep FSScore disabled with graceful np.nan fallback.

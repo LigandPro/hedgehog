@@ -5,6 +5,7 @@ from pathlib import Path
 
 from hedgehog.configs.logger import logger
 from hedgehog.docking.binaries import _validate_optional_tool_path
+from hedgehog.docking.receptor_sanitize import ensure_gnina_compatible_receptor
 
 
 def _resolve_receptor_path(receptor_pdb, base_folder=None):
@@ -131,22 +132,29 @@ def _get_receptor_and_prep_cmd(cfg, ligands_dir, protein_preparation_tool, tool_
         return None, None
 
     receptor = str(receptor_path)
+    protein_prep_cmd = None
+    prepared_receptor = receptor
 
-    if protein_preparation_tool is None:
-        if "protein_prepared.pdb" in receptor:
-            logger.info("%s: Using prepared receptor: %s", tool_name.upper(), receptor)
-        else:
-            logger.info("%s: Using receptor: %s", tool_name.upper(), receptor)
-        return receptor, None
-
-    prepared_receptor, protein_prep_cmd = _prepare_protein_for_docking(
-        receptor, ligands_dir, protein_preparation_tool
-    )
-    if prepared_receptor != receptor:
-        cfg["receptor_pdb"] = prepared_receptor
-        logger.info(
-            "%s: Using prepared protein: %s", tool_name.upper(), prepared_receptor
+    if protein_preparation_tool is not None:
+        prepared_receptor, protein_prep_cmd = _prepare_protein_for_docking(
+            receptor, ligands_dir, protein_preparation_tool
         )
+        if prepared_receptor != receptor:
+            cfg["receptor_pdb"] = prepared_receptor
+            logger.info(
+                "%s: Using prepared protein: %s", tool_name.upper(), prepared_receptor
+            )
+    elif "protein_prepared.pdb" in prepared_receptor:
+        logger.info("%s: Using prepared receptor: %s", tool_name.upper(), prepared_receptor)
+    else:
+        logger.info("%s: Using receptor: %s", tool_name.upper(), prepared_receptor)
+
+    if tool_name.lower() == "gnina" and protein_prep_cmd is None:
+        prepared_receptor = ensure_gnina_compatible_receptor(
+            prepared_receptor, ligands_dir
+        )
+        cfg["receptor_pdb"] = prepared_receptor
+
     return prepared_receptor, protein_prep_cmd
 
 

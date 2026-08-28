@@ -33,6 +33,8 @@ These five filters use the `medchem.functional` API:
 
 The symmetry filter is disabled by default because many approved drugs are symmetric (e.g., ibuprofen, metformin). Enable it only if your project specifically requires asymmetric scaffolds.
 
+With target alignment enabled, Hedgehog recalculates the ring cutoff, both stereocenter limits, all three halogen limits, and the symmetry threshold from the requested retained target percentile. It then recomputes those four pass masks and decides which complete structural rules can remain enabled without dropping below the combined retention target. Execution-only settings such as schedulers are not percentile parameters and remain unchanged.
+
 ## Pipeline Position
 
 Structural filters run after the descriptor stage or independently and write results to `03_structural_filters_post/`.

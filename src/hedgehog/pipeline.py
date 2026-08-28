@@ -114,6 +114,8 @@ DOCKING_RESULTS_DIR_TEMPLATE = {
 
 
 FILE_RUN_INCOMPLETE = ".RUN_INCOMPLETE"
+CONTINUE_MODE_KEY = "_continue_mode"
+CONTINUE_COMPLETED_STAGES_KEY = "_continue_completed_stages"
 
 
 def _plain_output_enabled() -> bool:
@@ -488,6 +490,7 @@ class DataChecker:
         DIR_STRUCT_FILTERS_POST: Path(DIR_STRUCT_FILTERS_POST)
         / FILE_FILTERED_MOLECULES,
         DIR_SYNTHESIS: Path(DIR_SYNTHESIS) / FILE_FILTERED_MOLECULES,
+        DIR_DOCKING: Path(DIR_DOCKING) / FILE_FILTERED_MOLECULES,
         DIR_DOCKING_FILTERS: Path(DIR_DOCKING_FILTERS) / FILE_FILTERED_MOLECULES,
         # Legacy paths
         "Descriptors": Path("Descriptors") / "passDescriptorsSMILES.csv",
@@ -541,6 +544,7 @@ class PipelineStageRunner:
     # Local priority list for stage-based data checking (uses directory names)
     DATA_SOURCE_PRIORITY = [
         DIR_DOCKING_FILTERS,
+        DIR_DOCKING,
         DIR_SYNTHESIS,
         DIR_STRUCT_FILTERS_POST,
         DIR_DESCRIPTORS_INITIAL,
@@ -885,6 +889,7 @@ class MoleculeCounter:
         ),
         STAGE_STRUCT_FILTERS: (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
         STAGE_SYNTHESIS: (DIR_SYNTHESIS, FILE_FILTERED_MOLECULES),
+        STAGE_DOCKING: (DIR_DOCKING, FILE_FILTERED_MOLECULES),
         STAGE_DOCKING_FILTERS: (DIR_DOCKING_FILTERS, FILE_FILTERED_MOLECULES),
         STAGE_FINAL_DESCRIPTORS: (
             DIR_DESCRIPTORS_FINAL,
@@ -1045,6 +1050,7 @@ class PipelineReporter:
         if stage.name == STAGE_FINAL_DESCRIPTORS:
             sources = [
                 DIR_DOCKING_FILTERS,
+                DIR_DOCKING,
                 DIR_SYNTHESIS,
                 DIR_STRUCT_FILTERS_POST,
                 DIR_MOL_PREP,
@@ -1322,30 +1328,8 @@ class MolecularAnalysisPipeline:
                 logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
 
-        # In stage-selection mode, always run Mol Prep first (if enabled in config),
-        # so downstream stages operate on standardized molecules.
-        selection_requires_mol_prep = False
-        if selected_stage_names:
-            selection_requires_mol_prep = any(
-                stage_name != STAGE_MOL_PREP for stage_name in selected_stage_names
-            )
-        elif single_stage_override:
-            selection_requires_mol_prep = single_stage_override != STAGE_MOL_PREP
-
-        if selection_requires_mol_prep:
-            mol_prep = self._stage_by_name.get(STAGE_MOL_PREP)
-            if mol_prep is not None:
-                try:
-                    cfg_path = self.config.get(CONFIG_MOL_PREP)
-                    if cfg_path:
-                        cfg = load_config(cfg_path)
-                        if cfg.get(CONFIG_RUN_KEY, False):
-                            mol_prep.enabled = True
-                            logger.info(
-                                "Single stage mode: also enabling %s", STAGE_MOL_PREP
-                            )
-                except Exception:
-                    pass
+        # Stage selection runs only the requested stages. Mol Prep is no longer
+        # forced on when the user asks for a different stage via --stage.
 
     def _cancel_requested(self) -> bool:
         """Return True when the progress callback exposes a cancellation signal."""
@@ -2143,6 +2127,10 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
 
     lines = [
         "|   +-- ligands.csv                Prepared ligands",
+        "|   +-- docking_out.sdf            Combined poses from all docking tools",
+        "|   +-- docking_results.csv        Per-tool docking success flags",
+        "|   +-- filtered_molecules.csv     Molecules docked by at least one tool",
+        "|   +-- failed_molecules.csv       Molecules not docked by any tool",
         "|   +-- job_meta.json              Job metadata",
     ]
     if has_smina:
@@ -2428,6 +2416,25 @@ def _generate_structure_readme(
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
+
+def resolve_continuation_stages(
+    config: dict, folder_to_save: Path
+) -> tuple[list[str], list[str]]:
+    """Return completed and remaining enabled stages for --continue."""
+    del folder_to_save  # folder is taken from config during pipeline init
+    pipeline = MolecularAnalysisPipeline(config)
+    completed: list[str] = []
+    resume: list[str] = []
+    for stage in pipeline.stages:
+        if not stage.enabled:
+            continue
+        has_output = pipeline.data_checker.check_stage_data(stage.directory)
+        if has_output:
+            completed.append(stage.name)
+        else:
+            resume.append(stage.name)
+    return completed, resume
 
 
 def calculate_metrics(data, config: dict, progress_callback=None) -> bool:

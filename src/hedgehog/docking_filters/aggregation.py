@@ -9,6 +9,11 @@ import pandas as pd
 from rdkit import Chem
 
 from hedgehog.configs.logger import logger
+from hedgehog.docking.identity import (
+    build_canonical_mol_idx_map,
+    build_smiles_lookup,
+    resolve_canonical_mol_idx,
+)
 
 
 def _collapse_to_single_pose(
@@ -31,11 +36,14 @@ def _collapse_to_single_pose(
         collapsed["gnina_minimizedAffinity"], errors="coerce"
     ).fillna(float("inf"))
 
+    identity_cols = ["source_mol_idx"]
+    if "model_name" in collapsed.columns:
+        identity_cols.insert(0, "model_name")
     collapsed = collapsed.sort_values(
-        by=["source_mol_idx", "_affinity_sort", "mol_idx"],
-        ascending=[True, True, True],
+        by=[*identity_cols, "_affinity_sort", "mol_idx"],
+        ascending=[True] * (len(identity_cols) + 2),
         kind="mergesort",
-    ).drop_duplicates(subset=["source_mol_idx"], keep="first")
+    ).drop_duplicates(subset=identity_cols, keep="first")
 
     rows: list[dict[str, Any]] = []
     selected_mols: list[Chem.Mol] = []
@@ -128,11 +136,16 @@ def save_results(
         # Use original SMILES from ligands.csv (preserves 2D stereochemistry)
         # instead of generating from 3D poses which can resolve stereo differently.
         ligands_path = docking_dir / "ligands.csv"
-        smiles_lookup: dict[str, str] = {}
-        if ligands_path.exists():
-            lig_df = pd.read_csv(ligands_path)
-            smiles_lookup = dict(zip(lig_df["mol_idx"].astype(str), lig_df["smiles"]))
+        canonical_map = build_canonical_mol_idx_map(ligands_path)
+        smiles_lookup = (
+            build_smiles_lookup(ligands_path) if ligands_path.exists() else {}
+        )
 
+        canonical_ids = (
+            filtered_df["source_mol_idx"]
+            .astype(str)
+            .map(lambda dock_id: resolve_canonical_mol_idx(dock_id, canonical_map))
+        )
         fallback_smiles = pd.Series(
             [
                 Chem.MolToSmiles(mols[i]) if 0 <= i < len(mols) and mols[i] else ""
@@ -140,16 +153,11 @@ def save_results(
             ],
             index=filtered_df.index,
         )
-        filtered_df["smiles"] = (
-            filtered_df["source_mol_idx"]
-            .astype(str)
-            .map(smiles_lookup)
-            .fillna(fallback_smiles)
-        )
+        filtered_df["smiles"] = canonical_ids.map(smiles_lookup).fillna(fallback_smiles)
 
         # For downstream pipeline stages, mol_idx should refer to the original molecule id
         # (not the pose index inside the SDF).
-        filtered_df["mol_idx"] = filtered_df["source_mol_idx"]
+        filtered_df["mol_idx"] = canonical_ids
         filtered_df = filtered_df.drop(columns=["source_mol_idx"])
 
         # Save all passing poses to CSV (pose-level detail)
@@ -162,7 +170,9 @@ def save_results(
         aff_col = "gnina_minimizedAffinity"
         if aff_col in filtered_df.columns:
             filtered_df = filtered_df.sort_values(aff_col, ascending=True)
-        dedup_df = filtered_df.drop_duplicates(subset=["mol_idx"], keep="first")
+        dedup_df = filtered_df.drop_duplicates(
+            subset=["model_name", "mol_idx"], keep="first"
+        )
         dedup_df[["smiles", "model_name", "mol_idx"]].to_csv(filtered_path, index=False)
         logger.info(
             "Saved %d unique molecules to %s (from %d poses)",

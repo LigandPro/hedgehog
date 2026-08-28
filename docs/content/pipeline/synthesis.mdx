@@ -87,12 +87,15 @@ uv run hedgehog setup nonpher-check --python /mnt/ligandpro/shared_storage/data/
 
 When `run_retrosynthesis: true`, the pipeline runs AiZynthFinder to search for actual retrosynthetic routes:
 
-1. Input SMILES are written to `input_smiles.smi`
-2. AiZynthFinder performs tree search using its neural expansion policy
-3. Routes are analyzed for feasibility (are all starting materials commercially available?)
-4. Results are saved to `retrosynthesis_results.json`
+1. Input SMILES are written to `input_smiles.smi`.
+2. Hedgehog searches the configured charge and isotope representations. By default this includes original and neutralized charge forms plus isotope-preserved and isotope-stripped forms; atom stereochemistry is retained and results map back to the original SMILES.
+3. Targets are divided into isolated, resumable shards. Each shard has a private working directory, checkpoint, and log, and failed shards are retried without discarding completed molecules. Hedgehog polls checkpoint rows while searches run, so progress is visible before a whole shard finishes.
+4. The configured USPTO and ring-breaking expansion policies search for routes against every configured stock.
+5. Variant results are merged back onto the original input SMILES, preferring a solved route from either charge representation.
 
-If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept. This is the strictest synthesis filter but also the most computationally expensive.
+The default search profile uses a maximum depth of 8, 300 seconds, and 300 MCTS iterations per representation. This is intentionally more generous than upstream AiZynthFinder defaults while avoiding the extreme runtime of deep 15-step, 1000-iteration searches.
+
+If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept. `synthesis_extended.csv` retains diagnostic statuses for every searched target: `solved`, `route_found_stock_incomplete`, `search_exhausted`, or `worker_failed`. A missing worker output no longer discards other shard results unless `aizynthfinder_fail_on_worker_error: true`.
 
 Setting `run_retrosynthesis: false` skips AiZynthFinder entirely and only computes the enabled scores above, which is significantly faster.
 
@@ -115,7 +118,9 @@ A molecule passes the synthesis stage if **all** of the following hold:
 | `filtered_molecules.csv` | Molecules passing all synthesis filters |
 | `input_smiles.smi` | SMILES input file generated for AiZynthFinder |
 | `retrosynthesis_results.json` | Raw AiZynthFinder output with route trees |
-
+| `retrosynthesis_variants.json` | Raw results for preserved and neutralized search representations before union |
+| `aizynthfinder_run_manifest.json` | Shard outcomes, retry counts, failed-worker log paths, and concise log tails |
+| `aizynthfinder_subprocess.log` | Concise machine-readable run summary; full logs remain under `aizynthfinder_work/` |
 ## Usage
 
 ```bash
