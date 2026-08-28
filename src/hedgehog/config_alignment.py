@@ -27,6 +27,7 @@ ALIGNMENT_DIR_NAME = "target_alignment"
 ALIGNED_CONFIG_NAME = "aligned_config.yml"
 THRESHOLDS_NAME = "alignment_thresholds.yml"
 PROBE_CONFIGS_DIR_NAME = "calibration_configs_unfiltered"
+SOURCE_CONFIGS_DIR_NAME = "source_configs"
 TARGET_CALIBRATION_RUN_DIR_NAME = "calibration_target_run"
 
 _CONFIG_MOL_PREP = "config_mol_prep"
@@ -215,8 +216,12 @@ def create_probe_config(
     master: dict[str, Any], target_mols_path: str, alignment_root: Path
 ) -> dict[str, Any]:
     """Create a copied, non-filtering config for observing target metrics."""
+    source_dir = alignment_root / SOURCE_CONFIGS_DIR_NAME
+    source = _copy_master_configs(master, source_dir)
+    _dump_yaml(source, source_dir / "source_config.yml")
+
     probe_dir = alignment_root / PROBE_CONFIGS_DIR_NAME
-    probe = _copy_master_configs(master, probe_dir)
+    probe = _copy_master_configs(source, probe_dir)
     probe["generated_mols_path"] = str(Path(target_mols_path).resolve())
     probe["target_mols_path"] = str(Path(target_mols_path).resolve())
     probe["folder_to_save"] = str(

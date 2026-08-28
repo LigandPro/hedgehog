@@ -1974,6 +1974,128 @@ class MolecularAnalysisPipeline:
 # ---------------------------------------------------------------------------
 
 
+def _save_self_contained_config_bundle(
+    config: dict, destination: Path, master_filename: str
+) -> Path:
+    """Copy a master and all referenced stage configs into one portable folder."""
+    destination.mkdir(parents=True, exist_ok=True)
+    bundled = dict(config)
+    for key, path_str in config.items():
+        if not key.startswith("config_") or not path_str:
+            continue
+        try:
+            source = Path(path_str)
+            if not source.is_file():
+                continue
+            target = destination / f"{key}{source.suffix or '.yml'}"
+            if source.resolve() != target.resolve():
+                shutil.copyfile(source, target)
+            bundled[key] = str(target.resolve())
+        except OSError as copy_err:
+            logger.warning("Could not bundle config file for %s: %s", key, copy_err)
+
+    master_path = destination / master_filename
+    with master_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(bundled, handle, sort_keys=False)
+    return master_path
+
+
+def _save_alignment_config_lineage(config: dict, configs_dir: Path) -> None:
+    """Save source, calibration, production, and active config provenance."""
+    lineage_root = configs_dir / "lineage"
+    active_dir = lineage_root / "30_active_runtime"
+    active_master = _save_self_contained_config_bundle(
+        config, active_dir, FILE_MASTER_CONFIG
+    )
+
+    manifest: dict = {
+        "schema_version": 1,
+        "active_runtime": {
+            "path": str(active_master.relative_to(configs_dir)),
+            "status": "captured",
+        },
+    }
+
+    alignment = config.get("alignment")
+    thresholds_raw = (
+        alignment.get("thresholds_path") if isinstance(alignment, dict) else None
+    )
+    alignment_root = None
+    aligned_dir = None
+    if thresholds_raw:
+        thresholds_path = Path(str(thresholds_raw))
+        if thresholds_path.is_file():
+            aligned_dir = thresholds_path.parent
+            alignment_root = aligned_dir.parent
+
+    layers = [
+        (
+            "source",
+            "00_source",
+            ["source_configs"],
+            "source_config.yml",
+            None,
+        ),
+        (
+            "calibration_measurement",
+            "10_calibration_measurement",
+            ["calibration_configs_unfiltered", "probe_configs"],
+            "probe_config.yml",
+            "source",
+        ),
+        (
+            "production_aligned",
+            "20_production_aligned",
+            [aligned_dir.name] if aligned_dir is not None else [],
+            "aligned_config.yml",
+            "source",
+        ),
+    ]
+
+    for role, destination_name, source_names, master_name, parent_role in layers:
+        entry = {"status": "not_available"}
+        if parent_role is not None:
+            entry["inherits_from"] = parent_role
+        source_dir = None
+        if alignment_root is not None:
+            for source_name in source_names:
+                candidate = alignment_root / source_name
+                if candidate.is_dir():
+                    source_dir = candidate
+                    break
+        if source_dir is not None:
+            destination = lineage_root / destination_name
+            shutil.copytree(source_dir, destination, dirs_exist_ok=True)
+            copied_master = destination / master_name
+            if copied_master.is_file():
+                _save_self_contained_config_bundle(
+                    load_config(str(copied_master)), destination, master_name
+                )
+            entry["path"] = (
+                str(copied_master.relative_to(configs_dir))
+                if copied_master.is_file()
+                else str(destination.relative_to(configs_dir))
+            )
+            entry["status"] = "captured"
+        manifest[role] = entry
+
+    if manifest["production_aligned"]["status"] == "captured":
+        manifest["active_runtime"]["inherits_from"] = "production_aligned"
+
+    lineage_root.mkdir(parents=True, exist_ok=True)
+    with (lineage_root / "lineage.yml").open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(manifest, handle, sort_keys=False)
+    (lineage_root / "README.md").write_text(
+        "# Configuration lineage\n\n"
+        "- `00_source/`: exact configuration before target calibration.\n"
+        "- `10_calibration_measurement/`: non-filtering target measurement config.\n"
+        "- `20_production_aligned/`: target-derived production thresholds.\n"
+        "- `30_active_runtime/`: exact config used by the current invocation.\n"
+        "- `lineage.yml`: machine-readable inheritance chain.\n",
+        encoding="utf-8",
+    )
+
+
 def _save_config_snapshot(config: dict) -> None:
     """Save a snapshot of configuration files for provenance."""
     try:
@@ -1997,6 +2119,8 @@ def _save_config_snapshot(config: dict) -> None:
                     shutil.copyfile(src_path, dest_dir / src_path.name)
             except OSError as copy_err:
                 logger.warning("Could not copy config file for %s: %s", key, copy_err)
+
+        _save_alignment_config_lineage(config, dest_dir)
 
         logger.info("Saved run config snapshot to: %s", dest_dir)
     except Exception as snapshot_err:

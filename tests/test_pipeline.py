@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from hedgehog.pipeline import (
     DIR_DESCRIPTORS_INITIAL,
@@ -23,6 +24,7 @@ from hedgehog.pipeline import (
     _cleanup_lingering_processes,
     _directory_has_files,
     _file_exists_and_not_empty,
+    _save_config_snapshot,
     calculate_metrics,
 )
 from hedgehog.pipeline import (
@@ -1104,6 +1106,53 @@ def test_calculate_metrics_keeps_incomplete_marker_on_reported_failure(
 
     assert success is False
     assert (tmp_path / ".RUN_INCOMPLETE").is_file()
+
+
+def test_config_snapshot_saves_self_contained_alignment_lineage(tmp_path):
+    """Run configs should preserve their source-to-active inheritance chain."""
+    alignment_root = tmp_path / "target_alignment"
+    source_dir = alignment_root / "source_configs"
+    calibration_dir = alignment_root / "calibration_configs_unfiltered"
+    production_dir = alignment_root / "aligned_configs"
+    for directory in (source_dir, calibration_dir, production_dir):
+        directory.mkdir(parents=True)
+
+    stage_config = production_dir / "config_synthesis.yml"
+    stage_config.write_text("run: true\n", encoding="utf-8")
+    (source_dir / "source_config.yml").write_text("alignment: source\n")
+    (calibration_dir / "probe_config.yml").write_text("alignment: probe\n")
+    (production_dir / "aligned_config.yml").write_text(
+        f"config_synthesis: {stage_config}\nalignment: production\n"
+    )
+    thresholds = production_dir / "alignment_thresholds.yml"
+    thresholds.write_text("target_coverage_percent: 95\n", encoding="utf-8")
+
+    _save_config_snapshot(
+        {
+            "folder_to_save": str(tmp_path),
+            "config_synthesis": str(stage_config),
+            "alignment": {"thresholds_path": str(thresholds)},
+        }
+    )
+
+    lineage_root = tmp_path / "configs" / "lineage"
+    manifest = yaml.safe_load((lineage_root / "lineage.yml").read_text())
+    active_master = yaml.safe_load(
+        (lineage_root / "30_active_runtime" / "master_config_resolved.yml").read_text()
+    )
+    assert manifest["source"]["status"] == "captured"
+    assert manifest["calibration_measurement"]["inherits_from"] == "source"
+    assert manifest["production_aligned"]["status"] == "captured"
+    assert manifest["active_runtime"]["inherits_from"] == "production_aligned"
+    assert Path(active_master["config_synthesis"]).parent == (
+        lineage_root / "30_active_runtime"
+    )
+    production_master = yaml.safe_load(
+        (lineage_root / "20_production_aligned" / "aligned_config.yml").read_text()
+    )
+    assert Path(production_master["config_synthesis"]).parent == (
+        lineage_root / "20_production_aligned"
+    )
 
 
 def test_calculate_metrics_propagates_cancellation(tmp_path, monkeypatch, caplog):

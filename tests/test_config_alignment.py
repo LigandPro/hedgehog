@@ -295,6 +295,12 @@ def test_probe_config_keeps_thresholds_and_disables_filtering_explicitly(tmp_pat
         "calibration_configs_unfiltered"
     )
     assert Path(probe["folder_to_save"]).name == "calibration_target_run"
+    source_master = tmp_path / "alignment" / "source_configs" / "source_config.yml"
+    assert source_master.is_file()
+    source = yaml.safe_load(source_master.read_text())
+    source_synthesis = yaml.safe_load(Path(source["config_synthesis"]).read_text())
+    assert source_synthesis["run_retrosynthesis"] is True
+    assert source_synthesis["sa_score_min"] == 1
     assert probe_struct["run"] is True
     assert probe_struct["filter_data"] is False
     assert probe_struct["write_per_filter_outputs"] is True
