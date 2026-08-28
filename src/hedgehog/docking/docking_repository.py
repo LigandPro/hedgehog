@@ -246,6 +246,7 @@ def main() -> None:
         )
 
     started = time.perf_counter()
+    preparation_started = time.perf_counter()
     ligand_ids = _prepare_screening_dataset(
         args.receptor,
         args.ligands,
@@ -253,18 +254,23 @@ def main() -> None:
         args.target_name,
         center,
     )
+    dataset_preparation_seconds = time.perf_counter() - preparation_started
     command = _screening_command(args, dataset_root, results_dir)
     environment = os.environ.copy()
     if args.gpus:
         environment["CUDA_VISIBLE_DEVICES"] = args.gpus
+    screening_started = time.perf_counter()
     subprocess.run(command, cwd=args.repo, env=environment, check=True)
+    screening_seconds = time.perf_counter() - screening_started
 
     predictions_path = results_dir / "dekois2" / args.target_name / "predictions.sdf.gz"
     if not predictions_path.exists():
         raise FileNotFoundError(
             f"Docking screening output is missing: {predictions_path}"
         )
+    conversion_started = time.perf_counter()
     written = _write_matcha_outputs(predictions_path, run_dir)
+    output_conversion_seconds = time.perf_counter() - conversion_started
     if written == 0:
         raise RuntimeError("Docking screening produced no usable poses")
 
@@ -272,6 +278,9 @@ def main() -> None:
         "backend": "LigandPro/docking screening",
         "input_ligands": len(ligand_ids),
         "output_ligands": written,
+        "dataset_preparation_sec": dataset_preparation_seconds,
+        "screening_sec": screening_seconds,
+        "output_conversion_sec": output_conversion_seconds,
         "total_sec": time.perf_counter() - started,
         "command": command,
     }
