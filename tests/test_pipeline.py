@@ -1080,6 +1080,32 @@ def test_calculate_metrics_logs_traceback_on_failure(tmp_path, monkeypatch, capl
     assert matching[-1].exc_info is not None
 
 
+def test_calculate_metrics_keeps_incomplete_marker_on_reported_failure(
+    tmp_path, monkeypatch
+):
+    """A normal False result must remain resumable with --continue."""
+
+    class _ReportedFailurePipeline:
+        def __init__(self, config, progress_callback=None):
+            self.config = config
+            self.progress_callback = progress_callback
+
+        def run_pipeline(self, data):
+            return False
+
+    monkeypatch.setattr(
+        "hedgehog.pipeline.MolecularAnalysisPipeline", _ReportedFailurePipeline
+    )
+
+    success = calculate_metrics(
+        pd.DataFrame({COL_SMILES: ["CCO"]}),
+        {"folder_to_save": str(tmp_path)},
+    )
+
+    assert success is False
+    assert (tmp_path / ".RUN_INCOMPLETE").is_file()
+
+
 def test_calculate_metrics_propagates_cancellation(tmp_path, monkeypatch, caplog):
     """Cancellation should not be converted into a generic failed pipeline result."""
 

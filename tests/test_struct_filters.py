@@ -804,6 +804,31 @@ class TestCommonAlertsContract:
         assert cooccurrence.loc[0, "intersection"] == 0
         assert cooccurrence.loc[0, "jaccard"] == 0.0
 
+    def test_common_alert_cooccurrence_keeps_schema_with_one_group(self):
+        """One observed alert group has no pairs but must still produce valid CSV."""
+        from hedgehog.struct_filters.common_alert_diagnostics import _cooccurrence
+
+        hits_long = pd.DataFrame(
+            {
+                "mol_idx": [0, 1],
+                "ruleset": ["RulesetA", "RulesetA"],
+                "description": ["nitrogen atom", "nitrogen atom"],
+            }
+        )
+
+        cooccurrence = _cooccurrence(hits_long, ["ruleset"])
+
+        assert cooccurrence.empty
+        assert cooccurrence.columns.tolist() == [
+            "left",
+            "right",
+            "left_hits",
+            "right_hits",
+            "intersection",
+            "jaccard",
+            "containment",
+        ]
+
     @patch("hedgehog.struct_filters.utils.filter_alerts")
     @patch("hedgehog.struct_filters.utils.load_config")
     def test_progress_logs_are_emitted(

@@ -2468,8 +2468,9 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
         pipeline = MolecularAnalysisPipeline(config, progress_callback)
         success = pipeline.run_pipeline(data)
 
-        # Pipeline finished normally -- remove the marker.
-        incomplete_marker.unlink(missing_ok=True)
+        # Keep the marker when a stage reports failure so --continue can resume it.
+        if success:
+            incomplete_marker.unlink(missing_ok=True)
 
         return success
     except InterruptedError:
