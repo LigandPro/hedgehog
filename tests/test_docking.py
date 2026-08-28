@@ -1046,3 +1046,67 @@ class TestMatchaCommand:
         ]
         assert "--n-samples" in command
         assert "12" in command
+
+    def test_build_matcha_command_uses_docking_repository_adapter(
+        self, tmp_path, monkeypatch
+    ):
+        """The new repository backend should invoke Hedgehog's screening adapter."""
+        docking_repo = tmp_path / "docking"
+        docking_repo.mkdir()
+        training_config = tmp_path / "training.yaml"
+        training_config.write_text("seed: 777\n", encoding="utf-8")
+        checkpoint_root = tmp_path / "train_results"
+        checkpoint_root.mkdir()
+        cfg = {
+            "matcha_config": {
+                "backend": "docking",
+                "checkout_dir": "modules/docking",
+                "training_config": str(training_config),
+                "checkpoint_root": str(checkpoint_root),
+                "checkpoint_run": "model-run",
+                "n_samples": 20,
+                "gpus": "0",
+                "center": [1.0, 2.0, 3.0],
+            }
+        }
+
+        checkout_kwargs = {}
+
+        def fake_checkout(*args, **kwargs):
+            checkout_kwargs.update(kwargs)
+            return docking_repo
+
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts.ensure_matcha_checkout",
+            fake_checkout,
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking.scripts._resolve_executable",
+            lambda value: f"/resolved/{value}",
+        )
+
+        command, run_name, checkout = _build_matcha_command(
+            cfg,
+            tmp_path,
+            receptor="/tmp/receptor.pdb",
+            ligands_path="/tmp/ligands.sdf",
+        )
+
+        assert run_name == "matcha_run"
+        assert checkout == docking_repo
+        assert command[1:4] == [
+            "-m",
+            "hedgehog.docking.docking_repository",
+            "--uv-bin",
+        ]
+        assert "--checkpoint-run" in command
+        assert "model-run" in command
+        assert command[-6:] == [
+            "--center-x",
+            "1.0",
+            "--center-y",
+            "2.0",
+            "--center-z",
+            "3.0",
+        ]
+        assert checkout_kwargs["update"] is False

@@ -21,6 +21,11 @@ Set `auto_run: false` to generate docking scripts without executing them.
 
 SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA extends SMINA with convolutional neural network (CNN) scoring functions trained on protein-ligand complexes from the PDB. Matcha is a recent neural docking method based on multi-stage Riemannian flow matching.
 
+Matcha can run through the legacy `LigandPro/Matcha` CLI or the
+`LigandPro/docking` screening backend. The screening backend batches ETKDG
+conformer generation through nvMolKit and enforces a per-ligand timeout, which
+avoids unbounded serial RDKit embedding attempts.
+
 Select the tool in the docking config:
 
 ```yaml

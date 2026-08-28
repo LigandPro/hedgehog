@@ -34,12 +34,19 @@ gnina_config:
   no_gpu: false
   num_modes: 1
 matcha_config:
-  checkout_dir: modules/matcha_remote
-  checkpoints: /home/dorochka/projects/hedgehog/modules/matcha_remote/checkpoints
+  backend: docking
+  checkout_dir: modules/docking
+  repo_url: https://github.com/LigandPro/docking.git
+  update_checkout: false
+  training_config: /mnt/ligandpro/data/esevriugov/docking/train_results/2026-08-24-00:04:12-pocket-tune-base/config.yaml
+  checkpoint_root: /mnt/ligandpro/data/esevriugov/docking/train_results
+  checkpoint_run: 2026-08-24-00:04:12-pocket-tune-base
+  checkpoint_name: checkpoint-latest
   uv_bin: uv
   autobox_ligand: /home/dorochka/data/targets/KRAS/05C_from_7EW9.sdf
-  device: auto
   n_samples: 20
-  scorer: gnina
-  scorer_minimize: true
-  keep_workdir: false
+  sample_timeout_seconds: 180
+  data_workers: 16
+  concurrency: 64
+  batch_size: 256
+  gpus: "0"

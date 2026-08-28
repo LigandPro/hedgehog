@@ -2,6 +2,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from hedgehog._constants import TOOL_GNINA, TOOL_MATCHA, TOOL_SMINA
@@ -398,9 +399,21 @@ def _build_matcha_command(
 ) -> tuple[list[str], str, Path]:
     """Build Matcha CLI command and return (command_parts, run_name, checkout_path)."""
     matcha_cfg = cfg.get("matcha_config", {}) or {}
+    backend = str(matcha_cfg.get("backend") or "matcha_cli").strip().lower()
+    repo_url = matcha_cfg.get("repo_url")
+    update_default = backend != "docking"
+    checkout_kwargs = {
+        "checkout_dir": matcha_cfg.get("checkout_dir"),
+        "update": _parse_bool_config(
+            matcha_cfg.get("update_checkout", update_default),
+            update_default,
+        ),
+    }
+    if repo_url:
+        checkout_kwargs["repo_url"] = repo_url
     matcha_repo = ensure_matcha_checkout(
         _project_root(),
-        checkout_dir=matcha_cfg.get("checkout_dir"),
+        **checkout_kwargs,
     )
     uv_bin = str(matcha_cfg.get("uv_bin") or "uv").strip() or "uv"
     resolved_uv = _resolve_executable(uv_bin)
@@ -411,6 +424,72 @@ def _build_matcha_command(
 
     run_name = str(matcha_cfg.get("run_name") or "matcha_run").strip() or "matcha_run"
     output_dir = ligands_dir / "matcha"
+
+    if backend == "docking":
+        required = ("training_config", "checkpoint_root", "checkpoint_run")
+        missing = [key for key in required if not matcha_cfg.get(key)]
+        if missing:
+            raise ValueError(
+                "matcha_config is missing docking backend settings: "
+                + ", ".join(missing)
+            )
+        command = [
+            sys.executable,
+            "-m",
+            "hedgehog.docking.docking_repository",
+            "--uv-bin",
+            resolved_uv,
+            "--repo",
+            str(matcha_repo),
+            "--receptor",
+            receptor,
+            "--ligands",
+            ligands_path,
+            "--out",
+            str(output_dir.resolve()),
+            "--run-name",
+            run_name,
+            "--training-config",
+            str(Path(matcha_cfg["training_config"]).expanduser().resolve()),
+            "--checkpoint-root",
+            str(Path(matcha_cfg["checkpoint_root"]).expanduser().resolve()),
+            "--checkpoint-run",
+            str(matcha_cfg["checkpoint_run"]),
+            "--checkpoint-name",
+            str(matcha_cfg.get("checkpoint_name") or "checkpoint-latest"),
+            "--target-name",
+            str(matcha_cfg.get("target_name") or "hedgehog_target"),
+            "--n-samples",
+            str(int(matcha_cfg.get("n_samples", 20))),
+            "--sample-timeout-seconds",
+            str(float(matcha_cfg.get("sample_timeout_seconds", 180.0))),
+            "--data-workers",
+            str(int(matcha_cfg.get("data_workers", 16))),
+            "--concurrency",
+            str(int(matcha_cfg.get("concurrency", 64))),
+            "--batch-size",
+            str(int(matcha_cfg.get("batch_size", 256))),
+        ]
+        gpus = matcha_cfg.get("gpus")
+        if gpus:
+            command.extend(["--gpus", str(gpus)])
+        autobox_path = _resolve_matcha_autobox(cfg, matcha_cfg)
+        center = _resolve_matcha_center(cfg, matcha_cfg)
+        if autobox_path:
+            command.extend(["--autobox-ligand", autobox_path])
+        elif center is not None:
+            command.extend(
+                [
+                    "--center-x",
+                    str(center[0]),
+                    "--center-y",
+                    str(center[1]),
+                    "--center-z",
+                    str(center[2]),
+                ]
+            )
+        return command, run_name, matcha_repo
+
     command = [
         resolved_uv,
         "run",

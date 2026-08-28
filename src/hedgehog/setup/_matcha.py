@@ -23,6 +23,7 @@ def ensure_matcha_checkout(
     repo_url: str = _MATCHA_REPO_URL,
     checkout_dir: str | Path | None = None,
     pr_number: int | None = None,  # noqa: ARG001 — kept for config compatibility
+    update: bool = True,
 ) -> Path:
     """Clone Matcha or update it to the latest default-branch commit."""
     del pr_number  # only the remote default branch is supported
@@ -54,17 +55,21 @@ def ensure_matcha_checkout(
         target_dir.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Cloning Matcha from %s into %s", repo_url, target_dir)
         _run_git(["git", "clone", repo_url, str(target_dir)], cwd=target_dir.parent)
-    else:
+    elif update:
         logger.info("Updating Matcha checkout at %s", target_dir)
 
-    # Fetch the remote's default branch without assuming it is named ``main``.
-    # FETCH_HEAD is the exact commit returned by the server for its HEAD ref.
-    _run_git(["git", "fetch", "origin", "HEAD"], cwd=target_dir)
-    _run_git(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=target_dir)
+    if update:
+        # Fetch the remote's default branch without assuming it is named ``main``.
+        # FETCH_HEAD is the exact commit returned by the server for its HEAD ref.
+        _run_git(["git", "fetch", "origin", "HEAD"], cwd=target_dir)
+        _run_git(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=target_dir)
 
-    if not (target_dir / "matcha" / "cli.py").is_file():
+    supported_layout = (target_dir / "matcha" / "cli.py").is_file() or (
+        target_dir / "docking" / "screening" / "screening.py"
+    ).is_file()
+    if not supported_layout:
         raise RuntimeError(
-            f"Matcha checkout is missing matcha/cli.py after cloning {repo_url}."
+            f"Docking checkout at {target_dir} has neither the Matcha CLI nor screening API."
         )
 
     return target_dir

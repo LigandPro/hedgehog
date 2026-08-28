@@ -241,7 +241,9 @@ alongside it:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `backend` | string | `matcha_cli` | Use `docking` for the LigandPro/docking screening API or `matcha_cli` for the legacy Matcha CLI |
 | `checkout_dir` | string | `modules/matcha_remote` | Managed Matcha checkout directory populated from GitHub |
+| `update_checkout` | bool | backend-dependent | Update a managed legacy checkout; defaults to `false` for a caller-owned docking repository |
 | `uv_bin` | string | `uv` | Launcher used to invoke Matcha |
 | `autobox_ligand` | string | `src/hedgehog/configs/examples/05C_from_7EW9.sdf` | Optional Matcha autobox reference ligand |
 | `device` | string | `auto` | Matcha device selection (`auto`, `cpu`, `cuda`, `cuda:N`, `mps`) |
@@ -250,6 +252,13 @@ alongside it:
 | `scorer_minimize` | bool | `true` | Minimize poses during Matcha GNINA scoring |
 | `physical_only` | bool | `false` | Keep only physically valid poses in Matcha outputs |
 | `keep_workdir` | bool | `false` | Preserve Matcha internal work directory after the run |
+
+The `docking` backend additionally requires `training_config`,
+`checkpoint_root`, and `checkpoint_run`. It uses nvMolKit to generate all
+ETKDG conformers for a ligand as one GPU batch with a real timeout. Hedgehog
+converts the resulting positive `cnn_affinity` to
+`minimizedAffinity = -cnn_affinity` so existing docking thresholds retain
+their lower-is-better meaning.
 
 When `prepare_ligands` is `true`, one input molecule may produce several
 prepared ligands. This can change row counts and downstream mapping. Keep it
