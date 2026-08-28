@@ -1512,6 +1512,7 @@ class MolecularAnalysisPipeline:
         for name, run_step in steps:
             self._raise_if_cancel_requested(f"stage boundary before '{name}'")
             completed, early_exit = run_step()
+            _release_loky_workers()
             self._raise_if_cancel_requested(f"stage boundary after '{name}'")
             if completed:
                 self._stage_by_name[name].completed = True
@@ -2483,6 +2484,19 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
     return success
 
 
+def _release_loky_workers() -> None:
+    """Release joblib's reusable pool so it cannot leak into the next stage."""
+    try:
+        from joblib.externals.loky import reusable_executor as loky_reusable_executor
+
+        loky_executor = getattr(loky_reusable_executor, "_executor", None)
+        if loky_executor is not None:
+            loky_executor.shutdown(wait=True, kill_workers=True)
+            logger.info("Released reusable loky workers at stage boundary")
+    except Exception as exc:
+        logger.debug("Could not release reusable loky workers: %s", exc)
+
+
 def _cleanup_lingering_processes(timeout_seconds: float = 2.0) -> None:
     """Best-effort cleanup of leftover workers without long shutdown stalls."""
     # Some third-party libraries (e.g., joblib/loky) can leave worker processes
@@ -2529,14 +2543,7 @@ def _cleanup_lingering_processes(timeout_seconds: float = 2.0) -> None:
         except Exception:
             pass
 
-    try:
-        from joblib.externals.loky import reusable_executor as loky_reusable_executor
-
-        loky_executor = getattr(loky_reusable_executor, "_executor", None)
-        if loky_executor is not None:
-            loky_executor.shutdown(wait=True, kill_workers=True)
-    except Exception:
-        pass
+    _release_loky_workers()
 
     # A second pass helps when child processes were created by external runtimes
     # (e.g. loky) and were not visible during the first active_children() call.

@@ -1,3 +1,4 @@
+import json
 import os
 import shlex
 import subprocess
@@ -221,8 +222,29 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     except ImportError as err:
         raise RuntimeError("RDKit not available for ligand conversion") from err
 
+    source_path = Path(ligands_csv).resolve()
+    source_stat = source_path.stat()
     sdf_path = ligands_dir / "_workdir" / "ligands_prepared.sdf"
+    cache_path = sdf_path.with_suffix(".cache.json")
     sdf_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_key = {
+        "source_path": str(source_path),
+        "source_size": source_stat.st_size,
+        "source_mtime_ns": source_stat.st_mtime_ns,
+    }
+    if sdf_path.is_file() and sdf_path.stat().st_size > 0 and cache_path.is_file():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached = {}
+        if all(cached.get(key) == value for key, value in cache_key.items()):
+            logger.info(
+                "Reusing RDKit-prepared ligand SDF with %d molecules: %s",
+                int(cached.get("written_count", 0)),
+                sdf_path,
+            )
+            return str(sdf_path.resolve()), None
+
     df = pd.read_csv(ligands_csv)
     smiles_series = df["smiles"]
     name_series = df["name"]
@@ -238,7 +260,9 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
         context="docking.ligand_prep",
     )
 
-    writer = Chem.SDWriter(str(sdf_path))
+    temporary_path = sdf_path.with_suffix(".sdf.tmp")
+    temporary_path.unlink(missing_ok=True)
+    writer = Chem.SDWriter(str(temporary_path))
     written_count = 0
 
     for idx, (smi, name) in enumerate(
@@ -277,8 +301,14 @@ def _convert_with_rdkit(ligands_csv, ligands_dir):
     writer.close()
 
     if written_count == 0:
+        temporary_path.unlink(missing_ok=True)
         raise RuntimeError("RDKit conversion produced 0 molecules for GNINA SDF")
 
+    temporary_path.replace(sdf_path)
+    cache_path.write_text(
+        json.dumps(cache_key | {"written_count": written_count}, indent=2),
+        encoding="utf-8",
+    )
     logger.info("Converted %d molecules to SDF using RDKit", written_count)
     return str(sdf_path.resolve()), None
 

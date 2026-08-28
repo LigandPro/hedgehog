@@ -513,6 +513,11 @@ class TestPerMoleculeArchitecture:
         assert Path(output_path).exists()
         assert len(calls) == 1
 
+        cached_path, _ = _convert_with_rdkit(ligands_csv, tmp_path)
+        assert cached_path == output_path
+        assert len(calls) == 1
+        assert Path(output_path).with_suffix(".cache.json").is_file()
+
     def test_split_sdf_to_molecules(self, tmp_path):
         """Should split multi-molecule SDF into individual files."""
         from rdkit import Chem
