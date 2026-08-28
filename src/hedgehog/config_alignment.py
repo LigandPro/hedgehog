@@ -1461,6 +1461,13 @@ def finalize_global_alignment(
     protected_path = aligned_dir / "protected_target_molecules.csv"
     protected.to_csv(protected_path, index=False)
     aligned = copy.deepcopy(source_master)
+    for runtime_key in (
+        "_continue_mode",
+        "_continue_completed_stages",
+        "_run_single_stage_override",
+        "_run_stage_selection_override",
+    ):
+        aligned.pop(runtime_key, None)
     summary = _new_threshold_summary(target_run, target_mols_path, percentile)
     summary["selection_method"] = "global_protected_target_cohort"
     verified_stages: list[str] = []

@@ -10,6 +10,11 @@ from tests.test_config_alignment import _base_master
 
 def test_global_alignment_protects_one_shared_target_cohort(tmp_path):
     master = _base_master(tmp_path)
+    master["_continue_mode"] = True
+    master["_continue_completed_stages"] = ["mol_prep"]
+    master["_run_stage_selection_override"] = ["docking"]
+    master["_run_single_stage_override"] = "docking"
+
     targets = tmp_path / "targets.csv"
     target_run = tmp_path / "target_run"
     target_ids = [f"mol-{index}" for index in range(10)]
@@ -98,6 +103,13 @@ def test_global_alignment_protects_one_shared_target_cohort(tmp_path):
         str(targets),
         80,
     )
+    for runtime_key in (
+        "_continue_mode",
+        "_continue_completed_stages",
+        "_run_stage_selection_override",
+        "_run_single_stage_override",
+    ):
+        assert runtime_key not in aligned
 
     audit = yaml.safe_load(audit_path.read_text())
     assert audit["selection_method"] == "global_protected_target_cohort"
