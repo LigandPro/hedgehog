@@ -17,6 +17,7 @@ INPUT_SOURCE_PRIORITY_NEW = [
     ("stages", _STAGE_DOCKING, "filtered_molecules.csv"),
     ("stages", _STAGE_SYNTHESIS, "filtered_molecules.csv"),
     ("stages", _STAGE_STRUCT_FILTERS_POST, "filtered_molecules.csv"),
+    ("stages", _STAGE_DESCRIPTORS_INITIAL, "filtered_molecules.csv"),
     ("stages", _STAGE_DESCRIPTORS_INITIAL, "filtered", "filtered_molecules.csv"),
     ("stages", _STAGE_MOL_PREP, "filtered_molecules.csv"),
     ("input", "sampled_molecules.csv"),

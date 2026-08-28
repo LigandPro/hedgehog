@@ -485,7 +485,6 @@ class DataChecker:
     _STAGE_OUTPUT_PATHS = {
         DIR_MOL_PREP: Path(DIR_MOL_PREP) / FILE_FILTERED_MOLECULES,
         DIR_DESCRIPTORS_INITIAL: Path(DIR_DESCRIPTORS_INITIAL)
-        / "filtered"
         / FILE_FILTERED_MOLECULES,
         DIR_STRUCT_FILTERS_POST: Path(DIR_STRUCT_FILTERS_POST)
         / FILE_FILTERED_MOLECULES,
@@ -533,6 +532,15 @@ class DataChecker:
         if relative_path is None:
             return None
         csv_path = self.base_path / relative_path
+        if stage_name == DIR_DESCRIPTORS_INITIAL and not csv_path.exists():
+            legacy_path = (
+                self.base_path
+                / DIR_DESCRIPTORS_INITIAL
+                / "filtered"
+                / FILE_FILTERED_MOLECULES
+            )
+            if legacy_path.exists():
+                csv_path = legacy_path
         if is_large_dataset_mode(self.config):
             return output_path_or_parts(csv_path)
         return csv_path
@@ -884,7 +892,6 @@ class MoleculeCounter:
         STAGE_MOL_PREP: (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
         STAGE_DESCRIPTORS: (
             DIR_DESCRIPTORS_INITIAL,
-            "filtered",
             FILE_FILTERED_MOLECULES,
         ),
         STAGE_STRUCT_FILTERS: (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
@@ -975,6 +982,15 @@ class MoleculeCounter:
         path_parts = self._OUTPUT_PATHS.get(stage_name)
         if path_parts is not None:
             output_path = self.base_path.joinpath(*path_parts)
+            if stage_name == STAGE_DESCRIPTORS and not output_path.exists():
+                legacy_output = (
+                    self.base_path
+                    / DIR_DESCRIPTORS_INITIAL
+                    / "filtered"
+                    / FILE_FILTERED_MOLECULES
+                )
+                if legacy_output.exists():
+                    output_path = legacy_output
             if output_path.exists():
                 counted = self.count_csv_rows(output_path)
                 if counted is not None:
@@ -1456,7 +1472,11 @@ class MolecularAnalysisPipeline:
         base = self.data_checker.base_path
         if source.startswith("stages/"):
             if "descriptors" in source:
-                csv_path = base / source / "filtered" / FILE_FILTERED_MOLECULES
+                csv_path = base / source / FILE_FILTERED_MOLECULES
+                if not csv_path.exists():
+                    legacy_path = base / source / "filtered" / FILE_FILTERED_MOLECULES
+                    if legacy_path.exists():
+                        csv_path = legacy_path
             else:
                 csv_path = base / source / FILE_FILTERED_MOLECULES
         else:
@@ -1667,9 +1687,37 @@ class MolecularAnalysisPipeline:
                         e,
                     )
 
-        return self._run_stage(
+        completed, early_exit = self._run_stage(
             STAGE_DESCRIPTORS, self.stage_runner.run_descriptors, descriptors_input
         )
+        if not completed or early_exit:
+            return completed, early_exit
+
+        output_candidates = [
+            self.data_checker.base_path
+            / DIR_DESCRIPTORS_INITIAL
+            / FILE_FILTERED_MOLECULES,
+            self.data_checker.base_path
+            / DIR_DESCRIPTORS_INITIAL
+            / "filtered"
+            / FILE_FILTERED_MOLECULES,
+        ]
+        output_path = next((path for path in output_candidates if path.exists()), None)
+        if output_path is not None:
+            try:
+                descriptor_output = pd.read_csv(output_path)
+                self.current_data = descriptor_output
+                if descriptor_output.empty:
+                    logger.info(
+                        "No molecules left after descriptors; ending pipeline early."
+                    )
+                    return True, True
+            except Exception as exc:
+                logger.warning(
+                    "Could not load descriptors output (%s): %s", output_path, exc
+                )
+
+        return True, False
 
     def _run_post_descriptors_filters(self) -> tuple[bool, bool]:
         """Run post-descriptors structural filters stage."""
@@ -1852,15 +1900,18 @@ class MolecularAnalysisPipeline:
             STAGE_SYNTHESIS: [
                 (DIR_SYNTHESIS, FILE_FILTERED_MOLECULES),
                 (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
+                (DIR_DESCRIPTORS_INITIAL, FILE_FILTERED_MOLECULES),
                 (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
                 (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
             ],
             STAGE_STRUCT_FILTERS: [
                 (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
+                (DIR_DESCRIPTORS_INITIAL, FILE_FILTERED_MOLECULES),
                 (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
                 (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
             ],
             STAGE_DESCRIPTORS: [
+                (DIR_DESCRIPTORS_INITIAL, FILE_FILTERED_MOLECULES),
                 (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
                 (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
             ],
@@ -2311,9 +2362,9 @@ def _count_stage_molecules(base_path: Path, stage_dir: str) -> int | None:
 
     Returns the row count (excluding header), or None if the file is missing.
     """
-    csv_path = base_path / stage_dir / "filtered" / FILE_FILTERED_MOLECULES
+    csv_path = base_path / stage_dir / FILE_FILTERED_MOLECULES
     if not csv_path.exists():
-        csv_path = base_path / stage_dir / FILE_FILTERED_MOLECULES
+        csv_path = base_path / stage_dir / "filtered" / FILE_FILTERED_MOLECULES
     if not csv_path.exists():
         return None
     try:

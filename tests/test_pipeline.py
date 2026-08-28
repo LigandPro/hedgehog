@@ -200,6 +200,18 @@ class TestDataChecker:
 
         assert checker.check_stage_data(DIR_DESCRIPTORS_INITIAL) is True
 
+    def test_check_stage_data_current_descriptors_path(self, tmp_path):
+        """Current descriptor output lives directly in the numbered stage."""
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial"
+        desc_dir.mkdir(parents=True)
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME}\n{SMILES_ETHANOL},{MODEL_TEST}"
+        )
+
+        checker = DataChecker({"folder_to_save": str(tmp_path)})
+
+        assert checker.check_stage_data(DIR_DESCRIPTORS_INITIAL) is True
+
     def test_check_stage_data_mol_prep(self, tmp_path):
         """Check stage data for MolPrep output."""
         prep_dir = tmp_path / "stages" / "01_mol_prep"
@@ -643,6 +655,37 @@ class TestStageLoggingCanonicalFormat:
         assert (
             "Stage descriptors completed: 3 in -> 2 out (delta -1, retained 66.67%,"
         ) in str(complete_events[-1].get("message", ""))
+
+    def test_empty_descriptor_output_ends_pipeline_before_struct_filters(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """A header-only descriptor result must stop downstream stages."""
+        pipeline = _build_enabled_pipeline(tmp_path, STAGE_DESCRIPTORS)
+        descriptor_output = (
+            tmp_path / "stages" / "02_descriptors_initial" / FILE_FILTERED_MOLECULES
+        )
+
+        def _run_descriptors(data, reporter=None):
+            descriptor_output.parent.mkdir(parents=True, exist_ok=True)
+            data.iloc[:0].to_csv(descriptor_output, index=False)
+            return True
+
+        monkeypatch.setattr(pipeline.stage_runner, "run_descriptors", _run_descriptors)
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["CCO", "CCC"],
+                COL_MODEL_NAME: ["m1", "m1"],
+                COL_MOL_IDX: [0, 1],
+            }
+        )
+
+        with caplog.at_level("INFO"):
+            completed, early_exit = pipeline._run_descriptors(input_df)
+
+        assert completed is True
+        assert early_exit is True
+        assert "Stage descriptors completed: 2 in -> 0 out" in caplog.text
+        assert "No molecules left after descriptors" in caplog.text
 
     def test_stage_failure_uses_best_effort_output_count(self, tmp_path, caplog):
         events: list[dict] = []
