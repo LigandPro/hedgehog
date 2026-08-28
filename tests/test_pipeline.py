@@ -1151,9 +1151,10 @@ def test_calculate_metrics_keeps_incomplete_marker_on_reported_failure(
     assert (tmp_path / ".RUN_INCOMPLETE").is_file()
 
 
-def test_config_snapshot_saves_self_contained_alignment_lineage(tmp_path):
-    """Run configs should preserve their source-to-active inheritance chain."""
-    alignment_root = tmp_path / "target_alignment"
+def test_config_snapshot_saves_lineage_in_global_results_store(tmp_path):
+    """Per-run lineage belongs under results/configs, outside the run folder."""
+    run_dir = tmp_path / "results" / "run_1"
+    alignment_root = run_dir / "target_alignment"
     source_dir = alignment_root / "source_configs"
     calibration_dir = alignment_root / "calibration_configs_unfiltered"
     production_dir = alignment_root / "aligned_configs"
@@ -1172,21 +1173,26 @@ def test_config_snapshot_saves_self_contained_alignment_lineage(tmp_path):
 
     _save_config_snapshot(
         {
-            "folder_to_save": str(tmp_path),
+            "folder_to_save": str(run_dir),
             "config_synthesis": str(stage_config),
             "alignment": {"thresholds_path": str(thresholds)},
         }
     )
 
-    lineage_root = tmp_path / "configs" / "lineage"
+    lineage_root = tmp_path / "results" / "configs" / "run_1"
     manifest = yaml.safe_load((lineage_root / "lineage.yml").read_text())
     active_master = yaml.safe_load(
         (lineage_root / "30_active_runtime" / "master_config_resolved.yml").read_text()
+    )
+    local_master = yaml.safe_load(
+        (run_dir / "configs" / "master_config_resolved.yml").read_text()
     )
     assert manifest["source"]["status"] == "captured"
     assert manifest["calibration_measurement"]["inherits_from"] == "source"
     assert manifest["production_aligned"]["status"] == "captured"
     assert manifest["active_runtime"]["inherits_from"] == "production_aligned"
+    assert local_master["global_config_snapshot"] == str(lineage_root.resolve())
+    assert not (run_dir / "configs" / "lineage").exists()
     assert Path(active_master["config_synthesis"]).parent == (
         lineage_root / "30_active_runtime"
     )

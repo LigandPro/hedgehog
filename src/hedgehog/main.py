@@ -32,6 +32,7 @@ from hedgehog.config_alignment import (
     TARGET_CALIBRATION_RUN_DIR_NAME,
     create_aligned_stage_config,
     create_probe_config,
+    finalize_global_alignment,
     set_probe_molprep_allowed_atoms,
     validate_target_coverage_percent,
 )
@@ -717,6 +718,20 @@ def _align_config_with_target_molecules(
     if not calculate_metrics(target_data, probe_config, alignment_progress):
         logger.error("[red]Error:[/red] Target alignment pipeline failed.")
         raise typer.Exit(code=1)
+    try:
+        latest_aligned = finalize_global_alignment(
+            config_dict,
+            target_run,
+            alignment_root,
+            str(target_path),
+            percentile,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        logger.error(
+            "[red]Error:[/red] Could not verify global target retention: %s",
+            exc,
+        )
+        raise typer.Exit(code=1) from exc
 
     if latest_aligned is None:
         logger.warning(
@@ -1497,6 +1512,20 @@ def _run_pipeline_command(
         logger.error("Pipeline completed with failures")
         raise typer.Exit(code=1)
     if alignment_resume_outer is not None:
+        try:
+            finalize_global_alignment(
+                alignment_resume_master,
+                folder_to_save,
+                alignment_root,
+                target_path,
+                coverage,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            logger.error(
+                "[red]Error:[/red] Could not verify global target retention: %s",
+                exc,
+            )
+            raise typer.Exit(code=1) from exc
         aligned_master_path = (
             alignment_resume_outer
             / ALIGNMENT_DIR_NAME

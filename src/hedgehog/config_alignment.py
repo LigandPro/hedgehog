@@ -1131,6 +1131,510 @@ def _align_docking_config(
     }
 
 
+def _config_from_master(
+    master: dict[str, Any], config_key: str
+) -> tuple[dict[str, Any], Path] | None:
+    raw_path = master.get(config_key)
+    if not isinstance(raw_path, str):
+        return None
+    path = Path(raw_path)
+    if not path.is_file():
+        return None
+    return load_config(str(path)), path
+
+
+def _descriptor_threshold_specs(config: dict[str, Any]) -> dict[str, set[str]]:
+    specs: dict[str, set[str]] = {}
+    borders = config.get("borders")
+    if isinstance(borders, dict):
+        for key in borders:
+            if key.endswith("_min"):
+                _add_threshold_side(specs, key.removesuffix("_min"), "min")
+            elif key.endswith("_max"):
+                _add_threshold_side(specs, key.removesuffix("_max"), "max")
+
+    constraints = config.get("structural_constraints")
+    if not isinstance(constraints, dict):
+        return specs
+    type_limits = constraints.get("type_limits")
+    if isinstance(type_limits, dict):
+        for column in type_limits:
+            _add_threshold_side(specs, str(column), "min")
+            _add_threshold_side(specs, str(column), "max")
+    element_limits = constraints.get("element_limits")
+    if isinstance(element_limits, dict):
+        for element, column in _STRUCTURAL_ELEMENT_COLUMNS.items():
+            if element in element_limits:
+                _add_threshold_side(specs, column, "min")
+                _add_threshold_side(specs, column, "max")
+    for key, column in _STRUCTURAL_DIRECT_COLUMNS.items():
+        if key in constraints:
+            _add_threshold_side(specs, column, "min")
+            _add_threshold_side(specs, column, "max")
+    return specs
+
+
+def _synthesis_threshold_specs(config: dict[str, Any]) -> dict[str, set[str]]:
+    specs: dict[str, set[str]] = {}
+    enabled_columns = _enabled_synthesis_score_columns(config)
+    for column, (min_key, max_key) in _SYNTHESIS_LEGACY_FILTERS.items():
+        if column not in enabled_columns:
+            continue
+        if min_key in config:
+            _add_threshold_side(specs, column, "min")
+        if max_key in config:
+            _add_threshold_side(specs, column, "max")
+    nested = config.get("score_filters")
+    if isinstance(nested, dict):
+        for column, thresholds in nested.items():
+            if column not in enabled_columns or not isinstance(thresholds, dict):
+                continue
+            for side in ("min", "max"):
+                if side in thresholds:
+                    _add_threshold_side(specs, column, side)
+    return specs
+
+
+def _metric_extremeness(metrics: pd.DataFrame, specs: dict[str, set[str]]) -> pd.Series:
+    """Return each molecule's worst normalized threshold extremeness."""
+    penalties: list[pd.Series] = []
+    for column, sides in specs.items():
+        if column == "ring_size" and sides == {"min", "max"}:
+            minimums = _ring_size_extrema(metrics, "min")
+            maximums = _ring_size_extrema(metrics, "max")
+            if minimums is None or maximums is None:
+                continue
+            valid_count = int((minimums.notna() & maximums.notna()).sum())
+            if valid_count <= 1:
+                penalty = pd.Series(0.5, index=metrics.index)
+            else:
+                min_ranks = (minimums.rank(method="average") - 1.0) / (
+                    valid_count - 1.0
+                )
+                max_ranks = (maximums.rank(method="average") - 1.0) / (
+                    valid_count - 1.0
+                )
+                penalty = pd.concat([1.0 - min_ranks, max_ranks], axis=1).max(axis=1)
+            penalties.append(penalty.fillna(0.0).rename(column))
+            continue
+
+        if column not in metrics:
+            continue
+        values = pd.to_numeric(metrics[column], errors="coerce")
+        valid_count = int(values.notna().sum())
+        if valid_count <= 1:
+            ranks = pd.Series(0.5, index=metrics.index)
+        else:
+            ranks = (values.rank(method="average") - 1.0) / (valid_count - 1.0)
+        if sides == {"min", "max"}:
+            penalty = (ranks - 0.5).abs() * 2.0
+        elif "min" in sides:
+            penalty = 1.0 - ranks
+        else:
+            penalty = ranks
+        penalties.append(penalty.fillna(1.0).rename(column))
+    if not penalties:
+        return pd.Series(0.0, index=metrics.index)
+    return pd.concat(penalties, axis=1).max(axis=1)
+
+
+def _metrics_by_target_id(
+    metrics: pd.DataFrame,
+    target_ids: pd.Index,
+    stage: str,
+) -> pd.DataFrame:
+    """Index one-row-per-target metrics by stable mol_idx."""
+    indexed = metrics.copy()
+    if "mol_idx" in indexed.columns:
+        indexed["mol_idx"] = indexed["mol_idx"].astype(str)
+        if indexed["mol_idx"].duplicated().any():
+            raise ValueError(
+                f"{stage} alignment metrics contain duplicate mol_idx values."
+            )
+        indexed = indexed.set_index("mol_idx", drop=False)
+    elif len(indexed) == len(target_ids):
+        logger.warning(
+            "%s alignment metrics have no mol_idx; using preserved target row order.",
+            stage,
+        )
+        indexed.index = target_ids
+        indexed["mol_idx"] = target_ids
+    else:
+        raise ValueError(
+            f"{stage} alignment metrics have no mol_idx and contain "
+            f"{len(indexed)} rows for {len(target_ids)} targets."
+        )
+    return indexed.reindex(target_ids)
+
+
+def _select_global_protected_cohort(
+    master: dict[str, Any],
+    target_run: Path,
+    target_molecules: pd.DataFrame,
+    percentile: float,
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """Select one fixed target cohort using every available aligned stage."""
+    target_ids = pd.Index(target_molecules["mol_idx"].astype(str), name="mol_idx")
+    required_count = math.ceil(len(target_ids) * percentile / 100.0)
+    penalties: dict[str, pd.Series] = {}
+    stage_metrics: dict[str, pd.DataFrame] = {}
+    eligible = pd.Series(True, index=target_ids)
+
+    descriptor_source = _config_from_master(master, _CONFIG_DESCRIPTORS)
+    if descriptor_source is not None and descriptor_source[0].get("run", True):
+        raw = _read_csv(
+            target_run
+            / "stages"
+            / "02_descriptors_initial"
+            / "metrics"
+            / "descriptors_all.csv"
+        )
+        if raw is None:
+            raise ValueError("Descriptor target metrics are missing.")
+        metrics = _metrics_by_target_id(raw, target_ids, "Descriptor")
+        specs = _descriptor_threshold_specs(descriptor_source[0])
+        penalties["descriptors"] = _metric_extremeness(metrics, specs)
+        stage_metrics["descriptors"] = metrics
+
+    structural_source = _config_from_master(master, _CONFIG_STRUCT_FILTERS)
+    if structural_source is not None and structural_source[0].get("run", False):
+        raw = _read_structural_rule_masks(
+            target_run / "stages" / "03_structural_filters_post"
+        )
+        if raw is None:
+            raise ValueError("Structural-filter target metrics are missing.")
+        metrics = _metrics_by_target_id(raw, target_ids, "Structural-filter")
+        rules = _structural_rule_columns(metrics)
+        if rules:
+            pass_matrix = pd.DataFrame(
+                {rule: _boolean_pass_values(metrics[rule]) for rule in rules},
+                index=metrics.index,
+            )
+            penalties["struct_filters"] = 1.0 - pass_matrix.mean(axis=1)
+        stage_metrics["struct_filters"] = metrics
+
+    synthesis_source = _config_from_master(master, _CONFIG_SYNTHESIS)
+    if synthesis_source is not None and synthesis_source[0].get("run", False):
+        raw = _read_csv(target_run / "stages" / "04_synthesis" / "synthesis_scores.csv")
+        if raw is None:
+            raise ValueError("Synthesis-score target metrics are missing.")
+        metrics = _metrics_by_target_id(raw, target_ids, "Synthesis")
+        specs = _synthesis_threshold_specs(synthesis_source[0])
+        penalties["synthesis"] = _metric_extremeness(metrics, specs)
+        stage_metrics["synthesis"] = metrics
+
+    docking_source = _config_from_master(master, _CONFIG_DOCKING)
+    if (
+        docking_source is not None
+        and docking_source[0].get("run", False)
+        and docking_source[0].get("calculate_score_thresholds_from_targets") is True
+    ):
+        selected_tools = [
+            tool
+            for tool in _parse_tools_config(docking_source[0])
+            if tool in _DOCKING_SCORE_PROPERTIES
+        ]
+        raw = _read_docking_score_metrics(
+            target_run / "stages" / "05_docking" / "docking_out.sdf",
+            selected_tools,
+        )
+        if raw is None:
+            raise ValueError("Docking target metrics are missing.")
+        metrics = _metrics_by_target_id(raw, target_ids, "Docking")
+        specs = {tool: {"max"} for tool in selected_tools}
+        penalties["docking"] = _metric_extremeness(metrics, specs)
+        eligible &= metrics[selected_tools].notna().all(axis=1)
+        stage_metrics["docking"] = metrics
+
+    if not penalties:
+        raise ValueError("No target metrics are available for global alignment.")
+    if int(eligible.sum()) < required_count:
+        raise ValueError(
+            "Global target alignment cannot protect "
+            f"{required_count}/{len(target_ids)} molecules: only "
+            f"{int(eligible.sum())} have all required stage measurements."
+        )
+
+    penalty_frame = pd.DataFrame(penalties, index=target_ids).fillna(1.0)
+    ranking = pd.DataFrame(
+        {
+            "eligible": eligible,
+            "worst": penalty_frame.max(axis=1),
+            "mean": penalty_frame.mean(axis=1),
+            "source_order": range(len(target_ids)),
+        },
+        index=target_ids,
+    )
+    selected_ids = ranking.sort_values(
+        ["eligible", "worst", "mean", "source_order"],
+        ascending=[False, True, True, True],
+        kind="stable",
+    ).index[:required_count]
+    if not bool(eligible.loc[selected_ids].all()):
+        raise ValueError(
+            "Global target cohort contains molecules with missing metrics."
+        )
+
+    protected = target_molecules.copy()
+    protected["mol_idx"] = protected["mol_idx"].astype(str)
+    protected = protected.set_index("mol_idx", drop=False).loc[selected_ids].copy()
+    protected["alignment_worst_extremeness"] = ranking.loc[selected_ids, "worst"]
+    protected["alignment_mean_extremeness"] = ranking.loc[selected_ids, "mean"]
+    return protected.reset_index(drop=True), stage_metrics
+
+
+def _protected_numeric_pass_count(
+    metrics: pd.DataFrame,
+    specs: dict[str, set[str]],
+    config: dict[str, Any],
+    *,
+    synthesis: bool = False,
+) -> int:
+    passed = pd.Series(True, index=metrics.index)
+    borders = config.get("borders", {}) if not synthesis else {}
+    nested = config.get("score_filters", {}) if synthesis else {}
+    legacy_by_column = {
+        column: keys for column, keys in _SYNTHESIS_LEGACY_FILTERS.items()
+    }
+    for column, sides in specs.items():
+        if column == "ring_size":
+            values_by_side = {
+                "min": _ring_size_extrema(metrics, "min"),
+                "max": _ring_size_extrema(metrics, "max"),
+            }
+        else:
+            values = pd.to_numeric(metrics.get(column), errors="coerce")
+            values_by_side = {"min": values, "max": values}
+        for side in sides:
+            if synthesis:
+                threshold = None
+                keys = legacy_by_column.get(column)
+                if keys is not None:
+                    threshold = config.get(keys[0 if side == "min" else 1])
+                if isinstance(nested, dict) and isinstance(nested.get(column), dict):
+                    threshold = nested[column].get(side, threshold)
+            else:
+                threshold = borders.get(f"{column}_{side}")
+            if threshold is None:
+                continue
+            values = values_by_side[side]
+            if values is None:
+                passed &= False
+            elif side == "min":
+                passed &= values.isna() | (values >= float(threshold))
+            else:
+                passed &= values.isna() | (values <= float(threshold))
+    return int(passed.sum())
+
+
+def finalize_global_alignment(
+    master: dict[str, Any],
+    target_run: Path,
+    alignment_root: Path,
+    target_mols_path: str,
+    percentile: float,
+) -> tuple[dict[str, Any], Path, Path]:
+    """Build production configs around one globally protected target cohort."""
+    percentile = validate_target_coverage_percent(percentile)
+    source_master_path = alignment_root / SOURCE_CONFIGS_DIR_NAME / "source_config.yml"
+    source_master = (
+        load_config(str(source_master_path))
+        if source_master_path.is_file()
+        else copy.deepcopy(master)
+    )
+    target_molecules = _read_csv(target_run / "input" / "sampled_molecules.csv")
+    if target_molecules is None or target_molecules.empty:
+        raise ValueError("Saved target molecules are missing for global alignment.")
+    if "mol_idx" not in target_molecules:
+        raise ValueError("Saved target molecules do not contain stable mol_idx values.")
+    target_molecules["mol_idx"] = target_molecules["mol_idx"].astype(str)
+    if target_molecules["mol_idx"].duplicated().any():
+        raise ValueError("Saved target molecules contain duplicate mol_idx values.")
+
+    protected, stage_metrics = _select_global_protected_cohort(
+        source_master, target_run, target_molecules, percentile
+    )
+    protected_ids = pd.Index(protected["mol_idx"].astype(str), name="mol_idx")
+    required_count = len(protected)
+    aligned_dir = alignment_root / "aligned_configs"
+    aligned_dir.mkdir(parents=True, exist_ok=True)
+    protected_path = aligned_dir / "protected_target_molecules.csv"
+    protected.to_csv(protected_path, index=False)
+    aligned = copy.deepcopy(source_master)
+    summary = _new_threshold_summary(target_run, target_mols_path, percentile)
+    summary["selection_method"] = "global_protected_target_cohort"
+    verified_stages: list[str] = []
+
+    def write_stage(
+        stage: str,
+        config_key: str,
+        updater,
+        metrics: pd.DataFrame,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        source = _config_from_master(source_master, config_key)
+        if source is None:
+            raise ValueError(f"Missing source config for aligned stage {stage}.")
+        config, source_path = source
+        target_path = aligned_dir / f"{config_key}{source_path.suffix or '.yml'}"
+        protected_metrics = metrics.reindex(protected_ids).copy()
+        thresholds = updater(config, protected_metrics, 100.0)
+        _dump_yaml(config, target_path)
+        aligned[config_key] = str(target_path.resolve())
+        summary["stages"][stage] = {
+            "thresholds": thresholds,
+            "status": "globally_aligned",
+            "protected_molecules": required_count,
+        }
+        verified_stages.append(stage)
+        return config, thresholds
+
+    molprep_source = _config_from_master(source_master, _CONFIG_MOL_PREP)
+    if molprep_source is not None:
+        molprep_config, source_path = molprep_source
+        allowed_atoms = _target_atom_symbols(target_molecules)
+        filters = molprep_config.setdefault("filters", {})
+        filters["allowed_atoms"] = allowed_atoms
+        target_path = aligned_dir / f"{_CONFIG_MOL_PREP}{source_path.suffix or '.yml'}"
+        _dump_yaml(molprep_config, target_path)
+        aligned[_CONFIG_MOL_PREP] = str(target_path.resolve())
+        summary["stages"]["mol_prep"] = {
+            "thresholds": {"filters.allowed_atoms": allowed_atoms},
+            "status": "globally_aligned",
+            "protected_molecules": required_count,
+        }
+        verified_stages.append("mol_prep")
+
+    if "descriptors" in stage_metrics:
+        config, thresholds = write_stage(
+            "descriptors",
+            _CONFIG_DESCRIPTORS,
+            _align_descriptor_config,
+            stage_metrics["descriptors"],
+        )
+        protected_metrics = stage_metrics["descriptors"].reindex(protected_ids)
+        retained = _protected_numeric_pass_count(
+            protected_metrics, _descriptor_threshold_specs(config), config
+        )
+        summary["stages"]["descriptors"]["protected_retained_molecules"] = retained
+        if retained < required_count:
+            raise ValueError(
+                f"Descriptor alignment protects only {retained}/{required_count} molecules."
+            )
+
+    if "struct_filters" in stage_metrics:
+        config, thresholds = write_stage(
+            "struct_filters",
+            _CONFIG_STRUCT_FILTERS,
+            _align_structural_filter_config,
+            stage_metrics["struct_filters"],
+        )
+        retained = int(thresholds.get("retained_molecules", 0))
+        summary["stages"]["struct_filters"]["protected_retained_molecules"] = retained
+        failure_audit_path = aligned_dir / "structural_filter_failures.csv"
+        _write_structural_failure_audit(
+            stage_metrics["struct_filters"], failure_audit_path
+        )
+        thresholds["failure_audit_path"] = str(failure_audit_path.resolve())
+        if retained < required_count:
+            raise ValueError(
+                f"Structural alignment protects only {retained}/{required_count} molecules."
+            )
+
+    if "synthesis" in stage_metrics:
+        config, _thresholds = write_stage(
+            "synthesis",
+            _CONFIG_SYNTHESIS,
+            _align_synthesis_config,
+            stage_metrics["synthesis"],
+        )
+        config["filter_solved_only"] = False
+        synthesis_path = Path(aligned[_CONFIG_SYNTHESIS])
+        _dump_yaml(config, synthesis_path)
+        retained = _protected_numeric_pass_count(
+            stage_metrics["synthesis"].reindex(protected_ids),
+            _synthesis_threshold_specs(config),
+            config,
+            synthesis=True,
+        )
+        summary["stages"]["synthesis"].update(
+            {
+                "protected_retained_molecules": retained,
+                "retrosynthesis_policy": "report_only_not_retention_filter",
+            }
+        )
+        if retained < required_count:
+            raise ValueError(
+                f"Synthesis alignment protects only {retained}/{required_count} molecules."
+            )
+
+    if "docking" in stage_metrics:
+        _config, thresholds = write_stage(
+            "docking",
+            _CONFIG_DOCKING,
+            _align_docking_config,
+            stage_metrics["docking"],
+        )
+        retained = int(thresholds.get("retained_molecules", 0))
+        summary["stages"]["docking"]["protected_retained_molecules"] = retained
+        if retained < required_count:
+            raise ValueError(
+                f"Docking alignment protects only {retained}/{required_count} molecules."
+            )
+
+    docking_filters_source = _config_from_master(source_master, _CONFIG_DOCKING_FILTERS)
+    if docking_filters_source is not None:
+        config, source_path = docking_filters_source
+        was_enabled = bool(config.get("run", False))
+        config["run"] = False
+        target_path = (
+            aligned_dir / f"{_CONFIG_DOCKING_FILTERS}{source_path.suffix or '.yml'}"
+        )
+        _dump_yaml(config, target_path)
+        aligned[_CONFIG_DOCKING_FILTERS] = str(target_path.resolve())
+        summary["stages"]["docking_filters"] = {
+            "thresholds": {},
+            "status": "disabled_unaligned_filter"
+            if was_enabled
+            else "disabled_by_config",
+            "note": (
+                "Disabled in the retention-guaranteed run because pose filters "
+                "were not measured during target calibration."
+            ),
+        }
+
+    summary["global_guarantee"] = {
+        "status": "verified",
+        "target_molecules": len(target_molecules),
+        "required_retained_molecules": required_count,
+        "guaranteed_retained_molecules": required_count,
+        "guaranteed_retained_percent": float(
+            required_count / len(target_molecules) * 100.0
+        ),
+        "protected_cohort_path": str(protected_path.resolve()),
+        "verified_stages": verified_stages,
+    }
+    thresholds_path = aligned_dir / THRESHOLDS_NAME
+    master_path = aligned_dir / ALIGNED_CONFIG_NAME
+    aligned["target_mols_path"] = str(Path(target_mols_path).resolve())
+    aligned["alignment"] = {
+        "enabled": False,
+        "target_coverage_percent": percentile,
+        "selection_method": "global_protected_target_cohort",
+        "thresholds_path": str(thresholds_path.resolve()),
+        "protected_cohort_path": str(protected_path.resolve()),
+        "target_run": str(target_run.resolve()),
+    }
+    _dump_yaml(summary, thresholds_path)
+    _dump_yaml(aligned, master_path)
+    logger.info(
+        "Verified global target coverage: %d/%d molecules (%.2f%%) are protected.",
+        required_count,
+        len(target_molecules),
+        required_count / len(target_molecules) * 100.0,
+    )
+    return aligned, master_path, thresholds_path
+
+
 def _new_threshold_summary(
     target_run: Path,
     target_mols_path: str,

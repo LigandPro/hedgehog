@@ -314,7 +314,9 @@ def run_aizynthfinder(
     _ensure_aizynth_logging_config(run_dir)
     input_abs = input_smiles_file.resolve()
     output_abs = output_json_file.resolve()
-    effective_config = _prepare_aizynthfinder_config(config_file, output_json_file.parent, synthesis_config)
+    effective_config = _prepare_aizynthfinder_config(
+        config_file, output_json_file.parent, synthesis_config
+    )
     config_abs = effective_config.resolve()
 
     try:
@@ -554,8 +556,11 @@ def parse_retrosynthesis_results(json_file):
 def merge_retrosynthesis_results(input_df, retrosynth_df):
     """Merge retrosynthesis results with input DataFrame.
 
-    Uses SMILES-based matching when a SMILES column is available in both
-    DataFrames, falling back to positional merge otherwise.
+    AiZynthFinder's ``index`` is the zero-based line number in its input SMILES
+    file. Use that stable identity first because AiZynthFinder may canonicalize
+    or otherwise rewrite the target SMILES, including its stereochemical text.
+    SMILES matching is only a fallback for legacy result files without usable
+    indices.
 
     Args:
         input_df: Original input DataFrame with molecules (may have duplicate SMILES)
@@ -570,7 +575,7 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
     merged["solved"] = 0
     merged["search_time"] = 0.0
 
-    # Determine SMILES column names
+    # Determine SMILES column names.
     input_smi_col = None
     for col in ("smiles", "SMILES"):
         if col in merged.columns:
@@ -583,30 +588,66 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
             retro_smi_col = col
             break
 
-    if input_smi_col and retro_smi_col:
-        # SMILES-based merge: build lookup from retrosynth results
-        retro_lookup: dict[str, dict] = {}
-        for _, row in retrosynth_df_copy.iterrows():
-            smi = str(row[retro_smi_col])
-            if smi not in retro_lookup:
-                retro_lookup[smi] = {
-                    "solved": row.get("solved", 0),
-                    "search_time": row.get("search_time", 0.0),
-                }
+    matched_input_positions: set[int] = set()
+    matched_result_rows: set[int] = set()
 
-        for idx, row in merged.iterrows():
-            smi = str(row[input_smi_col])
-            match = retro_lookup.get(smi)
-            if match:
-                merged.loc[idx, "solved"] = match["solved"]
-                merged.loc[idx, "search_time"] = match["search_time"]
-    else:
-        # Positional fallback when SMILES column is unavailable
-        logger.warning("No SMILES column found for merge; using positional matching")
-        for idx, row in retrosynth_df_copy.iterrows():
-            if idx < len(merged):
-                merged.loc[idx, "solved"] = row.get("solved", 0)
-                merged.loc[idx, "search_time"] = row.get("search_time", 0.0)
+    # prepare_input_smiles drops null SMILES and preserves the remaining order.
+    # Map AiZynthFinder line numbers back to those exact input rows.
+    if "index" in retrosynth_df_copy.columns:
+        eligible_positions = (
+            merged.index[merged[input_smi_col].notna()].tolist()
+            if input_smi_col
+            else merged.index.tolist()
+        )
+        seen_line_numbers: set[int] = set()
+        for result_row, row in retrosynth_df_copy.iterrows():
+            raw_index = row.get("index")
+            try:
+                line_number = int(raw_index)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if (
+                line_number < 0
+                or line_number >= len(eligible_positions)
+                or line_number in seen_line_numbers
+            ):
+                continue
+            input_position = eligible_positions[line_number]
+            merged.loc[input_position, "solved"] = row.get("solved", 0)
+            merged.loc[input_position, "search_time"] = row.get("search_time", 0.0)
+            seen_line_numbers.add(line_number)
+            matched_input_positions.add(input_position)
+            matched_result_rows.add(result_row)
+
+    # Legacy JSON exports may omit the index. Exact SMILES matching remains safe
+    # for unique strings; do not use connectivity-only matching because that can
+    # silently conflate stereoisomers.
+    if input_smi_col and retro_smi_col:
+        unmatched_lookup: dict[str, list[int]] = {}
+        for input_position, raw_smiles in merged[input_smi_col].items():
+            if input_position in matched_input_positions or pd.isna(raw_smiles):
+                continue
+            unmatched_lookup.setdefault(str(raw_smiles), []).append(input_position)
+
+        for result_row, row in retrosynth_df_copy.iterrows():
+            if result_row in matched_result_rows:
+                continue
+            candidates = unmatched_lookup.get(str(row[retro_smi_col]), [])
+            if len(candidates) != 1:
+                continue
+            input_position = candidates.pop()
+            merged.loc[input_position, "solved"] = row.get("solved", 0)
+            merged.loc[input_position, "search_time"] = row.get("search_time", 0.0)
+            matched_input_positions.add(input_position)
+            matched_result_rows.add(result_row)
+
+    unmatched_results = len(retrosynth_df_copy) - len(matched_result_rows)
+    if unmatched_results:
+        logger.warning(
+            "Could not map %d/%d retrosynthesis result(s) to input molecules",
+            unmatched_results,
+            len(retrosynth_df_copy),
+        )
 
     return merged
 

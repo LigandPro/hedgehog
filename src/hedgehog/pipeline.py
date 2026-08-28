@@ -1314,6 +1314,7 @@ class MolecularAnalysisPipeline:
                     "Single stage mode: enabling only %s", single_stage_override
                 )
             else:
+                selected_stage_names.add(STAGE_MOL_PREP)
                 ordered = [
                     stage_name
                     for stage_name, _, _ in self._STAGE_DEFINITIONS
@@ -2051,9 +2052,9 @@ def _save_self_contained_config_bundle(
     return master_path
 
 
-def _save_alignment_config_lineage(config: dict, configs_dir: Path) -> None:
-    """Save source, calibration, production, and active config provenance."""
-    lineage_root = configs_dir / "lineage"
+def _save_alignment_config_lineage(config: dict, snapshot_root: Path) -> None:
+    """Save one run's config provenance in the global results config store."""
+    lineage_root = snapshot_root
     active_dir = lineage_root / "30_active_runtime"
     active_master = _save_self_contained_config_bundle(
         config, active_dir, FILE_MASTER_CONFIG
@@ -2062,7 +2063,7 @@ def _save_alignment_config_lineage(config: dict, configs_dir: Path) -> None:
     manifest: dict = {
         "schema_version": 1,
         "active_runtime": {
-            "path": str(active_master.relative_to(configs_dir)),
+            "path": str(active_master.relative_to(snapshot_root)),
             "status": "captured",
         },
     }
@@ -2123,9 +2124,9 @@ def _save_alignment_config_lineage(config: dict, configs_dir: Path) -> None:
                     load_config(str(copied_master)), destination, master_name
                 )
             entry["path"] = (
-                str(copied_master.relative_to(configs_dir))
+                str(copied_master.relative_to(snapshot_root))
                 if copied_master.is_file()
-                else str(destination.relative_to(configs_dir))
+                else str(destination.relative_to(snapshot_root))
             )
             entry["status"] = "captured"
         manifest[role] = entry
@@ -2148,15 +2149,19 @@ def _save_alignment_config_lineage(config: dict, configs_dir: Path) -> None:
 
 
 def _save_config_snapshot(config: dict) -> None:
-    """Save a snapshot of configuration files for provenance."""
+    """Save local runtime configs and global per-run config provenance."""
     try:
         base_path = Path(config[CONFIG_FOLDER_TO_SAVE])
         dest_dir = base_path / DIR_CONFIGS
         dest_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_root = base_path.parent / DIR_CONFIGS / base_path.name
+        snapshot_root.mkdir(parents=True, exist_ok=True)
 
         master_config_path = dest_dir / FILE_MASTER_CONFIG
+        snapshot_config = dict(config)
+        snapshot_config["global_config_snapshot"] = str(snapshot_root.resolve())
         with open(master_config_path, "w") as f:
-            yaml.safe_dump(config, f, sort_keys=False)
+            yaml.safe_dump(snapshot_config, f, sort_keys=False)
 
         for key in config:
             if not key.startswith("config_"):
@@ -2167,13 +2172,16 @@ def _save_config_snapshot(config: dict) -> None:
             try:
                 src_path = Path(path_str)
                 if src_path.exists():
-                    shutil.copyfile(src_path, dest_dir / src_path.name)
+                    destination = dest_dir / src_path.name
+                    if src_path.resolve() != destination.resolve():
+                        shutil.copyfile(src_path, destination)
             except OSError as copy_err:
                 logger.warning("Could not copy config file for %s: %s", key, copy_err)
 
-        _save_alignment_config_lineage(config, dest_dir)
+        _save_alignment_config_lineage(config, snapshot_root)
 
         logger.info("Saved run config snapshot to: %s", dest_dir)
+        logger.info("Saved global config provenance to: %s", snapshot_root)
     except Exception as snapshot_err:
         logger.warning("Config snapshot failed: %s", snapshot_err)
 

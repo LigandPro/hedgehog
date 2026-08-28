@@ -309,9 +309,7 @@ class TestCalculateSynthesisScoresRegistry:
                 pd.DataFrame({"smiles": ["a", "b", "c"]}),
                 config={
                     "enabled_scores": ["fakebatch"],
-                    "score_filters": {
-                        "fake_batch_score": {"min": 0.0, "max": 4.0}
-                    },
+                    "score_filters": {"fake_batch_score": {"min": 0.0, "max": 4.0}},
                 },
             )
 
@@ -966,6 +964,45 @@ class TestMergeRetrosynthesisResults:
         assert COL_MODEL_NAME in result.columns
         assert "mol_idx" in result.columns
 
+    def test_index_merge_survives_rewritten_stereochemical_smiles(self):
+        """AiZynthFinder target text must not replace its stable line index."""
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["N[C@@H](C)C(=O)O", "N[C@H](C)C(=O)O"],
+                "mol_idx": ["left", "right"],
+            }
+        )
+        retro_df = pd.DataFrame(
+            {
+                "index": [1, 0],
+                "SMILES": ["CC(N)C(=O)O", "CC(N)C(=O)O"],
+                "solved": [0, 1],
+                "search_time": [7.0, 3.0],
+            }
+        )
+
+        result = merge_retrosynthesis_results(input_df, retro_df)
+
+        assert result["solved"].tolist() == [1, 0]
+        assert result["search_time"].tolist() == [3.0, 7.0]
+
+    def test_index_maps_to_non_null_smiles_input_lines(self):
+        """Line indices follow the null-dropping behavior of input preparation."""
+        input_df = pd.DataFrame({COL_SMILES: ["CCO", None, "CCN"]})
+        retro_df = pd.DataFrame(
+            {
+                "index": [1],
+                "SMILES": ["NCC"],
+                "solved": [1],
+                "search_time": [4.0],
+            }
+        )
+
+        result = merge_retrosynthesis_results(input_df, retro_df)
+
+        assert result["solved"].tolist() == [0, 0, 1]
+        assert result["search_time"].tolist() == [0.0, 0.0, 4.0]
+
 
 class TestBuildScoreFilterMask:
     """Tests for _build_score_filter_mask function."""
@@ -1051,9 +1088,7 @@ class TestPrepareInputSmiles:
 class TestRunAizynthfinder:
     """Tests for run_aizynthfinder nproc handling."""
 
-    def test_passes_search_overrides_via_effective_config(
-        self, tmp_path, monkeypatch
-    ):
+    def test_passes_search_overrides_via_effective_config(self, tmp_path, monkeypatch):
         """Synthesis search settings should reach the AiZynthFinder config."""
         captured = {}
 
