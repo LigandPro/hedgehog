@@ -156,6 +156,7 @@ def test_generated_threshold_numbers_are_normalized(
         _yaml_number(value, outward=outward, integer_values=integer_values) == expected
     )
 
+
 def test_descriptor_alignment_reads_ring_size_lists_without_replacing_them():
     config = {"borders": {"ring_size_min": 3, "ring_size_max": 12}}
     metrics = pd.DataFrame(
@@ -246,7 +247,7 @@ def test_conflicting_coverage_and_legacy_values_are_rejected():
         _alignment_target_coverage_from_config(config, None)
 
 
-def test_probe_config_keeps_originals_and_relaxes_numeric_filters(tmp_path):
+def test_probe_config_keeps_thresholds_and_disables_filtering_explicitly(tmp_path):
     master = _base_master(tmp_path)
     targets = tmp_path / "targets.csv"
     targets.write_text("smiles\nCCO\n", encoding="utf-8")
@@ -282,7 +283,18 @@ def test_probe_config_keeps_originals_and_relaxes_numeric_filters(tmp_path):
     assert probe_synthesis["filter_solved_only"] is False
     assert probe_synthesis["run_retrosynthesis"] is False
     assert probe_synthesis["enabled_scores"] is None
-    assert probe_synthesis["sa_score_min"] is None
+    assert probe_synthesis["alignment_measurement_mode"] is True
+    assert probe_synthesis["apply_score_filters"] is False
+    assert probe_synthesis["sa_score_min"] == 1
+    assert probe_synthesis["sa_score_max"] == 10
+    assert probe_synthesis["score_filters"]["sync_score"] == {
+        "min": 0.5,
+        "max": 1,
+    }
+    assert Path(probe["config_synthesis"]).parent.name == (
+        "calibration_configs_unfiltered"
+    )
+    assert Path(probe["folder_to_save"]).name == "calibration_target_run"
     assert probe_struct["run"] is True
     assert probe_struct["filter_data"] is False
     assert probe_struct["write_per_filter_outputs"] is True

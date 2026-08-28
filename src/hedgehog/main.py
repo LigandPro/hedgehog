@@ -29,6 +29,7 @@ from hedgehog._constants import (
 )
 from hedgehog.config_alignment import (
     ALIGNMENT_DIR_NAME,
+    TARGET_CALIBRATION_RUN_DIR_NAME,
     create_aligned_stage_config,
     create_probe_config,
     set_probe_molprep_allowed_atoms,
@@ -180,9 +181,7 @@ def _prepare_docking_source_sdf(
         if raw:
             source_paths = [str(raw)]
 
-    sdf_paths = [
-        path for path in source_paths if Path(path).suffix.lower() == ".sdf"
-    ]
+    sdf_paths = [path for path in source_paths if Path(path).suffix.lower() == ".sdf"]
     if not sdf_paths or len(sdf_paths) != len(source_paths):
         return None
 
@@ -461,9 +460,8 @@ def _apply_cli_overrides(
 
     if generated_mols_paths:
         config_dict["generated_mols_paths"] = list(generated_mols_paths)
-        config_dict["generated_mols_path"] = (
-            generated_mols_path
-            or str(Path(generated_mols_paths[0]).parent)
+        config_dict["generated_mols_path"] = generated_mols_path or str(
+            Path(generated_mols_paths[0]).parent
         )
         logger.info(
             "[bold]Override:[/bold] Using molecules from %d file(s) under: %s",
@@ -1221,21 +1219,29 @@ def _run_pipeline_command(
         )
         raise typer.Exit(code=1)
 
-    continue_path = Path(continue_folder).expanduser().resolve() if continue_folder else None
+    continue_path = (
+        Path(continue_folder).expanduser().resolve() if continue_folder else None
+    )
     alignment_resume_outer: Path | None = None
     if continue_path is not None:
-        nested_target_run = continue_path / ALIGNMENT_DIR_NAME / "target_run"
+        calibration_root = continue_path / ALIGNMENT_DIR_NAME
+        nested_target_run = calibration_root / TARGET_CALIBRATION_RUN_DIR_NAME
+        legacy_target_run = calibration_root / "target_run"
+        if not (nested_target_run / FILE_RUN_INCOMPLETE).is_file():
+            nested_target_run = legacy_target_run
         if (nested_target_run / FILE_RUN_INCOMPLETE).is_file():
             alignment_resume_outer = continue_path
             continue_path = nested_target_run
         elif (
-            continue_path.name == "target_run"
+            continue_path.name in {TARGET_CALIBRATION_RUN_DIR_NAME, "target_run"}
             and continue_path.parent.name == ALIGNMENT_DIR_NAME
         ):
             alignment_resume_outer = continue_path.parent.parent
     if continue_path is not None:
         if not continue_path.is_dir():
-            logger.error("[red]Error:[/red] Continue folder does not exist: %s", continue_path)
+            logger.error(
+                "[red]Error:[/red] Continue folder does not exist: %s", continue_path
+            )
             raise typer.Exit(code=1)
         if not (continue_path / FILE_RUN_INCOMPLETE).is_file():
             logger.error(
@@ -1243,7 +1249,9 @@ def _run_pipeline_command(
             )
             raise typer.Exit(code=1)
         saved_config = continue_path / "configs" / "master_config_resolved.yml"
-        selected_config_path = Path(config_path).expanduser() if config_path else saved_config
+        selected_config_path = (
+            Path(config_path).expanduser() if config_path else saved_config
+        )
         if not selected_config_path.is_file():
             logger.error(
                 "[red]Error:[/red] Continuation config does not exist: %s",
@@ -1320,7 +1328,9 @@ def _run_pipeline_command(
 
     if continue_path is not None:
         folder_to_save = continue_path
-        logger.info("[bold]Continue mode:[/bold] Using unfinished run %s", folder_to_save)
+        logger.info(
+            "[bold]Continue mode:[/bold] Using unfinished run %s", folder_to_save
+        )
     elif _exact_output_folder is not None:
         folder_to_save = _exact_output_folder.resolve()
         logger.info(
@@ -1410,9 +1420,7 @@ def _run_pipeline_command(
     alignment_resume_callback = None
     if alignment_resume_outer is not None:
         alignment_root = alignment_resume_outer / ALIGNMENT_DIR_NAME
-        aligned_master_path = (
-            alignment_root / "aligned_configs" / "aligned_config.yml"
-        )
+        aligned_master_path = alignment_root / "aligned_configs" / "aligned_config.yml"
         if not aligned_master_path.is_file():
             logger.error(
                 "[red]Error:[/red] Cannot continue target alignment because the "
@@ -1462,9 +1470,7 @@ def _run_pipeline_command(
                 coverage,
                 float(previous_coverage),
             )
-            for completed_stage in config_dict.get(
-                CONTINUE_COMPLETED_STAGES_KEY, []
-            ):
+            for completed_stage in config_dict.get(CONTINUE_COMPLETED_STAGES_KEY, []):
                 _update_resumed_alignment(
                     {
                         "type": "stage_complete",

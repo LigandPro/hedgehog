@@ -5,7 +5,7 @@ alignment:
   enabled: true
   target_coverage_percent: 95
 # folder_to_save: results/seed1_pb_clean_rerun
-folder_to_save: results/KRAS_checker_95
+folder_to_save: results/KRAS_touse_retention95_full_docking
 n_jobs: 96
 sample_size: 10000
 batch_size: 512

@@ -1,14 +1,15 @@
 run: true
 n_jobs: 64
 enabled_scores:
-  # - sa
-  # - syba
-  # - rascore
+  - sa
+  - syba
+  - rascore
   # - sync
   # - scscore
   # - nonpher
   # - fsscore
   # - gasa
+apply_score_filters: true
 # Validate optional Nonpher runtime:
 #   uv run hedgehog setup nonpher-check
 # uv-only optional env bootstrap uses HEDGEHOG_OPTIONAL_ENV_ROOT/nonpher.
@@ -36,24 +37,12 @@ ra_score_max: 1
 sync_auto_install: true
 sync_device: cpu
 sync_conformer_seed: 61453
-score_filters:
-  sc_score:
-    min:
-    max:
-  sync_score:
-    min: 0.5
-    max: 1
-  nonpher_complexity_score:
-    min:
-    max:
-  fs_score:
-    min:
-    max:
-  gasa_score:
-    min:
-    max:
-gasa:
-  command:
-  executable:
-  api_url:
-  timeout_seconds: 30
+# Optional scorer filters belong here only when their scorer is enabled above.
+# Example:
+# score_filters:
+#   sync_score:
+#     min: 0.5
+#     max: 1
+# gasa:
+#   command: /absolute/path/to/gasa
+#   timeout_seconds: 30

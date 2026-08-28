@@ -26,6 +26,8 @@ from hedgehog.docking.metadata import _parse_tools_config
 ALIGNMENT_DIR_NAME = "target_alignment"
 ALIGNED_CONFIG_NAME = "aligned_config.yml"
 THRESHOLDS_NAME = "alignment_thresholds.yml"
+PROBE_CONFIGS_DIR_NAME = "calibration_configs_unfiltered"
+TARGET_CALIBRATION_RUN_DIR_NAME = "calibration_target_run"
 
 _CONFIG_MOL_PREP = "config_mol_prep"
 _CONFIG_DESCRIPTORS = "config_descriptors"
@@ -213,11 +215,13 @@ def create_probe_config(
     master: dict[str, Any], target_mols_path: str, alignment_root: Path
 ) -> dict[str, Any]:
     """Create a copied, non-filtering config for observing target metrics."""
-    probe_dir = alignment_root / "probe_configs"
+    probe_dir = alignment_root / PROBE_CONFIGS_DIR_NAME
     probe = _copy_master_configs(master, probe_dir)
     probe["generated_mols_path"] = str(Path(target_mols_path).resolve())
     probe["target_mols_path"] = str(Path(target_mols_path).resolve())
-    probe["folder_to_save"] = str((alignment_root / "target_run").resolve())
+    probe["folder_to_save"] = str(
+        (alignment_root / TARGET_CALIBRATION_RUN_DIR_NAME).resolve()
+    )
     probe["sample_size"] = None
     probe["save_sampled_mols"] = True
     probe["large_dataset_mode"] = False
@@ -254,19 +258,13 @@ def create_probe_config(
         config["exclude_descriptions"] = {}
 
     def relax_synthesis(config: dict[str, Any]) -> None:
+        # Calibration needs every configured score for every target molecule,
+        # but it must not reject molecules using the source thresholds. Keep
+        # those numeric thresholds visible and disable filtering explicitly.
+        config["alignment_measurement_mode"] = True
+        config["apply_score_filters"] = False
         config["filter_solved_only"] = False
         config["run_retrosynthesis"] = False
-        for min_key, max_key in _SYNTHESIS_LEGACY_FILTERS.values():
-            if min_key in config:
-                config[min_key] = None
-            if max_key in config:
-                config[max_key] = None
-        nested = config.get("score_filters")
-        if isinstance(nested, dict):
-            for thresholds in nested.values():
-                if isinstance(thresholds, dict):
-                    thresholds["min"] = None
-                    thresholds["max"] = None
 
     def relax_docking(config: dict[str, Any]) -> None:
         calculate_thresholds = (
@@ -758,9 +756,7 @@ def _numeric_values(df: pd.DataFrame | None, column: str) -> pd.Series | None:
     return values
 
 
-def _ring_size_extrema(
-    df: pd.DataFrame | None, side: str
-) -> pd.Series | None:
+def _ring_size_extrema(df: pd.DataFrame | None, side: str) -> pd.Series | None:
     """Return one per-molecule ring-size extreme without changing list metrics."""
     if df is None or "ring_size" not in df.columns:
         return None
@@ -856,9 +852,7 @@ def _select_stage_subset(
                 max_ranks = (maximums.rank(method="average") - 1.0) / (
                     valid_count - 1.0
                 )
-                penalty = pd.concat(
-                    [1.0 - min_ranks, max_ranks], axis=1
-                ).max(axis=1)
+                penalty = pd.concat([1.0 - min_ranks, max_ranks], axis=1).max(axis=1)
             # Acyclic molecules have an empty ring-size list and pass the runtime
             # all-rings check, so missing ring extrema carry no penalty.
             worst = pd.concat([worst, penalty.fillna(0.0)], axis=1).max(axis=1)
