@@ -1,6 +1,7 @@
 import contextlib
 import importlib
 import io
+import json
 import os
 import sys
 import threading
@@ -40,6 +41,9 @@ _ALERT_COMPILED_SMARTS: list[dict] | None = None
 _ALERT_RULESET_NAMES: list[str] | None = None
 _MOLGRAPH_CATALOG = None
 _MOLGRAPH_SEVERITY_BY_ENTRY: list[int] | None = None
+_MOLGRAPH_RULE_DETAILS_BY_ENTRY: list[dict] | None = None
+_PROTECTING_GROUPS_CATALOG = None
+_SPECIAL_PROTECTING_GROUP_QUERIES = None
 
 
 def _import_medchem_quietly():
@@ -207,6 +211,7 @@ except ImportError:
 
 from hedgehog._constants import CFG_STRUCT_FILTERS, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
+from hedgehog.struct_filters._helpers import resolve_include_rulesets
 from hedgehog.struct_filters.common_alert_diagnostics import (
     HITS_JSON_COLUMN,
     hit_records_to_json,
@@ -275,40 +280,6 @@ def _ensure_dataframe_length(df, expected_length, template_row=None):
     return df
 
 
-def camelcase(any_str):
-    """Convert underscore-separated string to CamelCase."""
-    return "".join(word.capitalize() for word in any_str.split("_"))
-
-
-def build_identity_map_from_descriptors(config):
-    """Build a map of (smiles, model_name) -> mol_idx from descriptors output."""
-    base_folder = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
-    id_paths = [
-        base_folder / "stages" / "02_descriptors_initial" / "filtered_molecules.csv",
-        base_folder
-        / "stages"
-        / "02_descriptors_initial"
-        / "filtered"
-        / "filtered_molecules.csv",
-        base_folder / "Descriptors" / "passDescriptorsSMILES.csv",
-    ]
-
-    for id_path in id_paths:
-        try:
-            if not id_path.exists():
-                continue
-            id_df = pd.read_csv(id_path)
-            identity_map = {
-                (row["smiles"], row["model_name"]): row["mol_idx"]
-                for _, row in id_df.iterrows()
-            }
-            return identity_map, id_df
-        except Exception:
-            continue
-
-    return {}, None
-
-
 def process_path(folder_to_save, key_word=None):
     """Backward-compatible wrapper around shared process_path helper."""
     return _shared_process_path(folder_to_save, key_word)
@@ -363,16 +334,22 @@ def clean_name(name):
 
 
 def filter_alerts(config):
-    """Filter structural alerts based on configuration."""
+    """Select alerts by whole ruleset, optionally dropping exact SMARTS."""
     df = pd.read_csv(config["alerts_data_path"])
-    mask = df["rule_set_name"].isin(config["include_rulesets"])
+    available = df["rule_set_name"].dropna().astype(str).tolist()
+    available_unique = list(dict.fromkeys(available))
+    include_rulesets = set(
+        resolve_include_rulesets(config.get("include_rulesets"), available_unique)
+    )
+    mask = df["rule_set_name"].astype(str).isin(include_rulesets)
 
-    for ruleset in config["exclude_descriptions"]:
-        is_other_ruleset = df["rule_set_name"] != ruleset
-        is_not_excluded = ~df["description"].isin(
-            config["exclude_descriptions"][ruleset]
-        )
-        mask &= is_other_ruleset | is_not_excluded
+    excluded_smarts = {
+        str(value)
+        for value in (config.get("exclude_smarts") or [])
+        if value is not None
+    }
+    if excluded_smarts:
+        mask &= ~df["smarts"].astype(str).isin(excluded_smarts)
 
     return df[mask]
 
@@ -412,7 +389,7 @@ def _parse_smiles_item(args):
     return row_idx, smiles_raw, model_name, mol_idx, mol
 
 
-def prepare_structfilters_input(df, subsample, parse_n_jobs, progress_cb=None):
+def prepare_structfilters_input(df, subsample, n_jobs, progress_cb=None):
     """Prepare structFilters payload once: subsample + SMILES parsing.
 
     Returns:
@@ -458,16 +435,14 @@ def prepare_structfilters_input(df, subsample, parse_n_jobs, progress_cb=None):
     )
     parse_payload = [(row_idx, item[0], item[1], item[2]) for row_idx, item in items]
 
-    n_jobs = int(parse_n_jobs)
-    if n_jobs <= 0:
-        n_jobs = os.cpu_count() or 1
+    worker_count = max(1, int(n_jobs))
     parsed = parallel_map(
         _parse_smiles_item,
         parse_payload,
-        n_jobs,
+        worker_count,
         progress=progress_cb,
         initializer=_silence_worker_stdio
-        if n_jobs > 1 and len(parse_payload) > 1
+        if worker_count > 1 and len(parse_payload) > 1
         else None,
     )
 
@@ -953,63 +928,6 @@ def _build_alerts_results(results_list, mols):
     return results
 
 
-def _resolve_common_alerts_n_jobs(
-    config_sf: dict, config: dict, total_items: int
-) -> int:
-    """Resolve worker count for Common Alerts using size-aware defaults.
-
-    Policy:
-    - total_items < 1_000  -> 1 worker
-    - total_items < 10_000 -> 12 workers
-    - otherwise            -> all available workers
-    """
-    auto_n_jobs = bool(config_sf.get("common_alerts_auto_n_jobs", True))
-    if not auto_n_jobs:
-        return resolve_n_jobs(config_sf, config)
-
-    max_workers = resolve_n_jobs({"n_jobs": -1}, config)
-
-    small_threshold_raw = config_sf.get("common_alerts_small_input_threshold", 1000)
-    small_n_jobs_raw = config_sf.get("common_alerts_small_input_n_jobs", 1)
-    medium_n_jobs_raw = config_sf.get("common_alerts_large_input_n_jobs", 12)
-
-    try:
-        small_threshold = int(small_threshold_raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Invalid common_alerts_small_input_threshold=%r; using 1000.",
-            small_threshold_raw,
-        )
-        small_threshold = 1000
-
-    try:
-        small_n_jobs = int(small_n_jobs_raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Invalid common_alerts_small_input_n_jobs=%r; using 1.",
-            small_n_jobs_raw,
-        )
-        small_n_jobs = 1
-
-    try:
-        medium_n_jobs = int(medium_n_jobs_raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Invalid common_alerts_large_input_n_jobs=%r; using 12.",
-            medium_n_jobs_raw,
-        )
-        medium_n_jobs = 12
-
-    if total_items < small_threshold:
-        n_jobs = small_n_jobs
-    elif total_items < 10_000:
-        n_jobs = medium_n_jobs
-    else:
-        n_jobs = max_workers
-
-    return max(1, min(n_jobs, max_workers))
-
-
 def _resolve_common_alerts_start_method(config_sf: dict) -> str | None:
     """Resolve multiprocessing start method for Common Alerts workers.
 
@@ -1052,7 +970,7 @@ def apply_structural_alerts(
 
     items = [(i, mol) for i, mol in enumerate(mols)]
     total_items = len(items)
-    n_jobs = _resolve_common_alerts_n_jobs(config_sf, config, total_items)
+    n_jobs = resolve_n_jobs(config_sf, config)
     start_method = _resolve_common_alerts_start_method(config_sf)
     logger.info("Common Alerts workers: %d", n_jobs)
     logger.info(
@@ -1102,36 +1020,61 @@ def apply_structural_alerts(
 def _get_molgraph_catalog_and_severity():
     global _MOLGRAPH_CATALOG
     global _MOLGRAPH_SEVERITY_BY_ENTRY
+    global _MOLGRAPH_RULE_DETAILS_BY_ENTRY
 
-    if _MOLGRAPH_CATALOG is None or _MOLGRAPH_SEVERITY_BY_ENTRY is None:
+    if (
+        _MOLGRAPH_CATALOG is None
+        or _MOLGRAPH_SEVERITY_BY_ENTRY is None
+        or _MOLGRAPH_RULE_DETAILS_BY_ENTRY is None
+    ):
         graph_path = mc.utils.loader.get_data_path("graph.csv")
         graph_df = pd.read_csv(graph_path)
         _MOLGRAPH_SEVERITY_BY_ENTRY = graph_df["severity"].astype(int).tolist()
+        _MOLGRAPH_RULE_DETAILS_BY_ENTRY = [
+            {
+                "pattern_index": int(index),
+                "label": row.get("labels", ""),
+                "description": row.get("description", ""),
+                "smarts": row.get("smarts", ""),
+                "severity": int(row["severity"]),
+            }
+            for index, row in graph_df.iterrows()
+        ]
         _MOLGRAPH_CATALOG = mc.catalogs.NamedCatalogs.unstable_graph(
             severity_threshold=1
         )
     return _MOLGRAPH_CATALOG, _MOLGRAPH_SEVERITY_BY_ENTRY
 
 
-def _molgraph_max_severity_for_mol(mol):
+def _molgraph_diagnostics_for_mol(mol):
     catalog, severity_by_entry = _get_molgraph_catalog_and_severity()
     matched_entries = catalog.GetMatches(mol)
     max_severity = 0
+    matched_rules = []
     for entry in matched_entries:
         try:
             entry_idx = int(entry.GetDescription())
         except (TypeError, ValueError):
             continue
         if 0 <= entry_idx < len(severity_by_entry):
-            max_severity = max(max_severity, int(severity_by_entry[entry_idx]))
-    return max_severity
+            severity = int(severity_by_entry[entry_idx])
+            max_severity = max(max_severity, severity)
+            if _MOLGRAPH_RULE_DETAILS_BY_ENTRY is not None:
+                matched_rules.append(_MOLGRAPH_RULE_DETAILS_BY_ENTRY[entry_idx])
+    return {
+        "molgraph_max_severity": max_severity,
+        "molgraph_matched_patterns_json": json.dumps(
+            matched_rules, separators=(",", ":")
+        ),
+        "molgraph_matched_pattern_count": len(matched_rules),
+    }
 
 
-def _compute_molgraph_max_severities(mols, n_jobs, scheduler):
+def _compute_molgraph_diagnostics(mols, n_jobs, scheduler):
     if len(mols) == 0:
         return []
     return dm.parallelized(
-        _molgraph_max_severity_for_mol,
+        _molgraph_diagnostics_for_mol,
         mols,
         n_jobs=n_jobs,
         scheduler=scheduler,
@@ -1147,8 +1090,18 @@ def apply_molgraph_stats(config, mols, smiles_model_name_mols=None, progress_cb=
     scheduler = _resolve_scheduler(config_sf, "molgraph_scheduler")
     logger.info("MolGraph workers: %d", n_jobs)
 
-    max_severities = _compute_molgraph_max_severities(mols, n_jobs, scheduler)
-    results = {"mol": mols, "molgraph_max_severity": max_severities}
+    diagnostics = _compute_molgraph_diagnostics(mols, n_jobs, scheduler)
+    max_severities = [row["molgraph_max_severity"] for row in diagnostics]
+    results = {
+        "mol": mols,
+        "molgraph_max_severity": max_severities,
+        "molgraph_matched_patterns_json": [
+            row["molgraph_matched_patterns_json"] for row in diagnostics
+        ],
+        "molgraph_matched_pattern_count": [
+            row["molgraph_matched_pattern_count"] for row in diagnostics
+        ],
+    }
     if progress_cb is not None:
         progress_cb(total_mols, max(1, total_mols))
 
@@ -1229,6 +1182,12 @@ def _apply_simple_medchem_filter(
         kwargs.update(extra_kwargs(config_sf))
     out = mc_func(**kwargs)
     results = pd.DataFrame({"mol": mols, "pass": out})
+    results["status"] = np.where(results["pass"], "ok", "warning")
+    results["reason"] = np.where(
+        results["pass"],
+        "",
+        f"{filter_name} diagnostic criterion triggered",
+    )
     if smiles_model_name_mols is not None:
         results = add_model_name_col(results, smiles_model_name_mols)
     return results
@@ -1245,15 +1204,86 @@ def apply_bredt_filter(config, mols, smiles_model_name_mols=None):
     )
 
 
-def apply_protecting_groups(config, mols, smiles_model_name_mols=None):
-    return _apply_simple_medchem_filter(
-        config,
-        mols,
-        smiles_model_name_mols,
-        "Protecting Groups",
-        mc.functional.protecting_groups_filter,
-        "protecting_groups_scheduler",
+def _get_protecting_groups_catalog():
+    """Load Hedgehog's curated protecting-group catalog once per worker."""
+    global _PROTECTING_GROUPS_CATALOG
+    if _PROTECTING_GROUPS_CATALOG is None:
+        catalog_path = Path(__file__).parent / "data" / "protecting_groups.csv"
+        _PROTECTING_GROUPS_CATALOG = mc.groups.ChemicalGroup(
+            "protecting_groups",
+            groups_db=catalog_path,
+        )
+    return _PROTECTING_GROUPS_CATALOG
+
+
+def _get_special_protecting_group_queries():
+    """Compile motifs that cannot use MedChem's exact terminal matcher."""
+    global _SPECIAL_PROTECTING_GROUP_QUERIES
+    if _SPECIAL_PROTECTING_GROUP_QUERIES is None:
+        catalog = _get_protecting_groups_catalog()
+        row = catalog.data.loc[catalog.data["name"] == "n-tert-butoxymethyl"].iloc[0]
+        query = Chem.MolFromSmarts(str(row["smarts"]))
+        if query is None:
+            raise ValueError("Invalid n-tert-butoxymethyl SMARTS")
+        _SPECIAL_PROTECTING_GROUP_QUERIES = {"n-tert-butoxymethyl": query}
+    return _SPECIAL_PROTECTING_GROUP_QUERIES
+
+
+def _match_protecting_groups(mol):
+    """Return curated terminal protecting-group names matched by one molecule."""
+    if mol is None:
+        return []
+    matches = _get_protecting_groups_catalog().get_matches(
+        mol,
+        exact_match=True,
+        terminal_only=True,
     )
+    names = [] if matches is None else matches["name"].astype(str).tolist()
+    # MedChem's source entry includes the protected imidazole itself, so its
+    # exact+terminal combination can never match a substituted molecule. This
+    # curated SMARTS describes the actual N-CH2-O-tBu protecting-group motif.
+    for name, query in _get_special_protecting_group_queries().items():
+        if name not in names and mol.HasSubstructMatch(query):
+            names.append(name)
+    return names
+
+
+def apply_protecting_groups(config, mols, smiles_model_name_mols=None):
+    """Apply the curated terminal protecting-group catalog."""
+    logger.info("Calculating Protecting Groups filter...")
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    scheduler = _resolve_scheduler(config_sf, "protecting_groups_scheduler")
+    logger.info("Protecting Groups workers: %d", n_jobs)
+
+    matched_groups = dm.parallelized(
+        _match_protecting_groups,
+        mols,
+        n_jobs=n_jobs,
+        scheduler=scheduler,
+        progress=False,
+    )
+    matched_groups = [groups or [] for groups in matched_groups]
+    passed = np.asarray([len(groups) == 0 for groups in matched_groups], dtype=bool)
+    matched_text = [";".join(groups) for groups in matched_groups]
+
+    results = pd.DataFrame(
+        {
+            "mol": mols,
+            "pass": passed,
+            "matched_protecting_groups": matched_text,
+            "n_protecting_groups": [len(groups) for groups in matched_groups],
+        }
+    )
+    results["status"] = np.where(results["pass"], "ok", "warning")
+    results["reason"] = np.where(
+        results["pass"],
+        "",
+        "Protecting groups detected: " + results["matched_protecting_groups"],
+    )
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
+    return results
 
 
 def apply_ring_infraction(config, mols, smiles_model_name_mols=None):
@@ -1273,23 +1303,64 @@ def apply_ring_infraction(config, mols, smiles_model_name_mols=None):
 def _compute_stereo_center_row(args):
     mol_idx, mol, max_stereo_centers, max_undefined_stereo_centers = args
     if mol is None:
-        return {"_mol_idx": mol_idx, "pass": False}
+        return {
+            "_mol_idx": mol_idx,
+            "pass": False,
+            "n_stereo_centers": np.nan,
+            "n_undefined_stereo_centers": np.nan,
+            "stereo_max_centers": max_stereo_centers,
+            "stereo_max_undefined": max_undefined_stereo_centers,
+            "undefined_stereo_pass": False,
+            "undefined_stereo_reason": "invalid molecule",
+            "status": "warning",
+            "reason": "invalid molecule",
+        }
 
     prepared_mol = Chem.Mol(mol)
     Chem.AssignStereochemistry(prepared_mol, cleanIt=True, force=True)
-    stereo_centers = Chem.FindMolChiralCenters(
-        prepared_mol,
-        includeUnassigned=True,
-        useLegacyImplementation=False,
-    )
+    try:
+        stereo_centers = Chem.FindMolChiralCenters(
+            prepared_mol,
+            includeUnassigned=True,
+            useLegacyImplementation=False,
+        )
+    except RuntimeError:
+        # RDKit's modern CIP labeler can reject otherwise parseable unusual
+        # tetrahedral centres (for example [P@@H2]) with a carriers.size()
+        # post-condition violation.  The legacy implementation still returns
+        # the centre and its assignment, so one such molecule must not abort
+        # the entire structural-filter stage.
+        stereo_centers = Chem.FindMolChiralCenters(
+            prepared_mol,
+            includeUnassigned=True,
+            useLegacyImplementation=True,
+        )
     n_stereo_centers = len(stereo_centers)
     n_undefined_stereo_centers = sum(1 for _, label in stereo_centers if label == "?")
+    passed = n_stereo_centers < max_stereo_centers
+    undefined_stereo_pass = n_undefined_stereo_centers <= max_undefined_stereo_centers
+    reasons = []
+    if n_stereo_centers >= max_stereo_centers:
+        reasons.append(
+            f"stereocenters={n_stereo_centers} >= cutoff={max_stereo_centers}"
+        )
+    undefined_reason = ""
+    if not undefined_stereo_pass:
+        undefined_reason = (
+            f"undefined_stereocenters={n_undefined_stereo_centers} "
+            f"> maximum={max_undefined_stereo_centers}"
+        )
     return {
         "_mol_idx": mol_idx,
-        "pass": (
-            n_stereo_centers < max_stereo_centers
-            and n_undefined_stereo_centers < max_undefined_stereo_centers
-        ),
+        "pass": passed,
+        "n_stereo_centers": n_stereo_centers,
+        "n_undefined_stereo_centers": n_undefined_stereo_centers,
+        "stereo_max_centers": max_stereo_centers,
+        "stereo_max_undefined": max_undefined_stereo_centers,
+        "undefined_stereo_pass": undefined_stereo_pass,
+        "undefined_stereo_reason": undefined_reason,
+        "status": "ok" if passed else "warning",
+        "reason": "; ".join(reasons),
     }
 
 
@@ -1312,44 +1383,179 @@ def apply_stereo_center(config, mols, smiles_model_name_mols=None):
     ]
     rows = parallel_map(_compute_stereo_center_row, items, n_jobs)
     result = pd.DataFrame(
-        {
-            "mol": [mols[row["_mol_idx"]] for row in rows],
-            "pass": [row["pass"] for row in rows],
-        }
+        [
+            {
+                "mol": mols[row["_mol_idx"]],
+                **{k: v for k, v in row.items() if k != "_mol_idx"},
+            }
+            for row in rows
+        ]
     )
     if smiles_model_name_mols is not None:
         result = add_model_name_col(result, smiles_model_name_mols)
     return result
 
 
+def _halogen_count(mol, atomic_number):
+    if mol is None:
+        return np.nan
+    return sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() == atomic_number)
+
+
 def apply_halogenicity(config, mols, smiles_model_name_mols=None):
-    return _apply_simple_medchem_filter(
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    thresholds = {
+        "F": int(config_sf.get("halogenicity_thresh_F", 6)),
+        "Br": int(config_sf.get("halogenicity_thresh_Br", 3)),
+        "Cl": int(config_sf.get("halogenicity_thresh_Cl", 3)),
+    }
+    results = _apply_simple_medchem_filter(
         config,
         mols,
-        smiles_model_name_mols,
+        None,
         "Halogenicity",
         mc.functional.halogenicity_filter,
         "halogenicity_scheduler",
-        extra_kwargs=lambda cfg: {
-            "thresh_F": cfg.get("halogenicity_thresh_F", 6),
-            "thresh_Br": cfg.get("halogenicity_thresh_Br", 3),
-            "thresh_Cl": cfg.get("halogenicity_thresh_Cl", 3),
+        extra_kwargs=lambda _cfg: {
+            "thresh_F": thresholds["F"],
+            "thresh_Br": thresholds["Br"],
+            "thresh_Cl": thresholds["Cl"],
         },
     )
+    for symbol, atomic_number in (("F", 9), ("Br", 35), ("Cl", 17)):
+        results[f"n_{symbol}"] = [_halogen_count(mol, atomic_number) for mol in mols]
+        results[f"threshold_{symbol}"] = thresholds[symbol]
+    results["reason"] = results.apply(
+        lambda row: "; ".join(
+            f"{symbol}={int(row[f'n_{symbol}'])} > cutoff={thresholds[symbol]}"
+            for symbol in ("F", "Br", "Cl")
+            if pd.notna(row[f"n_{symbol}"]) and row[f"n_{symbol}"] > thresholds[symbol]
+        ),
+        axis=1,
+    )
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
+    return results
+
+
+def _compute_symmetry_row(args):
+    (
+        mol_idx,
+        mol,
+        threshold,
+        max_automorphisms,
+        timeout_seconds,
+        timeout_policy,
+    ) = args
+    if mol is None:
+        return {
+            "_mol_idx": mol_idx,
+            "pass": False,
+            "symmetry_score": np.nan,
+            "symmetry_threshold": threshold,
+            "symmetry_automorphisms_examined": 0,
+            "symmetry_nonidentity_automorphisms": 0,
+            "symmetry_truncated": False,
+            "symmetry_timed_out": False,
+            "status": "warning",
+            "reason": "invalid molecule",
+        }
+
+    symmetry_module = importlib.import_module("hedgehog.struct_filters.symmetry")
+    try:
+        details = symmetry_module.score_symmetry_bounded(
+            mol,
+            max_automorphisms=max_automorphisms,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:
+        return {
+            "_mol_idx": mol_idx,
+            # A calculation error is not evidence that the molecule violates
+            # the symmetry threshold. Preserve it as an explicit diagnostic.
+            "pass": True,
+            "symmetry_score": np.nan,
+            "symmetry_threshold": threshold,
+            "symmetry_automorphisms_examined": 0,
+            "symmetry_nonidentity_automorphisms": 0,
+            "symmetry_truncated": True,
+            "symmetry_timed_out": False,
+            "status": "warning",
+            "reason": f"symmetry calculation failed: {type(exc).__name__}: {exc}",
+        }
+    score = float(details.score)
+    passed = timeout_policy == "pass" if details.timed_out else score <= threshold
+    reasons = []
+    if not details.timed_out and not passed:
+        reasons.append(f"symmetry={score:.6g} > cutoff={threshold}")
+    if details.timed_out:
+        reasons.append(
+            f"symmetry calculation exceeded timeout={timeout_seconds:g}s; "
+            f"timeout_policy={timeout_policy}"
+        )
+    elif details.truncated:
+        reasons.append(
+            f"automorphism_limit={max_automorphisms} reached; score is a lower bound"
+        )
+    return {
+        "_mol_idx": mol_idx,
+        "pass": passed,
+        "symmetry_score": score,
+        "symmetry_threshold": threshold,
+        "symmetry_automorphisms_examined": details.mappings_examined,
+        "symmetry_nonidentity_automorphisms": details.nonidentity_mappings,
+        "symmetry_truncated": details.truncated,
+        "symmetry_timed_out": details.timed_out,
+        "status": "ok" if passed and not details.truncated else "warning",
+        "reason": "; ".join(reasons),
+    }
 
 
 def apply_symmetry(config, mols, smiles_model_name_mols=None):
-    return _apply_simple_medchem_filter(
-        config,
-        mols,
-        smiles_model_name_mols,
-        "Symmetry",
-        mc.functional.symmetry_filter,
-        "symmetry_scheduler",
-        extra_kwargs=lambda cfg: {
-            "symmetry_threshold": cfg.get("symmetry_threshold", 0.8),
-        },
+    logger.info("Calculating Symmetry diagnostic...")
+    config_sf = load_config(config[CFG_STRUCT_FILTERS])
+    n_jobs = resolve_n_jobs(config_sf, config)
+    threshold = float(config_sf.get("symmetry_threshold", 0.8))
+    max_automorphisms = max(1, int(config_sf.get("symmetry_max_automorphisms", 10_000)))
+    timeout_seconds = max(0.0, float(config_sf.get("symmetry_timeout_seconds", 5.0)))
+    timeout_policy = str(config_sf.get("symmetry_timeout_policy", "pass")).lower()
+    if timeout_policy not in {"pass", "fail"}:
+        raise ValueError("symmetry_timeout_policy must be 'pass' or 'fail'")
+    logger.info(
+        "Symmetry workers: %d; max automorphisms: %d; timeout: %.3gs; timeout policy: %s",
+        n_jobs,
+        max_automorphisms,
+        timeout_seconds,
+        timeout_policy,
     )
+    rows = parallel_map(
+        _compute_symmetry_row,
+        [
+            (
+                mol_idx,
+                mol,
+                threshold,
+                max_automorphisms,
+                timeout_seconds,
+                timeout_policy,
+            )
+            for mol_idx, mol in enumerate(mols)
+        ],
+        n_jobs,
+        chunksize=1,
+    )
+    results = pd.DataFrame(
+        [
+            {
+                "mol": mols[row["_mol_idx"]],
+                **{key: value for key, value in row.items() if key != "_mol_idx"},
+            }
+            for row in rows
+        ]
+    )
+    if smiles_model_name_mols is not None:
+        results = add_model_name_col(results, smiles_model_name_mols)
+    return results
 
 
 def apply_nibr_filter(config, mols, smiles_model_name_mols=None):
@@ -1419,14 +1625,12 @@ def _process_lilly_batch(dfilter, batch, n_jobs, scheduler):
             batch_result = _ensure_dataframe_length(batch_result, len(batch), template)
         return batch_result
     except Exception as batch_error:
-        if "Length of values" in str(
-            batch_error
-        ) or "does not match length of index" in str(batch_error):
-            return _process_lilly_one_by_one(dfilter, batch, scheduler)
-        smiles_list = [dm.to_smiles(m) if m else None for m in batch]
-        return _create_failed_dataframe(
-            len(batch), smiles_list, "batch_processing_failed"
+        logger.warning(
+            "Lilly batch failed (%s). Retrying %d molecules individually.",
+            batch_error,
+            len(batch),
         )
+        return _process_lilly_one_by_one(dfilter, batch, scheduler)
 
 
 def _process_lilly_one_by_one(dfilter, batch, scheduler):
@@ -1461,22 +1665,39 @@ def _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler, batch_size=500
     return pd.concat(batch_results, ignore_index=True)
 
 
+def _resolve_lilly_filter_options(config_sf):
+    """Build validated Lilly scorer options from the structural-filter config."""
+    raw_cutoff = config_sf.get("lilly_demerit_cutoff")
+    if raw_cutoff is None:
+        return {}
+
+    try:
+        cutoff = int(raw_cutoff)
+    except (TypeError, ValueError) as error:
+        raise ValueError("lilly_demerit_cutoff must be a positive integer") from error
+    if isinstance(raw_cutoff, float) and not raw_cutoff.is_integer():
+        raise ValueError("lilly_demerit_cutoff must be a positive integer")
+    if cutoff < 1:
+        raise ValueError("lilly_demerit_cutoff must be a positive integer")
+    return {"dthresh": cutoff}
+
+
+def _new_lilly_filter(lilly_filter_options):
+    """Create a Lilly scorer with the configured native demerit cutoff."""
+    return LillyDemeritsFilters(**lilly_filter_options)
+
+
 def _process_lilly_chunk(args):
     """Process one Lilly chunk in an isolated worker process."""
-    indexed_chunk, scheduler = args
+    indexed_chunk, scheduler, lilly_filter_options = args
     mol_indices = [item[0] for item in indexed_chunk]
     mol_chunk = [item[1] for item in indexed_chunk]
 
-    dfilter = LillyDemeritsFilters()
+    dfilter = _new_lilly_filter(lilly_filter_options)
     try:
         chunk_result = dfilter(mols=mol_chunk, n_jobs=1, scheduler=scheduler)
-    except ValueError as error:
-        if "Length of values" in str(error) or "does not match length of index" in str(
-            error
-        ):
-            chunk_result = _process_lilly_one_by_one(dfilter, mol_chunk, scheduler)
-        else:
-            raise
+    except Exception:
+        chunk_result = _process_lilly_one_by_one(dfilter, mol_chunk, scheduler)
 
     if len(chunk_result) != len(indexed_chunk):
         template = chunk_result.iloc[-1].to_dict() if len(chunk_result) > 0 else None
@@ -1526,7 +1747,8 @@ def apply_lilly_filter(config, mols, smiles_model_name_mols=None):
     logger.info("Calculating Lilly filter...")
     config_sf = load_config(config[CFG_STRUCT_FILTERS])
     n_jobs = resolve_n_jobs(config_sf, config)
-    scheduler = _resolve_scheduler(config_sf, "lilly_scheduler")
+    scheduler = _resolve_scheduler(config_sf, "lilly_scheduler", default="threads")
+    lilly_filter_options = _resolve_lilly_filter_options(config_sf)
     if scheduler != "threads":
         logger.warning(
             "Lilly supports only threads scheduler. Falling back to 'threads' (got '%s').",
@@ -1534,6 +1756,10 @@ def apply_lilly_filter(config, mols, smiles_model_name_mols=None):
         )
         scheduler = "threads"
     logger.info("Lilly workers: %d", n_jobs)
+    logger.info(
+        "Lilly demerit cutoff: %s",
+        lilly_filter_options.get("dthresh", "native default"),
+    )
 
     if smiles_model_name_mols is not None:
         expected_len = len(smiles_model_name_mols)
@@ -1571,7 +1797,9 @@ def apply_lilly_filter(config, mols, smiles_model_name_mols=None):
     # Run Lilly across worker processes, one thread-backed call per worker.
     n_workers = max(1, min(n_jobs, len(valid_indexed)))
     chunked_mols = _split_indexed_mols(valid_indexed, n_workers)
-    chunk_payloads = [(chunk, scheduler) for chunk in chunked_mols]
+    chunk_payloads = [
+        (chunk, scheduler, lilly_filter_options) for chunk in chunked_mols
+    ]
 
     try:
         chunk_results = parallel_map(
@@ -1590,7 +1818,7 @@ def apply_lilly_filter(config, mols, smiles_model_name_mols=None):
             "Parallel Lilly execution failed (%s). Falling back to batched native mode.",
             error,
         )
-        dfilter = LillyDemeritsFilters()
+        dfilter = _new_lilly_filter(lilly_filter_options)
         results = _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler)
         if results is None:
             raise ValueError("All Lilly batches failed in fallback mode.") from error
@@ -1609,7 +1837,7 @@ def apply_lilly_filter(config, mols, smiles_model_name_mols=None):
                 len(results),
                 len(valid_mols),
             )
-            dfilter = LillyDemeritsFilters()
+            dfilter = _new_lilly_filter(lilly_filter_options)
             results = _run_lilly_in_batches(dfilter, valid_mols, n_jobs, scheduler)
             if results is None:
                 raise ValueError("All Lilly batches failed in fallback mode.")
@@ -1694,7 +1922,12 @@ def _stats_common_alerts(config, filter_results, model_name, num_mol, stat, exte
         all_banned_ratio=(~filter_results["pass"]).mean(),
         any_banned_ratio=(~filter_results["pass_any"]).mean(),
     )
-    for name in config["include_rulesets"]:
+    ruleset_names = [
+        column[len("pass_") :]
+        for column in filter_results.columns
+        if column.startswith("pass_") and column not in {"pass", "pass_any"}
+    ]
+    for name in ruleset_names:
         res_df[f"{name}_banned_ratio"] = 1 - filter_results[f"pass_{name}"].mean()
     return common_postprocessing_statistics(filter_results, res_df, stat, extend)
 
@@ -1707,12 +1940,18 @@ def _stats_molgraph(config, filter_results, model_name, num_mol, stat, extend):
     res_df, filter_extended = common_postprocessing_statistics(
         filter_results, res_df, stat, extend
     )
-    pass_cols = [
-        col
-        for col in filter_extended.columns
-        if col.startswith("pass_") and col != "pass_any"
-    ]
-    filter_extended["pass"] = filter_extended[pass_cols].all(axis=1)
+    raw_threshold = config.get("molgraph_max_severity", 5)
+    try:
+        threshold = int(raw_threshold)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "molgraph_max_severity must be an integer from 1 to 11"
+        ) from error
+    if isinstance(raw_threshold, float) and not raw_threshold.is_integer():
+        raise ValueError("molgraph_max_severity must be an integer from 1 to 11")
+    if not 1 <= threshold <= 11:
+        raise ValueError("molgraph_max_severity must be an integer from 1 to 11")
+    filter_extended["pass"] = filter_extended["molgraph_max_severity"] < threshold
     return res_df, filter_extended
 
 
@@ -1737,7 +1976,24 @@ def _stats_simple_banned(config, filter_results, model_name, num_mol, stat, exte
 
 
 def _stats_nibr(config, filter_results, model_name, num_mol, stat, extend):
-    """Compute statistics for NIBR filter."""
+    """Compute statistics using the published NIBR severity policy."""
+    raw_threshold = config.get("nibr_max_severity", 10)
+    try:
+        threshold = int(raw_threshold)
+    except (TypeError, ValueError) as error:
+        raise ValueError("nibr_max_severity must be a positive integer") from error
+    if isinstance(raw_threshold, float) and not raw_threshold.is_integer():
+        raise ValueError("nibr_max_severity must be a positive integer")
+    if threshold < 1:
+        raise ValueError("nibr_max_severity must be a positive integer")
+
+    severity = pd.to_numeric(filter_results["severity"], errors="coerce")
+    severity_pass = severity.lt(threshold).fillna(False)
+    if "pass_filter" in filter_results.columns:
+        native_pass = filter_results["pass_filter"].fillna(False).astype(bool)
+    else:
+        native_pass = pd.Series(True, index=filter_results.index, dtype=bool)
+    publication_pass = native_pass & severity_pass
     res_df = _create_base_stats_df(
         model_name,
         num_mol,
@@ -1746,14 +2002,24 @@ def _stats_nibr(config, filter_results, model_name, num_mol, stat, extend):
         mean_n_covalent_motif=filter_results.n_covalent_motif.mean(),
         mean_nonzero_special_mol=(filter_results.special_mol > 0).mean(),
     )
-    pass_col = _get_pass_column(filter_results, "severity", lambda x: x == 0)
-    res_df["banned_ratio"] = 1 - filter_results[pass_col].mean()
+    res_df["banned_ratio"] = 1 - publication_pass.mean()
+    res_df["severity_threshold"] = threshold
+    if "pass_filter" in filter_results.columns:
+        res_df["native_pass_filter_banned_ratio"] = (
+            1 - filter_results["pass_filter"].fillna(False).astype(bool).mean()
+        )
     res_df, filter_extended = common_postprocessing_statistics(
         filter_results, res_df, stat, extend
     )
-    filter_extended = _ensure_pass_column_in_extended(
-        filter_extended, pass_col, filter_results, "severity"
-    )
+    if "pass_filter" in filter_extended.columns:
+        filter_extended["native_pass_filter"] = filter_extended["pass_filter"]
+    extended_severity = pd.to_numeric(filter_extended["severity"], errors="coerce")
+    extended_severity_pass = extended_severity.lt(threshold).fillna(False)
+    if "pass_filter" in filter_extended.columns:
+        extended_native_pass = filter_extended["pass_filter"].fillna(False).astype(bool)
+    else:
+        extended_native_pass = pd.Series(True, index=filter_extended.index, dtype=bool)
+    filter_extended["pass"] = extended_native_pass & extended_severity_pass
     return res_df, filter_extended
 
 
@@ -1826,6 +2092,335 @@ def get_basic_stats(
     if handler is None:
         raise ValueError(f"Filter {filter_name} not found")
     return handler(config, filter_results, model_name, num_mol, stat, extend)
+
+
+def _pass_mask_from_column(
+    filter_extended: pd.DataFrame, pass_column: str
+) -> pd.DataFrame:
+    """Build an identity-keyed pass mask from one calculated decision column."""
+    identity_cols = [
+        col
+        for col in ("smiles", "model_name", "mol_idx")
+        if col in filter_extended.columns
+    ]
+    if pass_column not in filter_extended.columns:
+        return pd.DataFrame(columns=[*identity_cols, "pass"])
+    result = filter_extended[identity_cols + [pass_column]].copy()
+    if pass_column != "pass":
+        result = result.rename(columns={pass_column: "pass"})
+    result["pass"] = result["pass"].fillna(False).astype(bool)
+    return result.drop_duplicates(subset=identity_cols, keep="last")
+
+
+def build_structural_policy_pass_masks(
+    config: dict,
+    filter_name: str,
+    filter_extended: pd.DataFrame,
+    default_mask: pd.DataFrame | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Build independently selectable hard-policy masks from one calculation."""
+    masks = {
+        filter_name: (
+            default_mask
+            if default_mask is not None
+            else build_structural_enforcement_pass_mask(
+                config, filter_name, filter_extended
+            )
+        )
+    }
+    undefined_policy_configured = (
+        "filter_undefined_stereo_center" in config
+        or "undefined_stereo_center" in (config.get("enforced_filters") or [])
+    )
+    if filter_name == "stereo_center" and undefined_policy_configured:
+        masks["undefined_stereo_center"] = _pass_mask_from_column(
+            filter_extended, "undefined_stereo_pass"
+        )
+    return masks
+
+
+def merge_structural_policy_aliases(
+    profile: pd.DataFrame, filter_name: str
+) -> pd.DataFrame:
+    """Expose policy-specific stereo decisions in the liability profile."""
+    if filter_name != "stereo_center":
+        return profile
+    out = profile.copy()
+    column_aliases = {
+        "stereo_center__undefined_stereo_pass": ("undefined_stereo_center__pass"),
+        "stereo_center__undefined_stereo_reason": ("undefined_stereo_center__reason"),
+        "stereo_center__n_undefined_stereo_centers": ("undefined_stereo_center__count"),
+        "stereo_center__stereo_max_undefined": ("undefined_stereo_center__maximum"),
+    }
+    for source, target in column_aliases.items():
+        if source in out.columns:
+            out[target] = out[source]
+    pass_column = "undefined_stereo_center__pass"
+    if pass_column in out.columns:
+        out["undefined_stereo_center__enforcement_pass"] = (
+            out[pass_column].fillna(False).astype(bool)
+        )
+    return out
+
+
+def build_structural_enforcement_pass_mask(
+    config: dict,
+    filter_name: str,
+    filter_extended: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build the survival mask independently from diagnostic calculation."""
+    identity_cols = [
+        col
+        for col in ("smiles", "model_name", "mol_idx")
+        if col in filter_extended.columns
+    ]
+    if filter_name != "common_alerts":
+        if "pass" in filter_extended.columns:
+            pass_column = "pass"
+        elif "pass_filter" in filter_extended.columns:
+            pass_column = "pass_filter"
+        else:
+            return pd.DataFrame(columns=[*identity_cols, "pass"])
+        result = filter_extended[identity_cols + [pass_column]].copy()
+        if pass_column != "pass":
+            result = result.rename(columns={pass_column: "pass"})
+        result["pass"] = result["pass"].fillna(False).astype(bool)
+        return result.drop_duplicates(subset=identity_cols, keep="last")
+
+    available_rulesets = {
+        column.removeprefix("pass_")
+        for column in filter_extended.columns
+        if column.startswith("pass_") and column != "pass_any"
+    }
+    include_rulesets = {
+        str(value)
+        for value in config.get("common_alerts_filter_include_rulesets", []) or []
+    }
+    exclude_rulesets = {
+        str(value)
+        for value in config.get("common_alerts_filter_exclude_rulesets", []) or []
+    }
+    unknown_rulesets = (include_rulesets | exclude_rulesets) - available_rulesets
+    if unknown_rulesets:
+        names = ", ".join(sorted(unknown_rulesets))
+        raise ValueError(f"Unknown Common Alerts filter ruleset(s): {names}")
+
+    if include_rulesets:
+        selected_rulesets = include_rulesets - exclude_rulesets
+    else:
+        selected_rulesets = available_rulesets - exclude_rulesets
+
+    def _passes_selected_alerts(value) -> bool:
+        records = _common_alert_profile_values(value)[0]
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            if record.get("ruleset") in selected_rulesets:
+                return False
+        return True
+
+    result = filter_extended[identity_cols].copy()
+    alert_json = filter_extended.get(
+        "alert_hits_json", pd.Series("[]", index=filter_extended.index)
+    )
+    result["pass"] = alert_json.map(_passes_selected_alerts).astype(bool)
+    return result.drop_duplicates(subset=identity_cols, keep="last")
+
+
+def attach_structural_enforcement_pass(
+    config: dict,
+    filter_name: str,
+    filter_extended: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Attach the configured survival decision without replacing native pass."""
+    mask = build_structural_enforcement_pass_mask(config, filter_name, filter_extended)
+    identity_cols = [
+        col
+        for col in ("smiles", "model_name", "mol_idx")
+        if col in filter_extended.columns and col in mask.columns
+    ]
+    if not identity_cols or mask.empty:
+        result = filter_extended.copy()
+        result["enforcement_pass"] = False
+        return result, mask
+    enforcement = mask.rename(columns={"pass": "enforcement_pass"})
+    result = filter_extended.drop(columns=["enforcement_pass"], errors="ignore").merge(
+        enforcement, on=identity_cols, how="left"
+    )
+    result["enforcement_pass"] = result["enforcement_pass"].fillna(False).astype(bool)
+    return result, mask
+
+
+def initialize_structural_liability_profile(input_df: pd.DataFrame) -> pd.DataFrame:
+    """Create the identity spine for one molecule-level structural profile."""
+    identity_cols = [
+        col for col in ("smiles", "model_name", "mol_idx") if col in input_df
+    ]
+    return input_df[identity_cols].drop_duplicates().copy()
+
+
+def merge_structural_liability_profile(
+    profile: pd.DataFrame,
+    filter_name: str,
+    filter_extended: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add every row-level output from one structural filter to the profile."""
+    identity_cols = [
+        col
+        for col in ("smiles", "model_name", "mol_idx")
+        if col in profile.columns and col in filter_extended.columns
+    ]
+    if not identity_cols:
+        return profile
+    details = filter_extended.drop(columns=["mol"], errors="ignore").copy()
+    details = details.drop_duplicates(subset=identity_cols, keep="last")
+    details = details.rename(
+        columns={
+            col: f"{filter_name}__{col}"
+            for col in details.columns
+            if col not in identity_cols
+        }
+    )
+    return profile.merge(details, on=identity_cols, how="left")
+
+
+def _profile_pass(profile: pd.DataFrame, filter_name: str) -> pd.Series:
+    column = f"{filter_name}__pass"
+    if column not in profile.columns:
+        return pd.Series(False, index=profile.index, dtype=bool)
+    return profile[column].fillna(False).astype(bool)
+
+
+def _profile_enforcement_pass(profile: pd.DataFrame, filter_name: str) -> pd.Series:
+    column = f"{filter_name}__enforcement_pass"
+    if column in profile.columns:
+        return profile[column].fillna(False).astype(bool)
+    return _profile_pass(profile, filter_name)
+
+
+def _common_alert_profile_values(value):
+    """Summarize atom-level Common Alerts JSON without discarding raw hits."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        records = []
+    else:
+        try:
+            records = json.loads(str(value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            records = []
+    if not isinstance(records, list):
+        records = []
+    rule_ids = sorted(
+        {
+            str(record.get("rule_id"))
+            for record in records
+            if isinstance(record, dict) and record.get("rule_id") is not None
+        }
+    )
+    return records, len(records), len(rule_ids), ";".join(rule_ids)
+
+
+def finalize_structural_liability_profile(
+    profile: pd.DataFrame,
+    enforced_filters,
+    calculated_filters,
+) -> pd.DataFrame:
+    """Add hard-pass and warning summaries while retaining all raw diagnostics."""
+    out = profile.copy()
+    calculated = list(calculated_filters)
+    hard_filters = (
+        calculated
+        if enforced_filters is None
+        else [name for name in calculated if name in set(enforced_filters)]
+    )
+    diagnostic_filters = [name for name in calculated if name not in hard_filters]
+    out["stage3_hard_filters"] = ";".join(hard_filters)
+    hard_filter_set = set(hard_filters)
+    for name in calculated:
+        out[f"{name}__filter_enabled"] = name in hard_filter_set
+
+    if hard_filters:
+        hard_matrix = pd.concat(
+            [
+                _profile_enforcement_pass(out, name).rename(name)
+                for name in hard_filters
+            ],
+            axis=1,
+        )
+        out["stage3_hard_pass"] = hard_matrix.all(axis=1)
+        out["hard_failed_filters"] = hard_matrix.apply(
+            lambda row: ";".join(name for name, passed in row.items() if not passed),
+            axis=1,
+        )
+    else:
+        out["stage3_hard_pass"] = True
+        out["hard_failed_filters"] = ""
+
+    if diagnostic_filters:
+        diagnostic_matrix = pd.concat(
+            [_profile_pass(out, name).rename(name) for name in diagnostic_filters],
+            axis=1,
+        )
+        out["structural_warning_count"] = (~diagnostic_matrix).sum(axis=1)
+        out["diagnostic_failed_filters"] = diagnostic_matrix.apply(
+            lambda row: ";".join(name for name, passed in row.items() if not passed),
+            axis=1,
+        )
+    else:
+        out["structural_warning_count"] = 0
+        out["diagnostic_failed_filters"] = ""
+
+    ruleset_columns = [
+        col
+        for col in out.columns
+        if col.startswith("common_alerts__pass_")
+        and col not in {"common_alerts__pass_any"}
+    ]
+    out["common_alert_ruleset_hit_count"] = (
+        (~out[ruleset_columns].fillna(False).astype(bool)).sum(axis=1)
+        if ruleset_columns
+        else 0
+    )
+    alert_json_column = "common_alerts__alert_hits_json"
+    if alert_json_column in out.columns:
+        alert_values = out[alert_json_column].map(_common_alert_profile_values)
+        out["common_alert_match_count"] = alert_values.map(lambda value: value[1])
+        out["common_alert_unique_rule_count"] = alert_values.map(lambda value: value[2])
+        out["common_alert_rule_ids"] = alert_values.map(lambda value: value[3])
+        for pass_column in ruleset_columns:
+            ruleset = pass_column.removeprefix("common_alerts__pass_")
+            prefix = f"common_alert_ruleset__{ruleset}"
+            out[f"{prefix}__match_count"] = alert_values.map(
+                lambda value, name=ruleset: sum(
+                    1
+                    for record in value[0]
+                    if isinstance(record, dict) and record.get("ruleset") == name
+                )
+            )
+            out[f"{prefix}__unique_rule_count"] = alert_values.map(
+                lambda value, name=ruleset: len(
+                    {
+                        str(record.get("rule_id"))
+                        for record in value[0]
+                        if isinstance(record, dict)
+                        and record.get("ruleset") == name
+                        and record.get("rule_id") is not None
+                    }
+                )
+            )
+    else:
+        out["common_alert_match_count"] = 0
+        out["common_alert_unique_rule_count"] = 0
+        out["common_alert_rule_ids"] = ""
+
+    if {"NIBR", "molgraph_stats"}.issubset(calculated):
+        out["nibr_molgraph_policy_pass"] = _profile_pass(out, "NIBR") & _profile_pass(
+            out, "molgraph_stats"
+        )
+    if {"lilly", "molgraph_stats"}.issubset(calculated):
+        out["lilly160_molgraph_policy_pass"] = _profile_pass(
+            out, "lilly"
+        ) & _profile_pass(out, "molgraph_stats")
+    return out
 
 
 def check_paths(config, paths):
