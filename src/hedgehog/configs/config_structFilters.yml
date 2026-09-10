@@ -64,6 +64,3 @@ halogenicity_thresh_Cl: 3
 
 calculate_symmetry: true
 symmetry_threshold: 0.8
-symmetry_max_automorphisms: 10000
-symmetry_timeout_seconds: 5.0
-symmetry_timeout_policy: pass
