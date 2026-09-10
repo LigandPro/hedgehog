@@ -31,11 +31,7 @@ const fields: FormField[] = [
   // Processing section
   { key: 'n_jobs', label: 'Parallel Jobs', type: 'number', section: 'Processing', description: 'Number of parallel workers (-1 = all CPUs)' },
   { key: 'sample_size', label: 'Sample Size', type: 'number', description: 'Max molecules to process (use for testing)' },
-  { key: 'batch_size', label: 'Batch Size', type: 'number', description: 'Molecules per batch for memory efficiency' },
   { key: 'save_sampled_mols', label: 'Save Sampled Mols', type: 'boolean', description: 'Save sampled molecules to separate file' },
-  // Filter files section
-  { key: 'pains_file_path', label: 'PAINS Filter File', type: 'path', section: 'Filter Files', description: 'SMARTS patterns for PAINS (pan-assay interference)' },
-  { key: 'mcf_file_path', label: 'MCF File', type: 'path', description: 'Medicinal chemistry filter patterns' },
   // External tools section
   { key: 'ligand_preparation_tool', label: 'Ligand Prep Tool', type: 'path', section: 'External Tools', description: 'Path to ligand preparation binary (e.g., obabel)' },
   { key: 'protein_preparation_tool', label: 'Protein Prep Tool', type: 'path', description: 'Path to protein preparation binary' },

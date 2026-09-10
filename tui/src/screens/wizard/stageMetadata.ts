@@ -50,7 +50,6 @@ export const STAGE_METADATA: Record<WizardStageName, StageMetadata> = {
     writes: ['Descriptor columns and filtered subset'],
     heavyLevel: 'medium',
     keyParamsMap: {
-      batch_size: 'Batch size',
       filter_data: 'Filter output',
       molWt_min: 'MolWt min',
       molWt_max: 'MolWt max',
@@ -72,9 +71,11 @@ export const STAGE_METADATA: Record<WizardStageName, StageMetadata> = {
     writes: ['Flags and optionally filtered molecules'],
     heavyLevel: 'medium',
     keyParamsMap: {
+      n_jobs: 'Parallel jobs',
       calculate_common_alerts: 'Common alerts',
       calculate_NIBR: 'NIBR filters',
       calculate_lilly: 'Lilly filters',
+      filter_undefined_stereo_center: 'Reject undefined stereo',
       filter_data: 'Filter output',
     },
     configScreen: 'wizardConfigFilters',
@@ -118,7 +119,7 @@ export const STAGE_METADATA: Record<WizardStageName, StageMetadata> = {
     heavyLevel: 'high',
     keyParamsMap: {
       aggregation_mode: 'Aggregation mode',
-      max_clashes: 'Max clashes',
+      clash_cutoff: 'Clash cutoff',
       min_hbonds: 'Min H-bonds',
       max_rmsd_to_conformer: 'Max RMSD',
     },
@@ -149,13 +150,15 @@ export function getStageSummary(
     case 'mol_prep':
       return 'Datamol standardization';
     case 'descriptors': {
-      const batch = formatValue(quickParams.batch_size);
+      const filterData = formatValue(quickParams.filter_data);
       const nOrO = formatValue(quickParams.max_n_or_o_atoms);
       const smallRings = formatValue(quickParams.max_small_rings_3_4);
       const chain = formatValue(quickParams.max_acyclic_chain_length);
       const ringSystem = formatValue(quickParams.fraction_ring_system_min);
       const spider = formatValue(quickParams.has_spider_side_chains_max);
-      const base = preset ? `Batch: ${batch} | Preset: ${preset}` : `Batch: ${batch}`;
+      const base = preset
+        ? `Filter: ${filterData} | Preset: ${preset}`
+        : `Filter: ${filterData}`;
       const extras: string[] = [];
       if (quickParams.fraction_ring_system_min !== undefined) extras.push(`RingFrac>=${ringSystem}`);
       if (quickParams.has_spider_side_chains_max !== undefined) extras.push(`Spider<=${spider}`);
@@ -165,13 +168,13 @@ export function getStageSummary(
       return extras.length > 0 ? `${base} | ${extras.join(' | ')}` : base;
     }
     case 'struct_filters':
-      return `NIBR: ${formatValue(quickParams.calculate_NIBR)} | Lilly: ${formatValue(quickParams.calculate_lilly)}`;
+      return `NIBR: ${formatValue(quickParams.calculate_NIBR)} | Lilly: ${formatValue(quickParams.calculate_lilly)} | Undefined stereo reject: ${formatValue(quickParams.filter_undefined_stereo_center)}`;
     case 'synthesis':
       return `SA: ${formatValue(quickParams.sa_score_min)}-${formatValue(quickParams.sa_score_max)} | RA: ${formatValue(quickParams.ra_score_min)}-${formatValue(quickParams.ra_score_max)}`;
     case 'docking':
       return `Tool: ${formatValue(quickParams.tools)} | Exhaust: ${formatValue(quickParams.exhaustiveness)} | Modes: ${formatValue(quickParams.num_modes)}`;
     case 'docking_filters':
-      return `Mode: ${formatValue(quickParams.aggregation_mode)} | Clashes<=${formatValue(quickParams.max_clashes)} | H-bonds>=${formatValue(quickParams.min_hbonds)} | RMSD<=${formatValue(quickParams.max_rmsd_to_conformer)}`;
+      return `Mode: ${formatValue(quickParams.aggregation_mode)} | Clash cutoff=${formatValue(quickParams.clash_cutoff)} | H-bonds>=${formatValue(quickParams.min_hbonds)} | RMSD<=${formatValue(quickParams.max_rmsd_to_conformer)}`;
     default:
       return 'Configured';
   }
