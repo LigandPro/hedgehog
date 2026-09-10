@@ -5,19 +5,21 @@ import pandas as pd
 
 from hedgehog._constants import CFG_DOCKING, KEY_FOLDER_TO_SAVE
 from hedgehog.configs.logger import load_config, logger
-from hedgehog.docking.aggregation import _aggregate_docking_results  # noqa: F401
+from hedgehog.docking.aggregation import _collect_docking_stage_results
 from hedgehog.docking.binaries import _validate_optional_tool_path
-from hedgehog.docking.config_writer import _create_docking_config_file  # noqa: F401
+from hedgehog.docking.configuration import (
+    DockingConfigError,
+    normalize_docking_config,
+    validate_docking_config,
+)
 from hedgehog.docking.execution import _execute_auto_run
 from hedgehog.docking.input import _find_latest_input_source, _prepare_ligands_dataframe
-from hedgehog.docking.ligand_prep import _prepare_ligands_for_docking  # noqa: F401
 from hedgehog.docking.metadata import (
     _generate_job_id,
     _parse_tools_config,
     _save_job_ids,
     _save_job_metadata,
 )
-from hedgehog.docking.monitoring import _create_progress_tracker  # noqa: F401
 from hedgehog.docking.paths import _warn_if_autobox_far_from_receptor
 from hedgehog.docking.receptor_prep import _execute_protein_preparation
 from hedgehog.docking.scripts import _emit_manual_mode_warnings, _setup_docking_tools
@@ -45,9 +47,17 @@ def _mark_docking_completed_empty(
 def run(config, reporter=None):
     """Main docking orchestration function."""
     # 1. Load config and validate input
-    cfg = load_config(config[CFG_DOCKING])
+    docking_config_path = Path(config[CFG_DOCKING]).expanduser().resolve()
+    cfg = load_config(docking_config_path)
     if not cfg.get("run", False):
         logger.info("Docking disabled in config")
+        return False
+
+    try:
+        tools_list = _parse_tools_config(cfg)
+        cfg = normalize_docking_config(cfg, docking_config_path, tools_list)
+    except (DockingConfigError, ValueError) as exc:
+        logger.error("%s", exc)
         return False
 
     base_folder = Path(config[KEY_FOLDER_TO_SAVE]).resolve()
@@ -66,6 +76,10 @@ def run(config, reporter=None):
 
     ligands_dir = base_folder / "stages" / "05_docking"
     ligands_csv = ligands_dir / "ligands.csv"
+    ligands_dir.mkdir(parents=True, exist_ok=True)
+    df[["smiles", "model_name", "mol_idx"]].drop_duplicates(
+        subset=["mol_idx"], keep="first"
+    ).to_csv(ligands_dir / "input_molecules.csv", index=False)
     empty_marker = ligands_dir / DOCKING_COMPLETED_EMPTY_MARKER
     if empty_marker.exists():
         try:
@@ -79,14 +93,30 @@ def run(config, reporter=None):
         logger.error("Ligand preparation failed: %s", e)
         return False
 
-    ligand_preparation_tool = _validate_optional_tool_path(
-        config.get("ligand_preparation_tool"), "Ligand preparation tool"
-    )
+    ligand_preparation_tool = None
+    if cfg.get("prepare_ligands", False):
+        ligand_preparation_tool = _validate_optional_tool_path(
+            config.get("ligand_preparation_tool"), "Ligand preparation tool"
+        )
     protein_preparation_tool = _validate_optional_tool_path(
         config.get("protein_preparation_tool"), "Protein preparation tool"
     )
-    tools_list = _parse_tools_config(cfg)
     logger.info("Docking tools configured: %s", tools_list)
+
+    source_sdf = None
+    cfg_sdf = config.get("docking_source_sdf")
+    if cfg_sdf:
+        candidate = Path(str(cfg_sdf)).expanduser()
+        if candidate.exists():
+            source_sdf = candidate.resolve()
+    if source_sdf is None:
+        candidate = base_folder / "input" / "ligands.sdf"
+        if candidate.exists():
+            source_sdf = candidate.resolve()
+    if source_sdf is not None:
+        for tool_name in tools_list:
+            cfg[f"{tool_name}_ligands"] = str(source_sdf)
+        logger.info("Using precomputed docking ligands SDF: %s", source_sdf)
 
     if int(ligands_stats.get("written", 0)) == 0:
         marker = _mark_docking_completed_empty(
@@ -98,7 +128,19 @@ def run(config, reporter=None):
             int(ligands_stats.get("total", 0)),
             marker,
         )
+        _collect_docking_stage_results(
+            ligands_dir,
+            tools_list,
+            {},
+            score_thresholds=cfg.get("score_thresholds"),
+        )
         return True
+
+    try:
+        validate_docking_config(cfg, tools_list)
+    except DockingConfigError as exc:
+        logger.error("%s", exc)
+        return False
 
     for tool in tools_list:
         _warn_if_autobox_far_from_receptor(cfg, tool)
@@ -109,7 +151,7 @@ def run(config, reporter=None):
             return False
 
     # 3. Tool setup
-    config_dir = Path(config[CFG_DOCKING]).resolve().parent
+    config_dir = docking_config_path.parent
     scripts_prepared, job_ids = _setup_docking_tools(
         cfg,
         tools_list,

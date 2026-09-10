@@ -286,6 +286,36 @@ class TestCalculateSynthesisScoresRegistry:
             "fake_batch_score",
         ]
 
+    def test_calculate_synthesis_scores_logs_passed_criterion_count(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        """Score summaries should report criterion passes, not calculation counts."""
+
+        def _fake_batch(smiles_list, config, progress_cb=None):
+            return [1.0, 5.0, np.nan]
+
+        monkeypatch.setitem(
+            synthesis_utils.SYNTHESIS_SCORERS,
+            "fakebatch",
+            synthesis_utils.SynthesisScorer(
+                name="fakebatch",
+                column="fake_batch_score",
+                batch_calculator=_fake_batch,
+            ),
+        )
+
+        with caplog.at_level("INFO"):
+            calculate_synthesis_scores(
+                pd.DataFrame({"smiles": ["a", "b", "c"]}),
+                config={
+                    "enabled_scores": ["fakebatch"],
+                    "score_filters": {"fake_batch_score": {"min": 0.0, "max": 4.0}},
+                },
+            )
+
+        assert "fake_batch_score passed: 1/2" in caplog.text
+        assert "calculated for" not in caplog.text
+
     def test_fsscore_external_command_adapter(self):
         """FSScore should read scores from an explicitly configured command."""
         command = (
@@ -362,6 +392,26 @@ class TestCalculateSynthesisScoresRegistry:
         )
 
         assert [scorer.name for scorer in scorers] == ["sa", "syba"]
+
+    def test_enabled_scores_all_expands_to_canonical_scorers(self):
+        """Scalar or one-item 'all' should enable every public scorer once."""
+        expected = list(synthesis_utils.ALL_SYNTHESIS_SCORER_NAMES)
+        for raw in ("all", ["all"]):
+            scorers = synthesis_utils._resolve_enabled_scorers(
+                {"enabled_scores": raw}
+            )
+            assert [scorer.name for scorer in scorers] == expected
+
+    def test_enabled_scores_rejects_mixed_all(self):
+        """'all' must not be mixed with named scorers."""
+        with pytest.raises(ValueError, match="scalar 'all'"):
+            synthesis_utils._resolve_enabled_scorers(
+                {"enabled_scores": ["all", "sa"]}
+            )
+        with pytest.raises(ValueError, match="scalar 'all'"):
+            synthesis_utils._resolve_enabled_scorers(
+                {"enabled_scores": "all, sa"}
+            )
 
     def test_fsscore_repo_path_resolves_default_model(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -934,6 +984,70 @@ class TestMergeRetrosynthesisResults:
         assert COL_MODEL_NAME in result.columns
         assert "mol_idx" in result.columns
 
+    def test_preserves_literal_retrosynthesis_diagnostics(self):
+        input_df = pd.DataFrame({COL_SMILES: ["CCO", "CCN"]})
+        retro_df = pd.DataFrame(
+            {
+                "index": [0],
+                "SMILES": ["CCO"],
+                "solved": [0],
+                "search_time": [300.1],
+                "retrosynthesis_status": ["unsolved"],
+                "retrosynthesis_reason": ["literal output-derived reason"],
+                "iterations": [811],
+                "precursors_not_in_stock": ["Br"],
+            }
+        )
+
+        result = merge_retrosynthesis_results(input_df, retro_df)
+
+        assert result.loc[0, "retrosynthesis_reason"] == "literal output-derived reason"
+        assert result.loc[0, "iterations"] == 811
+        assert result.loc[0, "precursors_not_in_stock"] == "Br"
+        assert result.loc[1, "retrosynthesis_status"] == "result_missing"
+        assert result.loc[1, "retrosynthesis_reason"].startswith(
+            "No AiZynthFinder result row"
+        )
+
+    def test_index_merge_survives_rewritten_stereochemical_smiles(self):
+        """AiZynthFinder target text must not replace its stable line index."""
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["N[C@@H](C)C(=O)O", "N[C@H](C)C(=O)O"],
+                "mol_idx": ["left", "right"],
+            }
+        )
+        retro_df = pd.DataFrame(
+            {
+                "index": [1, 0],
+                "SMILES": ["CC(N)C(=O)O", "CC(N)C(=O)O"],
+                "solved": [0, 1],
+                "search_time": [7.0, 3.0],
+            }
+        )
+
+        result = merge_retrosynthesis_results(input_df, retro_df)
+
+        assert result["solved"].tolist() == [1, 0]
+        assert result["search_time"].tolist() == [3.0, 7.0]
+
+    def test_index_maps_to_non_null_smiles_input_lines(self):
+        """Line indices follow the null-dropping behavior of input preparation."""
+        input_df = pd.DataFrame({COL_SMILES: ["CCO", None, "CCN"]})
+        retro_df = pd.DataFrame(
+            {
+                "index": [1],
+                "SMILES": ["NCC"],
+                "solved": [1],
+                "search_time": [4.0],
+            }
+        )
+
+        result = merge_retrosynthesis_results(input_df, retro_df)
+
+        assert result["solved"].tolist() == [0, 0, 1]
+        assert result["search_time"].tolist() == [0.0, 0.0, 4.0]
+
 
 class TestBuildScoreFilterMask:
     """Tests for _build_score_filter_mask function."""
@@ -1018,6 +1132,214 @@ class TestPrepareInputSmiles:
 
 class TestRunAizynthfinder:
     """Tests for run_aizynthfinder nproc handling."""
+
+    def test_charge_variants_preserve_stereochemistry(self):
+        smiles = "N[C@@H](C)C(=O)[O-]"
+
+        variants = synthesis_utils._prepare_aizynth_variants([smiles], "both")
+
+        assert [variant.representation for variant in variants] == [
+            "preserved",
+            "neutralized",
+        ]
+        assert "@" in variants[1].search_smiles
+        neutral_mol = synthesis_utils.Chem.MolFromSmiles(variants[1].search_smiles)
+        assert synthesis_utils.Chem.GetFormalCharge(neutral_mol) == 0
+
+    def test_charge_variant_results_map_back_to_original(self, tmp_path):
+        original = "[O-]c1ccccc1"
+        variants = synthesis_utils._prepare_aizynth_variants([original], "both")
+        raw_output = tmp_path / "retrosynthesis_variants.json"
+        output = tmp_path / "retrosynthesis_results.json"
+        raw_output.write_text(
+            json.dumps(
+                {
+                    "data": [
+                        {"index": 0, "is_solved": False, "number_of_nodes": 4},
+                        {"index": 1, "is_solved": True, "number_of_nodes": 2},
+                    ]
+                }
+            )
+        )
+
+        synthesis_utils._aggregate_aizynth_variants(raw_output, output, variants)
+
+        result = json.loads(output.read_text())["data"]
+        assert len(result) == 1
+        assert result[0]["index"] == 0
+        assert result[0]["target"] == original
+        assert result[0]["is_solved"] is True
+        assert result[0]["hedgehog_charge_representation"] == "neutralized"
+
+    def test_charge_mode_is_validated(self):
+        with pytest.raises(ValueError, match="aizynthfinder_charge_mode"):
+            synthesis_utils._prepare_aizynth_variants(["CC"], "invalid")
+
+    def test_invalid_neutralized_form_is_skipped(self):
+        smiles = (
+            "O(c1nc(N2C[C@H]3N[C@@H](C2)CC3)c2c(n1)CN(CC2)"
+            "c1c2c([c-](c1)OC)cccc2)C[C@H]1N(CCC1)C"
+        )
+
+        variants = synthesis_utils._prepare_aizynth_variants([smiles], "both")
+
+        assert [(item.representation, item.search_smiles) for item in variants] == [
+            ("preserved", smiles)
+        ]
+
+    def test_variant_aggregation_rejects_shifted_indices(self, tmp_path):
+        variants = synthesis_utils._prepare_aizynth_variants(["[O-]c1ccccc1"], "both")
+        raw_output = tmp_path / "raw.json"
+        raw_output.write_text(
+            json.dumps({"data": [{"index": 1, "target": "CC", "is_solved": True}]})
+        )
+
+        with pytest.raises(ValueError, match="does not match its target"):
+            synthesis_utils._aggregate_aizynth_variants(
+                raw_output, tmp_path / "out.json", variants
+            )
+
+    def test_runner_uses_and_aggregates_charge_variants(self, tmp_path, monkeypatch):
+        input_file = tmp_path / "in.smi"
+        output_file = tmp_path / "out.json"
+        input_file.write_text("[O-]c1ccccc1\n", encoding="utf-8")
+
+        def fake_run(cmd, **kwargs):
+            del kwargs
+            variant_input = Path(cmd[cmd.index("--smiles") + 1])
+            raw_output = Path(cmd[cmd.index("--output") + 1])
+            assert len(variant_input.read_text().splitlines()) == 2
+            pd.DataFrame(
+                [
+                    {"index": 0, "is_solved": False},
+                    {"index": 1, "is_solved": True},
+                ]
+            ).to_json(raw_output, orient="table", index=False)
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
+
+        ok = run_aizynthfinder(
+            input_file,
+            output_file,
+            _aizynth_config_path(tmp_path),
+            synthesis_config={"n_jobs": 1, "aizynthfinder_charge_mode": "both"},
+        )
+
+        assert ok is True
+        result = json.loads(output_file.read_text())["data"]
+        assert len(result) == 1
+        assert result[0]["target"] == "[O-]c1ccccc1"
+        assert result[0]["is_solved"] is True
+
+    def test_runner_retries_only_fully_unsolved_molecules(self, tmp_path, monkeypatch):
+        input_file = tmp_path / "in.smi"
+        output_file = tmp_path / "out.json"
+        input_file.write_text("[O-]c1ccccc1\nCC\n", encoding="utf-8")
+        config = _aizynth_config_path(tmp_path)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("stock:\n  zinc: stock.hdf5\n", encoding="utf-8")
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            del kwargs
+            smiles_file = Path(cmd[cmd.index("--smiles") + 1])
+            raw_output = Path(cmd[cmd.index("--output") + 1])
+            smiles = smiles_file.read_text().splitlines()
+            calls.append(smiles)
+            if len(smiles) == 3:
+                solved = [False, True, False]
+            else:
+                assert smiles == ["CC"]
+                solved = [True]
+            pd.DataFrame(
+                [
+                    {"index": index, "target": target, "is_solved": solved[index]}
+                    for index, target in enumerate(smiles)
+                ]
+            ).to_json(raw_output, orient="table", index=False)
+
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
+
+        synthesis_config = {
+            "n_jobs": 1,
+            "aizynthfinder_charge_mode": "both",
+            "aizynthfinder_time_limit": 300,
+            "aizynthfinder_iteration_limit": 300,
+            "aizynthfinder_retry_unsolved": True,
+            "aizynthfinder_retry_time_limit": 600,
+            "aizynthfinder_retry_iteration_limit": 1_000_000,
+        }
+        ok = run_aizynthfinder(
+            input_file,
+            output_file,
+            config,
+            synthesis_config=synthesis_config,
+        )
+
+        assert ok is True
+        assert len(calls) == 2
+        assert len(calls[0]) == 3
+        result = json.loads(output_file.read_text())["data"]
+        assert [row["is_solved"] for row in result] == [True, True]
+        pass1_config = synthesis_utils.yaml.safe_load(
+            (tmp_path / "aizynthfinder_effective_config_pass1.yml").read_text()
+        )
+        retry_config = synthesis_utils.yaml.safe_load(
+            (tmp_path / "aizynthfinder_effective_config_retry.yml").read_text()
+        )
+        assert pass1_config["search"]["iteration_limit"] == 300
+        assert retry_config["search"]["iteration_limit"] == 1_000_000
+        assert retry_config["search"]["time_limit"] == 600
+
+        calls.clear()
+        synthesis_config["aizynthfinder_reuse_pass1"] = True
+        assert run_aizynthfinder(
+            input_file,
+            output_file,
+            config,
+            synthesis_config=synthesis_config,
+        )
+        assert calls == [["CC"]]
+
+    def test_passes_search_overrides_via_effective_config(self, tmp_path, monkeypatch):
+        """Synthesis search settings should reach the AiZynthFinder config."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            effective_path = Path(cmd[cmd.index("--config") + 1])
+            captured["config"] = synthesis_utils.yaml.safe_load(
+                effective_path.read_text()
+            )
+            return None
+
+        config = _aizynth_config_path(tmp_path)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("stock:\n  zinc: stock.hdf5\n")
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
+
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            config,
+            synthesis_config={
+                "n_jobs": 1,
+                "aizynthfinder_max_transforms": 10,
+                "aizynthfinder_time_limit": 600,
+                "aizynthfinder_iteration_limit": 300,
+                "aizynthfinder_return_first": True,
+            },
+        )
+
+        assert ok is True
+        assert captured["config"]["search"] == {
+            "max_transforms": 10,
+            "time_limit": 600.0,
+            "iteration_limit": 300,
+            "return_first": True,
+        }
 
     def test_uses_uv_binary_from_resolver(self, tmp_path, monkeypatch):
         """run_aizynthfinder should use the binary returned by resolve_uv_binary."""
@@ -1232,6 +1554,87 @@ class TestParseRetrosynthesisResults:
         assert len(result) == 2
         assert result["solved"].tolist() == [1, 0]
         assert result["search_time"].tolist() == [1.5, 2.0]
+        assert result["retrosynthesis_status"].tolist() == ["solved", "unsolved"]
+
+    def test_literal_unsolved_diagnostics_come_from_aizynthfinder_fields(
+        self, tmp_path
+    ):
+        json_file = tmp_path / "retrosynthesis_results.json"
+        (tmp_path / "aizynthfinder_effective_config.yml").write_text(
+            "search:\n  time_limit: 300\n  iteration_limit: 4000\n"
+            "  max_transforms: 15\n",
+            encoding="utf-8",
+        )
+        json_file.write_text(
+            json.dumps(
+                {
+                    "data": [
+                        {
+                            "index": 0,
+                            "target": "CCO",
+                            "is_solved": False,
+                            "search_time": 300.25,
+                            "number_of_steps": 7,
+                            "number_of_nodes": 1234,
+                            "number_of_routes": 55,
+                            "number_of_solved_routes": 0,
+                            "number_of_precursors": 3,
+                            "number_of_precursors_in_stock": 1,
+                            "precursors_not_in_stock": "Br, CCO",
+                            "profiling": {"iterations": 812},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = parse_retrosynthesis_results(json_file).iloc[0]
+
+        assert result["retrosynthesis_status"] == "unsolved"
+        assert result["retrosynthesis_limit_reached"] == "time_limit"
+        assert bool(result["time_limit_reached"]) is True
+        assert bool(result["iteration_limit_reached"]) is False
+        assert bool(result["max_depth_reached"]) is False
+        assert result["route_depth"] == 7
+        assert result["iterations"] == 812
+        assert result["precursors_not_in_stock"] == "Br, CCO"
+        assert "search_time=300.25s/300s" in result["retrosynthesis_reason"]
+        assert "iterations=812/4000" in result["retrosynthesis_reason"]
+        assert "best_route_steps=7/15" in result["retrosynthesis_reason"]
+        assert "precursors_not_in_stock=[Br, CCO]" in result["retrosynthesis_reason"]
+
+    def test_iteration_and_depth_limits_are_reported_independently(self, tmp_path):
+        json_file = tmp_path / "retrosynthesis_results.json"
+        (tmp_path / "aizynthfinder_effective_config.yml").write_text(
+            "search:\n  time_limit: 300\n  iteration_limit: 4000\n"
+            "  max_transforms: 15\n",
+            encoding="utf-8",
+        )
+        json_file.write_text(
+            json.dumps(
+                {
+                    "data": [
+                        {
+                            "index": 0,
+                            "target": "CCO",
+                            "is_solved": False,
+                            "search_time": 250,
+                            "number_of_steps": 15,
+                            "profiling": {"iterations": 4000},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = parse_retrosynthesis_results(json_file).iloc[0]
+
+        assert result["retrosynthesis_limit_reached"] == "iteration_limit"
+        assert bool(result["iteration_limit_reached"]) is True
+        assert bool(result["time_limit_reached"]) is False
+        assert bool(result["max_depth_reached"]) is True
 
     def test_empty_json(self, tmp_path):
         """Parse JSON with no data."""
@@ -1287,6 +1690,24 @@ class TestGetInputPath:
         result = get_input_path(config, str(tmp_path))
 
         assert "descriptors_initial" in result
+
+    def test_ignores_stale_synthesis_and_docking_outputs(self, tmp_path):
+        """Synthesis must consume the latest pre-synthesis stage output."""
+        mol_prep_dir = tmp_path / "stages" / "01_mol_prep"
+        mol_prep_dir.mkdir(parents=True)
+        expected = mol_prep_dir / FILE_FILTERED_MOLECULES
+        expected.write_text(f"{COL_SMILES}\n{SMILES_ETHANOL}")
+
+        for stage in ("04_synthesis", "05_docking", "06_docking_filters"):
+            stage_dir = tmp_path / "stages" / stage
+            stage_dir.mkdir(parents=True)
+            (stage_dir / FILE_FILTERED_MOLECULES).write_text(
+                f"{COL_SMILES},{COL_MODEL_NAME},mol_idx\n"
+            )
+
+        config = {"generated_mols_path": "/fallback/path.csv"}
+
+        assert get_input_path(config, str(tmp_path)) == str(expected)
 
     def test_falls_back_to_config(self, tmp_path):
         """Should fall back to config path if no processed data."""

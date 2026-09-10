@@ -35,7 +35,7 @@ pipeline:
 | Checkpoint | Source File | Description |
 |------------|------------|-------------|
 | **Input** | `input/sampled_molecules.csv` | Raw generated molecules before any filtering |
-| **Descriptors** | `stages/02_descriptors_initial/filtered/filtered_molecules.csv` | After descriptor calculation and initial property filtering |
+| **Descriptors** | `stages/02_descriptors_initial/filtered_molecules.csv` | After descriptor calculation and initial property filtering |
 | **StructFilters** | `stages/03_structural_filters_post/filtered_molecules.csv` | After all structural filters (PAINS, NIBR, Lilly, medchem, etc.) |
 | **Synthesis** | `stages/04_synthesis/filtered_molecules.csv` | After retrosynthesis feasibility filtering |
 | **DockingFilters** | `stages/06_docking_filters/filtered_molecules.csv` | After docking score threshold filtering |

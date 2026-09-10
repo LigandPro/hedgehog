@@ -43,8 +43,9 @@ def report_gen(base_path):
             "docking_filters": {
                 "aggregation": {"mode": "all"},
                 "pose_quality": {
-                    "max_clashes": 2,
-                    "max_strain_energy": 50.0,
+                    "clash_cutoff": 0.75,
+                    "volume_clash_cutoff": 0.075,
+                    "max_distance": 5.0,
                 },
                 "conformer_deviation": {"max_rmsd_to_conformer": 3.0},
                 "search_box": {"max_outside_fraction": 0.0},
@@ -72,8 +73,6 @@ class TestGetDockingFiltersDetailed:
             {
                 "mol_idx": [0, 1, 2, 3, 4],
                 "model_name": ["ModelA", "ModelA", "ModelB", "ModelB", "ModelA"],
-                "clashes": [0, 1, 3, 0, 2],
-                "strain_energy": [5.0, 12.0, 60.0, 3.0, 25.0],
                 "min_conformer_rmsd": [1.0, 2.5, 4.0, 0.8, 1.5],
                 "frac_atoms_outside_box": [0.0, 0.0, 0.1, 0.0, 0.0],
                 "pass_search_box": [True, True, False, True, True],
@@ -113,9 +112,9 @@ class TestGetDockingFiltersDetailed:
         assert result["per_filter"]["pose_quality"]["total"] == 5
 
         # Numeric metrics
-        assert "clashes" in result["numeric_metrics"]
-        assert len(result["numeric_metrics"]["clashes"]) == 5
-        assert "strain_energy" in result["numeric_metrics"]
+        assert "min_conformer_rmsd" in result["numeric_metrics"]
+        assert len(result["numeric_metrics"]["min_conformer_rmsd"]) == 5
+        assert "frac_atoms_outside_box" in result["numeric_metrics"]
 
         # By model
         assert "ModelA" in result["by_model"]
@@ -125,8 +124,6 @@ class TestGetDockingFiltersDetailed:
         assert result["by_model"]["ModelB"]["total"] == 2
 
         # Thresholds from config
-        assert result["thresholds"]["clashes"]["max"] == 2
-        assert result["thresholds"]["strain_energy"]["max"] == 50.0
         assert result["thresholds"]["min_conformer_rmsd"]["max"] == 3.0
 
     def test_handles_empty_csv(self, report_gen, base_path):
@@ -584,10 +581,13 @@ class TestNewPlotFunctions:
         from hedgehog.reporting.plots import plot_docking_filters_metric_histograms
 
         metrics = {
-            "clashes": [0, 1, 2, 0, 3, 1],
-            "strain_energy": [5.0, 12.0, 25.0, 3.0, 45.0],
+            "min_conformer_rmsd": [1.0, 2.5, 4.0, 0.8, 1.5],
+            "frac_atoms_outside_box": [0.0, 0.0, 0.1, 0.0, 0.0],
         }
-        thresholds = {"clashes": {"max": 2}, "strain_energy": {"max": 50.0}}
+        thresholds = {
+            "min_conformer_rmsd": {"max": 3.0},
+            "frac_atoms_outside_box": {"max": 0.0},
+        }
         html = plot_docking_filters_metric_histograms(metrics, thresholds)
         assert html
         assert "plotly" in html.lower() or "div" in html.lower()

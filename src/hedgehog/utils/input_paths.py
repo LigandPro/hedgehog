@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 # Stage directory basenames (under stages/)
+_STAGE_DOCKING_FILTERS = "06_docking_filters"
+_STAGE_DOCKING = "05_docking"
 _STAGE_SYNTHESIS = "04_synthesis"
 _STAGE_STRUCT_FILTERS_POST = "03_structural_filters_post"
 _STAGE_DESCRIPTORS_INITIAL = "02_descriptors_initial"
@@ -11,8 +13,11 @@ _STAGE_MOL_PREP = "01_mol_prep"
 
 # Priority order for input sources (hierarchical structure)
 INPUT_SOURCE_PRIORITY_NEW = [
+    ("stages", _STAGE_DOCKING_FILTERS, "filtered_molecules.csv"),
+    ("stages", _STAGE_DOCKING, "filtered_molecules.csv"),
     ("stages", _STAGE_SYNTHESIS, "filtered_molecules.csv"),
     ("stages", _STAGE_STRUCT_FILTERS_POST, "filtered_molecules.csv"),
+    ("stages", _STAGE_DESCRIPTORS_INITIAL, "filtered_molecules.csv"),
     ("stages", _STAGE_DESCRIPTORS_INITIAL, "filtered", "filtered_molecules.csv"),
     ("stages", _STAGE_MOL_PREP, "filtered_molecules.csv"),
     ("input", "sampled_molecules.csv"),
@@ -34,6 +39,7 @@ STAGE_DIRECTORIES = {
     ],
     "descriptors": ["stages/02_descriptors_initial", "Descriptors"],
     "docking": ["stages/05_docking"],
+    "docking_filters": ["stages/06_docking_filters"],
     "mol_prep": ["stages/01_mol_prep"],
 }
 

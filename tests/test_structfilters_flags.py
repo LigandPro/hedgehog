@@ -77,11 +77,10 @@ def test_flags_disable_outputs_and_plots(tmp_path, monkeypatch):
         {
             "filter_data": True,
             "calculate_bredt": True,
-            "parse_input_n_jobs": 1,
+            "enforced_filters": [],
             "write_per_filter_outputs": False,
             "generate_plots": True,
             "generate_failure_analysis": True,
-            "combine_in_memory": True,
         },
     )
 
@@ -108,6 +107,7 @@ def test_flags_disable_outputs_and_plots(tmp_path, monkeypatch):
     plot_ratio_mock.assert_not_called()
     fail_analysis_mock.assert_not_called()
     combine_mock.assert_called_once()
+    assert combine_mock.call_args.args[2] == {}
 
 
 def test_flags_enable_outputs_and_plots(tmp_path, monkeypatch):
@@ -117,11 +117,9 @@ def test_flags_enable_outputs_and_plots(tmp_path, monkeypatch):
         {
             "filter_data": False,
             "calculate_bredt": True,
-            "parse_input_n_jobs": 1,
             "write_per_filter_outputs": True,
             "generate_plots": True,
             "generate_failure_analysis": True,
-            "combine_in_memory": True,
         },
     )
 
@@ -169,11 +167,9 @@ def test_progress_uses_real_molecule_totals(tmp_path, monkeypatch):
         {
             "filter_data": False,
             "calculate_bredt": True,
-            "parse_input_n_jobs": 1,
             "write_per_filter_outputs": False,
             "generate_plots": False,
             "generate_failure_analysis": False,
-            "combine_in_memory": True,
         },
     )
 
@@ -203,3 +199,128 @@ def test_progress_uses_real_molecule_totals(tmp_path, monkeypatch):
     assert all(total == 2 for total in totals)
     assert 0 in currents
     assert 2 in currents
+
+
+def test_enforced_filters_keep_other_calculations_diagnostic(tmp_path, monkeypatch):
+    _mock_filter_processing(monkeypatch)
+    config = _build_base_config(
+        tmp_path,
+        {
+            "filter_data": True,
+            "calculate_bredt": True,
+            "calculate_protecting_groups": True,
+            "enforced_filters": ["bredt"],
+            "write_per_filter_outputs": False,
+            "generate_plots": False,
+            "generate_failure_analysis": False,
+        },
+    )
+    captured = {}
+
+    def capture_combine(_output_dir, _input_df, pass_masks):
+        captured.update(pass_masks)
+
+    monkeypatch.setattr(
+        structfilters_main, "combine_filter_results_in_memory", capture_combine
+    )
+
+    structfilters_main.main(config, "StructFilters")
+
+    assert set(captured) == {"bredt"}
+
+
+def test_per_filter_flags_control_survival_independently_of_calculation(
+    tmp_path, monkeypatch
+):
+    _mock_filter_processing(monkeypatch)
+    config = _build_base_config(
+        tmp_path,
+        {
+            "filter_data": True,
+            "calculate_bredt": True,
+            "calculate_protecting_groups": True,
+            "filter_bredt": False,
+            "filter_protecting_groups": True,
+            "write_per_filter_outputs": False,
+            "generate_plots": False,
+            "generate_failure_analysis": False,
+        },
+    )
+    captured = {}
+
+    def capture_combine(_output_dir, _input_df, pass_masks):
+        captured.update(pass_masks)
+
+    monkeypatch.setattr(
+        structfilters_main, "combine_filter_results_in_memory", capture_combine
+    )
+
+    structfilters_main.main(config, "StructFilters")
+
+    assert set(captured) == {"protecting_groups"}
+    profile = pd.read_csv(
+        tmp_path / "StructFilters" / "structural_liability_profile.csv"
+    )
+    assert bool(profile["bredt__filter_enabled"].iloc[0]) is False
+    assert bool(profile["protecting_groups__filter_enabled"].iloc[0]) is True
+
+def test_undefined_stereo_is_hard_while_total_is_diagnostic(tmp_path, monkeypatch):
+    _mock_filter_processing(monkeypatch)
+    stereo_df = pd.DataFrame(
+        {
+            "smiles": ["CCO"],
+            "model_name": ["m1"],
+            "mol_idx": [0],
+            "mol": [object()],
+            "pass": [True],
+            "n_stereo_centers": [3],
+            "n_undefined_stereo_centers": [3],
+            "stereo_max_centers": [4],
+            "stereo_max_undefined": [2],
+            "undefined_stereo_pass": [False],
+            "undefined_stereo_reason": [
+                "undefined_stereocenters=3 > maximum=2"
+            ],
+        }
+    )
+    metrics_df = pd.DataFrame(
+        {"model_name": ["m1"], "num_mol": [1], "banned_ratio": [0.0]}
+    )
+    monkeypatch.setattr(
+        structfilters_main,
+        "get_basic_stats",
+        lambda *args, **kwargs: (metrics_df.copy(), stereo_df.copy()),
+    )
+    config = _build_base_config(
+        tmp_path,
+        {
+            "filter_data": True,
+            "calculate_stereo_center": True,
+            "filter_stereo_center": False,
+            "filter_undefined_stereo_center": True,
+            "write_per_filter_outputs": False,
+            "write_structural_liability_profile": True,
+            "generate_plots": False,
+            "generate_failure_analysis": False,
+        },
+    )
+    captured = {}
+
+    def capture_combine(_output_dir, _input_df, pass_masks):
+        captured.update(pass_masks)
+
+    monkeypatch.setattr(
+        structfilters_main, "combine_filter_results_in_memory", capture_combine
+    )
+
+    structfilters_main.main(config, "StructFilters")
+
+    assert set(captured) == {"undefined_stereo_center"}
+    assert captured["undefined_stereo_center"]["pass"].tolist() == [False]
+    profile = pd.read_csv(
+        tmp_path / "StructFilters" / "structural_liability_profile.csv"
+    )
+    assert bool(profile["stereo_center__filter_enabled"].iloc[0]) is False
+    assert bool(profile["undefined_stereo_center__filter_enabled"].iloc[0]) is True
+    assert bool(profile["stage3_hard_pass"].iloc[0]) is False
+    assert profile["hard_failed_filters"].iloc[0] == "undefined_stereo_center"

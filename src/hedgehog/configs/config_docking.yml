@@ -1,32 +1,38 @@
 run: true
-tools: gnina  # Options: all, gnina, smina, matcha, or a comma-separated list such as gnina,matcha
-receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
+
+calculate_score_thresholds_from_targets: true # Target alignment calibrates one affinity cutoff for every configured tool
+score_thresholds:
+  smina:  {score_property: minimizedAffinity, max: -6.5}
+  gnina:  {score_property: minimizedAffinity, max: -6.5}
+  matcha: {score_property: minimizedAffinity, max: -6.5}
+tools: all  # all | [gnina, smina, matcha] | a comma-separated list as gnina,matcha
+receptor_pdb: examples/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
-prepare_ligands: false  # If true, use ligand_preparation_tool for conformer generation (may expand molecules 4x times).
-                        # If false, use input molecules directly (1:1 mapping)
-gnina_per_process_cpu: 8
-gnina_parallel_jobs_max: 6
+prepare_ligands: false   # true: use ligand_preparation_tool for conformer generation (may expand molecules 4x times).
+                         # false: use input molecules directly (1:1 mapping)
 smina_config:
   bin: smina
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
+  autobox_ligand: examples/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
   exhaustiveness: 8
   num_modes: 1
+
+gnina_parallel_jobs_max: 8 # max concurrent gnina processes; omit to auto from CPUs/GPUs
 gnina_config:
   bin: gnina
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
+  autobox_ligand: examples/05C_from_7EW9.sdf
   autobox_add: 4
-  cpu: 8
+  cpu: 2                   # 2 cpus per job x jobs_max = total cpus required
   seed: 42
   no_gpu: false
   num_modes: 1
+
 matcha_config:
   checkout_dir: modules/matcha_remote
-  uv_bin: uv
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf
+  autobox_ligand: examples/05C_from_7EW9.sdf
   device: auto
   n_samples: 20
   scorer: gnina

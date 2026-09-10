@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from hedgehog.descriptors.io import process_path as descriptors_process_path
-from hedgehog.struct_filters.io import process_path as struct_filters_io_process_path
+from hedgehog.struct_filters.utils import process_path as struct_filters_process_path
 from hedgehog.utils.paths import process_path
 
 
@@ -35,9 +35,9 @@ def test_shared_process_path_appends_keyword_subfolder(tmp_path):
     assert Path(result.rstrip("/")).exists()
 
 
-def test_struct_filters_io_process_path_stays_compatible(tmp_path):
+def test_struct_filters_process_path_stays_compatible(tmp_path):
     target = tmp_path / "compat_out"
-    assert struct_filters_io_process_path(target) == process_path(target)
+    assert struct_filters_process_path(target) == process_path(target)
 
 
 def test_descriptors_io_reexports_shared_process_path():
@@ -81,12 +81,8 @@ def test_docking_filters_package_exports_main_lazily(monkeypatch):
     module = _reload_package_without_submodules(
         monkeypatch,
         "hedgehog.docking_filters",
-        [
-            "hedgehog.docking_filters.main",
-            "hedgehog.docking_filters.utils",
-        ],
+        ["hedgehog.docking_filters.main"],
     )
     assert "hedgehog.docking_filters.main" not in sys.modules
-    assert "hedgehog.docking_filters.utils" not in sys.modules
     assert callable(module.docking_filters_main)
     assert "hedgehog.docking_filters.main" in sys.modules

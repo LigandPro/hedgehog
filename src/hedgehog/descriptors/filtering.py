@@ -239,15 +239,29 @@ def _build_structural_constraint_borders(structural_constraints):
     return translated
 
 
-def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
+def filter_molecules(
+    df,
+    borders,
+    folder_to_save,
+    structural_constraints=None,
+    molecule_output_folder=None,
+):
     """Filter molecules based on descriptor thresholds.
 
     Args:
         df: DataFrame with computed descriptors
         borders: Dictionary with min/max thresholds for each descriptor
-        folder_to_save: Output folder path (should already include 'Descriptors' subfolder)
+        folder_to_save: Folder for descriptor diagnostics and pass/fail details.
+        structural_constraints: Optional structural descriptor limits.
+        molecule_output_folder: Folder for the lightweight filtered/failed molecule
+            tables. Defaults to ``folder_to_save`` for backwards compatibility.
     """
     folder_to_save = Path(process_path(folder_to_save))
+    molecule_output_folder = Path(
+        process_path(molecule_output_folder or folder_to_save)
+    )
+    folder_to_save.mkdir(parents=True, exist_ok=True)
+    molecule_output_folder.mkdir(parents=True, exist_ok=True)
     id_cols = ["smiles", "model_name", "mol_idx"]
     normalized_borders, constraints = _extract_borders_and_constraints(
         borders, structural_constraints
@@ -305,7 +319,7 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
             folder_to_save / "descriptors_passed.csv", index=False
         )
         pass_filters[id_cols].to_csv(
-            folder_to_save / "filtered_molecules.csv", index=False
+            molecule_output_folder / "filtered_molecules.csv", index=False
         )
     else:
         logger.warning("No molecules pass Descriptors Filters")
@@ -322,7 +336,7 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
             ]
         ).to_csv(folder_to_save / "descriptors_passed.csv", index=False)
         pd.DataFrame(columns=id_cols).to_csv(
-            folder_to_save / "filtered_molecules.csv", index=False
+            molecule_output_folder / "filtered_molecules.csv", index=False
         )
 
     # Save failed molecules
@@ -351,10 +365,23 @@ def filter_molecules(df, borders, folder_to_save, structural_constraints=None):
             fail_filters = all_computed.copy()
 
         if len(fail_filters) > 0:
-            save_failed_molecules(fail_filters, folder_to_save, flags_path)
+            save_failed_molecules(
+                fail_filters,
+                folder_to_save,
+                flags_path,
+                molecule_output_folder=molecule_output_folder,
+            )
+        else:
+            pd.DataFrame(columns=id_cols).to_csv(
+                molecule_output_folder / "failed_molecules.csv", index=False
+            )
+    else:
+        pd.DataFrame(columns=id_cols).to_csv(
+            molecule_output_folder / "failed_molecules.csv", index=False
+        )
 
     # Re-order existing CSV files
-    if (folder_to_save / "filtered_molecules.csv").exists():
+    if (molecule_output_folder / "filtered_molecules.csv").exists():
         if all_computed is not None:
             order_identity_columns(all_computed).to_csv(all_computed_path, index=False)
 

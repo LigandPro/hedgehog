@@ -23,12 +23,6 @@ def _resolve_autobox_path(autobox_ligand, project_root):
     if candidate.exists():
         return candidate
 
-    if "data/" in autobox_ligand:
-        data_path = autobox_ligand[autobox_ligand.find("data/") :]
-        candidate = (project_root / data_path).resolve()
-        if candidate.exists():
-            return candidate
-
     return None
 
 

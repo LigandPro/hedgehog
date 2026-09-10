@@ -32,12 +32,74 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
+def _load_reference_ligand(path: str | Path) -> Chem.Mol | None:
+    """Load the first molecule from an SDF or MOL file."""
+    ligand_path = Path(path)
+    if not ligand_path.exists():
+        return None
+    suffix = ligand_path.suffix.lower()
+    if suffix == ".sdf":
+        supplier = Chem.SDMolSupplier(str(ligand_path), removeHs=False)
+        return next((mol for mol in supplier if mol is not None), None)
+    return Chem.MolFromMolFile(str(ligand_path), removeHs=False)
+
+
+def _active_interaction_bits(row: pd.Series) -> set[str]:
+    bits: set[str] = set()
+    for column, value in row.items():
+        try:
+            active = bool(value)
+        except Exception:
+            active = False
+        if active:
+            bits.add(str(column))
+    return bits
+
+
+def _tanimoto_bits(left: set[str], right: set[str]) -> float:
+    if not left and not right:
+        return 1.0
+    union = left | right
+    if not union:
+        return 0.0
+    return len(left & right) / len(union)
+
+
+def _align_mol_to_reference(mol: Chem.Mol, reference_mol: Chem.Mol) -> Chem.Mol:
+    """Align a pose onto the reference ligand; return the original mol on failure."""
+    if mol is None or reference_mol is None:
+        return mol
+    if mol.GetNumConformers() == 0 or reference_mol.GetNumConformers() == 0:
+        return mol
+    aligned = Chem.Mol(mol)
+    try:
+        AllChem.AlignMol(aligned, reference_mol)
+        return aligned
+    except Exception:
+        try:
+            from rdkit.Chem import rdMolAlign
+
+            rdMolAlign.GetBestRMS(aligned, reference_mol)
+            return aligned
+        except Exception:
+            logger.warning("align_before_scoring failed; using unaligned coordinates")
+            return mol
+
+
 def _ensure_posecheck_fast_rdkit_compat() -> None:
     """Restore the legacy RDKit API expected by posecheck-fast."""
     periodic_table_type = type(Chem.GetPeriodicTable())
-    if hasattr(periodic_table_type, "GetMaxAtomicNumber"):
-        return
-    periodic_table_type.GetMaxAtomicNumber = lambda self: 118
+    if not hasattr(periodic_table_type, "GetMaxAtomicNumber"):
+        periodic_table_type.GetMaxAtomicNumber = lambda self: 118
+
+    conformer_type = type(Chem.Conformer(0))
+    if not hasattr(conformer_type, "SetPositions"):
+
+        def _set_positions(self, positions) -> None:
+            for atom_index, position in enumerate(np.asarray(positions, dtype=float)):
+                self.SetAtomPosition(atom_index, position)
+
+        conformer_type.SetPositions = _set_positions
 
 
 @contextmanager
@@ -257,7 +319,7 @@ def _check_conformer_rmsd_single(args: tuple) -> dict[str, Any]:
         args: Tuple of
             (mol, num_conformers, max_rmsd, method_name, random_seed,
              include_hydrogens, max_matches, early_stop_on_pass, use_symmetry,
-             use_nvmolkit).
+             use_nvmolkit, optimize_conformers).
 
     Returns:
         Dict with keys: min_rmsd, n_conformers_generated, passed, error.
@@ -273,6 +335,7 @@ def _check_conformer_rmsd_single(args: tuple) -> dict[str, Any]:
         early_stop_on_pass,
         use_symmetry,
         use_nvmolkit,
+        optimize_conformers,
     ) = args
     try:
         if use_nvmolkit:
@@ -288,6 +351,12 @@ def _check_conformer_rmsd_single(args: tuple) -> dict[str, Any]:
         mol_confs.RemoveAllConformers()
         AllChem.EmbedMultipleConfs(mol_confs, numConfs=num_conformers, params=params)
         n_generated = mol_confs.GetNumConformers()
+        if optimize_conformers:
+            for conf_id in range(n_generated):
+                try:
+                    AllChem.UFFOptimizeMolecule(mol_confs, confId=conf_id)
+                except Exception:
+                    continue
 
         if n_generated == 0:
             return _fail_result("no conformers generated", **_CONFORMER_ERROR)
@@ -485,67 +554,6 @@ def load_molecules_from_sdf(sdf_path: str | Path) -> list[Chem.Mol]:
 
 
 # ---------------------------------------------------------------------------
-# Pose quality filter (PoseCheck legacy)
-# ---------------------------------------------------------------------------
-
-
-def apply_pose_quality_filter(
-    mols: list[Chem.Mol],
-    protein_pdb: str | Path,
-    config: dict[str, Any],
-) -> pd.DataFrame:
-    """
-    Apply pose quality filter using PoseCheck.
-
-    Checks for steric clashes and ligand strain energy.
-
-    Args:
-        mols: List of RDKit molecules with 3D coordinates
-        protein_pdb: Path to protein PDB file
-        config: Filter configuration dict
-
-    Returns:
-        DataFrame with columns: mol_idx, clashes, strain_energy, pass
-    """
-    from posecheck import PoseCheck
-
-    max_clashes = config.get("max_clashes", 2)
-    max_strain = config.get("max_strain_energy", 10.0)
-
-    logger.info(
-        "Running pose quality filter (max_clashes=%d, max_strain=%.1f)",
-        max_clashes,
-        max_strain,
-    )
-
-    pc = PoseCheck()
-    pc.load_protein_from_pdb(str(protein_pdb))
-    pc.ligands = mols
-
-    # Calculate metrics
-    clashes = pc.calculate_clashes()
-    strain_energies = pc.calculate_strain_energy()
-
-    # Build results DataFrame
-    df = pd.DataFrame(
-        {
-            "mol_idx": range(len(mols)),
-            "clashes": clashes,
-            "strain_energy": strain_energies,
-        }
-    )
-    df["pass_pose_quality"] = (df["clashes"] <= max_clashes) & (
-        df["strain_energy"] <= max_strain
-    )
-    logger.info(
-        "Pose quality filter: %d/%d passed",
-        int(df["pass_pose_quality"].sum()),
-        len(df),
-    )
-    return df
-
-
-# ---------------------------------------------------------------------------
 # Interaction filter (ProLIF)
 # ---------------------------------------------------------------------------
 
@@ -578,6 +586,8 @@ def apply_interaction_filter(
     interaction_types = config.get(
         "interaction_types", ["HBDonor", "HBAcceptor", "Hydrophobic", "VdWContact"]
     )
+    similarity_threshold = float(config.get("similarity_threshold", 0.0) or 0.0)
+    reference_ligand_path = config.get("reference_ligand")
 
     logger.info("Running interaction filter (min_hbonds=%d)", min_hbonds)
 
@@ -617,6 +627,7 @@ def apply_interaction_filter(
             if interaction_type != "unknown":
                 break
 
+        residue_candidates: list[str] = []
         for part in parts:
             cleaned = part.strip().strip("'\"")
             if not cleaned:
@@ -625,10 +636,14 @@ def apply_interaction_filter(
                 continue
             match = residue_pattern.search(cleaned)
             if match:
-                residue = match.group(0).replace(" ", ":")
-                break
+                residue_candidates.append(cleaned.replace(" ", ":"))
+                continue
             if residue == "unknown":
                 residue = cleaned
+        if residue_candidates:
+            # ProLIF tuple columns are (ligand, protein residue, interaction).
+            # Select the last residue-like token so UNL1 never replaces ASP12.A.
+            residue = residue_candidates[-1]
 
         return {
             "label": label,
@@ -684,6 +699,32 @@ def apply_interaction_filter(
 
     df_interactions = fp.to_dataframe(drop_empty=False)
 
+    ref_bits: set[str] | None = None
+    if similarity_threshold > 0:
+        if not reference_ligand_path:
+            logger.warning(
+                "interactions.similarity_threshold=%.3f but reference_ligand is "
+                "unset; skipping interaction similarity",
+                similarity_threshold,
+            )
+        else:
+            ref_mol = _load_reference_ligand(reference_ligand_path)
+            if ref_mol is None:
+                logger.warning(
+                    "Failed to load interactions.reference_ligand=%s; "
+                    "skipping interaction similarity",
+                    reference_ligand_path,
+                )
+            else:
+                ref_h = Chem.AddHs(ref_mol, addCoords=True)
+                fp_ref = plf.Fingerprint(interactions=safe_interactions)
+                fp_ref.run_from_iterable(
+                    [plf.Molecule.from_rdkit(ref_h)], protein, n_jobs=1
+                )
+                ref_df = fp_ref.to_dataframe(drop_empty=False)
+                if not ref_df.empty:
+                    ref_bits = _active_interaction_bits(ref_df.iloc[0])
+
     # Build results DataFrame
     results = []
     for i in range(len(mols)):
@@ -699,7 +740,7 @@ def apply_interaction_filter(
             has_required = True
             for res in required_residues:
                 res_cols = [c for c in row.index if res in str(c)]
-                if res_cols and not any(row[res_cols].values):
+                if not res_cols or not any(row[res_cols].values):
                     has_required = False
                     break
 
@@ -712,12 +753,22 @@ def apply_interaction_filter(
                     break
 
             passed = n_hbonds >= min_hbonds and has_required and not has_forbidden
+            similarity = float("nan")
+            if ref_bits is not None:
+                similarity = _tanimoto_bits(
+                    _active_interaction_bits(row), ref_bits
+                )
+                passed = passed and similarity >= similarity_threshold
             active_labels = _collect_active_labels(row)
             interactions_str = ",".join(item["label"] for item in active_labels)
             interaction_labels_json = json.dumps(active_labels, sort_keys=True)
         else:
             n_hbonds = 0
             passed = min_hbonds == 0 and not required_residues
+            similarity = float("nan")
+            if ref_bits is not None:
+                similarity = 0.0
+                passed = False
             interactions_str = ""
             interaction_labels_json = "[]"
 
@@ -727,6 +778,7 @@ def apply_interaction_filter(
                 "n_hbonds": n_hbonds,
                 "interactions": interactions_str,
                 "interaction_labels_json": interaction_labels_json,
+                "interaction_similarity": similarity,
                 "pass_interactions": passed,
             }
         )
@@ -1031,11 +1083,16 @@ def apply_shepherd_score_filter(
         backend = "auto"
 
     min_shape_score = float(config.get("min_shape_score", 0.5))
+    align_before_scoring = bool(config.get("align_before_scoring", True))
     logger.info(
-        "Running Shepherd-Score filter (backend=%s, min_shape_score=%.2f)",
+        "Running Shepherd-Score filter (backend=%s, min_shape_score=%.2f, "
+        "align_before_scoring=%s)",
         backend,
         min_shape_score,
+        align_before_scoring,
     )
+    if align_before_scoring:
+        mols = [_align_mol_to_reference(mol, reference_mol) for mol in mols]
 
     if backend in {"auto", "worker"}:
         try:
@@ -1174,7 +1231,7 @@ def apply_posebusters_fast_filter(
     config: dict[str, Any],
     progress_cb=None,
 ) -> pd.DataFrame:
-    """Apply pose quality filter using posecheck-fast (~100x faster than PoseCheck).
+    """Apply pose quality filter using posecheck-fast.
 
     Checks for steric clashes (VDW), volume overlap (ShapeTverskyIndex),
     distance to protein, and internal geometry (bond lengths/angles).
@@ -1298,11 +1355,14 @@ def apply_symmetry_rmsd_filter(
     max_matches = int(config.get("max_matches", 10000))
     early_stop_on_pass = bool(config.get("early_stop_on_pass", True))
     use_nvmolkit = bool(config.get("use_nvmolkit", True))
+    optimize_conformers = bool(config.get("optimize_conformers", False))
 
     logger.info(
-        "Running symmetry-RMSD conformer filter (max_rmsd=%.1f, n_confs=%d)",
+        "Running symmetry-RMSD conformer filter (max_rmsd=%.1f, n_confs=%d, "
+        "optimize_conformers=%s)",
         max_rmsd,
         num_conformers,
+        optimize_conformers,
     )
 
     n_jobs = resolve_n_jobs(config)
@@ -1318,6 +1378,7 @@ def apply_symmetry_rmsd_filter(
             early_stop_on_pass,
             True,  # use_symmetry
             use_nvmolkit,
+            optimize_conformers,
         )
         for mol in mols
     ]
@@ -1360,6 +1421,7 @@ def apply_conformer_deviation_filter(
     random_seed = config.get("random_seed", 42)
     method = config.get("conformer_method", "ETKDGv3")
     use_nvmolkit = bool(config.get("use_nvmolkit", True))
+    optimize_conformers = bool(config.get("optimize_conformers", False))
 
     logger.info(
         "Running conformer deviation filter (max_rmsd=%.1f, n_confs=%d)",
@@ -1381,6 +1443,7 @@ def apply_conformer_deviation_filter(
             False,  # early_stop_on_pass (not supported in naive)
             False,  # use_symmetry
             use_nvmolkit,
+            optimize_conformers,
         )
         for mol in mols
     ]

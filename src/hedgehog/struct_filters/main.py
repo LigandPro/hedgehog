@@ -11,11 +11,16 @@ from hedgehog.struct_filters.common_alert_diagnostics import (
 )
 from hedgehog.struct_filters.large import run_large
 from hedgehog.struct_filters.utils import (
+    attach_structural_enforcement_pass,
+    build_structural_policy_pass_masks,
     combine_filter_results_in_memory,
-    filter_data,
     filter_function_applier,
+    finalize_structural_liability_profile,
     get_basic_stats,
+    initialize_structural_liability_profile,
     inject_identity_columns_to_all_csvs,
+    merge_structural_liability_profile,
+    merge_structural_policy_aliases,
     plot_calculated_stats,
     plot_filter_failures_analysis,
     plot_restriction_ratios,
@@ -25,6 +30,11 @@ from hedgehog.struct_filters.utils import (
     process_path,
     process_prepared_payload,
 )
+from hedgehog.struct_filters.waves.registry import (
+    get_aligned_enforced_filters,
+    get_calculated_policy_names,
+    policy_calculation_filter,
+)
 from hedgehog.utils.input_paths import find_sampled_molecules
 from hedgehog.utils.mol_index import assign_mol_idx
 from hedgehog.utils.parallel import resolve_n_jobs
@@ -33,14 +43,15 @@ IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
 
 _FILTER_DESCRIPTIONS: dict[str, str] = {
     "common_alerts": "SMARTS-based structural alert screening using curated rule sets (PAINS, Dundee, BMS, Glaxo, etc.).",
-    "molgraph_stats": "Graph-theoretic severity metrics (levels 1–11) highlighting topological anomalies.",
+    "molgraph_stats": "Generator graph-sanity patterns with catalog severities 5, 8, and 10.",
     "molcomplexity": "Molecular complexity heuristics (medchem complexity filters).",
     "NIBR": "Novartis in-house structural filters (severity-based developability heuristics).",
     "bredt": "Bredt's rule violations at bridgehead positions in small bicyclic systems.",
     "lilly": "Eli Lilly Medchem Rules demerit scoring; higher demerits indicate less desirable structures.",
-    "protecting_groups": "Common protecting group motifs (e.g., Boc/Fmoc/Cbz) that are undesirable in final compounds.",
+    "protecting_groups": "Curated terminal Fmoc, N-tert-butoxymethyl, and Boc-family motifs that are undesirable in final compounds.",
     "ring_infraction": "Strained/unusual ring systems and ring infractions (configurable heterocycle minimum size).",
-    "stereo_center": "Excessive or undefined stereocenters (configurable max count / max undefined).",
+    "stereo_center": "Total stereocenter count diagnostic with an optional independent hard gate.",
+    "undefined_stereo_center": "Undefined stereocenters above the configured inclusive maximum.",
     "halogenicity": "Excessive halogen content (configurable thresholds for F/Cl/Br).",
     "symmetry": "Highly symmetric molecules (optional; configurable symmetry threshold).",
 }
@@ -102,6 +113,7 @@ def _get_input_path(config, stage_dir, folder_to_save):
     if is_post_descriptors:
         base = Path(folder_to_save)
         descriptors_candidates = [
+            str(base / "stages" / "02_descriptors_initial" / "filtered_molecules.csv"),
             str(
                 base
                 / "stages"
@@ -245,11 +257,14 @@ def _get_enabled_filters(config_struct_filters):
     }
 
 
-def _write_stage_readme(
-    output_dir: Path, stage_dir: str, config_struct_filters: dict
-) -> None:
+def _write_stage_readme(output_dir: Path, config_struct_filters: dict) -> None:
     """Write a README.md into the stage output directory describing available filters and outputs."""
     enabled = sorted(_get_enabled_filters(config_struct_filters).keys())
+    hard_filters = sorted(
+        key.removeprefix("filter_")
+        for key, value in config_struct_filters.items()
+        if key.startswith("filter_") and key != "filter_data" and value is True
+    )
     all_known = sorted(_FILTER_DESCRIPTIONS.keys(), key=lambda x: x.lower())
     disabled = [f for f in all_known if f not in enabled]
 
@@ -269,7 +284,7 @@ def _write_stage_readme(
     lines.append("## Filters")
     lines.append("")
     lines.append(
-        "Each filter is controlled via `config_struct_filters.yml` keys like `calculate_<filter_name>: true`."
+        "`calculate_<filter_name>` enables diagnostics; `filter_<filter_name>` independently includes that method in Stage 3 survival."
     )
     lines.append("")
     lines.append("### Enabled in this run")
@@ -280,6 +295,14 @@ def _write_stage_readme(
             lines.append(f"- `{name}` — {desc}" if desc else f"- `{name}`")
     else:
         lines.append("- (none)")
+    lines.append("")
+    lines.append("### Hard filters in this run")
+    lines.append("")
+    if hard_filters:
+        for name in hard_filters:
+            lines.append(f"- `{name}`")
+    else:
+        lines.append("- (none; diagnostics only)")
     lines.append("")
     lines.append("### Available filters (reference)")
     lines.append("")
@@ -299,9 +322,14 @@ def _write_stage_readme(
     lines.append("")
     lines.append("Combined outputs (stage root):")
     lines.append("")
-    lines.append("- `filtered_molecules.csv` — molecules passing all enabled filters")
     lines.append(
-        "- `failed_molecules.csv` — molecules failing at least one filter (best effort)"
+        "- `filtered_molecules.csv` — molecules passing every method with `filter_<name>: true`"
+    )
+    lines.append(
+        "- `failed_molecules.csv` — molecules failing at least one enforced hard filter (best effort)"
+    )
+    lines.append(
+        "- `structural_liability_profile.csv` — hard decision plus all molecule-level diagnostics"
     )
     lines.append("")
     lines.append("Plots (if generated):")
@@ -325,40 +353,6 @@ def _write_stage_readme(
     (output_dir / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def _resolve_parse_input_n_jobs(config_struct_filters: dict, config: dict) -> int:
-    """Resolve workers for one-time SMILES parsing."""
-    raw = config_struct_filters.get("parse_input_n_jobs", -1)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        logger.warning("Invalid parse_input_n_jobs=%r. Falling back to auto.", raw)
-        value = -1
-
-    if value > 0:
-        return value
-    return resolve_n_jobs({"n_jobs": value}, config)
-
-
-def _build_filter_pass_mask(filter_extended: pd.DataFrame) -> pd.DataFrame:
-    """Build compact pass mask table for in-memory combine."""
-    id_cols = [c for c in IDENTITY_COLUMNS if c in filter_extended.columns]
-    if "pass" in filter_extended.columns:
-        pass_col = "pass"
-    elif "pass_filter" in filter_extended.columns:
-        pass_col = "pass_filter"
-    else:
-        pass_col = None
-
-    if pass_col is None or not id_cols:
-        return pd.DataFrame(columns=id_cols + ["pass"])
-
-    out = filter_extended[id_cols + [pass_col]].copy()
-    if pass_col != "pass":
-        out = out.rename(columns={pass_col: "pass"})
-    out["pass"] = out["pass"].fillna(False).astype(bool)
-    return out.drop_duplicates(subset=id_cols, keep="last")
-
-
 def _log_stage_timings(timings: dict[str, float]) -> None:
     """Log structured stage timings."""
     if not timings:
@@ -370,7 +364,7 @@ def _log_stage_timings(timings: dict[str, float]) -> None:
 
 def _resolve_stage_options(config_struct_filters, config):
     """Extract and validate stage-level options from config."""
-    parse_input_n_jobs = _resolve_parse_input_n_jobs(config_struct_filters, config)
+    n_jobs = resolve_n_jobs(config_struct_filters, config)
     write_per_filter_outputs = bool(
         config_struct_filters.get("write_per_filter_outputs", True)
     )
@@ -378,29 +372,19 @@ def _resolve_stage_options(config_struct_filters, config):
     generate_failure_analysis = bool(
         config_struct_filters.get("generate_failure_analysis", True)
     )
-    combine_in_memory = bool(config_struct_filters.get("combine_in_memory", True))
-    if not write_per_filter_outputs and not combine_in_memory:
-        logger.warning(
-            "write_per_filter_outputs=false with combine_in_memory=false is invalid. "
-            "Forcing combine_in_memory=true."
-        )
-        combine_in_memory = True
-
     logger.info(
-        "StructFilters mode: parse_input_n_jobs=%s, write_per_filter_outputs=%s, "
-        "generate_plots=%s, generate_failure_analysis=%s, combine_in_memory=%s",
-        parse_input_n_jobs,
+        "StructFilters mode: n_jobs=%s, write_per_filter_outputs=%s, "
+        "generate_plots=%s, generate_failure_analysis=%s",
+        n_jobs,
         write_per_filter_outputs,
         generate_plots,
         generate_failure_analysis,
-        combine_in_memory,
     )
     return {
-        "parse_input_n_jobs": parse_input_n_jobs,
+        "n_jobs": n_jobs,
         "write_per_filter_outputs": write_per_filter_outputs,
         "generate_plots": generate_plots,
         "generate_failure_analysis": generate_failure_analysis,
-        "combine_in_memory": combine_in_memory,
     }
 
 
@@ -421,7 +405,6 @@ def _make_filter_progress_cb(reporter, molecule_total, filter_name):
 
 def _compute_filter(
     config,
-    filter_name,
     apply_func,
     prepared_payload,
     is_csv,
@@ -458,10 +441,7 @@ def _run_post_filter_phases(
     combine_started = perf_counter()
     is_single_stage = config.get("_run_single_stage_override") == "struct_filters"
     if config_struct_filters.get("filter_data", False) or is_single_stage:
-        if opts["combine_in_memory"]:
-            combine_filter_results_in_memory(output_dir, input_df, pass_mask_by_filter)
-        else:
-            filter_data(config, stage_dir)
+        combine_filter_results_in_memory(output_dir, input_df, pass_mask_by_filter)
     timings["combine"] = perf_counter() - combine_started
 
     plot_started = perf_counter()
@@ -504,7 +484,7 @@ def main(config, stage_dir, reporter=None):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config_struct_filters = load_config(config[CFG_STRUCT_FILTERS])
-    _write_stage_readme(output_dir, stage_dir, config_struct_filters)
+    _write_stage_readme(output_dir, config_struct_filters)
     if is_large_dataset_mode(config):
         return run_large(
             config,
@@ -522,11 +502,43 @@ def main(config, stage_dir, reporter=None):
         logger.error("Could not load input data from %s: %s", input_path, e)
         raise
 
+    if input_df.empty:
+        identity_cols = [col for col in IDENTITY_COLUMNS if col in input_df.columns]
+        empty_output = input_df[identity_cols].copy()
+        empty_output.to_csv(output_dir / "filtered_molecules.csv", index=False)
+        empty_output.to_csv(output_dir / "failed_molecules.csv", index=False)
+        if config_struct_filters.get("write_structural_liability_profile", True):
+            empty_profile = empty_output.copy()
+            empty_profile["stage3_hard_pass"] = pd.Series(dtype=bool)
+            empty_profile["hard_failed_filters"] = pd.Series(dtype=str)
+            empty_profile.to_csv(
+                output_dir / "structural_liability_profile.csv", index=False
+            )
+        logger.info("No molecules available for structural filters; stage is empty.")
+        if reporter is not None:
+            reporter.progress(1, 1, message="StructFilters complete (empty input)")
+        return empty_output
+
     filters_to_calculate = _get_enabled_filters(config_struct_filters)
+    enforced_filters = get_aligned_enforced_filters(config, config_struct_filters)
+    if enforced_filters is not None:
+        missing_enforced = {
+            name
+            for name in enforced_filters
+            if policy_calculation_filter(name) not in filters_to_calculate
+        }
+        if missing_enforced:
+            names = ", ".join(sorted(missing_enforced))
+            raise ValueError(
+                f"Structural filter flag enabled but calculation disabled: {names}"
+            )
     opts = _resolve_stage_options(config_struct_filters, config)
 
     is_csv = input_path.lower().endswith(".csv")
     filter_names = list(filters_to_calculate)
+    policy_filter_names = get_calculated_policy_names(
+        filter_names, config_struct_filters
+    )
     molecule_total = max(1, len(input_df))
     timings: dict[str, float] = {}
     stage_started = perf_counter()
@@ -537,11 +549,12 @@ def main(config, stage_dir, reporter=None):
         prepared_payload = prepare_structfilters_input(
             input_df,
             sample_size,
-            opts["parse_input_n_jobs"],
+            opts["n_jobs"],
         )
     timings["input_parse"] = perf_counter() - parse_started
 
     pass_mask_by_filter: dict[str, pd.DataFrame] = {}
+    liability_profile = initialize_structural_liability_profile(input_df)
 
     for filter_name in filter_names:
         if reporter is not None:
@@ -559,7 +572,6 @@ def main(config, stage_dir, reporter=None):
         compute_started = perf_counter()
         filter_results = _compute_filter(
             config,
-            filter_name,
             apply_func,
             prepared_payload,
             is_csv,
@@ -578,7 +590,29 @@ def main(config, stage_dir, reporter=None):
         final_res, final_extended = get_basic_stats(
             config_struct_filters, filter_results, model_name, filter_name=filter_name
         )
-        pass_mask_by_filter[filter_name] = _build_filter_pass_mask(final_extended)
+        final_extended, enforcement_mask = attach_structural_enforcement_pass(
+            config_struct_filters, filter_name, final_extended
+        )
+        liability_profile = merge_structural_liability_profile(
+            liability_profile, filter_name, final_extended
+        )
+        liability_profile = merge_structural_policy_aliases(
+            liability_profile, filter_name
+        )
+        policy_masks = build_structural_policy_pass_masks(
+            config_struct_filters,
+            filter_name,
+            final_extended,
+            default_mask=enforcement_mask,
+        )
+        for policy_name, policy_mask in policy_masks.items():
+            if enforced_filters is None or policy_name in enforced_filters:
+                pass_mask_by_filter[policy_name] = policy_mask
+            else:
+                logger.info(
+                    "Calculated structural policy %s; current enforcement policy excludes it from rejection.",
+                    policy_name,
+                )
         if opts["write_per_filter_outputs"]:
             _save_filter_results(output_dir, filter_name, final_res, final_extended)
         timings[f"filter_post:{filter_name}"] = perf_counter() - post_started
@@ -588,6 +622,14 @@ def main(config, stage_dir, reporter=None):
                 molecule_total,
                 message=f"StructFilters: {filter_name}",
             )
+
+    if config_struct_filters.get("write_structural_liability_profile", True):
+        liability_profile = finalize_structural_liability_profile(
+            liability_profile, enforced_filters, policy_filter_names
+        )
+        liability_profile.to_csv(
+            output_dir / "structural_liability_profile.csv", index=False
+        )
 
     _run_post_filter_phases(
         config,

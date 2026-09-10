@@ -16,8 +16,8 @@ from rdkit.Chem import DataStructs
 try:
     from molbloom import buy
     _has_molbloom = True
-except (ImportError, TypeError) as e:
-    pass  # molbloom is optional
+except (ImportError, TypeError):
+    # molbloom is optional
     _has_molbloom = False
 
 from hedgehog.vendor.moleval.utils import disable_rdkit_log, enable_rdkit_log
@@ -28,14 +28,6 @@ from hedgehog.vendor.moleval.metrics.metrics_utils import SA, QED, NP, weight, l
 from hedgehog.vendor.moleval.metrics.metrics_utils import compute_fragments, average_agg_tanimoto, \
     compute_scaffolds, fingerprints, numpy_fps_to_bitvectors, sphere_exclusion,\
     get_mol, canonic_smiles, mol_passes_filters, analogues_tanimoto, compute_functional_groups, compute_ring_systems
-
-try:
-    from hedgehog.vendor.moleval.metrics.posecheck import PoseCheck
-    _posecheck_available = True
-except Exception as e:
-    _posecheck_available = False
-    _posecheck_error = e
-
 
 class GetMetrics(object):
     """
@@ -95,7 +87,7 @@ class GetMetrics(object):
     """
     def __init__(self, n_jobs=1, device='cpu', batch_size=512, pool=None,
                  test=None, test_scaffolds=None, ptest=None, ptest_scaffolds=None, train=None, ptrain=None,
-                 target=None, ptarget=None, target_structure=None, target_ligand=None, run_fcd=True, normalize=True, cumulative=False):
+                 target=None, ptarget=None, run_fcd=True, normalize=True, cumulative=False):
         """
         Prepare to calculate metrics by declaring reference datasets and running pre-statistics
         """
@@ -127,9 +119,6 @@ class GetMetrics(object):
         self.ptest_scaffolds = ptest_scaffolds
         self.ptrain = ptrain
         self.ptarget = ptarget
-        # Posecheck target structure
-        self.target_structure = target_structure
-        self.target_ligand = target_ligand
         # Later defined
         self.kwargs = None
         self.kwargs_fcd = None
@@ -165,14 +154,6 @@ class GetMetrics(object):
             self.target_int = compute_intermediate_statistics(self.target, pool=self.pool, run_fcd=self.run_fcd, **self.kwargs)
             self.target_sw = SillyWalks(reference_mols=self.target, n_jobs=self.n_jobs)
             if not self.ptarget: self.ptarget = self.target_int.get('FCD')
-
-        # Initialize posecheck
-        if self.target_structure:
-            if _posecheck_available:
-                self.posecheck = PoseCheck(n_jobs=self.n_jobs)
-                self.posecheck.load_protein_from_pdb(self.target_structure)
-            else:
-                warnings.warn(f"PoseCheck: currently unavailable due to {_posecheck_error} error")
 
     def calculate(self, gen=None, calc_valid=False, calc_unique=False, se_k=1000, sp_k=1000, properties=False, return_stats=False):
         """
@@ -282,21 +263,6 @@ class GetMetrics(object):
         if _has_molbloom:
             purchasable = mapper(self.pool)(buy, gen)
             add_metric('Purchasable_ZINC20', np.mean(purchasable) if self.normalize else np.sum(purchasable))
-
-        # ---- PoseCheck metrics ----
-        if self.target_structure and _posecheck_available:
-            self.posecheck.load_ligands_from_mols(mols, add_hs=True)
-            clashes = self.posecheck.calculate_clashes()
-            add_metric('PC_Clashes', np.nanmean(clashes), dist=clashes)
-            strain_energy = self.posecheck.calculate_strain_energy()
-            add_metric('PC_StrainEnergy', np.nanmean(strain_energy), dist=strain_energy)
-            if self.target_ligand:
-                similarities = self.posecheck.calculate_interaction_similarity(
-                    ref_lig_path = self.target_ligand,
-                    similarity_func = "Tanimoto",
-                    count = False
-                )
-                add_metric('PC_Interactions', np.nanmean(similarities), dist=similarities)
 
         # ---- Extrinsic properties ----
 

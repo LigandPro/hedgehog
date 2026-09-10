@@ -23,13 +23,15 @@ from urllib import request as urllib_request
 
 import numpy as np
 import pandas as pd
+import yaml
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from rdkit.Chem.MolStandardize import rdMolStandardize
 
 from hedgehog.configs.logger import logger
 from hedgehog.setup._download import resolve_uv_binary
 from hedgehog.synthesis.sync import calculate_sync_scores_batch
-from hedgehog.utils.input_paths import get_all_input_candidates
+from hedgehog.utils.input_paths import find_latest_input_source
 from hedgehog.utils.parallel import parallel_map, resolve_n_jobs
 from hedgehog.utils.paths import process_path
 
@@ -64,6 +66,16 @@ class SynthesisScorer:
 
 
 DEFAULT_SYNTHESIS_SCORERS = ("sa", "syba", "rascore")
+ALL_SYNTHESIS_SCORER_NAMES = (
+    "sa",
+    "syba",
+    "rascore",
+    "sync",
+    "scscore",
+    "nonpher",
+    "fsscore",
+    "gasa",
+)
 AUTO_INSTALL_ENV = "HEDGEHOG_AUTO_INSTALL"
 OPTIONAL_ENV_ROOT_ENV = "HEDGEHOG_OPTIONAL_ENV_ROOT"
 _NONPHER_AUTO_ENV_DIR = ".venv-nonpher-worker"
@@ -109,6 +121,238 @@ root:
 
 _AIZYNTH_PAIR_PROGRESS_RE = re.compile(r"(?<!\d)(\d+)\s*/\s*(\d+)(?!\d)")
 _AIZYNTH_PERCENT_PROGRESS_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_AIZYNTH_CHARGE_MODES = {"preserve", "neutralize", "both"}
+
+
+@dataclass(frozen=True)
+class _AizynthVariant:
+    original_index: int
+    original_smiles: str
+    search_smiles: str
+    representation: str
+
+
+def _canonical_aizynth_smiles(smiles: str) -> str | None:
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    return Chem.MolToSmiles(mol, canonical=True, isomericSmiles=True)
+
+
+def _neutralize_aizynth_smiles(smiles: str) -> str | None:
+    """Return a stereochemistry-preserving neutralized SMILES."""
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    neutral = rdMolStandardize.Uncharger().uncharge(mol)
+    neutral_smiles = Chem.MolToSmiles(neutral, canonical=True, isomericSmiles=True)
+    if _canonical_aizynth_smiles(neutral_smiles) is None:
+        logger.warning("Skipping invalid neutralized AiZynthFinder form: %s", smiles)
+        return None
+    return neutral_smiles
+
+
+def _prepare_aizynth_variants(
+    smiles: list[str], charge_mode: str
+) -> list[_AizynthVariant]:
+    """Build charge representations without merging duplicate input rows."""
+    mode = charge_mode.strip().lower()
+    if mode not in _AIZYNTH_CHARGE_MODES:
+        choices = ", ".join(sorted(_AIZYNTH_CHARGE_MODES))
+        raise ValueError(f"aizynthfinder_charge_mode must be one of: {choices}")
+
+    variants: list[_AizynthVariant] = []
+    for index, original in enumerate(smiles):
+        neutral = _neutralize_aizynth_smiles(original)
+        canonical_original = _canonical_aizynth_smiles(original)
+        if mode in {"preserve", "both"}:
+            variants.append(_AizynthVariant(index, original, original, "preserved"))
+        if mode == "neutralize":
+            variants.append(
+                _AizynthVariant(index, original, neutral or original, "neutralized")
+            )
+        elif mode == "both" and neutral is not None and neutral != canonical_original:
+            variants.append(_AizynthVariant(index, original, neutral, "neutralized"))
+    return variants
+
+
+def _aggregate_aizynth_variants(
+    raw_output: Path,
+    output_file: Path,
+    variants: list[_AizynthVariant],
+) -> None:
+    """Select the best charge representation for each original input row."""
+    with raw_output.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        raise ValueError(f"AiZynthFinder output has no data list: {raw_output}")
+
+    by_original: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        try:
+            variant = variants[int(row["index"])]
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        target = row.get("target")
+        if target and _canonical_aizynth_smiles(target) != _canonical_aizynth_smiles(
+            variant.search_smiles
+        ):
+            raise ValueError(
+                f"AiZynthFinder output index {row['index']} does not match its target"
+            )
+        candidate = dict(row)
+        candidate["index"] = variant.original_index
+        candidate["target"] = variant.original_smiles
+        candidate["hedgehog_search_smiles"] = variant.search_smiles
+        candidate["hedgehog_charge_representation"] = variant.representation
+        by_original.setdefault(variant.original_index, []).append(candidate)
+
+    def _rank(row: dict[str, Any]) -> tuple[bool, float, float]:
+        return (
+            bool(row.get("is_solved", False)),
+            float(row.get("number_of_nodes", 0) or 0),
+            -float(row.get("search_time", 0) or 0),
+        )
+
+    originals = {
+        variant.original_index: variant.original_smiles for variant in variants
+    }
+    merged: list[dict[str, Any]] = []
+    for index, original in sorted(originals.items()):
+        candidates = by_original.get(index, [])
+        if candidates:
+            merged.append(max(candidates, key=_rank))
+        else:
+            merged.append({"index": index, "target": original, "is_solved": False})
+
+    pd.DataFrame(merged).to_json(output_file, orient="table", index=False)
+
+
+def _retry_unsolved_aizynth_variants(
+    raw_output: Path,
+    config_file: Path,
+    effective_config: Path,
+    run_dir: Path,
+    synthesis_config: dict[str, Any],
+    variants: list[_AizynthVariant],
+    progress_cb: Callable[[int, int, str | None], None] | None,
+) -> bool:
+    """Retry only molecules with no solved charge representation."""
+    if not synthesis_config.get("aizynthfinder_retry_unsolved", False):
+        return True
+
+    rows = json.loads(raw_output.read_text(encoding="utf-8")).get("data")
+    if not isinstance(rows, list):
+        raise ValueError(f"AiZynthFinder output has no data list: {raw_output}")
+
+    indexed: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        index = int(row["index"])
+        if index < 0 or index >= len(variants):
+            raise ValueError(f"Invalid AiZynthFinder variant index: {index}")
+        variant = variants[index]
+        if _canonical_aizynth_smiles(row.get("target", "")) != (
+            _canonical_aizynth_smiles(variant.search_smiles)
+        ):
+            raise ValueError(
+                f"AiZynthFinder output index {index} does not match its target"
+            )
+        indexed[index] = row
+    if len(indexed) != len(variants):
+        raise ValueError(
+            f"AiZynthFinder returned {len(indexed)} of {len(variants)} variants"
+        )
+
+    solved_originals = {
+        variants[index].original_index
+        for index, row in indexed.items()
+        if row.get("is_solved", False)
+    }
+    retry_indices = [
+        index
+        for index, variant in enumerate(variants)
+        if variant.original_index not in solved_originals
+    ]
+
+    pass1_output = raw_output.with_name("retrosynthesis_variants_pass1.json")
+    shutil.copy2(raw_output, pass1_output)
+    if not retry_indices:
+        logger.info("AiZynthFinder retry skipped: all molecules solved in pass 1")
+        return True
+
+    retry_input = raw_output.with_name("input_smiles_variants_retry.smi")
+    retry_input.write_text(
+        "".join(f"{variants[index].search_smiles}\n" for index in retry_indices),
+        encoding="utf-8",
+    )
+    retry_output = raw_output.with_name("retrosynthesis_variants_retry.json")
+    retry_config = dict(synthesis_config)
+    retry_config["aizynthfinder_charge_mode"] = "preserve"
+    retry_config["aizynthfinder_time_limit"] = synthesis_config.get(
+        "aizynthfinder_retry_time_limit", retry_config.get("aizynthfinder_time_limit")
+    )
+    retry_config["aizynthfinder_iteration_limit"] = synthesis_config.get(
+        "aizynthfinder_retry_iteration_limit",
+        retry_config.get("aizynthfinder_iteration_limit"),
+    )
+    for key in (
+        "aizynthfinder_retry_unsolved",
+        "aizynthfinder_retry_time_limit",
+        "aizynthfinder_retry_iteration_limit",
+    ):
+        retry_config.pop(key, None)
+
+    pass1_config = effective_config.with_name(
+        "aizynthfinder_effective_config_pass1.yml"
+    )
+    retry_effective_config = effective_config.with_name(
+        "aizynthfinder_effective_config_retry.yml"
+    )
+    shutil.copy2(effective_config, pass1_config)
+    logger.info(
+        "AiZynthFinder pass 1 solved %d/%d molecules; retrying %d variants",
+        len(solved_originals),
+        len({variant.original_index for variant in variants}),
+        len(retry_indices),
+    )
+    retry_ok = run_aizynthfinder(
+        retry_input,
+        retry_output,
+        config_file,
+        aizynthfinder_dir=run_dir,
+        synthesis_config=retry_config,
+        progress_cb=progress_cb,
+    )
+    if effective_config.exists():
+        shutil.copy2(effective_config, retry_effective_config)
+    shutil.copy2(pass1_config, effective_config)
+    if not retry_ok:
+        return False
+
+    retry_rows = json.loads(retry_output.read_text(encoding="utf-8")).get("data")
+    if not isinstance(retry_rows, list) or len(retry_rows) != len(retry_indices):
+        raise ValueError(
+            "AiZynthFinder retry output does not match the retry input size"
+        )
+    for row in retry_rows:
+        retry_index = int(row["index"])
+        variant_index = retry_indices[retry_index]
+        variant = variants[variant_index]
+        if _canonical_aizynth_smiles(row.get("target", "")) != (
+            _canonical_aizynth_smiles(variant.search_smiles)
+        ):
+            raise ValueError(
+                f"AiZynthFinder retry index {retry_index} does not match its target"
+            )
+        replacement = dict(row)
+        replacement["index"] = variant_index
+        indexed[variant_index] = replacement
+
+    pd.DataFrame([indexed[index] for index in range(len(variants))]).to_json(
+        raw_output, orient="table", index=False
+    )
+    return True
 
 
 def _get_cached(key: str, loader: callable) -> Any:
@@ -249,6 +493,58 @@ def _extract_aizynth_progress(
     return done, fallback_total
 
 
+def _prepare_aizynthfinder_config(
+    config_file: Path,
+    output_dir: Path,
+    synthesis_config: dict[str, Any] | None,
+) -> Path:
+    """Create an AiZynthFinder config containing synthesis search overrides."""
+    if not synthesis_config:
+        return config_file
+
+    max_transforms = synthesis_config.get("aizynthfinder_max_transforms")
+    time_limit = synthesis_config.get("aizynthfinder_time_limit")
+    iteration_limit = synthesis_config.get("aizynthfinder_iteration_limit")
+    return_first = synthesis_config.get("aizynthfinder_return_first")
+    if (
+        max_transforms is None
+        and time_limit is None
+        and iteration_limit is None
+        and return_first is None
+    ):
+        return config_file
+    if return_first is not None and not isinstance(return_first, bool):
+        raise ValueError("aizynthfinder_return_first must be a boolean")
+    if iteration_limit is not None and int(iteration_limit) <= 0:
+        raise ValueError("aizynthfinder_iteration_limit must be greater than zero")
+
+    with config_file.open(encoding="utf-8") as handle:
+        config = yaml.safe_load(handle) or {}
+
+    search = config.setdefault("search", {})
+    if max_transforms is not None:
+        search["max_transforms"] = int(max_transforms)
+    if time_limit is not None:
+        search["time_limit"] = float(time_limit)
+    if iteration_limit is not None:
+        search["iteration_limit"] = int(iteration_limit)
+    if return_first is not None:
+        search["return_first"] = return_first
+
+    effective_config = output_dir / "aizynthfinder_effective_config.yml"
+    with effective_config.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(config, handle, sort_keys=False)
+    logger.info(
+        "AiZynthFinder search settings: max_transforms=%s, time_limit=%ss, "
+        "iteration_limit=%s, return_first=%s",
+        search.get("max_transforms", "default"),
+        search.get("time_limit", "default"),
+        search.get("iteration_limit", "default"),
+        search.get("return_first", "default"),
+    )
+    return effective_config
+
+
 def run_aizynthfinder(
     input_smiles_file,
     output_json_file,
@@ -264,11 +560,15 @@ def run_aizynthfinder(
         output_json_file: Path to output JSON file
         config_file: Path to AiZynthFinder config file
         aizynthfinder_dir: Optional working directory for AiZynthFinder CLI
-        synthesis_config: Optional synthesis stage config (supports ``n_jobs``)
+        synthesis_config: Optional synthesis stage config (supports ``n_jobs`` and
+            AiZynthFinder search overrides)
 
     Returns:
         True if successful, False otherwise
     """
+    input_smiles_file = Path(input_smiles_file)
+    output_json_file = Path(output_json_file)
+    config_file = Path(config_file)
     output_json_file.parent.mkdir(parents=True, exist_ok=True)
 
     run_dir = (
@@ -277,7 +577,37 @@ def run_aizynthfinder(
     _ensure_aizynth_logging_config(run_dir)
     input_abs = input_smiles_file.resolve()
     output_abs = output_json_file.resolve()
-    config_abs = config_file.resolve()
+    charge_mode = (
+        str((synthesis_config or {}).get("aizynthfinder_charge_mode", "preserve"))
+        .strip()
+        .lower()
+    )
+    variants: list[_AizynthVariant] = []
+    if charge_mode != "preserve" or (synthesis_config or {}).get(
+        "aizynthfinder_retry_unsolved", False
+    ):
+        with input_abs.open(encoding="utf-8") as handle:
+            original_smiles = [line.strip() for line in handle if line.strip()]
+        variants = _prepare_aizynth_variants(original_smiles, charge_mode)
+        variant_input = output_json_file.parent / "input_smiles_variants.smi"
+        variant_input.write_text(
+            "".join(f"{variant.search_smiles}\n" for variant in variants),
+            encoding="utf-8",
+        )
+        input_abs = variant_input.resolve()
+        output_abs = (
+            output_json_file.parent / "retrosynthesis_variants.json"
+        ).resolve()
+        logger.info(
+            "AiZynthFinder charge mode %s: %d targets -> %d search variants",
+            charge_mode,
+            len(original_smiles),
+            len(variants),
+        )
+    effective_config = _prepare_aizynthfinder_config(
+        config_file, output_json_file.parent, synthesis_config
+    )
+    config_abs = effective_config.resolve()
 
     try:
         uv_binary = resolve_uv_binary()
@@ -304,6 +634,32 @@ def run_aizynthfinder(
     )
     cmd.extend(["--nproc", str(nproc)])
 
+    def _finish() -> bool:
+        if variants and not _retry_unsolved_aizynth_variants(
+            output_abs,
+            config_file,
+            effective_config,
+            run_dir,
+            synthesis_config or {},
+            variants,
+            progress_cb,
+        ):
+            return False
+        if variants:
+            _aggregate_aizynth_variants(output_abs, output_json_file, variants)
+        logger.info("Retrosynthesis analysis completed successfully")
+        return True
+
+    pass1_checkpoint = output_abs.with_name("retrosynthesis_variants_pass1.json")
+    if (
+        variants
+        and (synthesis_config or {}).get("aizynthfinder_reuse_pass1", False)
+        and pass1_checkpoint.exists()
+    ):
+        shutil.copy2(pass1_checkpoint, output_abs)
+        logger.info("Reusing completed AiZynthFinder pass 1: %s", pass1_checkpoint)
+        return _finish()
+
     try:
         logger.info("Running retrosynthesis analysis...")
         logger.debug("Command: %s", cmd)
@@ -320,8 +676,7 @@ def run_aizynthfinder(
                 cwd=str(run_dir),
                 env=child_env,
             )
-            logger.info("Retrosynthesis analysis completed successfully")
-            return True
+            return _finish()
 
         total_targets = _count_nonempty_lines(input_abs)
         if total_targets <= 0:
@@ -415,7 +770,8 @@ def run_aizynthfinder(
             )
             return False
 
-        logger.info("Retrosynthesis analysis completed successfully")
+        if not _finish():
+            return False
         progress_cb(best_total, best_total, "completed")
         return True
     except subprocess.CalledProcessError as e:
@@ -479,6 +835,167 @@ def _resolve_aizynth_nproc(
     return resolved
 
 
+_RETROSYNTHESIS_RESULT_COLUMNS = [
+    "index",
+    "SMILES",
+    "solved",
+    "search_time",
+    "retrosynthesis_status",
+    "retrosynthesis_reason",
+    "retrosynthesis_limit_reached",
+    "route_depth",
+    "max_transforms",
+    "iterations",
+    "iteration_limit",
+    "time_limit_seconds",
+    "time_limit_reached",
+    "iteration_limit_reached",
+    "max_depth_reached",
+    "number_of_nodes",
+    "number_of_routes",
+    "number_of_solved_routes",
+    "number_of_precursors",
+    "number_of_precursors_in_stock",
+    "precursors_not_in_stock",
+]
+
+
+def _aizynth_effective_search_config(json_file: Path) -> dict[str, Any]:
+    """Read the effective AiZynthFinder search budget saved beside its output."""
+    config_path = json_file.with_name("aizynthfinder_effective_config.yml")
+    if not config_path.exists():
+        return {}
+    try:
+        with config_path.open(encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("Could not read AiZynthFinder effective config: %s", exc)
+        return {}
+    search = config.get("search", {})
+    return search if isinstance(search, dict) else {}
+
+
+def _aizynth_profile(item: dict[str, Any]) -> dict[str, Any]:
+    """Return profiling fields whether AiZynthFinder emitted a mapping or JSON."""
+    profile = item.get("profiling")
+    if isinstance(profile, dict):
+        return profile
+    if isinstance(profile, str) and profile.strip():
+        try:
+            parsed = json.loads(profile)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _optional_number(value: Any, converter: Callable[[Any], Any]) -> Any:
+    """Convert an optional numeric result without inventing a default value."""
+    if value is None or value == "":
+        return None
+    try:
+        return converter(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _format_observed_value(value: Any, suffix: str = "") -> str:
+    """Format an observed scalar for a deterministic diagnostic sentence."""
+    if value is None:
+        return "unavailable"
+    if isinstance(value, float):
+        return f"{value:.6g}{suffix}"
+    return f"{value}{suffix}"
+
+
+def _retrosynthesis_diagnostic(
+    item: dict[str, Any], search_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a factual diagnosis exclusively from AiZynthFinder output fields."""
+    solved = bool(item.get("is_solved", False))
+    search_time = _optional_number(item.get("search_time"), float)
+    route_depth = _optional_number(item.get("number_of_steps"), int)
+    max_transforms = _optional_number(
+        item.get("max_transforms", search_config.get("max_transforms")), int
+    )
+    iterations = _optional_number(_aizynth_profile(item).get("iterations"), int)
+    iteration_limit = _optional_number(search_config.get("iteration_limit"), int)
+    time_limit = _optional_number(search_config.get("time_limit"), float)
+
+    time_reached = (
+        search_time is not None and time_limit is not None and search_time >= time_limit
+    )
+    iteration_reached = (
+        iterations is not None
+        and iteration_limit is not None
+        and iterations >= iteration_limit
+    )
+    depth_reached = (
+        route_depth is not None
+        and max_transforms is not None
+        and route_depth >= max_transforms
+    )
+    observed_limits = []
+    if time_reached:
+        observed_limits.append("time_limit")
+    if iteration_reached:
+        observed_limits.append("iteration_limit")
+
+    precursor_total = _optional_number(item.get("number_of_precursors"), int)
+    precursor_stock = _optional_number(item.get("number_of_precursors_in_stock"), int)
+    missing = str(item.get("precursors_not_in_stock") or "").strip()
+
+    if solved:
+        status = "solved"
+        reason = (
+            "AiZynthFinder returned a solved route; "
+            f"search_time={_format_observed_value(search_time, 's')}; "
+            f"iterations={_format_observed_value(iterations)}; "
+            f"route_steps={_format_observed_value(route_depth)}; "
+            "stock_precursors="
+            f"{_format_observed_value(precursor_stock)}/"
+            f"{_format_observed_value(precursor_total)}."
+        )
+    else:
+        status = "unsolved"
+        missing_text = f"[{missing}]" if missing else "[]"
+        reason = (
+            "AiZynthFinder returned no solved route; "
+            f"search_time={_format_observed_value(search_time, 's')}/"
+            f"{_format_observed_value(time_limit, 's')}; "
+            f"iterations={_format_observed_value(iterations)}/"
+            f"{_format_observed_value(iteration_limit)}; "
+            f"best_route_steps={_format_observed_value(route_depth)}/"
+            f"{_format_observed_value(max_transforms)}; "
+            "stock_precursors="
+            f"{_format_observed_value(precursor_stock)}/"
+            f"{_format_observed_value(precursor_total)}; "
+            f"precursors_not_in_stock={missing_text}."
+        )
+
+    return {
+        "retrosynthesis_status": status,
+        "retrosynthesis_reason": reason,
+        "retrosynthesis_limit_reached": ";".join(observed_limits),
+        "route_depth": route_depth,
+        "max_transforms": max_transforms,
+        "iterations": iterations,
+        "iteration_limit": iteration_limit,
+        "time_limit_seconds": time_limit,
+        "time_limit_reached": time_reached,
+        "iteration_limit_reached": iteration_reached,
+        "max_depth_reached": depth_reached,
+        "number_of_nodes": _optional_number(item.get("number_of_nodes"), int),
+        "number_of_routes": _optional_number(item.get("number_of_routes"), int),
+        "number_of_solved_routes": _optional_number(
+            item.get("number_of_solved_routes"), int
+        ),
+        "number_of_precursors": precursor_total,
+        "number_of_precursors_in_stock": precursor_stock,
+        "precursors_not_in_stock": missing,
+    }
+
+
 def parse_retrosynthesis_results(json_file):
     """Parse retrosynthesis JSON results into a DataFrame.
 
@@ -486,7 +1003,8 @@ def parse_retrosynthesis_results(json_file):
         json_file: Path to JSON output from aizynthfinder
 
     Returns:
-        DataFrame with columns: index, SMILES, solved, search_time
+        DataFrame with the outcome and literal diagnostics observed in the
+        AiZynthFinder output. The diagnostic does not infer chemical causality.
     """
     try:
         with open(json_file) as f:
@@ -494,30 +1012,34 @@ def parse_retrosynthesis_results(json_file):
 
         if "data" not in data:
             logger.warning("No 'data' key found in JSON file %s", json_file)
-            return pd.DataFrame(columns=["index", "SMILES", "solved", "search_time"])
+            return pd.DataFrame(columns=_RETROSYNTHESIS_RESULT_COLUMNS)
 
+        search_config = _aizynth_effective_search_config(Path(json_file))
         results = []
         for item in data["data"]:
-            results.append(
-                {
-                    "index": item.get("index", -1),
-                    "SMILES": item.get("target", ""),
-                    "solved": 1 if item.get("is_solved", False) else 0,
-                    "search_time": item.get("search_time", 0.0),
-                }
-            )
+            row = {
+                "index": item.get("index", -1),
+                "SMILES": item.get("target", ""),
+                "solved": 1 if item.get("is_solved", False) else 0,
+                "search_time": item.get("search_time", 0.0),
+            }
+            row.update(_retrosynthesis_diagnostic(item, search_config))
+            results.append(row)
 
-        return pd.DataFrame(results)
+        return pd.DataFrame(results, columns=_RETROSYNTHESIS_RESULT_COLUMNS)
     except Exception as e:
         logger.error("Error parsing retrosynthesis results: %s", e)
-        return pd.DataFrame(columns=["index", "SMILES", "solved", "search_time"])
+        return pd.DataFrame(columns=_RETROSYNTHESIS_RESULT_COLUMNS)
 
 
 def merge_retrosynthesis_results(input_df, retrosynth_df):
     """Merge retrosynthesis results with input DataFrame.
 
-    Uses SMILES-based matching when a SMILES column is available in both
-    DataFrames, falling back to positional merge otherwise.
+    AiZynthFinder's ``index`` is the zero-based line number in its input SMILES
+    file. Use that stable identity first because AiZynthFinder may canonicalize
+    or otherwise rewrite the target SMILES, including its stereochemical text.
+    SMILES matching is only a fallback for legacy result files without usable
+    indices.
 
     Args:
         input_df: Original input DataFrame with molecules (may have duplicate SMILES)
@@ -529,10 +1051,28 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
     merged = input_df.reset_index(drop=True).copy()
     retrosynth_df_copy = retrosynth_df.reset_index(drop=True)
 
+    result_value_columns = [
+        column
+        for column in retrosynth_df_copy.columns
+        if column not in {"index", "SMILES", "smiles"}
+    ]
+    for column in result_value_columns:
+        if column not in merged.columns:
+            merged[column] = pd.NA
     merged["solved"] = 0
     merged["search_time"] = 0.0
+    if "retrosynthesis_status" in result_value_columns:
+        merged["retrosynthesis_status"] = "result_missing"
+    if "retrosynthesis_reason" in result_value_columns:
+        merged["retrosynthesis_reason"] = (
+            "No AiZynthFinder result row was returned for this input molecule."
+        )
 
-    # Determine SMILES column names
+    def _copy_result(input_position: int, row: pd.Series) -> None:
+        for column in result_value_columns:
+            merged.at[input_position, column] = row.get(column, pd.NA)
+
+    # Determine SMILES column names.
     input_smi_col = None
     for col in ("smiles", "SMILES"):
         if col in merged.columns:
@@ -545,37 +1085,66 @@ def merge_retrosynthesis_results(input_df, retrosynth_df):
             retro_smi_col = col
             break
 
-    if input_smi_col and retro_smi_col:
-        # SMILES-based merge: build lookup from retrosynth results
-        retro_lookup: dict[str, dict] = {}
-        for _, row in retrosynth_df_copy.iterrows():
-            smi = str(row[retro_smi_col])
-            if smi not in retro_lookup:
-                retro_lookup[smi] = {
-                    "solved": row.get("solved", 0),
-                    "search_time": row.get("search_time", 0.0),
-                }
+    matched_input_positions: set[int] = set()
+    matched_result_rows: set[int] = set()
 
-        for idx, row in merged.iterrows():
-            smi = str(row[input_smi_col])
-            match = retro_lookup.get(smi)
-            if match:
-                merged.loc[idx, "solved"] = match["solved"]
-                merged.loc[idx, "search_time"] = match["search_time"]
-    else:
-        # Positional fallback when SMILES column is unavailable
-        logger.warning("No SMILES column found for merge; using positional matching")
-        for idx, row in retrosynth_df_copy.iterrows():
-            if idx < len(merged):
-                merged.loc[idx, "solved"] = row.get("solved", 0)
-                merged.loc[idx, "search_time"] = row.get("search_time", 0.0)
+    # prepare_input_smiles drops null SMILES and preserves the remaining order.
+    # Map AiZynthFinder line numbers back to those exact input rows.
+    if "index" in retrosynth_df_copy.columns:
+        eligible_positions = (
+            merged.index[merged[input_smi_col].notna()].tolist()
+            if input_smi_col
+            else merged.index.tolist()
+        )
+        seen_line_numbers: set[int] = set()
+        for result_row, row in retrosynth_df_copy.iterrows():
+            raw_index = row.get("index")
+            try:
+                line_number = int(raw_index)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if (
+                line_number < 0
+                or line_number >= len(eligible_positions)
+                or line_number in seen_line_numbers
+            ):
+                continue
+            input_position = eligible_positions[line_number]
+            _copy_result(input_position, row)
+            seen_line_numbers.add(line_number)
+            matched_input_positions.add(input_position)
+            matched_result_rows.add(result_row)
+
+    # Legacy JSON exports may omit the index. Exact SMILES matching remains safe
+    # for unique strings; do not use connectivity-only matching because that can
+    # silently conflate stereoisomers.
+    if input_smi_col and retro_smi_col:
+        unmatched_lookup: dict[str, list[int]] = {}
+        for input_position, raw_smiles in merged[input_smi_col].items():
+            if input_position in matched_input_positions or pd.isna(raw_smiles):
+                continue
+            unmatched_lookup.setdefault(str(raw_smiles), []).append(input_position)
+
+        for result_row, row in retrosynth_df_copy.iterrows():
+            if result_row in matched_result_rows:
+                continue
+            candidates = unmatched_lookup.get(str(row[retro_smi_col]), [])
+            if len(candidates) != 1:
+                continue
+            input_position = candidates.pop()
+            _copy_result(input_position, row)
+            matched_input_positions.add(input_position)
+            matched_result_rows.add(result_row)
+
+    unmatched_results = len(retrosynth_df_copy) - len(matched_result_rows)
+    if unmatched_results:
+        logger.warning(
+            "Could not map %d/%d retrosynthesis result(s) to input molecules",
+            unmatched_results,
+            len(retrosynth_df_copy),
+        )
 
     return merged
-
-
-def _get_input_path_candidates(base_folder: str) -> list:
-    """Get ordered list of candidate input paths to check."""
-    return [str(p) for p in get_all_input_candidates(Path(base_folder))]
 
 
 def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
@@ -585,11 +1154,13 @@ def get_input_path(config: dict[str, Any], folder_to_save: str) -> str:
     Supports both new hierarchical structure and legacy flat structure.
     """
     base_folder = process_path(folder_to_save)
-
-    for candidate in _get_input_path_candidates(base_folder):
-        if Path(candidate).exists():
-            logger.debug("Using input file: %s", candidate)
-            return candidate
+    candidate = find_latest_input_source(
+        Path(base_folder),
+        skip_stages=["synthesis", "docking", "docking_filters"],
+    )
+    if candidate is not None:
+        logger.debug("Using input file: %s", candidate)
+        return str(candidate)
 
     logger.warning("No processed data found, using molecules from config")
     return config.get("generated_mols_path", "")
@@ -1498,14 +2069,14 @@ def _calculate_ra_scores_batch_legacy(
 
 def _calculate_ra_scores_batch(
     smiles_list: list,
-    config: dict[str, Any] | None = None,
+    _config: dict[str, Any] | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
 ) -> list:
     """Calculate RA scores for multiple molecules in a single batch.
 
     Args:
         smiles_list: List of SMILES strings
-        config: Not used, kept for API compatibility
+        _config: Unused; kept to match the batch_calculator(smiles, config, ...) API
 
     Returns:
         List of RA scores (0-1, higher is better), with np.nan for failed calculations
@@ -2182,17 +2753,39 @@ SYNTHESIS_SCORERS = {
 
 
 def _resolve_enabled_scorers(config: dict[str, Any] | None) -> list[SynthesisScorer]:
-    """Resolve enabled synthesis scorers from config."""
+    """Resolve enabled synthesis scorers from config.
+
+    ``enabled_scores`` accepts:
+    - missing / ``None`` → default ``sa``, ``syba``, ``rascore``
+    - scalar ``"all"`` or ``["all"]`` → every canonical scorer
+    - list / comma-separated string of scorer names
+    """
     raw_enabled = None if config is None else config.get("enabled_scores")
     if raw_enabled is None:
         raw_enabled = DEFAULT_SYNTHESIS_SCORERS
 
-    if isinstance(raw_enabled, str):
+    if isinstance(raw_enabled, str) and raw_enabled.strip().lower() == "all":
+        enabled_names = list(ALL_SYNTHESIS_SCORER_NAMES)
+    elif isinstance(raw_enabled, str):
         raw_items = re.split(r"[\s,]+", raw_enabled.strip())
+        enabled_names = [str(name).strip().lower() for name in raw_items if str(name)]
+        if "all" in enabled_names:
+            raise ValueError(
+                "enabled_scores: use scalar 'all' (or a one-item list ['all']) "
+                "to enable every scorer, not a mixed comma-separated string."
+            )
     else:
         raw_items = raw_enabled
+        enabled_names = [str(name).strip().lower() for name in raw_items if str(name)]
+        if "all" in enabled_names:
+            if enabled_names == ["all"]:
+                enabled_names = list(ALL_SYNTHESIS_SCORER_NAMES)
+            else:
+                raise ValueError(
+                    "enabled_scores: use scalar 'all' (or a one-item list ['all']) "
+                    "to enable every scorer, not a list entry mixed with other names."
+                )
 
-    enabled_names = [str(name).strip().lower() for name in raw_items if str(name)]
     enabled_scorers: list[SynthesisScorer] = []
     seen_columns: set[str] = set()
     for name in enabled_names:
@@ -2244,12 +2837,11 @@ def _calculate_scorer_values(
     )
 
 
-def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb=None):
+def calculate_synthesis_scores(df, config=None, progress_cb=None):
     """Calculate enabled synthesis scores for all molecules in DataFrame.
 
     Args:
         df: DataFrame with 'smiles' column
-        folder_to_save: Optional folder to save outputs
         config: Optional config dict
 
     Returns:
@@ -2272,17 +2864,28 @@ def calculate_synthesis_scores(df, folder_to_save=None, config=None, progress_cb
             progress_cb,
         )
 
+    filter_specs = {
+        column: (min_val, max_val)
+        for column, min_val, max_val in _iter_score_filter_specs(runtime_config)
+    }
     for score_name in [scorer.column for scorer in enabled_scorers]:
         valid_scores = result_df[score_name].dropna()
-        if len(valid_scores) > 0:
+        thresholds = filter_specs.get(score_name)
+        if len(valid_scores) > 0 and thresholds is not None:
+            min_val, max_val = thresholds
+            mask = _build_score_filter_mask(result_df, score_name, min_val, max_val)
+            if mask is None:
+                continue
+            evaluated = result_df[score_name].notna()
+            passed = int((mask & evaluated).sum())
             logger.info(
-                "  %s: calculated for %d/%d molecules (mean=%.2f, std=%.2f)",
+                "  %s passed: %d/%d",
                 score_name,
-                len(valid_scores),
-                len(df),
-                valid_scores.mean(),
-                valid_scores.std(),
+                passed,
+                int(evaluated.sum()),
             )
+        elif len(valid_scores) > 0:
+            logger.info("  %s: filter disabled (no criterion configured)", score_name)
         else:
             logger.debug(
                 "  %s: could not be calculated (module not available)", score_name

@@ -633,7 +633,6 @@ class PipelineHandler:
                         )
 
             if stage == "docking_filters" and stage_config.get("run", False):
-                run_after_docking = bool(stage_config.get("run_after_docking", True))
                 input_sdf_raw = stage_config.get("input_sdf")
                 receptor_pdb_raw = stage_config.get("receptor_pdb")
                 input_sdf = (
@@ -646,14 +645,6 @@ class PipelineHandler:
                     if receptor_pdb_raw
                     else None
                 )
-
-                if not run_after_docking and not input_sdf:
-                    add_stage(
-                        "DOCKING_FILTERS_INPUT_REQUIRED",
-                        "error",
-                        "input_sdf is required when run_after_docking is false",
-                        field="input_sdf",
-                    )
 
                 if input_sdf:
                     try:

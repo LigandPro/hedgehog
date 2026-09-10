@@ -86,7 +86,6 @@ function truncateMiddle(value: string, width: number): string {
 
 const settingsFields: SettingField[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable descriptors calculation stage' },
-  { key: 'batch_size', label: 'Batch Size', type: 'number', description: 'Molecules per batch for memory efficiency' },
   { key: 'filter_data', label: 'Filter Data', type: 'boolean', description: 'Apply descriptor borders to filter molecules' },
   {
     key: 'enabled',

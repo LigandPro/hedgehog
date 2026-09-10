@@ -81,14 +81,20 @@ def merge_pass_flags(df, flags_path):
     return df
 
 
-def save_failed_molecules(fail_filters, folder_to_save, flags_path):
+def save_failed_molecules(
+    fail_filters, folder_to_save, flags_path, molecule_output_folder=None
+):
     """Save failed molecules to CSV files.
 
     Args:
         fail_filters: DataFrame with failed molecules
         folder_to_save: Output folder path (Path object)
         flags_path: Path to pass flags CSV
+        molecule_output_folder: Folder for the lightweight failed molecule table.
+            Defaults to ``folder_to_save`` for backwards compatibility.
     """
+    molecule_output_folder = Path(molecule_output_folder or folder_to_save)
+    molecule_output_folder.mkdir(parents=True, exist_ok=True)
     fail_filters = merge_pass_flags(fail_filters, flags_path)
     fail_filters = order_identity_columns(fail_filters)
 
@@ -98,4 +104,6 @@ def save_failed_molecules(fail_filters, folder_to_save, flags_path):
     )
 
     id_cols = ["smiles", "model_name", "mol_idx"]
-    fail_filters[id_cols].to_csv(folder_to_save / "failed_molecules.csv", index=False)
+    fail_filters[id_cols].to_csv(
+        molecule_output_folder / "failed_molecules.csv", index=False
+    )

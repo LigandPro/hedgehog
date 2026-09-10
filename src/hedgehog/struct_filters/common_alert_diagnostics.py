@@ -276,18 +276,17 @@ def build_description_summary(hits_long: pd.DataFrame) -> pd.DataFrame:
 
 
 def _cooccurrence(hits_long: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+    columns = [
+        "left",
+        "right",
+        "left_hits",
+        "right_hits",
+        "intersection",
+        "jaccard",
+        "containment",
+    ]
     if hits_long.empty:
-        return pd.DataFrame(
-            columns=[
-                "left",
-                "right",
-                "left_hits",
-                "right_hits",
-                "intersection",
-                "jaccard",
-                "containment",
-            ]
-        )
+        return pd.DataFrame(columns=columns)
 
     hits_with_id = _with_molecule_identity(hits_long)
     mol_sets = {
@@ -300,6 +299,8 @@ def _cooccurrence(hits_long: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
         else str(key): value
         for key, value in mol_sets.items()
     }
+    if len(normalized_sets) < 2:
+        return pd.DataFrame(columns=columns)
 
     rows: list[dict[str, Any]] = []
     for left, right in combinations(sorted(normalized_sets), 2):
@@ -320,7 +321,7 @@ def _cooccurrence(hits_long: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
             }
         )
 
-    return pd.DataFrame(rows).sort_values(
+    return pd.DataFrame(rows, columns=columns).sort_values(
         ["intersection", "jaccard", "left", "right"],
         ascending=[False, False, True, True],
     )

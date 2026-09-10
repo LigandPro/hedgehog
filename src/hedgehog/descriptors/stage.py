@@ -108,6 +108,7 @@ def run(data, config, subfolder=None, reporter=None):
             config_descriptors["borders"],
             filtered_folder,
             structural_constraints=config_descriptors.get("structural_constraints"),
+            molecule_output_folder=descriptors_folder,
         )
         if reporter is not None:
             reporter.progress(

@@ -213,6 +213,7 @@ def collect_yield_evidence(
         [
             "output/final_molecules.csv",
             "final_molecules.csv",
+            "stages/07_descriptors_final/filtered_molecules.csv",
             "stages/07_descriptors_final/filtered/filtered_molecules.csv",
             "stages/06_docking_filters/filtered_molecules.csv",
         ],

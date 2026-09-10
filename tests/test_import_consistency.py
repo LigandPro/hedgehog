@@ -8,10 +8,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 
-# Optional integration module used behind a guarded import.
-OPTIONAL_MISSING_MODULES = {
-    "hedgehog.vendor.moleval.metrics.posecheck",
-}
+OPTIONAL_MISSING_MODULES: set[str] = set()
 
 
 def _iter_python_files() -> list[Path]:

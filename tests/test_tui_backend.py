@@ -1095,7 +1095,6 @@ class TestPipelinePreflight:
             yaml.safe_dump(
                 {
                     "run": True,
-                    "batch_size": 1000,
                     "borders": {
                         "molWt_min": 200,
                         "molWt_max": 500,
@@ -1135,7 +1134,6 @@ class TestPipelinePreflight:
             yaml.safe_dump(
                 {
                     "run": True,
-                    "run_after_docking": True,
                     "input_sdf": None,
                     "receptor_pdb": None,
                     "aggregation": {"mode": "all"},
@@ -1345,35 +1343,4 @@ class TestPipelinePreflight:
             check["code"] == "DOCKING_RECEPTOR_INVALID"
             for report in result["stage_reports"]
             for check in report["checks"]
-        )
-
-    def test_preflight_requires_input_sdf_for_manual_docking_filters(
-        self, preflight_env
-    ):
-        project_root = preflight_env["paths"]["project_root"]
-        filters_cfg = (
-            project_root / "src" / "hedgehog" / "configs" / "config_docking_filters.yml"
-        )
-        filters_cfg.write_text(
-            yaml.safe_dump(
-                {
-                    "run": True,
-                    "run_after_docking": False,
-                    "input_sdf": None,
-                    "receptor_pdb": None,
-                    "aggregation": {"mode": "all"},
-                },
-                sort_keys=False,
-            )
-        )
-
-        handler = preflight_env["server"].pipeline_handler
-        result = handler.preflight_pipeline(["docking_filters"])
-
-        assert result["valid"] is False
-        stage_checks = result["stage_reports"][0]["checks"]
-        assert any(
-            check["code"] == "DOCKING_FILTERS_INPUT_REQUIRED"
-            and check["level"] == "error"
-            for check in stage_checks
         )

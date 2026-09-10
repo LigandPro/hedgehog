@@ -16,6 +16,7 @@ CFG_DOCKING = "config_docking"
 
 # Common config keys
 KEY_FOLDER_TO_SAVE = "folder_to_save"
+KEY_ALIGNMENT_SKIP_FINAL_DESCRIPTORS = "_alignment_skip_final_descriptors"
 
 # Docking tool names
 TOOL_GNINA = "gnina"

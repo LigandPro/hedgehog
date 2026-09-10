@@ -208,7 +208,6 @@ const initialWizardState: WizardState = {
       enabled: true,
       order: 1,
       quickParams: {
-        batch_size: 1000,
         filter_data: true,
         molWt_min: 200,
         molWt_max: 500,
@@ -237,6 +236,8 @@ const initialWizardState: WizardState = {
         calculate_common_alerts: true,
         calculate_NIBR: true,
         calculate_lilly: true,
+        calculate_stereo_center: true,
+        filter_undefined_stereo_center: true,
         filter_data: true,
       },
     },
@@ -267,7 +268,7 @@ const initialWizardState: WizardState = {
       order: 5,
       quickParams: {
         aggregation_mode: 'all',
-        max_clashes: 2,
+        clash_cutoff: 0.75,
         min_hbonds: 0,
         max_rmsd_to_conformer: 3.0,
       },

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
+import TextInput from 'ink-text-input';
 import { Header } from '../components/Header.js';
 import { Footer } from '../components/Footer.js';
 import { AppShell } from '../components/AppShell.js';
@@ -24,28 +25,28 @@ const ALL_RULESETS = [
 interface SettingItem {
   key: string;
   label: string;
-  type: 'boolean' | 'path' | 'select';
-  options?: string[];
+  type: 'boolean' | 'number' | 'path';
   description?: string;
 }
 
 const settingsItems: SettingItem[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable structural filters stage' },
+  { key: 'n_jobs', label: 'Parallel Jobs', type: 'number', description: 'Workers for parsing and all structural filters (-1 = all CPUs)' },
   { key: 'filter_data', label: 'Filter Data', type: 'boolean', description: 'Apply filters to remove flagged molecules' },
   { key: 'alerts_data_path', label: 'Alerts Data Path', type: 'path', description: 'Path to structural alerts SMARTS database' },
   { key: 'calculate_common_alerts', label: 'Common Alerts', type: 'boolean', description: 'Check for PAINS, Dundee, Glaxo, etc. alerts' },
   { key: 'calculate_molgraph_stats', label: 'MolGraph Stats', type: 'boolean', description: 'Calculate molecular graph statistics' },
   { key: 'calculate_molcomplexity', label: 'Mol Complexity', type: 'boolean', description: 'Compute molecular complexity metrics' },
   { key: 'calculate_NIBR', label: 'NIBR Filters', type: 'boolean', description: 'Apply Novartis NIBR structural filters' },
-  { key: 'nibr_scheduler', label: 'NIBR Scheduler', type: 'select', options: ['threads', 'processes'], description: 'Parallelization: threads (faster) or processes (safer)' },
   { key: 'calculate_bredt', label: 'Bredt Filters', type: 'boolean', description: 'Check for Bredt rule violations (strained rings)' },
   { key: 'calculate_lilly', label: 'Lilly Filters', type: 'boolean', description: 'Apply Eli Lilly medchem demerits rules' },
-  { key: 'lilly_scheduler', label: 'Lilly Scheduler', type: 'select', options: ['threads', 'processes'], description: 'Parallelization: threads (faster) or processes (safer)' },
+  { key: 'calculate_stereo_center', label: 'Stereo Diagnostics', type: 'boolean', description: 'Calculate and report total and undefined stereocenters' },
+  { key: 'filter_undefined_stereo_center', label: 'Reject Undefined Stereo', type: 'boolean', description: 'Hard reject structures with more than 2 undefined stereocenters' },
 ];
 
 type ViewMode = 'settings' | 'rulesets';
 
-type SettingType = 'boolean' | 'path' | 'select';
+type SettingType = 'boolean' | 'number' | 'path';
 
 function getSettingColor(
   theme: ReturnType<typeof useTheme>['theme'],
@@ -55,7 +56,7 @@ function getSettingColor(
   if (type === 'boolean') {
     return value ? theme.palette.success : theme.palette.error;
   }
-  if (type === 'select') {
+  if (type === 'number') {
     return theme.palette.primary;
   }
   return theme.palette.info;
@@ -104,6 +105,8 @@ export function ConfigFilters(): React.ReactElement {
   const [scrollOffset, setScrollOffset] = useState(0);
   const [browsingField, setBrowsingField] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editValue, setEditValue] = useState('');
 
   const reservedRows = viewMode === 'rulesets' ? 11 : 10;
   const visibleRows = Math.max(2, terminalHeight - reservedRows);
@@ -151,8 +154,14 @@ export function ConfigFilters(): React.ReactElement {
 
   const parseConfig = (cfg: FiltersConfig) => {
     const rs: Record<string, boolean> = {};
+    const raw = cfg.include_rulesets;
+    const allMode = raw === 'all';
     for (const ruleset of ALL_RULESETS) {
-      rs[ruleset] = cfg.include_rulesets?.includes(ruleset) ?? false;
+      rs[ruleset] = allMode
+        ? true
+        : Array.isArray(raw)
+          ? raw.includes(ruleset)
+          : false;
     }
     setRulesets(rs);
   };
@@ -177,10 +186,14 @@ export function ConfigFilters(): React.ReactElement {
     try {
       const bridge = getBridge();
 
-      // Build include_rulesets from rulesets state
-      const includeRulesets = Object.entries(rulesets)
+      // Build include_rulesets from rulesets state; persist "all" when every known set is on.
+      const selected = Object.entries(rulesets)
         .filter(([_, enabled]) => enabled)
         .map(([name]) => name);
+      const includeRulesets =
+        ALL_RULESETS.length > 0 && selected.length === ALL_RULESETS.length
+          ? 'all'
+          : selected;
 
       const newConfig: FiltersConfig = {
         ...rawConfig,
@@ -233,13 +246,11 @@ export function ConfigFilters(): React.ReactElement {
     const item = settingsItems[selectedIndex];
     if (item.type === 'boolean') {
       setSettingValue(item.key, !getSettingValue(item.key));
-    } else if (item.type === 'select' && item.options) {
-      const current = getSettingValue(item.key) as string;
-      const idx = item.options.indexOf(current);
-      const nextIdx = (idx + 1) % item.options.length;
-      setSettingValue(item.key, item.options[nextIdx]);
     } else if (item.type === 'path') {
       setBrowsingField(item.key);
+    } else if (item.type === 'number') {
+      setEditValue(String(getSettingValue(item.key) ?? ''));
+      setEditMode(true);
     }
   };
 
@@ -268,6 +279,20 @@ export function ConfigFilters(): React.ReactElement {
 
   useInput((input, key) => {
     if (loading || browsingField) return;
+
+    if (editMode) {
+      if (key.escape) {
+        setEditMode(false);
+      } else if (key.return) {
+        const item = settingsItems[selectedIndex];
+        if (item?.type === 'number') {
+          const parsed = Number.parseInt(editValue, 10);
+          setSettingValue(item.key, Number.isNaN(parsed) ? 0 : parsed);
+        }
+        setEditMode(false);
+      }
+      return;
+    }
 
     if (viewMode === 'rulesets' && handleSearchInput(input, key)) {
       return;
@@ -488,14 +513,22 @@ export function ConfigFilters(): React.ReactElement {
                   <Text color={theme.palette.textMuted}>{item.label}</Text>
                 </Box>
                 <Box width={valueWidth}>
-                  <Text color={getSettingColor(theme, item.type, value)}>
-                    {truncateMiddle(
-                      item.type === 'boolean'
-                        ? (value ? 'Yes' : 'No')
-                        : String(value || '(not set)'),
-                      valueWidth,
-                    ).padEnd(valueWidth, ' ')}
-                  </Text>
+                  {isSelected && editMode && item.type === 'number' ? (
+                    <TextInput
+                      value={editValue}
+                      onChange={setEditValue}
+                      focus={true}
+                    />
+                  ) : (
+                    <Text color={getSettingColor(theme, item.type, value)}>
+                      {truncateMiddle(
+                        item.type === 'boolean'
+                          ? (value ? 'Yes' : 'No')
+                          : String(value ?? '(not set)'),
+                        valueWidth,
+                      ).padEnd(valueWidth, ' ')}
+                    </Text>
+                  )}
                 </Box>
               </Box>
             </Box>

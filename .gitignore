@@ -83,6 +83,7 @@ modules/aizynthfinder/
 modules/fsscore/
 modules/gasa/
 modules/matcha_remote/
+modules/docking/
 modules/scscore/
 
 # Build artifacts in external modules

@@ -5,7 +5,7 @@ import os
 from typing import Any
 
 import pandas as pd
-from rdkit import Chem
+from rdkit import Chem, rdBase
 
 from hedgehog.molprep.filters import (
     _allowed_atoms_ok,
@@ -38,14 +38,15 @@ def _safe_to_mol(
     to_mol_cfg: dict[str, Any],
 ) -> Chem.Mol | None:
     try:
-        return dm.to_mol(
-            smiles,
-            ordered=bool(to_mol_cfg.get("ordered", True)),
-            sanitize=bool(to_mol_cfg.get("sanitize", False)),
-            allow_cxsmiles=bool(to_mol_cfg.get("allow_cxsmiles", True)),
-            strict_cxsmiles=bool(to_mol_cfg.get("strict_cxsmiles", True)),
-            remove_hs=bool(to_mol_cfg.get("remove_hs", True)),
-        )
+        with rdBase.BlockLogs():
+            return dm.to_mol(
+                smiles,
+                ordered=bool(to_mol_cfg.get("ordered", True)),
+                sanitize=bool(to_mol_cfg.get("sanitize", False)),
+                allow_cxsmiles=bool(to_mol_cfg.get("allow_cxsmiles", True)),
+                strict_cxsmiles=bool(to_mol_cfg.get("strict_cxsmiles", True)),
+                remove_hs=bool(to_mol_cfg.get("remove_hs", True)),
+            )
     except Exception:
         return None
 
@@ -67,19 +68,21 @@ def _molprep_one(
     if _get_cfg(cfg, ["steps", "fix_mol", "enabled"], True):
         try:
             fix_cfg = _get_cfg(cfg, ["steps", "fix_mol"], {}) or {}
-            mol = dm.fix_mol(
-                mol,
-                n_iter=int(fix_cfg.get("n_iter", 1)),
-                remove_singleton=bool(fix_cfg.get("remove_singleton", True)),
-                largest_only=bool(fix_cfg.get("largest_only", False)),
-                inplace=False,
-            )
+            with rdBase.BlockLogs():
+                mol = dm.fix_mol(
+                    mol,
+                    n_iter=int(fix_cfg.get("n_iter", 1)),
+                    remove_singleton=bool(fix_cfg.get("remove_singleton", True)),
+                    largest_only=bool(fix_cfg.get("largest_only", False)),
+                    inplace=False,
+                )
         except Exception:
             return None, "fix_failed", "fix_mol", None
 
     if _get_cfg(cfg, ["steps", "sanitize_mol", "enabled"], True):
         try:
-            mol = dm.sanitize_mol(mol)
+            with rdBase.BlockLogs():
+                mol = dm.sanitize_mol(mol)
         except Exception:
             mol = None
         if mol is None:
@@ -88,15 +91,16 @@ def _molprep_one(
     if _get_cfg(cfg, ["steps", "remove_salts_solvents", "enabled"], True):
         try:
             rss_cfg = _get_cfg(cfg, ["steps", "remove_salts_solvents"], {}) or {}
-            mol = dm.remove_salts_solvents(
-                mol,
-                defn_data=rss_cfg.get("defn_data"),
-                defn_format=str(rss_cfg.get("defn_format", "smarts")),
-                dont_remove_everything=bool(
-                    rss_cfg.get("dont_remove_everything", True)
-                ),
-                sanitize=bool(rss_cfg.get("sanitize", True)),
-            )
+            with rdBase.BlockLogs():
+                mol = dm.remove_salts_solvents(
+                    mol,
+                    defn_data=rss_cfg.get("defn_data"),
+                    defn_format=str(rss_cfg.get("defn_format", "smarts")),
+                    dont_remove_everything=bool(
+                        rss_cfg.get("dont_remove_everything", True)
+                    ),
+                    sanitize=bool(rss_cfg.get("sanitize", True)),
+                )
         except Exception:
             return None, "remove_salts_failed", "remove_salts_solvents", None
         if mol is None:
@@ -104,7 +108,8 @@ def _molprep_one(
 
     if bool(_get_cfg(cfg, ["steps", "keep_largest_fragment"], True)):
         try:
-            mol = dm.keep_largest_fragment(mol)
+            with rdBase.BlockLogs():
+                mol = dm.keep_largest_fragment(mol)
         except Exception:
             return None, "largest_fragment_failed", "keep_largest_fragment", None
 
@@ -120,33 +125,42 @@ def _molprep_one(
     if _get_cfg(cfg, ["steps", "standardize_mol", "enabled"], True):
         try:
             std_cfg = _get_cfg(cfg, ["steps", "standardize_mol"], {}) or {}
-            mol = dm.standardize_mol(
-                mol,
-                disconnect_metals=bool(std_cfg.get("disconnect_metals", True)),
-                normalize=bool(std_cfg.get("normalize", True)),
-                reionize=bool(std_cfg.get("reionize", True)),
-                uncharge=bool(std_cfg.get("uncharge", True)),
-                stereo=bool(std_cfg.get("stereo", True)),
-            )
+            with rdBase.BlockLogs():
+                mol = dm.standardize_mol(
+                    mol,
+                    disconnect_metals=bool(std_cfg.get("disconnect_metals", True)),
+                    normalize=bool(std_cfg.get("normalize", True)),
+                    reionize=bool(std_cfg.get("reionize", True)),
+                    uncharge=bool(std_cfg.get("uncharge", False)),
+                    stereo=bool(std_cfg.get("stereo", True)),
+                )
         except Exception:
             return None, "standardize_mol_failed", "standardize_mol", None
         if mol is None:
             return None, "standardize_mol_failed", "standardize_mol", None
 
-    if bool(_get_cfg(cfg, ["steps", "remove_stereochemistry"], True)):
+    remove_stereochemistry = bool(
+        _get_cfg(cfg, ["steps", "remove_stereochemistry"], False)
+    )
+    if remove_stereochemistry:
         try:
             Chem.RemoveStereochemistry(mol)
         except Exception:
             return None, "remove_stereo_failed", "remove_stereochemistry", None
 
     try:
-        smiles = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
+        smiles = Chem.MolToSmiles(
+            mol,
+            canonical=True,
+            isomericSmiles=not remove_stereochemistry,
+        )
     except Exception:
         return None, "to_smiles_failed", "to_smiles", None
 
     if _get_cfg(cfg, ["steps", "standardize_smiles", "enabled"], True):
         try:
-            smiles = dm.standardize_smiles(smiles)
+            with rdBase.BlockLogs():
+                smiles = dm.standardize_smiles(smiles)
         except Exception:
             return None, "standardize_smiles_failed", "standardize_smiles", None
 
@@ -154,7 +168,8 @@ def _molprep_one(
             return None, "standardize_smiles_failed", "standardize_smiles", None
         smiles = str(smiles).strip()
 
-        mol2 = dm.to_mol(smiles, sanitize=True)
+        with rdBase.BlockLogs():
+            mol2 = dm.to_mol(smiles, sanitize=True)
         if mol2 is None:
             return None, "post_standardize_parse_failed", "post_standardize_parse", None
         mol = mol2
@@ -193,9 +208,13 @@ def _molprep_one(
             json.dumps(filter_flags, ensure_ascii=False),
         )
 
-    # Normalize final SMILES once more after filters (canonical, no stereo)
+    # Normalize final SMILES once more after filters.
     try:
-        smiles_final = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
+        smiles_final = Chem.MolToSmiles(
+            mol,
+            canonical=True,
+            isomericSmiles=not remove_stereochemistry,
+        )
     except Exception:
         return None, "to_smiles_failed", "to_smiles_final", None
 

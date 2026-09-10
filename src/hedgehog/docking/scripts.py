@@ -2,15 +2,15 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from hedgehog._constants import TOOL_GNINA, TOOL_MATCHA, TOOL_SMINA
 from hedgehog.configs.logger import logger
 from hedgehog.docking.binaries import _resolve_docking_binary
 from hedgehog.docking.config_writer import (
-    _create_gnina_config_file,
+    _create_docking_config_file,
     _create_per_molecule_configs,
-    _create_smina_config_file,
     _parse_bool_config,
 )
 from hedgehog.docking.ligand_prep import (
@@ -25,7 +25,6 @@ from hedgehog.docking.paths import _emit_post_docking_warnings, _resolve_autobox
 from hedgehog.docking.receptor_prep import (
     _get_receptor_and_prep_cmd,
     _prepare_receptor_if_needed,
-    _restore_gnina_receptor,
 )
 from hedgehog.setup import ensure_matcha_checkout
 
@@ -358,6 +357,7 @@ def _resolve_matcha_autobox(cfg: dict, matcha_cfg: dict) -> str | None:
     """Resolve Matcha autobox path with fallback to GNINA/SMINA autobox config."""
     raw_autobox = (
         matcha_cfg.get("autobox_ligand")
+        or cfg.get("autobox_ligand")
         or (cfg.get("gnina_config", {}) or {}).get("autobox_ligand")
         or (cfg.get("smina_config", {}) or {}).get("autobox_ligand")
     )
@@ -376,6 +376,7 @@ def _resolve_matcha_center(
     """Resolve Matcha box center from Matcha/GNINA/SMINA configs."""
     for config_dict in (
         matcha_cfg,
+        cfg,
         cfg.get("gnina_config", {}) or {},
         cfg.get("smina_config", {}) or {},
     ):
@@ -398,19 +399,88 @@ def _build_matcha_command(
 ) -> tuple[list[str], str, Path]:
     """Build Matcha CLI command and return (command_parts, run_name, checkout_path)."""
     matcha_cfg = cfg.get("matcha_config", {}) or {}
+    backend = str(matcha_cfg.get("backend") or "matcha_cli").strip().lower()
+    repo_url = matcha_cfg.get("repo_url")
+    checkout_kwargs = {
+        "checkout_dir": matcha_cfg.get("checkout_dir"),
+        "update": backend != "docking",
+    }
+    if repo_url:
+        checkout_kwargs["repo_url"] = repo_url
     matcha_repo = ensure_matcha_checkout(
         _project_root(),
-        checkout_dir=matcha_cfg.get("checkout_dir"),
+        **checkout_kwargs,
     )
-    uv_bin = str(matcha_cfg.get("uv_bin") or "uv").strip() or "uv"
-    resolved_uv = _resolve_executable(uv_bin)
-    if resolved_uv is None:
-        raise FileNotFoundError(
-            f"Matcha launcher '{uv_bin}' was not found. Install uv or configure matcha_config.uv_bin."
-        )
-
     run_name = str(matcha_cfg.get("run_name") or "matcha_run").strip() or "matcha_run"
     output_dir = ligands_dir / "matcha"
+
+    if backend == "docking":
+        required = ("checkpoint_root", "checkpoint_run")
+        missing = [key for key in required if not matcha_cfg.get(key)]
+        if missing:
+            raise ValueError(
+                "matcha_config is missing docking backend settings: "
+                + ", ".join(missing)
+            )
+        gnina_config = dict(cfg.get("gnina_config", {}) or {})
+        gnina_bin_name = str(gnina_config.get("bin") or cfg.get("gnina_bin") or "gnina")
+        gnina_bin = _resolve_executable(gnina_bin_name)
+        if gnina_bin is None:
+            raise FileNotFoundError(
+                f"GNINA executable '{gnina_bin_name}' is required to score Matcha poses"
+            )
+        gnina_cpu, _gpu_count, gnina_jobs = _resolve_gnina_parallelism(
+            cfg, gnina_config
+        )
+
+        command = [
+            sys.executable,
+            "-m",
+            "hedgehog.docking.docking_repository",
+            "--repo",
+            str(matcha_repo),
+            "--receptor",
+            receptor,
+            "--ligands",
+            ligands_path,
+            "--out",
+            str(output_dir.resolve()),
+            "--run-name",
+            run_name,
+            "--checkpoint-root",
+            str(Path(matcha_cfg["checkpoint_root"]).expanduser().resolve()),
+            "--checkpoint-run",
+            str(matcha_cfg["checkpoint_run"]),
+            "--target-name",
+            str(matcha_cfg.get("target_name") or "hedgehog_target"),
+            "--gnina-bin",
+            gnina_bin,
+            "--gnina-cpu",
+            str(gnina_cpu),
+            "--gnina-jobs",
+            str(gnina_jobs),
+        ]
+        autobox_path = _resolve_matcha_autobox(cfg, matcha_cfg)
+        center = _resolve_matcha_center(cfg, matcha_cfg)
+        if autobox_path:
+            command.extend(["--autobox-ligand", autobox_path])
+        elif center is not None:
+            command.extend(
+                [
+                    "--center-x",
+                    str(center[0]),
+                    "--center-y",
+                    str(center[1]),
+                    "--center-z",
+                    str(center[2]),
+                ]
+            )
+        return command, run_name, matcha_repo
+
+    resolved_uv = _resolve_executable("uv")
+    if resolved_uv is None:
+        raise FileNotFoundError("Matcha requires uv, but it was not found on PATH.")
+
     command = [
         resolved_uv,
         "run",
@@ -428,11 +498,13 @@ def _build_matcha_command(
         "--overwrite",
         "--device",
         str(matcha_cfg.get("device") or "auto"),
-        "--n-samples",
-        str(int(matcha_cfg.get("n_samples", 20))),
         "--scorer",
         str(matcha_cfg.get("scorer") or "gnina"),
     ]
+
+    n_samples = matcha_cfg.get("n_samples")
+    if n_samples is not None:
+        command.extend(["--n-samples", str(int(n_samples))])
 
     n_confs = matcha_cfg.get("n_confs")
     if n_confs is not None:
@@ -483,10 +555,6 @@ def _build_matcha_command(
 
     if _parse_bool_config(matcha_cfg.get("keep_workdir", False), False):
         command.append("--keep-workdir")
-
-    gpus = matcha_cfg.get("gpus")
-    if gpus:
-        command.extend(["--gpus", str(gpus)])
 
     autobox_path = _resolve_matcha_autobox(cfg, matcha_cfg)
     center = _resolve_matcha_center(cfg, matcha_cfg)
@@ -942,7 +1010,7 @@ def _resolve_env_library_paths(env_path):
     return env_lib_paths
 
 
-def _get_gnina_environment(cfg, base_folder):
+def _get_gnina_environment(cfg):
     """Get GNINA activation command and LD_LIBRARY_PATH."""
     gnina_config = cfg.get("gnina_config", {})
     env_path = gnina_config.get("env_path") or cfg.get("gnina_env_path")
@@ -1091,6 +1159,12 @@ def _resolve_gnina_parallelism(cfg, gnina_config):
     no_gpu_enabled = _parse_bool_config(gnina_config.get("no_gpu", False))
     gpu_count = 0 if no_gpu_enabled else _count_visible_nvidia_gpus()
     parallel_jobs = _resolve_gnina_parallel_jobs(cfg, cpu_per_process)
+    if (
+        gpu_count > 0
+        and cfg.get("gnina_parallel_jobs") is None
+        and cfg.get("gnina_parallel_jobs_max") is None
+    ):
+        parallel_jobs = min(parallel_jobs, gpu_count * 2)
     return cpu_per_process, gpu_count, parallel_jobs
 
 
@@ -1106,7 +1180,7 @@ def _setup_smina(
     """Setup SMINA docking configuration and script with per-molecule processing."""
     try:
         if protein_preparation_tool is None:
-            _prepare_receptor_if_needed(cfg, ligands_dir, None, base_folder)
+            _prepare_receptor_if_needed(cfg)
 
         receptor, protein_prep_cmd = _get_receptor_and_prep_cmd(
             cfg, ligands_dir, protein_preparation_tool, "smina"
@@ -1162,8 +1236,8 @@ def _setup_smina(
 
         # Fallback to legacy batch mode
         config_file = ligands_dir / "_workdir" / "smina_config.ini"
-        _create_smina_config_file(
-            cfg, ligands_dir, receptor, ligands_path, config_file, output_sdf
+        _create_docking_config_file(
+            cfg, ligands_dir, receptor, ligands_path, output_sdf, config_file, "smina"
         )
 
         prepared_output_relative = _extract_prepared_output_from_cmd(prep_cmd)
@@ -1265,8 +1339,8 @@ def _setup_gnina_batch_mode(
 ):
     """Setup GNINA in legacy batch mode. Returns script path."""
     config_file = ligands_dir / "_workdir" / "gnina_config.ini"
-    _create_gnina_config_file(
-        cfg, ligands_dir, receptor, ligands_path, output_sdf, config_file
+    _create_docking_config_file(
+        cfg, ligands_dir, receptor, ligands_path, output_sdf, config_file, "gnina"
     )
 
     prepared_output_relative = _extract_prepared_output_from_cmd(prep_cmd)
@@ -1296,10 +1370,6 @@ def _setup_gnina(
 ):
     """Setup GNINA docking configuration and script with per-molecule processing."""
     try:
-        original_receptor = _restore_gnina_receptor(cfg)
-        if not original_receptor:
-            return None
-
         receptor, protein_prep_cmd = _get_receptor_and_prep_cmd(
             cfg, ligands_dir, protein_preparation_tool, "gnina"
         )
@@ -1322,7 +1392,7 @@ def _setup_gnina(
         gnina_command_template = _build_gnina_command_template(
             cfg, gnina_bin, ligands_dir
         )
-        activate_cmd, ld_library_path = _get_gnina_environment(cfg, base_folder)
+        activate_cmd, ld_library_path = _get_gnina_environment(cfg)
 
         cpu_per_process, gpu_count, parallel_jobs = _resolve_gnina_parallelism(
             cfg, gnina_config

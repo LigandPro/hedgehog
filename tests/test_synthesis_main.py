@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 import hedgehog.synthesis.main as synthesis_main
@@ -72,3 +73,42 @@ def test_main_raises_for_unsupported_python_autoinstall(monkeypatch, tmp_path: P
 
     with pytest.raises(RuntimeError, match="supports Python 3.10-3.12"):
         synthesis_main.main(config)
+
+
+def test_main_with_no_thresholds_keeps_all_scored_molecules(
+    monkeypatch, tmp_path: Path
+):
+    output_dir = tmp_path / "results"
+    input_csv = tmp_path / "input.csv"
+    input_csv.write_text(
+        "smiles,model_name,mol_idx\nCCO,target,0\nCCN,target,1\n",
+        encoding="utf-8",
+    )
+    synthesis_config = tmp_path / "synthesis.yml"
+    synthesis_config.write_text(
+        "run: true\nenabled_scores: [sa]\nrun_retrosynthesis: false\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        synthesis_main,
+        "get_input_path",
+        lambda config, folder_to_save: str(input_csv),
+    )
+    monkeypatch.setattr(
+        synthesis_main,
+        "calculate_synthesis_scores",
+        lambda input_df, *_args, **_kwargs: input_df.assign(sa_score=[2.0, 3.0]),
+    )
+    synthesis_main.main(
+        {
+            "folder_to_save": str(output_dir),
+            "config_synthesis": str(synthesis_config),
+            "generated_mols_path": str(input_csv),
+        }
+    )
+
+    saved = pd.read_csv(
+        output_dir / "stages" / "04_synthesis" / "filtered_molecules.csv"
+    )
+    assert saved["smiles"].tolist() == ["CCO", "CCN"]

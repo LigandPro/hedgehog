@@ -57,9 +57,8 @@ def _save_job_ids(ligands_dir, overall_job_id, job_ids):
     try:
         with open(ids_path, "w") as f:
             f.write(f"overall: {overall_job_id}\n")
-            f.write(f"smina: {job_ids.get('smina', '')}\n")
-            f.write(f"gnina: {job_ids.get('gnina', '')}\n")
-            f.write(f"matcha: {job_ids.get('matcha', '')}\n")
+            for tool in (TOOL_SMINA, TOOL_GNINA, TOOL_MATCHA):
+                f.write(f"{tool}: {job_ids.get(tool, '')}\n")
     except Exception as e:
         logger.warning("Failed to write job_ids.txt: %s", e)
 
@@ -80,40 +79,31 @@ def _update_metadata_with_run_status(ligands_dir, run_status):
 
 
 def _parse_tools_config(cfg):
-    """Parse tools configuration into a list of tool names."""
-    tools_cfg = cfg.get("tools", "both")
+    """Parse and validate an explicit docking engine selection."""
+    tools_cfg = cfg.get("tools", [TOOL_SMINA, TOOL_GNINA])
 
     if isinstance(tools_cfg, str):
-        tools_list = (
-            [t.strip().lower() for t in tools_cfg.split(",")]
-            if "," in tools_cfg
-            else [tools_cfg.strip().lower()]
-        )
+        requested = [item.strip().lower() for item in tools_cfg.split(",")]
     elif isinstance(tools_cfg, (list, tuple)):
-        tools_list = [str(t).strip().lower() for t in tools_cfg]
+        requested = [str(item).strip().lower() for item in tools_cfg]
     else:
-        tools_list = ["both"]
+        raise ValueError("docking tools must be a string or a list")
 
-    if not tools_list:
-        return [TOOL_SMINA, TOOL_GNINA]
+    requested = [item for item in requested if item]
+    if not requested:
+        raise ValueError("docking tools must select at least one engine")
 
-    selected_tools = []
-
-    def _append(tool_name):
-        if tool_name not in selected_tools:
-            selected_tools.append(tool_name)
-
-    for tool_name in tools_list:
-        if tool_name == "all":
-            _append(TOOL_SMINA)
-            _append(TOOL_GNINA)
-            _append(TOOL_MATCHA)
-            continue
-        if tool_name == "both":
-            _append(TOOL_SMINA)
-            _append(TOOL_GNINA)
-            continue
-        if tool_name in [TOOL_SMINA, TOOL_GNINA, TOOL_MATCHA]:
-            _append(tool_name)
-
-    return selected_tools or [TOOL_SMINA, TOOL_GNINA]
+    aliases = {
+        "all": (TOOL_SMINA, TOOL_GNINA, TOOL_MATCHA),
+        "both": (TOOL_SMINA, TOOL_GNINA),
+    }
+    supported = {TOOL_SMINA, TOOL_GNINA, TOOL_MATCHA}
+    selected: list[str] = []
+    for item in requested:
+        expanded = aliases.get(item, (item,))
+        for tool in expanded:
+            if tool not in supported:
+                raise ValueError(f"Unsupported docking tool: {tool}")
+            if tool not in selected:
+                selected.append(tool)
+    return selected

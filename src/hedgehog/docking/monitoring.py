@@ -108,12 +108,17 @@ def _create_progress_tracker(reporter, selected_tools, ligands_dir, gnina_output
 
 
 def _evaluate_run_results(selected_tools, run_status, reporter, tool_totals) -> bool:
-    """Evaluate docking results and return True if all tools succeeded."""
+    """Evaluate docking results and return True if usable pose output exists."""
     completed_tools = [
         t for t in selected_tools if run_status.get(t, {}).get("status") == "completed"
     ]
     failed_tools = [
         t for t in selected_tools if run_status.get(t, {}).get("status") == "failed"
+    ]
+    tools_with_results = [
+        t
+        for t in completed_tools
+        if int(run_status.get(t, {}).get("aggregated_molecules") or 0) > 0
     ]
 
     if reporter is not None and tool_totals:
@@ -124,6 +129,13 @@ def _evaluate_run_results(selected_tools, run_status, reporter, tool_totals) -> 
         logger.error("Docking tools failed: %s", ", ".join(failed_tools))
 
     if len(completed_tools) == len(selected_tools):
+        return True
+    if tools_with_results:
+        logger.warning(
+            "Only %d/%d docking tools completed successfully; continuing with available pose outputs",
+            len(tools_with_results),
+            len(selected_tools),
+        )
         return True
     if completed_tools:
         logger.warning(

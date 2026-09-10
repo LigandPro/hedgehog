@@ -49,7 +49,6 @@ const MOL_PREP_PARAMS: ParamDef[] = [
 // Descriptors config params - all from config_descriptors.yml
 const DESCRIPTORS_PARAMS: ParamDef[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable descriptors calculation' },
-  { key: 'batch_size', label: 'Batch Size', type: 'number', description: 'Molecules per batch for memory efficiency' },
   { key: 'filter_data', label: 'Filter Data', type: 'boolean', description: 'Filter molecules outside border ranges' },
   // Descriptor ranges
   { key: 'molWt', label: 'Molecular Weight', type: 'range', minKey: 'molWt_min', maxKey: 'molWt_max', configPath: ['borders'], description: 'Molecular weight range (Da)' },
@@ -70,9 +69,12 @@ const DESCRIPTORS_PARAMS: ParamDef[] = [
 
 const FILTERS_PARAMS: ParamDef[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable structural filters' },
+  { key: 'n_jobs', label: 'Parallel Jobs', type: 'number', description: 'Workers for parsing and all structural filters (-1 = all CPUs)' },
   { key: 'calculate_common_alerts', label: 'Common Alerts', type: 'boolean', description: 'PAINS, Dundee, Glaxo alerts' },
   { key: 'calculate_NIBR', label: 'NIBR Filters', type: 'boolean', description: 'Novartis structural filters' },
   { key: 'calculate_lilly', label: 'Lilly Filters', type: 'boolean', description: 'Eli Lilly medchem demerits' },
+  { key: 'calculate_stereo_center', label: 'Stereo Diagnostics', type: 'boolean', description: 'Report total and undefined stereocenters' },
+  { key: 'filter_undefined_stereo_center', label: 'Reject Undefined Stereo', type: 'boolean', description: 'Reject structures with more than 2 undefined stereocenters' },
   { key: 'filter_data', label: 'Filter Data', type: 'boolean', description: 'Remove flagged molecules' },
 ];
 
@@ -95,8 +97,8 @@ const DOCKING_PARAMS: ParamDef[] = [
 
 const DOCKING_FILTERS_PARAMS: ParamDef[] = [
   { key: 'run', label: 'Run Stage', type: 'boolean', description: 'Enable/disable docking filters' },
-  { key: 'enabled', label: 'Pose Quality', type: 'boolean', configPath: ['pose_quality'], description: 'PoseCheck: clashes and strain filters' },
-  { key: 'max_clashes', label: 'Max Clashes', type: 'number', configPath: ['pose_quality'], description: 'Maximum allowed steric clashes' },
+  { key: 'enabled', label: 'Pose Quality', type: 'boolean', configPath: ['pose_quality'], description: 'Fast clash, volume-overlap, and protein-distance checks' },
+  { key: 'clash_cutoff', label: 'Clash Cutoff', type: 'number', configPath: ['pose_quality'], description: 'Relative VDW distance threshold' },
   { key: 'enabled', label: 'Interactions', type: 'boolean', configPath: ['interactions'], description: 'ProLIF: interaction-based filtering' },
   { key: 'min_hbonds', label: 'Min H-Bonds', type: 'number', configPath: ['interactions'], description: 'Minimum required hydrogen bonds' },
   { key: 'enabled', label: 'Conformer Deviation', type: 'boolean', configPath: ['conformer_deviation'], description: 'Reject poses far from plausible conformers' },
@@ -251,7 +253,6 @@ export function QuickConfig({ stageName }: QuickConfigProps): React.ReactElement
     if (stageName !== 'descriptors') return;
 
     const descriptorParams = [
-      'batch_size',
       'filter_data',
       'molWt_min',
       'molWt_max',

@@ -5,14 +5,14 @@ from pathlib import Path
 
 from hedgehog.configs.logger import logger
 from hedgehog.docking.binaries import _validate_optional_tool_path
+from hedgehog.docking.receptor_sanitize import ensure_gnina_compatible_receptor
 
 
-def _resolve_receptor_path(receptor_pdb, base_folder=None):
+def _resolve_receptor_path(receptor_pdb):
     """Resolve receptor path to absolute, checking multiple locations.
 
     Args:
         receptor_pdb: Original receptor path from config
-        base_folder: Base folder for relative path resolution
 
     Returns:
         Resolved Path object or None if not found
@@ -80,26 +80,17 @@ def _prepare_protein_for_docking(receptor_pdb, ligands_dir, protein_preparation_
     return str(prepared_output_path.resolve()), cmd_args
 
 
-def _prepare_receptor_if_needed(
-    cfg, ligands_dir, protein_preparation_tool, base_folder=None
-):
+def _prepare_receptor_if_needed(cfg):
     """Resolve receptor path and update config. Actual preparation happens in script."""
     original_receptor = cfg.get("receptor_pdb")
     if not original_receptor:
         return
 
-    receptor_path = Path(original_receptor)
-    if not receptor_path.is_absolute():
-        project_root = Path(__file__).parent.parent.parent.parent
-        receptor_path = (project_root / original_receptor).resolve()
-        if not receptor_path.exists():
-            receptor_path = Path(original_receptor).resolve()
-
-    if not receptor_path.exists():
+    receptor_path = _resolve_receptor_path(original_receptor)
+    if receptor_path is None:
         logger.warning(
-            "Receptor file not found: %s (resolved to: %s)",
+            "Receptor file not found: %s",
             original_receptor,
-            receptor_path,
         )
         return
 
@@ -131,53 +122,32 @@ def _get_receptor_and_prep_cmd(cfg, ligands_dir, protein_preparation_tool, tool_
         return None, None
 
     receptor = str(receptor_path)
+    protein_prep_cmd = None
+    prepared_receptor = receptor
 
-    if protein_preparation_tool is None:
-        if "protein_prepared.pdb" in receptor:
-            logger.info("%s: Using prepared receptor: %s", tool_name.upper(), receptor)
-        else:
-            logger.info("%s: Using receptor: %s", tool_name.upper(), receptor)
-        return receptor, None
-
-    prepared_receptor, protein_prep_cmd = _prepare_protein_for_docking(
-        receptor, ligands_dir, protein_preparation_tool
-    )
-    if prepared_receptor != receptor:
-        cfg["receptor_pdb"] = prepared_receptor
-        logger.info(
-            "%s: Using prepared protein: %s", tool_name.upper(), prepared_receptor
+    if protein_preparation_tool is not None:
+        prepared_receptor, protein_prep_cmd = _prepare_protein_for_docking(
+            receptor, ligands_dir, protein_preparation_tool
         )
+        if prepared_receptor != receptor:
+            cfg["receptor_pdb"] = prepared_receptor
+            logger.info(
+                "%s: Using prepared protein: %s", tool_name.upper(), prepared_receptor
+            )
+    elif "protein_prepared.pdb" in prepared_receptor:
+        logger.info(
+            "%s: Using prepared receptor: %s", tool_name.upper(), prepared_receptor
+        )
+    else:
+        logger.info("%s: Using receptor: %s", tool_name.upper(), prepared_receptor)
+
+    if tool_name.lower() == "gnina" and protein_prep_cmd is None:
+        prepared_receptor = ensure_gnina_compatible_receptor(
+            prepared_receptor, ligands_dir
+        )
+        cfg["receptor_pdb"] = prepared_receptor
+
     return prepared_receptor, protein_prep_cmd
-
-
-def _restore_gnina_receptor(cfg):
-    """Validate and restore GNINA receptor_pdb config entry.
-
-    Returns the receptor path string, or None if unrecoverable.
-    """
-    original_receptor = cfg.get("receptor_pdb")
-    if not original_receptor:
-        logger.error("GNINA: receptor_pdb is missing in config")
-        return None
-
-    if "protein_prepared.pdb" not in original_receptor:
-        return original_receptor
-
-    logger.warning(
-        "GNINA: Config has prepared path: %s, this should have been restored",
-        original_receptor,
-    )
-    project_root = Path(__file__).parent.parent.parent.parent
-    possible_originals = [
-        project_root / "src/hedgehog/configs/examples/7EW9_apo.pdb",
-    ]
-    for possible in possible_originals:
-        if possible.exists():
-            cfg["receptor_pdb"] = str(possible.resolve())
-            return cfg["receptor_pdb"]
-
-    logger.error("GNINA: Could not find original receptor file")
-    return None
 
 
 def _execute_protein_preparation(cfg, ligands_dir, protein_preparation_tool) -> bool:
@@ -185,7 +155,7 @@ def _execute_protein_preparation(cfg, ligands_dir, protein_preparation_tool) -> 
 
     Returns True on success (or graceful skip), False on hard failure.
     """
-    _prepare_receptor_if_needed(cfg, ligands_dir, protein_preparation_tool)
+    _prepare_receptor_if_needed(cfg)
     original_receptor = cfg.get("receptor_pdb")
     if not original_receptor:
         return True

@@ -1,6 +1,7 @@
 import csv
 import inspect
 import multiprocessing
+import re
 import shutil
 import time
 from datetime import datetime
@@ -9,9 +10,15 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from hedgehog.config_alignment import (
+    ALIGNED_CONFIG_NAME,
+    THRESHOLDS_NAME,
+    _dump_generated_yaml,
+)
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.descriptors.stage import run as descriptors_main
 from hedgehog.docking.main import main as docking_main
+from hedgehog.docking.metadata import _parse_tools_config
 from hedgehog.docking_filters.main import docking_filters_main
 from hedgehog.large_dataset import (
     copy_parts,
@@ -35,10 +42,9 @@ from hedgehog.synthesis.main import main as synthesis_main
 from hedgehog.utils.input_paths import find_latest_input_source as _find_input
 
 # Directory names
-DIR_INPUT = "input"
-DIR_STAGES = "stages"
 DIR_OUTPUT = "output"
 DIR_CONFIGS = "configs"
+DIR_CUSTOM_CONFIGS = "custom_configs"
 
 # Stage subdirectories
 DIR_MOL_PREP = "stages/01_mol_prep"
@@ -53,13 +59,11 @@ DIR_DESCRIPTORS_FINAL = "stages/07_descriptors_final"
 DIR_DESCRIPTORS = DIR_DESCRIPTORS_INITIAL
 DIR_STRUCT_FILTERS = DIR_STRUCT_FILTERS_POST
 DIR_FINAL_DESCRIPTORS = DIR_DESCRIPTORS_FINAL
-DIR_RUN_CONFIGS = DIR_CONFIGS
 
 # File names
 FILE_SAMPLED_MOLECULES = "sampled_molecules.csv"
 FILE_FINAL_MOLECULES = "final_molecules.csv"
 FILE_FILTERED_MOLECULES = "filtered_molecules.csv"
-FILE_PASS_SMILES_TEMPLATE = "filtered_molecules.csv"
 FILE_MASTER_CONFIG = "master_config_resolved.yml"
 FILE_GNINA_OUTPUT = "gnina_out.sdf"
 FILE_SMINA_OUTPUT = "smina_out.sdf"
@@ -114,6 +118,8 @@ DOCKING_RESULTS_DIR_TEMPLATE = {
 
 
 FILE_RUN_INCOMPLETE = ".RUN_INCOMPLETE"
+CONTINUE_MODE_KEY = "_continue_mode"
+CONTINUE_COMPLETED_STAGES_KEY = "_continue_completed_stages"
 
 
 def _plain_output_enabled() -> bool:
@@ -316,14 +322,6 @@ def _csv_has_data_rows(file_path: Path) -> bool:
         return False
 
 
-def _directory_has_files(dir_path: Path) -> bool:
-    """Check if a directory exists and contains files."""
-    try:
-        return dir_path.exists() and any(p.is_file() for p in dir_path.iterdir())
-    except OSError:
-        return False
-
-
 def _extract_float_prop(mol, prop_names: list[str]) -> float | None:
     """Return the first parseable float property from an SDF molecule."""
     for prop_name in prop_names:
@@ -474,6 +472,7 @@ class PipelineStage:
         self.directory = directory
         self.enabled = False
         self.completed = False
+        self.skipped = False
 
 
 class DataChecker:
@@ -483,11 +482,11 @@ class DataChecker:
     _STAGE_OUTPUT_PATHS = {
         DIR_MOL_PREP: Path(DIR_MOL_PREP) / FILE_FILTERED_MOLECULES,
         DIR_DESCRIPTORS_INITIAL: Path(DIR_DESCRIPTORS_INITIAL)
-        / "filtered"
         / FILE_FILTERED_MOLECULES,
         DIR_STRUCT_FILTERS_POST: Path(DIR_STRUCT_FILTERS_POST)
         / FILE_FILTERED_MOLECULES,
         DIR_SYNTHESIS: Path(DIR_SYNTHESIS) / FILE_FILTERED_MOLECULES,
+        DIR_DOCKING: Path(DIR_DOCKING) / FILE_FILTERED_MOLECULES,
         DIR_DOCKING_FILTERS: Path(DIR_DOCKING_FILTERS) / FILE_FILTERED_MOLECULES,
         # Legacy paths
         "Descriptors": Path("Descriptors") / "passDescriptorsSMILES.csv",
@@ -530,6 +529,15 @@ class DataChecker:
         if relative_path is None:
             return None
         csv_path = self.base_path / relative_path
+        if stage_name == DIR_DESCRIPTORS_INITIAL and not csv_path.exists():
+            legacy_path = (
+                self.base_path
+                / DIR_DESCRIPTORS_INITIAL
+                / "filtered"
+                / FILE_FILTERED_MOLECULES
+            )
+            if legacy_path.exists():
+                csv_path = legacy_path
         if is_large_dataset_mode(self.config):
             return output_path_or_parts(csv_path)
         return csv_path
@@ -541,6 +549,7 @@ class PipelineStageRunner:
     # Local priority list for stage-based data checking (uses directory names)
     DATA_SOURCE_PRIORITY = [
         DIR_DOCKING_FILTERS,
+        DIR_DOCKING,
         DIR_SYNTHESIS,
         DIR_STRUCT_FILTERS_POST,
         DIR_DESCRIPTORS_INITIAL,
@@ -821,9 +830,8 @@ class PipelineStageRunner:
     def run_docking_filters(
         self, reporter: StageProgressReporter | None = None
     ) -> bool:
-        """Run docking filters stage."""
+        """Run 3D filters on input coordinates, optionally adding docked poses."""
         try:
-            # Check if config exists
             config_path = self.config.get(CONFIG_DOCKING_FILTERS)
             if config_path is None:
                 logger.info("Docking filters config not specified, skipping")
@@ -834,37 +842,167 @@ class PipelineStageRunner:
                 logger.info("Docking filters disabled in config")
                 return False
 
-            input_sdf_cfg = config_filters.get("input_sdf")
-            if input_sdf_cfg:
-                input_sdf_path = Path(str(input_sdf_cfg))
-                if not input_sdf_path.is_absolute():
-                    input_sdf_path = (
-                        self.data_checker.base_path.resolve() / input_sdf_path
+            if self.config.get("evaluate_docked_coordinates", False):
+                docking_config_path = self.config.get(CONFIG_DOCKING)
+                if docking_config_path is None:
+                    logger.error(
+                        "evaluate_docked_coordinates requires a docking config"
                     )
-                if _file_exists_and_not_empty(input_sdf_path):
-                    logger.info(
-                        "Using docking_filters.input_sdf: %s (skipping docking results presence guard)",
-                        input_sdf_path,
+                    return False
+                docking_config = load_config(docking_config_path)
+                if not docking_config.get(CONFIG_RUN_KEY, False):
+                    logger.error(
+                        "evaluate_docked_coordinates requires docking.run: true"
                     )
-                    result = docking_filters_main(self.config, reporter=reporter)
-                    return result is not None and len(result) > 0
+                    return False
+                try:
+                    _parse_tools_config(docking_config)
+                except ValueError as exc:
+                    logger.error(
+                        "Invalid docking tools for docked coordinates: %s", exc
+                    )
+                    return False
+            base_folder = self.data_checker.base_path.resolve()
+            input_sdf_value = self.config.get("docking_source_sdf")
+            if not input_sdf_value:
+                input_sdf_value = config_filters.get("input_sdf")
 
-            # Check if docking results exist before running filters
+            input_sdf = None
+            if input_sdf_value:
+                input_sdf = Path(str(input_sdf_value)).expanduser()
+                if not input_sdf.is_absolute():
+                    input_sdf = base_folder / input_sdf
+                input_sdf = input_sdf.resolve()
+                if not _file_exists_and_not_empty(input_sdf):
+                    logger.error(
+                        "Configured input-coordinate SDF is missing: %s", input_sdf
+                    )
+                    return False
+
+            if input_sdf is None:
+                if not self.docking_results_present():
+                    logger.warning(
+                        "No input-coordinate SDF or docking results found. "
+                        "Skipping docking filters."
+                    )
+                    return False
+                result = docking_filters_main(
+                    self.config,
+                    reporter=reporter,
+                    pose_source="docked",
+                )
+                return result is not None
+
+            admission_csv = _find_input(
+                base_folder,
+                skip_stages=["docking_filters"],
+            )
+            logger.info(
+                "Evaluating input SDF coordinates as primary Stage 6 poses: %s",
+                input_sdf,
+            )
+            primary_result = docking_filters_main(
+                self.config,
+                reporter=reporter,
+                input_sdf_override=input_sdf,
+                admission_csv_override=admission_csv,
+                pose_source="input",
+            )
+            if primary_result is None:
+                return False
+
+            if not self.config.get("evaluate_docked_coordinates", False):
+                return True
             if not self.docking_results_present():
-                logger.warning(
-                    "No docking results found. Skipping docking filters. "
-                    "Ensure docking stage completed successfully before running filters."
+                logger.error(
+                    "Docked-coordinate evaluation was requested, but no docking "
+                    "poses are available."
                 )
                 return False
 
-            # Run docking filters
-            result = docking_filters_main(self.config, reporter=reporter)
-            return result is not None and len(result) > 0
+            docked_output_dir = base_folder / DIR_DOCKING_FILTERS / "docked"
+            logger.info("Additionally evaluating docked coordinates")
+            docked_result = docking_filters_main(
+                self.config,
+                reporter=reporter,
+                output_dir_override=docked_output_dir,
+                pose_source="docked",
+            )
+            if docked_result is None:
+                logger.warning(
+                    "Docked-coordinate evaluation produced no usable poses; "
+                    "keeping the input-coordinate result."
+                )
+                return True
+
+            self._merge_coordinate_branch_passes(docked_output_dir)
+            logger.info(
+                "Saved docked-coordinate evaluation to %s and merged molecule passes",
+                docked_output_dir,
+            )
+            return True
         except InterruptedError:
             raise
         except Exception as e:
             logger.error("Error running docking filters: %s", e)
             return False
+
+    def _merge_coordinate_branch_passes(self, docked_output_dir: Path) -> None:
+        """Merge input and docked molecule passes using pass-if-either semantics."""
+        primary_path = (
+            self.data_checker.base_path.resolve()
+            / DIR_DOCKING_FILTERS
+            / FILE_FILTERED_MOLECULES
+        )
+        docked_path = docked_output_dir / FILE_FILTERED_MOLECULES
+        frames = [
+            pd.read_csv(path)
+            for path in (primary_path, docked_path)
+            if _file_exists_and_not_empty(path)
+        ]
+        if not frames:
+            return
+
+        combined = pd.concat(frames, ignore_index=True)
+        if combined.empty:
+            return
+        combined["pose_source"] = combined["pose_source"].fillna("").astype(str)
+        source_order = {"input": 0, "docked": 1}
+        combined["_source_order"] = combined["pose_source"].map(source_order).fillna(2)
+        combined = combined.sort_values(
+            ["mol_idx", "_source_order"],
+            kind="mergesort",
+        )
+
+        rows = []
+        for _, group in combined.groupby("mol_idx", sort=False, dropna=False):
+            row = group.iloc[0].drop(labels=["_source_order"]).to_dict()
+            sources = [
+                source
+                for source in ("input", "docked")
+                if source in set(group["pose_source"])
+            ]
+            row["pose_source"] = "+".join(sources)
+            rows.append(row)
+
+        merged_passes = pd.DataFrame(rows)
+        merged_passes.to_csv(primary_path, index=False)
+
+        failed_path = primary_path.parent / "failed_molecules.csv"
+        if failed_path.exists():
+            failed_df = pd.read_csv(failed_path)
+            failure_id_col = (
+                "source_mol_idx" if "source_mol_idx" in failed_df.columns else "mol_idx"
+            )
+            if failure_id_col in failed_df.columns:
+                passed_ids = set(
+                    merged_passes["mol_idx"].dropna().astype(str).str.strip()
+                )
+                failed_ids = (
+                    failed_df[failure_id_col].fillna("").astype(str).str.strip()
+                )
+                failed_df = failed_df.loc[~failed_ids.isin(passed_ids)]
+                failed_df.to_csv(failed_path, index=False)
 
 
 # ---------------------------------------------------------------------------
@@ -880,15 +1018,14 @@ class MoleculeCounter:
         STAGE_MOL_PREP: (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
         STAGE_DESCRIPTORS: (
             DIR_DESCRIPTORS_INITIAL,
-            "filtered",
             FILE_FILTERED_MOLECULES,
         ),
         STAGE_STRUCT_FILTERS: (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
         STAGE_SYNTHESIS: (DIR_SYNTHESIS, FILE_FILTERED_MOLECULES),
+        STAGE_DOCKING: (DIR_DOCKING, FILE_FILTERED_MOLECULES),
         STAGE_DOCKING_FILTERS: (DIR_DOCKING_FILTERS, FILE_FILTERED_MOLECULES),
         STAGE_FINAL_DESCRIPTORS: (
             DIR_DESCRIPTORS_FINAL,
-            "filtered",
             FILE_FILTERED_MOLECULES,
         ),
     }
@@ -970,6 +1107,15 @@ class MoleculeCounter:
         path_parts = self._OUTPUT_PATHS.get(stage_name)
         if path_parts is not None:
             output_path = self.base_path.joinpath(*path_parts)
+            if stage_name == STAGE_DESCRIPTORS and not output_path.exists():
+                legacy_output = (
+                    self.base_path
+                    / DIR_DESCRIPTORS_INITIAL
+                    / "filtered"
+                    / FILE_FILTERED_MOLECULES
+                )
+                if legacy_output.exists():
+                    output_path = legacy_output
             if output_path.exists():
                 counted = self.count_csv_rows(output_path)
                 if counted is not None:
@@ -1032,6 +1178,8 @@ class PipelineReporter:
         """
         if not stage.enabled:
             return "DISABLED"
+        if stage.skipped:
+            return "SKIPPED"
         if stage.completed:
             return "COMPLETED"
 
@@ -1045,6 +1193,7 @@ class PipelineReporter:
         if stage.name == STAGE_FINAL_DESCRIPTORS:
             sources = [
                 DIR_DOCKING_FILTERS,
+                DIR_DOCKING,
                 DIR_SYNTHESIS,
                 DIR_STRUCT_FILTERS_POST,
                 DIR_MOL_PREP,
@@ -1292,6 +1441,7 @@ class MolecularAnalysisPipeline:
                     "Single stage mode: enabling only %s", single_stage_override
                 )
             else:
+                selected_stage_names.add(STAGE_MOL_PREP)
                 ordered = [
                     stage_name
                     for stage_name, _, _ in self._STAGE_DEFINITIONS
@@ -1322,30 +1472,8 @@ class MolecularAnalysisPipeline:
                 logger.warning("Could not load config for %s: %s", stage.name, e)
                 stage.enabled = False
 
-        # In stage-selection mode, always run Mol Prep first (if enabled in config),
-        # so downstream stages operate on standardized molecules.
-        selection_requires_mol_prep = False
-        if selected_stage_names:
-            selection_requires_mol_prep = any(
-                stage_name != STAGE_MOL_PREP for stage_name in selected_stage_names
-            )
-        elif single_stage_override:
-            selection_requires_mol_prep = single_stage_override != STAGE_MOL_PREP
-
-        if selection_requires_mol_prep:
-            mol_prep = self._stage_by_name.get(STAGE_MOL_PREP)
-            if mol_prep is not None:
-                try:
-                    cfg_path = self.config.get(CONFIG_MOL_PREP)
-                    if cfg_path:
-                        cfg = load_config(cfg_path)
-                        if cfg.get(CONFIG_RUN_KEY, False):
-                            mol_prep.enabled = True
-                            logger.info(
-                                "Single stage mode: also enabling %s", STAGE_MOL_PREP
-                            )
-                except Exception:
-                    pass
+        # Stage selection runs only the requested stages. Mol Prep is no longer
+        # forced on when the user asks for a different stage via --stage.
 
     def _cancel_requested(self) -> bool:
         """Return True when the progress callback exposes a cancellation signal."""
@@ -1407,11 +1535,7 @@ class MolecularAnalysisPipeline:
             except Exception:
                 return
 
-    # -- delegated counting (backwards compat) ----------------------------
-
-    def _count_csv_rows(self, path: Path) -> int | None:
-        """Count data rows in a CSV file (excluding header)."""
-        return self.counter.count_csv_rows(path)
+    # -- stage molecule counts --------------------------------------------
 
     def _resolve_stage_input_count(self, stage_name: str, args: tuple) -> int | None:
         """Resolve molecule count entering a stage."""
@@ -1472,7 +1596,11 @@ class MolecularAnalysisPipeline:
         base = self.data_checker.base_path
         if source.startswith("stages/"):
             if "descriptors" in source:
-                csv_path = base / source / "filtered" / FILE_FILTERED_MOLECULES
+                csv_path = base / source / FILE_FILTERED_MOLECULES
+                if not csv_path.exists():
+                    legacy_path = base / source / "filtered" / FILE_FILTERED_MOLECULES
+                    if legacy_path.exists():
+                        csv_path = legacy_path
             else:
                 csv_path = base / source / FILE_FILTERED_MOLECULES
         else:
@@ -1528,6 +1656,7 @@ class MolecularAnalysisPipeline:
         for name, run_step in steps:
             self._raise_if_cancel_requested(f"stage boundary before '{name}'")
             completed, early_exit = run_step()
+            _release_loky_workers()
             self._raise_if_cancel_requested(f"stage boundary after '{name}'")
             if completed:
                 self._stage_by_name[name].completed = True
@@ -1536,8 +1665,6 @@ class MolecularAnalysisPipeline:
             if early_exit:
                 return self._finalize_pipeline(
                     data,
-                    success_count,
-                    total_enabled,
                     final_stage_name=last_completed_stage,
                 )
 
@@ -1547,8 +1674,6 @@ class MolecularAnalysisPipeline:
         self._raise_if_cancel_requested("pipeline finalization")
         return self._finalize_pipeline(
             data,
-            success_count,
-            total_enabled,
             final_stage_name=last_completed_stage,
         )
 
@@ -1682,9 +1807,37 @@ class MolecularAnalysisPipeline:
                         e,
                     )
 
-        return self._run_stage(
+        completed, early_exit = self._run_stage(
             STAGE_DESCRIPTORS, self.stage_runner.run_descriptors, descriptors_input
         )
+        if not completed or early_exit:
+            return completed, early_exit
+
+        output_candidates = [
+            self.data_checker.base_path
+            / DIR_DESCRIPTORS_INITIAL
+            / FILE_FILTERED_MOLECULES,
+            self.data_checker.base_path
+            / DIR_DESCRIPTORS_INITIAL
+            / "filtered"
+            / FILE_FILTERED_MOLECULES,
+        ]
+        output_path = next((path for path in output_candidates if path.exists()), None)
+        if output_path is not None:
+            try:
+                descriptor_output = pd.read_csv(output_path)
+                self.current_data = descriptor_output
+                if descriptor_output.empty:
+                    logger.info(
+                        "No molecules left after descriptors; ending pipeline early."
+                    )
+                    return True, True
+            except Exception as exc:
+                logger.warning(
+                    "Could not load descriptors output (%s): %s", output_path, exc
+                )
+
+        return True, False
 
     def _run_post_descriptors_filters(self) -> tuple[bool, bool]:
         """Run post-descriptors structural filters stage."""
@@ -1735,15 +1888,21 @@ class MolecularAnalysisPipeline:
 
         return False, False
 
+    def _mark_stage_skipped(self, stage_name: str) -> tuple[bool, bool]:
+        """Record an intentional empty-input skip as a successful stage outcome."""
+        stage = self._stage_by_name[stage_name]
+        stage.skipped = True
+        return True, False
+
     def _run_docking(self) -> tuple[bool, bool]:
         """Run molecular docking stage."""
         source = _find_input(self.data_checker.base_path)
         if source is None:
             logger.info("No docking input found; skipping docking")
-            return False, False
+            return self._mark_stage_skipped(STAGE_DOCKING)
         if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
             logger.info("No molecules available for docking; skipping docking")
-            return False, False
+            return self._mark_stage_skipped(STAGE_DOCKING)
         return self._run_stage(STAGE_DOCKING, self.stage_runner.run_docking)
 
     def _run_docking_filters(self) -> tuple[bool, bool]:
@@ -1751,29 +1910,29 @@ class MolecularAnalysisPipeline:
         source = _find_input(self.data_checker.base_path)
         if source is None:
             logger.info("No docking input found; skipping docking filters")
-            return False, False
+            return self._mark_stage_skipped(STAGE_DOCKING_FILTERS)
         if source.suffix.lower() == ".csv" and not _csv_has_data_rows(source):
             logger.info("No molecules available for docking; skipping docking filters")
-            return False, False
+            return self._mark_stage_skipped(STAGE_DOCKING_FILTERS)
         return self._run_stage(
             STAGE_DOCKING_FILTERS, self.stage_runner.run_docking_filters
         )
 
     def _run_final_descriptors(self) -> tuple[bool, bool]:
         """Run final descriptors calculation stage."""
+        final_data = self.get_latest_data(
+            skip_descriptors=True, fallback_on_empty=False
+        )
+        if final_data is None:
+            logger.info("No data source found for final descriptors (skipping)")
+            return self._mark_stage_skipped(STAGE_FINAL_DESCRIPTORS)
+        if len(final_data) == 0:
+            logger.info(
+                "No molecules from previous steps; skipping final descriptors"
+            )
+            return self._mark_stage_skipped(STAGE_FINAL_DESCRIPTORS)
 
         def _run_final_desc():
-            final_data = self.get_latest_data(
-                skip_descriptors=True, fallback_on_empty=False
-            )
-            if final_data is None:
-                logger.info("No data source found for final descriptors (skipping)")
-                return False
-            if len(final_data) == 0:
-                logger.info(
-                    "No molecules from previous steps; skipping final descriptors"
-                )
-                return False
             return self.stage_runner.run_descriptors(
                 final_data, subfolder=DIR_FINAL_DESCRIPTORS
             )
@@ -1785,8 +1944,6 @@ class MolecularAnalysisPipeline:
     def _finalize_pipeline(
         self,
         data,
-        success_count: int,
-        total_enabled: int,
         final_stage_name: str | None = None,
     ) -> bool:
         """Finalize pipeline execution with summary and output."""
@@ -1867,15 +2024,18 @@ class MolecularAnalysisPipeline:
             STAGE_SYNTHESIS: [
                 (DIR_SYNTHESIS, FILE_FILTERED_MOLECULES),
                 (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
+                (DIR_DESCRIPTORS_INITIAL, FILE_FILTERED_MOLECULES),
                 (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
                 (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
             ],
             STAGE_STRUCT_FILTERS: [
                 (DIR_STRUCT_FILTERS_POST, FILE_FILTERED_MOLECULES),
+                (DIR_DESCRIPTORS_INITIAL, FILE_FILTERED_MOLECULES),
                 (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
                 (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
             ],
             STAGE_DESCRIPTORS: [
+                (DIR_DESCRIPTORS_INITIAL, FILE_FILTERED_MOLECULES),
                 (DIR_DESCRIPTORS_INITIAL, "filtered", FILE_FILTERED_MOLECULES),
                 (DIR_MOL_PREP, FILE_FILTERED_MOLECULES),
             ],
@@ -1956,49 +2116,213 @@ class MolecularAnalysisPipeline:
             logger.warning("Could not load %s output (%s): %s", stage.name, path, e)
             return None
 
-    # -- backwards compatibility delegates --------------------------------
-    # Tests call these methods directly on the pipeline instance.
-
-    def _save_final_output(self, final_data, final_count: int) -> None:
-        """Save final molecules to output directory (delegates to reporter)."""
-        self.reporter.save_final_output(final_data, final_count)
-
-    def _log_pipeline_summary(self) -> None:
-        """Log pipeline summary (delegates to reporter)."""
-        self.reporter.log_summary()
-
-    def _get_stage_status(self, stage: PipelineStage) -> str:
-        """Get display status for a stage (delegates to reporter)."""
-        return self.reporter._format_stage_status(stage)
-
-    def _stage_is_failed(self, stage: PipelineStage) -> bool:
-        """Check if a stage is considered failed (delegates to reporter)."""
-        return self.reporter.stage_is_failed(stage)
-
-    def _generate_html_report(self, initial_count: int, final_count: int) -> None:
-        """Generate HTML report (delegates to reporter)."""
-        self.reporter.generate_html_report(initial_count, final_count)
-
-    def _log_molecule_summary(self, initial_count: int, final_count: int) -> None:
-        """Log molecule count summary (delegates to reporter)."""
-        self.reporter.log_molecule_summary(initial_count, final_count)
-
 
 # ---------------------------------------------------------------------------
 # Config snapshot
 # ---------------------------------------------------------------------------
 
 
+def _alignment_source_dir(config: dict) -> Path | None:
+    """Return the directory containing the final target-aligned configs."""
+    alignment = config.get("alignment")
+    thresholds_raw = (
+        alignment.get("thresholds_path") if isinstance(alignment, dict) else None
+    )
+    if thresholds_raw:
+        thresholds_path = Path(str(thresholds_raw))
+        if thresholds_path.is_file():
+            return thresholds_path.resolve().parent
+
+    for key, raw_path in config.items():
+        if not key.startswith("config_") or not raw_path:
+            continue
+        candidate = Path(str(raw_path)).expanduser().resolve().parent / THRESHOLDS_NAME
+        if candidate.is_file():
+            return candidate.parent
+    return None
+
+
+def _safe_config_name(value: str) -> str:
+    """Convert a target or coverage label into a filesystem-safe name."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    return cleaned.strip("._-") or "target"
+
+
+def _infer_reference_target_name(config: dict) -> str:
+    """Resolve a stable human-readable target name for the config catalog."""
+    alignment = config.get("alignment")
+    if isinstance(alignment, dict) and alignment.get("target_name"):
+        return _safe_config_name(str(alignment["target_name"]))
+
+    docking_path = config.get(CONFIG_DOCKING)
+    if docking_path:
+        try:
+            docking_config = load_config(str(docking_path))
+            receptor_raw = docking_config.get("receptor_pdb")
+            if receptor_raw:
+                receptor = Path(str(receptor_raw))
+                parts = receptor.parts
+                if "targets" in parts:
+                    target_index = parts.index("targets") + 1
+                    if target_index < len(parts):
+                        return _safe_config_name(parts[target_index])
+        except (OSError, TypeError, ValueError, yaml.YAMLError):
+            pass
+
+    target_path = config.get("target_mols_path")
+    stem = Path(str(target_path)).stem if target_path else "target"
+    stem = re.sub(
+        r"(?i)(?:_touse|_references?|_targets?|_molecules?|_mols?)$", "", stem
+    )
+    return _safe_config_name(stem)
+
+
+def _coverage_config_name(config: dict) -> str | None:
+    """Return the ready-config filename for the configured target coverage."""
+    alignment = config.get("alignment")
+    if not isinstance(alignment, dict):
+        return None
+    raw_coverage = alignment.get("target_coverage_percent")
+    try:
+        coverage = float(raw_coverage)
+    except (TypeError, ValueError):
+        return None
+    label = f"{coverage:g}".replace(".", "_")
+    return f"retention_{label}.yml"
+
+
+def _save_reusable_reference_config(config: dict, config_store: Path) -> Path | None:
+    """Publish one ready target/retention config in the global config catalog."""
+    aligned_dir = _alignment_source_dir(config)
+    filename = _coverage_config_name(config)
+    if aligned_dir is None or filename is None:
+        return None
+
+    target_name = _infer_reference_target_name(config)
+    target_dir = config_store / target_name
+    support_dir = target_dir / "_support" / Path(filename).stem
+    support_dir.mkdir(parents=True, exist_ok=True)
+
+    bundled = dict(config)
+    for key, path_str in config.items():
+        if not key.startswith("config_") or not path_str:
+            continue
+        try:
+            source = Path(path_str)
+            if not source.is_file():
+                continue
+            destination = support_dir / f"{key}{source.suffix or '.yml'}"
+            if source.resolve() != destination.resolve():
+                shutil.copyfile(source, destination)
+            bundled[key] = str(destination.resolve())
+        except OSError as copy_err:
+            logger.warning(
+                "Could not bundle reference config file for %s: %s", key, copy_err
+            )
+
+    alignment = dict(bundled.get("alignment") or {})
+    for default_name in (
+        THRESHOLDS_NAME,
+        "protected_target_molecules.csv",
+    ):
+        try:
+            source = aligned_dir / default_name
+            if source.is_file():
+                destination = support_dir / default_name
+                if source.resolve() != destination.resolve():
+                    shutil.copyfile(source, destination)
+        except OSError as copy_err:
+            logger.warning(
+                "Could not bundle reference alignment file %s: %s",
+                default_name,
+                copy_err,
+            )
+    structural_failures_source = aligned_dir / "structural_filter_failures.csv"
+    structural_failures_destination = support_dir / "structural_filter_failures.csv"
+    if structural_failures_source.is_file():
+        try:
+            if (
+                structural_failures_source.resolve()
+                != structural_failures_destination.resolve()
+            ):
+                shutil.copyfile(
+                    structural_failures_source,
+                    structural_failures_destination,
+                )
+        except OSError as copy_err:
+            logger.warning(
+                "Could not bundle structural-filter audit: %s",
+                copy_err,
+            )
+
+    thresholds_destination = support_dir / "alignment_thresholds.yml"
+    protected_destination = support_dir / "protected_target_molecules.csv"
+    if thresholds_destination.is_file():
+        try:
+            threshold_audit = load_config(str(thresholds_destination))
+            global_guarantee = threshold_audit.get("global_guarantee")
+            if isinstance(global_guarantee, dict) and protected_destination.is_file():
+                global_guarantee["protected_cohort_path"] = str(
+                    protected_destination.resolve()
+                )
+            structural_stage = threshold_audit.get("stages", {}).get("struct_filters")
+            structural_thresholds = (
+                structural_stage.get("thresholds")
+                if isinstance(structural_stage, dict)
+                else None
+            )
+            if (
+                isinstance(structural_thresholds, dict)
+                and structural_failures_destination.is_file()
+            ):
+                structural_thresholds["failure_audit_path"] = str(
+                    structural_failures_destination.resolve()
+                )
+            with thresholds_destination.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(threshold_audit, handle, sort_keys=False)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as audit_err:
+            logger.warning("Could not rewrite bundled alignment audit: %s", audit_err)
+
+    bundled["alignment"] = alignment
+    bundled.pop("generated_mols_paths", None)
+    bundled.pop("global_config_snapshot", None)
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    master_path = target_dir / filename
+    template = aligned_dir / ALIGNED_CONFIG_NAME
+    _dump_generated_yaml(
+        bundled,
+        master_path,
+        source=template if template.is_file() else None,
+    )
+    return master_path
+
+
+def _custom_config_store(base_path: Path) -> Path:
+    """Return the shared custom-config catalog beside the results tree."""
+    for candidate in (base_path, *base_path.parents):
+        if candidate.name == "results":
+            return candidate / DIR_CUSTOM_CONFIGS
+    return base_path.parent / DIR_CUSTOM_CONFIGS
+
+
 def _save_config_snapshot(config: dict) -> None:
-    """Save a snapshot of configuration files for provenance."""
+    """Save the run snapshot and publish a ready target config when available."""
     try:
         base_path = Path(config[CONFIG_FOLDER_TO_SAVE])
         dest_dir = base_path / DIR_CONFIGS
         dest_dir.mkdir(parents=True, exist_ok=True)
+        config_store = _custom_config_store(base_path)
+        reference_path = _save_reusable_reference_config(config, config_store)
 
         master_config_path = dest_dir / FILE_MASTER_CONFIG
+        snapshot_config = {
+            key: value
+            for key, value in config.items()
+            if not key.startswith("_source_")
+        }
         with open(master_config_path, "w") as f:
-            yaml.safe_dump(config, f, sort_keys=False)
+            yaml.safe_dump(snapshot_config, f, sort_keys=False)
 
         for key in config:
             if not key.startswith("config_"):
@@ -2009,11 +2333,15 @@ def _save_config_snapshot(config: dict) -> None:
             try:
                 src_path = Path(path_str)
                 if src_path.exists():
-                    shutil.copyfile(src_path, dest_dir / src_path.name)
+                    destination = dest_dir / src_path.name
+                    if src_path.resolve() != destination.resolve():
+                        shutil.copyfile(src_path, destination)
             except OSError as copy_err:
                 logger.warning("Could not copy config file for %s: %s", key, copy_err)
 
         logger.info("Saved run config snapshot to: %s", dest_dir)
+        if reference_path is not None:
+            logger.info("Published ready reference config to: %s", reference_path)
     except Exception as snapshot_err:
         logger.warning("Config snapshot failed: %s", snapshot_err)
 
@@ -2143,6 +2471,10 @@ def _build_docking_tree(base_path: Path, config: dict | None) -> list[str]:
 
     lines = [
         "|   +-- ligands.csv                Prepared ligands",
+        "|   +-- docking_out.sdf            Combined poses from all docking tools",
+        "|   +-- docking_results.csv        Per-tool docking success flags",
+        "|   +-- filtered_molecules.csv     Molecules docked by at least one tool",
+        "|   +-- failed_molecules.csv       Molecules not docked by any tool",
         "|   +-- job_meta.json              Job metadata",
     ]
     if has_smina:
@@ -2198,9 +2530,9 @@ def _count_stage_molecules(base_path: Path, stage_dir: str) -> int | None:
 
     Returns the row count (excluding header), or None if the file is missing.
     """
-    csv_path = base_path / stage_dir / "filtered" / FILE_FILTERED_MOLECULES
+    csv_path = base_path / stage_dir / FILE_FILTERED_MOLECULES
     if not csv_path.exists():
-        csv_path = base_path / stage_dir / FILE_FILTERED_MOLECULES
+        csv_path = base_path / stage_dir / "filtered" / FILE_FILTERED_MOLECULES
     if not csv_path.exists():
         return None
     try:
@@ -2430,6 +2762,22 @@ def _generate_structure_readme(
 # ---------------------------------------------------------------------------
 
 
+def resolve_continuation_stages(config: dict) -> tuple[list[str], list[str]]:
+    """Return completed and remaining enabled stages for --continue."""
+    pipeline = MolecularAnalysisPipeline(config)
+    completed: list[str] = []
+    resume: list[str] = []
+    for stage in pipeline.stages:
+        if not stage.enabled:
+            continue
+        has_output = pipeline.data_checker.check_stage_data(stage.directory)
+        if has_output:
+            completed.append(stage.name)
+        else:
+            resume.append(stage.name)
+    return completed, resume
+
+
 def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
     """Calculate metrics for molecular data using the configured pipeline.
 
@@ -2460,8 +2808,9 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
         pipeline = MolecularAnalysisPipeline(config, progress_callback)
         success = pipeline.run_pipeline(data)
 
-        # Pipeline finished normally -- remove the marker.
-        incomplete_marker.unlink(missing_ok=True)
+        # Keep the marker when a stage reports failure so --continue can resume it.
+        if success:
+            incomplete_marker.unlink(missing_ok=True)
 
         return success
     except InterruptedError:
@@ -2474,6 +2823,19 @@ def calculate_metrics(data, config: dict, progress_callback=None) -> bool:
         _cleanup_lingering_processes()
 
     return success
+
+
+def _release_loky_workers() -> None:
+    """Release joblib's reusable pool so it cannot leak into the next stage."""
+    try:
+        from joblib.externals.loky import reusable_executor as loky_reusable_executor
+
+        loky_executor = getattr(loky_reusable_executor, "_executor", None)
+        if loky_executor is not None:
+            loky_executor.shutdown(wait=True, kill_workers=True)
+            logger.info("Released reusable loky workers at stage boundary")
+    except Exception as exc:
+        logger.debug("Could not release reusable loky workers: %s", exc)
 
 
 def _cleanup_lingering_processes(timeout_seconds: float = 2.0) -> None:
@@ -2522,14 +2884,7 @@ def _cleanup_lingering_processes(timeout_seconds: float = 2.0) -> None:
         except Exception:
             pass
 
-    try:
-        from joblib.externals.loky import reusable_executor as loky_reusable_executor
-
-        loky_executor = getattr(loky_reusable_executor, "_executor", None)
-        if loky_executor is not None:
-            loky_executor.shutdown(wait=True, kill_workers=True)
-    except Exception:
-        pass
+    _release_loky_workers()
 
     # A second pass helps when child processes were created by external runtimes
     # (e.g. loky) and were not visible during the first active_children() call.

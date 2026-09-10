@@ -1,4 +1,5 @@
 run: true
+set_allowed_atoms_from_targets: true  # During target alignment, replace filters.allowed_atoms with the target atom union.
 n_jobs: -1
 
 columns:
@@ -38,18 +39,18 @@ steps:
     disconnect_metals: true
     normalize: true
     reionize: true
-    uncharge: true
+    uncharge: false
     stereo: true
 
-  remove_stereochemistry: true
+  remove_stereochemistry: false
 
   standardize_smiles:
     enabled: true
 
 filters:
-  allowed_atoms: [C, N, O, S, F, Cl, Br, I, P, H]
+  allowed_atoms: [C, N, O, S, F, Cl, Br, I, P, H, Si]
   reject_radicals: true
-  reject_isotopes: true
+  reject_isotopes: false
   require_single_fragment: true
 
 output:

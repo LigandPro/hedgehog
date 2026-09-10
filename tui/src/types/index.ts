@@ -58,10 +58,7 @@ export interface MainConfig {
   folder_to_save: string;
   n_jobs: number;
   sample_size: number;
-  batch_size: number;
   save_sampled_mols: boolean;
-  pains_file_path: string;
-  mcf_file_path: string;
   ligand_preparation_tool?: string;
   protein_preparation_tool?: string;
   config_mol_prep: string;
@@ -122,30 +119,28 @@ export interface DescriptorStructuralConstraints {
 
 export interface DescriptorsConfig {
   run: boolean;
-  batch_size: number;
   filter_data: boolean;
   borders: Record<string, DescriptorBorder | string[] | boolean>;
   structural_constraints?: DescriptorStructuralConstraints;
   filtered_cols_to_plot: string[];
   discrete_features_to_plot: string[];
-  not_to_smooth_plot_by_sides: string[];
-  renamer: Record<string, string>;
 }
 
 export interface FiltersConfig {
   run: boolean;
+  n_jobs: number;
   filter_data: boolean;
   alerts_data_path: string;
   calculate_common_alerts: boolean;
-  include_rulesets: string[];
-  exclude_descriptions: Record<string, string[]>;
+  include_rulesets: string[] | 'all' | null;
+  exclude_smarts: string[];
   calculate_molgraph_stats: boolean;
   calculate_molcomplexity: boolean;
   calculate_NIBR: boolean;
-  nibr_scheduler: string;
   calculate_bredt: boolean;
   calculate_lilly: boolean;
-  lilly_scheduler: string;
+  calculate_stereo_center: boolean;
+  filter_undefined_stereo_center: boolean;
 }
 
 export interface SynthesisConfig {
@@ -227,15 +222,14 @@ export interface DockingConfig {
 
 export interface DockingFiltersConfig {
   run: boolean;
-  run_after_docking?: boolean;
   input_sdf?: string | null;
   receptor_pdb?: string | null;
   pose_quality?: {
     enabled?: boolean;
-    max_clashes?: number;
-    max_strain_energy?: number;
-    strain_forcefield?: string;
-    clash_tolerance?: number;
+    clash_cutoff?: number;
+    volume_clash_cutoff?: number;
+    max_distance?: number;
+    short_circuit?: boolean;
   };
   interactions?: {
     enabled?: boolean;

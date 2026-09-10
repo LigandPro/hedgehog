@@ -6,14 +6,15 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+import yaml
 
 from hedgehog.main import (
     Stage,
-    _canonicalize_smiles,
     _folder_is_empty,
     _get_input_format_flag,
     _get_unique_results_folder,
     _resolve_config_paths,
+    _resolve_output_folder,
     _save_sampled_molecules,
     _validate_input_path,
     preprocess_input_with_rdkit,
@@ -27,6 +28,7 @@ class _FakeProgress:
 
     def __init__(self, *args, **kwargs):
         self.add_calls: list[dict] = []
+        self.reset_calls: list[dict] = []
         self.update_calls: list[dict] = []
         _FakeProgress.instances.append(self)
 
@@ -42,6 +44,9 @@ class _FakeProgress:
             {"task_id": task_id, "description": description, **kwargs}
         )
         return task_id
+
+    def reset(self, task_id: int, **kwargs) -> None:
+        self.reset_calls.append({"task_id": task_id, **kwargs})
 
     def update(self, task_id: int, **kwargs) -> None:
         self.update_calls.append({"task_id": task_id, **kwargs})
@@ -68,47 +73,6 @@ def test_resolve_config_paths_relative_to_config_file(tmp_path):
     assert config["generated_mols_path"] == str(input_file.resolve())
     assert config["config_descriptors"] == str(sub_config.resolve())
     assert config["folder_to_save"] == "results/run"
-
-
-class TestCanonicalizeSmiles:
-    """Tests for _canonicalize_smiles function."""
-
-    def test_valid_smiles_benzene(self):
-        """Valid benzene SMILES - should return canonical form."""
-        result = _canonicalize_smiles("c1ccccc1")
-        assert result is not None
-        assert result == "c1ccccc1"
-
-    def test_valid_smiles_ethanol(self):
-        """Valid ethanol SMILES - should return canonical form."""
-        result = _canonicalize_smiles("CCO")
-        assert result is not None
-        assert result == "CCO"
-
-    def test_valid_smiles_aspirin(self):
-        """Valid aspirin SMILES - should return canonical form."""
-        result = _canonicalize_smiles("CC(=O)Oc1ccccc1C(=O)O")
-        assert result is not None
-
-    def test_invalid_smiles(self):
-        """Invalid SMILES string - should return None."""
-        result = _canonicalize_smiles("invalid")
-        assert result is None
-
-    def test_empty_smiles(self):
-        """Empty SMILES string - should return empty string."""
-        result = _canonicalize_smiles("")
-        assert result == ""
-
-    def test_smiles_with_stereochemistry(self):
-        """SMILES with stereochemistry should be preserved."""
-        result = _canonicalize_smiles("[C@@H](O)(F)Cl")
-        assert result is not None
-
-    def test_malformed_smiles(self):
-        """Malformed SMILES - should return None."""
-        result = _canonicalize_smiles("C(C)(C)(C)(C)C")  # invalid valence
-        assert result is None
 
 
 class TestFolderIsEmpty:
@@ -178,6 +142,260 @@ class TestGetUniqueResultsFolder:
         assert result == tmp_path / "results_6"
 
 
+class TestResolveOutputFolder:
+    """Tests for explicit fresh-run and reuse folder behavior."""
+
+    def test_stage_selection_creates_fresh_folder_by_default(self, tmp_path):
+        """Selecting one stage must not silently reuse an existing run."""
+        base = tmp_path / "run"
+        base.mkdir()
+        (base / "RUN_INFO.md").write_text("existing run\n", encoding="utf-8")
+
+        result = _resolve_output_folder(
+            {"folder_to_save": str(base)},
+            reuse_folder=False,
+            force_new_folder=False,
+        )
+
+        assert result == tmp_path / "run_2"
+
+    def test_reuse_is_the_only_existing_folder_mode(self, tmp_path):
+        """The configured directory is returned only with explicit reuse."""
+        base = tmp_path / "run"
+        base.mkdir()
+
+        result = _resolve_output_folder(
+            {"folder_to_save": str(base)},
+            reuse_folder=True,
+            force_new_folder=False,
+        )
+
+        assert result == base
+
+
+def test_continue_command_loads_saved_input_and_skips_completed_stages(
+    tmp_path, monkeypatch
+):
+    from hedgehog import main as main_mod
+
+    run_dir = tmp_path / "unfinished"
+    configs_dir = run_dir / "configs"
+    input_dir = run_dir / "input"
+    configs_dir.mkdir(parents=True)
+    input_dir.mkdir()
+    (run_dir / ".RUN_INCOMPLETE").write_text("interrupted\n", encoding="utf-8")
+    (input_dir / "sampled_molecules.csv").write_text(
+        "smiles,model_name,mol_idx\nCCO,target,0\n", encoding="utf-8"
+    )
+
+    master = {"folder_to_save": str(run_dir), "generated_mols_path": "unused.csv"}
+    for key in (
+        "config_mol_prep",
+        "config_descriptors",
+        "config_structFilters",
+        "config_synthesis",
+        "config_docking",
+        "config_docking_filters",
+    ):
+        config_path = configs_dir / f"{key}.yml"
+        config_path.write_text("run: true\n", encoding="utf-8")
+        master[key] = str(config_path)
+    (configs_dir / "master_config_resolved.yml").write_text(
+        yaml.safe_dump(master, sort_keys=False), encoding="utf-8"
+    )
+
+    for directory in (
+        "stages/01_mol_prep",
+        "stages/02_descriptors_initial",
+        "stages/03_structural_filters_post",
+    ):
+        stage_dir = run_dir / directory
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "filtered_molecules.csv").write_text(
+            "smiles,model_name,mol_idx\nCCO,target,0\n", encoding="utf-8"
+        )
+
+    captured = {}
+
+    def fake_calculate(data, config, progress_callback):
+        captured["data"] = data
+        captured["config"] = config
+        captured["progress_callback"] = progress_callback
+        return True
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
+    main_mod._run_pipeline_command(
+        config_path=None,
+        generated_mols_path=None,
+        out_dir=None,
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+        show_progress=False,
+        large_dataset=False,
+        continue_folder=str(run_dir),
+    )
+
+    assert len(captured["data"]) == 1
+    assert captured["config"]["folder_to_save"] == str(run_dir.resolve())
+    assert captured["config"]["_continue_mode"] is True
+    assert captured["config"]["_continue_completed_stages"] == [
+        "mol_prep",
+        "descriptors",
+        "struct_filters",
+    ]
+    assert captured["config"]["_run_stage_selection_override"] == [
+        "synthesis",
+        "docking",
+        "docking_filters",
+        "final_descriptors",
+    ]
+
+
+
+
+def test_target_alignment_preserves_cli_stage_selection_in_probe_and_candidates(
+    tmp_path, monkeypatch
+):
+    from hedgehog import main as main_mod
+
+    target = tmp_path / "targets.csv"
+    target.write_text("smiles,mol_idx\nCCO,target-1\n", encoding="utf-8")
+    target_run = tmp_path / "outer" / "target_alignment" / "calibration_target_run"
+    stage_selection = ["mol_prep", "descriptors"]
+    config = {
+        "generated_mols_path": str(target),
+        "target_mols_path": str(target),
+        "folder_to_save": str(tmp_path / "outer"),
+        "save_sampled_mols": True,
+        "_run_stage_selection_override": stage_selection,
+    }
+    captured = {}
+
+    def fake_create_probe(master, _target_path, _alignment_root):
+        probe = dict(master)
+        probe["folder_to_save"] = str(target_run)
+        captured["probe_created"] = probe
+        return probe
+
+    def fake_calculate(data, probe, _callback):
+        captured["probe_run"] = dict(probe)
+        return True
+
+    def fake_finalize(*_args, **_kwargs):
+        return (
+            {"folder_to_save": str(tmp_path / "discarded")},
+            tmp_path / "aligned.yml",
+            tmp_path / "thresholds.yml",
+        )
+
+    monkeypatch.setattr(main_mod, "create_probe_config", fake_create_probe)
+    monkeypatch.setattr(main_mod, "_preprocess_input", lambda *_args: None)
+    monkeypatch.setattr(
+        main_mod,
+        "prepare_input_data",
+        lambda *_args: pd.DataFrame(
+            {"smiles": ["CCO"], "mol_idx": ["target-1"]}
+        ),
+    )
+    monkeypatch.setattr(main_mod, "set_probe_molprep_allowed_atoms", lambda *_args: None)
+    monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
+    monkeypatch.setattr(main_mod, "finalize_global_alignment", fake_finalize)
+
+    aligned = main_mod._align_config_with_target_molecules(
+        config, tmp_path / "outer", 95
+    )
+
+    assert captured["probe_created"]["_run_stage_selection_override"] == stage_selection
+    assert captured["probe_run"]["_run_stage_selection_override"] == stage_selection
+    assert aligned["_run_stage_selection_override"] == stage_selection
+
+def test_continue_nested_alignment_then_starts_candidates(tmp_path, monkeypatch):
+    """An interrupted target probe should finish alignment and resume its outer run."""
+    from hedgehog import main as main_mod
+
+    outer = tmp_path / "run"
+    target_run = outer / "target_alignment" / "target_run"
+    target_configs = target_run / "configs"
+    target_configs.mkdir(parents=True)
+    (target_run / ".RUN_INCOMPLETE").write_text("unfinished\n", encoding="utf-8")
+    (target_run / "input").mkdir()
+    (target_run / "input" / "sampled_molecules.csv").write_text(
+        "smiles,model_name,mol_idx\nCCO,target,0\n", encoding="utf-8"
+    )
+    target_csv = tmp_path / "targets.csv"
+    target_csv.write_text("smiles\nCCO\n", encoding="utf-8")
+    candidate_csv = tmp_path / "candidates.csv"
+    candidate_csv.write_text("smiles\nCCN\n", encoding="utf-8")
+    docking_config = target_configs / "config_docking.yml"
+    docking_config.write_text("run: true\n", encoding="utf-8")
+    target_master = {
+        "generated_mols_path": str(target_csv),
+        "target_mols_path": str(target_csv),
+        "folder_to_save": str(target_run),
+        "sample_size": None,
+        "save_sampled_mols": True,
+        "alignment": {"enabled": True, "target_coverage_percent": 90},
+        "config_docking": str(docking_config),
+    }
+    (target_configs / "master_config_resolved.yml").write_text(
+        yaml.safe_dump(target_master, sort_keys=False), encoding="utf-8"
+    )
+
+    aligned_dir = outer / "target_alignment" / "aligned_configs"
+    aligned_dir.mkdir(parents=True)
+    aligned_master_path = aligned_dir / "aligned_config.yml"
+    aligned_master = {
+        "generated_mols_path": str(candidate_csv),
+        "target_mols_path": str(target_csv),
+        "folder_to_save": str(outer),
+        "sample_size": None,
+        "save_sampled_mols": True,
+        "alignment": {"enabled": False, "target_coverage_percent": 90},
+        "config_docking": str(docking_config),
+    }
+    aligned_master_path.write_text(
+        yaml.safe_dump(aligned_master, sort_keys=False), encoding="utf-8"
+    )
+
+    calls = []
+
+    def fake_calculate(data, config, progress_callback):
+        calls.append((data.copy(), dict(config)))
+        if config.get("_continue_mode"):
+            assert progress_callback is not None
+            progress_callback(
+                {"type": "stage_complete", "stage": "docking", "ok": True}
+            )
+        return True
+
+    def fake_create(*args, **kwargs):
+        return dict(aligned_master), aligned_master_path, aligned_dir / "thresholds.yml"
+
+    monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
+    monkeypatch.setattr(main_mod, "create_aligned_stage_config", fake_create)
+    monkeypatch.setattr(main_mod, "finalize_global_alignment", fake_create)
+
+    main_mod._run_pipeline_command(
+        config_path=None,
+        generated_mols_path=None,
+        out_dir=None,
+        stage=None,
+        reuse_folder=False,
+        force_new_folder=False,
+        auto_install=False,
+        show_progress=False,
+        large_dataset=False,
+        continue_folder=str(outer),
+    )
+
+    assert len(calls) == 2
+    assert calls[0][1]["folder_to_save"] == str(target_run.resolve())
+    assert calls[1][1]["folder_to_save"] == str(outer.resolve())
+    assert calls[1][0]["smiles"].tolist() == ["CCN"]
+
+
 class TestValidateInputPath:
     """Tests for _validate_input_path function."""
 
@@ -242,6 +460,25 @@ class TestPreprocessInputWithRdkit:
 
         assert result is not None
         assert Path(result).exists()
+
+    def test_preserves_existing_identity_and_provenance_columns(
+        self, tmp_path, mock_logger
+    ):
+        """Schema normalization must not replace stable upstream molecule IDs."""
+        input_file = tmp_path / "input.csv"
+        input_file.write_text(
+            "smiles,model_name,mol_idx,source_row\n"
+            "CCO,test,zinc-17,17\n"
+            "c1ccccc1,test,zinc-29,29\n"
+        )
+
+        result = preprocess_input_with_rdkit(
+            str(input_file), tmp_path / "output", mock_logger
+        )
+
+        output_df = pd.read_csv(result)
+        assert output_df["mol_idx"].tolist() == ["zinc-17", "zinc-29"]
+        assert output_df["source_row"].tolist() == [17, 29]
 
     def test_removes_duplicates(self, tmp_path, mock_logger):
         """Should remove duplicate SMILES within models."""
@@ -349,6 +586,26 @@ def test_apply_cli_overrides_supports_multiple_stage_selection():
         "struct_filters",
     ]
     assert main_mod.STAGE_OVERRIDE_KEY not in config
+
+
+def test_resolve_cli_mols_paths_filters_shell_expanded_sdf_list(tmp_path):
+    """Shell-expanded --mols globs should keep molecule files and drop README."""
+    from hedgehog import main as main_mod
+
+    drugflow = tmp_path / "drugflow.sdf"
+    pocket = tmp_path / "pocket2mol.sdf"
+    readme = tmp_path / "README.md"
+    drugflow.write_text("x")
+    pocket.write_text("y")
+    readme.write_text("docs")
+
+    primary, paths = main_mod._resolve_cli_mols_paths(
+        str(drugflow),
+        [str(pocket), str(readme)],
+    )
+
+    assert primary == str(tmp_path)
+    assert paths == [str(drugflow.resolve()), str(pocket.resolve())]
 
 
 def test_setup_aizynthfinder_auto_accepts_by_default(monkeypatch, tmp_path):
@@ -582,7 +839,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
-        ctx=SimpleNamespace(invoked_subcommand=None),
+        ctx=SimpleNamespace(invoked_subcommand=None, args=[]),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,
@@ -596,6 +853,9 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
 
     progress_instance = _FakeProgress.instances[-1]
     assert len(progress_instance.add_calls) == 1
+    assert len(progress_instance.reset_calls) == 2
+    assert all(call["start"] is True for call in progress_instance.reset_calls)
+    assert all(call["completed"] == 0 for call in progress_instance.reset_calls)
 
     descriptions = [
         call["description"]
@@ -679,7 +939,7 @@ def test_run_progress_strips_duplicate_stage_prefix(tmp_path, monkeypatch):
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
-        ctx=SimpleNamespace(invoked_subcommand=None),
+        ctx=SimpleNamespace(invoked_subcommand=None, args=[]),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,
@@ -762,7 +1022,7 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
-        ctx=SimpleNamespace(invoked_subcommand=None),
+        ctx=SimpleNamespace(invoked_subcommand=None, args=[]),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,
@@ -832,6 +1092,7 @@ def test_large_dataset_defaults_to_compute_only_statistics_path(tmp_path, monkey
     assert config["large_dataset_mode"] is True
     assert config["large_dataset_filter_data"] is False
     assert config["large_dataset_enable_all_filters"] is True
+    assert config["folder_to_save"] == str(tmp_path / "run_1")
 
 
 def test_large_dataset_still_rejects_docking_stage(tmp_path, monkeypatch):
@@ -875,6 +1136,7 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
     monkeypatch.setattr(main_mod, "_run_pipeline_command", _fake_run_pipeline_command)
 
     main_mod.run_command(
+        ctx=SimpleNamespace(args=[]),
         config_path="cfg.yml",
         generated_mols_path="input.csv",
         out_dir="results/x",
@@ -889,6 +1151,7 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
     assert captured == {
         "config_path": "cfg.yml",
         "generated_mols_path": "input.csv",
+        "generated_mols_paths": None,
         "out_dir": "results/x",
         "stage": [main_mod.Stage.docking],
         "reuse_folder": True,

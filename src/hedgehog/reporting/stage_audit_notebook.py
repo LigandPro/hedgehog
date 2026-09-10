@@ -137,16 +137,16 @@ def build_stage_audit_notebook() -> dict[str, Any]:
                         "stages/02_descriptors_initial/filtered_molecules.csv",
                     ],
                     "filtered": [
-                        "stages/02_descriptors_initial/filtered/filtered_molecules.csv",
                         "stages/02_descriptors_initial/filtered_molecules.csv",
+                        "stages/02_descriptors_initial/filtered/filtered_molecules.csv",
                     ],
                     "passed": [
                         "stages/02_descriptors_initial/filtered/descriptors_passed.csv",
                     ],
                     "failed": [
                         "stages/02_descriptors_initial/filtered/descriptors_failed.csv",
-                        "stages/02_descriptors_initial/filtered/failed_molecules.csv",
                         "stages/02_descriptors_initial/failed_molecules.csv",
+                        "stages/02_descriptors_initial/filtered/failed_molecules.csv",
                     ],
                     "previous": "mol_prep",
                 },
@@ -188,16 +188,16 @@ def build_stage_audit_notebook() -> dict[str, Any]:
                         "stages/07_descriptors_final/filtered_molecules.csv",
                     ],
                     "filtered": [
-                        "stages/07_descriptors_final/filtered/filtered_molecules.csv",
                         "stages/07_descriptors_final/filtered_molecules.csv",
+                        "stages/07_descriptors_final/filtered/filtered_molecules.csv",
                     ],
                     "passed": [
                         "stages/07_descriptors_final/filtered/descriptors_passed.csv",
                     ],
                     "failed": [
                         "stages/07_descriptors_final/filtered/descriptors_failed.csv",
-                        "stages/07_descriptors_final/filtered/failed_molecules.csv",
                         "stages/07_descriptors_final/failed_molecules.csv",
+                        "stages/07_descriptors_final/filtered/failed_molecules.csv",
                     ],
                     "previous": "docking_filters",
                 },
@@ -412,26 +412,6 @@ def build_stage_audit_notebook() -> dict[str, Any]:
                             "bound": "max",
                             "value": search_box["max_outside_fraction"],
                             "config_key": "search_box.max_outside_fraction",
-                        }
-                    )
-
-                pose_quality = DOCKING_FILTERS_CONFIG.get("pose_quality", {})
-                if "max_clashes" in pose_quality:
-                    rows.append(
-                        {
-                            "metric": "clashes",
-                            "bound": "max",
-                            "value": pose_quality["max_clashes"],
-                            "config_key": "pose_quality.max_clashes",
-                        }
-                    )
-                if "max_strain_energy" in pose_quality:
-                    rows.append(
-                        {
-                            "metric": "strain_energy",
-                            "bound": "max",
-                            "value": pose_quality["max_strain_energy"],
-                            "config_key": "pose_quality.max_strain_energy",
                         }
                     )
 

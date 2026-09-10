@@ -7,6 +7,7 @@ from hedgehog.configs.logger import logger
 from hedgehog.docking.aggregation import (
     _aggregate_docking_results,
     _aggregate_matcha_results,
+    _collect_docking_stage_results,
 )
 from hedgehog.docking.metadata import _update_metadata_with_run_status
 from hedgehog.docking.monitoring import _create_progress_tracker, _evaluate_run_results
@@ -91,7 +92,10 @@ def _run_smina(ligands_dir, background, job_id, tick=None):
     if not background and results_dir.exists():
         try:
             count = _aggregate_docking_results(
-                results_dir, output_sdf, model_name=TOOL_SMINA
+                results_dir,
+                output_sdf,
+                model_name=TOOL_SMINA,
+                ligands_csv=ligands_dir / "ligands.csv",
             )
             status["aggregated_molecules"] = count
             logger.info("Aggregated %d SMINA docking results", count)
@@ -99,6 +103,7 @@ def _run_smina(ligands_dir, background, job_id, tick=None):
             logger.warning("Failed to aggregate SMINA results: %s", e)
 
     smina_out_dir = ligands_dir / "smina_results"
+    status["output"] = str(output_sdf)
     status["results_dir"] = str(smina_out_dir) if smina_out_dir.exists() else None
     return status
 
@@ -117,7 +122,10 @@ def _run_gnina(ligands_dir, output_sdf, background, job_id, tick=None):
     if not background and results_dir.exists():
         try:
             count = _aggregate_docking_results(
-                results_dir, output_sdf, model_name=TOOL_GNINA
+                results_dir,
+                output_sdf,
+                model_name=TOOL_GNINA,
+                ligands_csv=ligands_dir / "ligands.csv",
             )
             status["aggregated_molecules"] = count
             logger.info("Aggregated %d GNINA docking results", count)
@@ -256,5 +264,21 @@ def _execute_auto_run(cfg, tools_list, job_ids, ligands_dir, base_folder, report
 
     if background:
         return True
+
+    tool_outputs = {
+        tool: Path(status["output"])
+        for tool, status in run_status.items()
+        if status.get("output")
+    }
+    try:
+        _collect_docking_stage_results(
+            ligands_dir,
+            selected_tools,
+            tool_outputs,
+            score_thresholds=cfg.get("score_thresholds"),
+        )
+    except Exception as e:
+        logger.error("Failed to collect docking stage results: %s", e)
+        return False
 
     return _evaluate_run_results(selected_tools, run_status, reporter, tool_totals)

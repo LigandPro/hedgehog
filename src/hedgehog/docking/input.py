@@ -12,7 +12,7 @@ def _find_latest_input_source(base_folder):
 
     Supports both new hierarchical structure and legacy flat structure.
     """
-    path = find_latest_input_source(base_folder)
+    path = find_latest_input_source(base_folder, skip_stages=["docking", "docking_filters"])
     if path:
         logger.debug("Using docking input: %s", path)
     return path

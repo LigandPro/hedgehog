@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from hedgehog.pipeline import (
     DIR_DESCRIPTORS_INITIAL,
+    DIR_DOCKING,
     DIR_MOL_PREP,
     DIR_SYNTHESIS,
     DOCKING_SCORE_COLUMNS,
@@ -20,8 +22,8 @@ from hedgehog.pipeline import (
     PipelineStage,
     PipelineStageRunner,
     _cleanup_lingering_processes,
-    _directory_has_files,
     _file_exists_and_not_empty,
+    _save_config_snapshot,
     calculate_metrics,
 )
 from hedgehog.pipeline import (
@@ -69,44 +71,6 @@ class TestFileExistsAndNotEmpty:
         assert _file_exists_and_not_empty(f) is True
 
 
-class TestDirectoryHasFiles:
-    """Tests for _directory_has_files function."""
-
-    def test_directory_with_files(self, tmp_path):
-        """Directory exists and contains files - should return True."""
-        (tmp_path / "file.csv").touch()
-        assert _directory_has_files(tmp_path) is True
-
-    def test_empty_directory(self, tmp_path):
-        """Directory exists but is empty - should return False."""
-        empty_dir = tmp_path / "empty"
-        empty_dir.mkdir()
-        assert _directory_has_files(empty_dir) is False
-
-    def test_missing_directory(self):
-        """Directory does not exist - should return False."""
-        assert _directory_has_files(Path("/nonexistent/directory")) is False
-
-    def test_directory_with_subdirectory_only(self, tmp_path):
-        """Directory contains only subdirectories, no files - should return False."""
-        subdir = tmp_path / "subdir"
-        subdir.mkdir()
-        assert _directory_has_files(tmp_path) is False
-
-    def test_directory_with_files_and_subdirs(self, tmp_path):
-        """Directory contains both files and subdirectories - should return True."""
-        (tmp_path / "subdir").mkdir()
-        (tmp_path / "file.txt").touch()
-        assert _directory_has_files(tmp_path) is True
-
-    def test_directory_with_multiple_files(self, tmp_path):
-        """Directory contains multiple files - should return True."""
-        (tmp_path / "file1.csv").touch()
-        (tmp_path / "file2.csv").touch()
-        (tmp_path / "file3.csv").touch()
-        assert _directory_has_files(tmp_path) is True
-
-
 class TestDataChecker:
     """Tests for DataChecker class."""
 
@@ -124,6 +88,20 @@ class TestDataChecker:
         checker = DataChecker(config)
 
         assert checker.check_stage_data(DIR_SYNTHESIS) is True
+
+    def test_check_stage_data_accepts_docking_filtered_output(self, tmp_path):
+        """Consolidated docking molecules should be available downstream."""
+        docking_dir = tmp_path / DIR_DOCKING
+        docking_dir.mkdir(parents=True)
+        (docking_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME},{COL_MOL_IDX}\n"
+            f"{SMILES_ETHANOL},{MODEL_TEST},mol-1\n"
+        )
+
+        checker = DataChecker({"folder_to_save": str(tmp_path)})
+
+        assert checker.check_stage_data(DIR_DOCKING) is True
+        assert DIR_DOCKING in PipelineStageRunner.DATA_SOURCE_PRIORITY
 
     def test_check_stage_data_missing(self, tmp_path):
         """Check stage data when file doesn't exist."""
@@ -180,6 +158,18 @@ class TestDataChecker:
 
         config = {"folder_to_save": str(tmp_path)}
         checker = DataChecker(config)
+
+        assert checker.check_stage_data(DIR_DESCRIPTORS_INITIAL) is True
+
+    def test_check_stage_data_current_descriptors_path(self, tmp_path):
+        """Current descriptor output lives directly in the numbered stage."""
+        desc_dir = tmp_path / "stages" / "02_descriptors_initial"
+        desc_dir.mkdir(parents=True)
+        (desc_dir / FILE_FILTERED_MOLECULES).write_text(
+            f"{COL_SMILES},{COL_MODEL_NAME}\n{SMILES_ETHANOL},{MODEL_TEST}"
+        )
+
+        checker = DataChecker({"folder_to_save": str(tmp_path)})
 
         assert checker.check_stage_data(DIR_DESCRIPTORS_INITIAL) is True
 
@@ -571,8 +561,6 @@ class TestStageLoggingCanonicalFormat:
 
         pipeline._finalize_pipeline(
             pd.DataFrame({COL_SMILES: ["CCO"]}),
-            success_count=1,
-            total_enabled=1,
             final_stage_name=STAGE_MOL_PREP,
         )
 
@@ -626,6 +614,37 @@ class TestStageLoggingCanonicalFormat:
         assert (
             "Stage descriptors completed: 3 in -> 2 out (delta -1, retained 66.67%,"
         ) in str(complete_events[-1].get("message", ""))
+
+    def test_empty_descriptor_output_ends_pipeline_before_struct_filters(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """A header-only descriptor result must stop downstream stages."""
+        pipeline = _build_enabled_pipeline(tmp_path, STAGE_DESCRIPTORS)
+        descriptor_output = (
+            tmp_path / "stages" / "02_descriptors_initial" / FILE_FILTERED_MOLECULES
+        )
+
+        def _run_descriptors(data, reporter=None):
+            descriptor_output.parent.mkdir(parents=True, exist_ok=True)
+            data.iloc[:0].to_csv(descriptor_output, index=False)
+            return True
+
+        monkeypatch.setattr(pipeline.stage_runner, "run_descriptors", _run_descriptors)
+        input_df = pd.DataFrame(
+            {
+                COL_SMILES: ["CCO", "CCC"],
+                COL_MODEL_NAME: ["m1", "m1"],
+                COL_MOL_IDX: [0, 1],
+            }
+        )
+
+        with caplog.at_level("INFO"):
+            completed, early_exit = pipeline._run_descriptors(input_df)
+
+        assert completed is True
+        assert early_exit is True
+        assert "Stage descriptors completed: 2 in -> 0 out" in caplog.text
+        assert "No molecules left after descriptors" in caplog.text
 
     def test_stage_failure_uses_best_effort_output_count(self, tmp_path, caplog):
         events: list[dict] = []
@@ -785,7 +804,7 @@ class TestFinalOutputWithDockingScores:
             }
         )
 
-        pipeline._save_final_output(final_data, len(final_data))
+        pipeline.reporter.save_final_output(final_data, len(final_data))
 
         output_path = tmp_path / "output" / "final_molecules.csv"
         out = pd.read_csv(output_path)
@@ -841,7 +860,7 @@ class TestFinalOutputWithDockingScores:
                 COL_MOL_IDX: ["mol-1", "mol-2", "mol-3"],
             }
         )
-        pipeline._save_final_output(final_data, len(final_data))
+        pipeline.reporter.save_final_output(final_data, len(final_data))
 
         output_path = tmp_path / "output" / "final_molecules.csv"
         out = pd.read_csv(output_path).assign(
@@ -880,7 +899,7 @@ class TestFinalOutputWithDockingScores:
                 COL_MOL_IDX: ["mol-1", "mol-2", "mol-3"],
             }
         )
-        pipeline._save_final_output(final_data, len(final_data))
+        pipeline.reporter.save_final_output(final_data, len(final_data))
 
         output_path = tmp_path / "output" / "final_molecules.csv"
         out = pd.read_csv(output_path).assign(
@@ -933,7 +952,7 @@ class TestFinalOutputWithDockingScores:
                 COL_MOL_IDX: ["mol-1"],
             }
         )
-        pipeline._save_final_output(final_data, len(final_data))
+        pipeline.reporter.save_final_output(final_data, len(final_data))
 
         out = pd.read_csv(tmp_path / "output" / "final_molecules.csv")
         assert out.loc[0, "gnina_affinity"] == pytest.approx(-8.1)
@@ -944,7 +963,7 @@ class TestFinalOutputWithDockingScores:
         pipeline = self._pipeline(tmp_path)
         empty_data = pd.DataFrame(columns=[COL_SMILES, COL_MODEL_NAME, COL_MOL_IDX])
 
-        pipeline._save_final_output(empty_data, 0)
+        pipeline.reporter.save_final_output(empty_data, 0)
 
         output_path = tmp_path / "output" / "final_molecules.csv"
         out = pd.read_csv(output_path)
@@ -1065,6 +1084,123 @@ def test_calculate_metrics_logs_traceback_on_failure(tmp_path, monkeypatch, capl
     assert matching[-1].exc_info is not None
 
 
+def test_calculate_metrics_keeps_incomplete_marker_on_reported_failure(
+    tmp_path, monkeypatch
+):
+    """A normal False result must remain resumable with --continue."""
+
+    class _ReportedFailurePipeline:
+        def __init__(self, config, progress_callback=None):
+            self.config = config
+            self.progress_callback = progress_callback
+
+        def run_pipeline(self, data):
+            return False
+
+    monkeypatch.setattr(
+        "hedgehog.pipeline.MolecularAnalysisPipeline", _ReportedFailurePipeline
+    )
+
+    success = calculate_metrics(
+        pd.DataFrame({COL_SMILES: ["CCO"]}),
+        {"folder_to_save": str(tmp_path)},
+    )
+
+    assert success is False
+    assert (tmp_path / ".RUN_INCOMPLETE").is_file()
+
+
+def test_config_snapshot_publishes_ready_reference_config(tmp_path):
+    """The global config store exposes one ready config per target/retention."""
+    run_dir = tmp_path / "results" / "run_1"
+    alignment_root = run_dir / "target_alignment"
+    source_dir = alignment_root / "source_configs"
+    calibration_dir = alignment_root / "calibration_configs_unfiltered"
+    production_dir = alignment_root / "aligned_configs"
+    for directory in (source_dir, calibration_dir, production_dir):
+        directory.mkdir(parents=True)
+
+    stage_config = production_dir / "config_synthesis.yml"
+    stage_config.write_text("run: true\n", encoding="utf-8")
+    (source_dir / "source_config.yml").write_text("alignment: source\n")
+    (calibration_dir / "probe_config.yml").write_text("alignment: probe\n")
+    (production_dir / "aligned_config.yml").write_text(
+        "# generated from source\n"
+        "folder_to_save: /tmp/source-run\n"
+        "target_mols_path: /tmp/source-target.csv\n"
+        f"config_synthesis: {stage_config}\n"
+        "alignment:\n"
+        "  enabled: false\n"
+        "  target_coverage_percent: 95\n",
+        encoding="utf-8",
+    )
+    protected = production_dir / "protected_target_molecules.csv"
+    protected.write_text("mol_idx\nmol-1\n", encoding="utf-8")
+    structural_failures = production_dir / "structural_filter_failures.csv"
+    structural_failures.write_text("mol_idx\nmol-2\n", encoding="utf-8")
+    thresholds = production_dir / "alignment_thresholds.yml"
+    thresholds.write_text(
+        "target_coverage_percent: 95\n"
+        "stages:\n"
+        "  struct_filters:\n"
+        "    thresholds:\n"
+        "      failure_audit_path: /tmp/stale-structural.csv\n"
+        "global_guarantee:\n"
+        "  protected_cohort_path: /tmp/stale-protected.csv\n",
+        encoding="utf-8",
+    )
+
+    _save_config_snapshot(
+        {
+            "folder_to_save": str(run_dir),
+            "target_mols_path": str(tmp_path / "KRAS_reference.csv"),
+            "generated_mols_paths": [str(tmp_path / "stale.csv")],
+            "config_synthesis": str(stage_config),
+            "alignment": {
+                "target_name": "KRAS",
+                "target_coverage_percent": 95,
+                "thresholds_path": str(thresholds),
+                "protected_cohort_path": str(protected),
+            },
+        }
+    )
+
+    reference_path = (
+        tmp_path / "results" / "custom_configs" / "KRAS" / "retention_95.yml"
+    )
+    reference_master = yaml.safe_load(reference_path.read_text())
+    local_master = yaml.safe_load(
+        (run_dir / "configs" / "master_config_resolved.yml").read_text()
+    )
+    assert list(reference_master) == [
+        "folder_to_save",
+        "target_mols_path",
+        "config_synthesis",
+        "alignment",
+    ]
+    assert "reference_config" not in reference_master
+    assert "generated_mols_paths" not in reference_master
+    assert "global_reference_config" not in local_master
+    assert reference_path.read_text(encoding="utf-8").startswith(
+        "# generated from source\n"
+    )
+    assert not (run_dir / "configs" / "lineage").exists()
+    assert not (tmp_path / "results" / "configs" / "run_1").exists()
+    support_dir = (
+        tmp_path / "results" / "custom_configs" / "KRAS" / "_support" / "retention_95"
+    )
+    assert Path(reference_master["config_synthesis"]).parent == support_dir
+    bundled_audit = yaml.safe_load(
+        (support_dir / "alignment_thresholds.yml").read_text()
+    )
+    assert bundled_audit["global_guarantee"]["protected_cohort_path"] == str(
+        (support_dir / "protected_target_molecules.csv").resolve()
+    )
+    assert bundled_audit["stages"]["struct_filters"]["thresholds"][
+        "failure_audit_path"
+    ] == str((support_dir / "structural_filter_failures.csv").resolve())
+
+
 def test_calculate_metrics_propagates_cancellation(tmp_path, monkeypatch, caplog):
     """Cancellation should not be converted into a generic failed pipeline result."""
 
@@ -1088,3 +1224,165 @@ def test_calculate_metrics_propagates_cancellation(tmp_path, monkeypatch, caplog
             )
 
     assert "Pipeline execution cancelled" in caplog.text
+
+
+def test_stage_runner_uses_input_sdf_as_primary_3d_filter_source(tmp_path, monkeypatch):
+    """SDF model coordinates should replace redocked poses as the primary input."""
+    filter_cfg = tmp_path / "config_docking_filters.yml"
+    filter_cfg.write_text("run: true\n", encoding="utf-8")
+    docking_cfg = tmp_path / "config_docking.yml"
+    docking_cfg.write_text("run: false\n", encoding="utf-8")
+
+    input_sdf = tmp_path / "input" / "ligands.sdf"
+    input_sdf.parent.mkdir()
+    input_sdf.write_text("indexed input sdf", encoding="utf-8")
+    admission_csv = tmp_path / "input" / "sampled_molecules.csv"
+    admission_csv.write_text(
+        "smiles,model_name,mol_idx\nCCO,model-a,LP-0001-00001\n",
+        encoding="utf-8",
+    )
+
+    config = {
+        "folder_to_save": str(tmp_path),
+        "config_docking": str(docking_cfg),
+        "config_docking_filters": str(filter_cfg),
+        "docking_source_sdf": str(input_sdf),
+    }
+    calls = []
+
+    def fake_docking_filters(_config, reporter=None, **kwargs):
+        calls.append(kwargs)
+        return pd.DataFrame({"mol_idx": ["LP-0001-00001"]})
+
+    monkeypatch.setattr("hedgehog.pipeline.docking_filters_main", fake_docking_filters)
+    runner = PipelineStageRunner(config, DataChecker(config))
+
+    assert runner.run_docking_filters() is True
+    assert len(calls) == 1
+    assert calls[0]["input_sdf_override"] == input_sdf.resolve()
+    assert calls[0]["admission_csv_override"] == admission_csv
+    assert calls[0]["pose_source"] == "input"
+
+
+@pytest.mark.parametrize(
+    ("docking_yaml", "expected_error"),
+    [
+        ("run: false\ntools: smina\n", "requires docking.run: true"),
+        ("run: true\ntools: []\n", "must select at least one engine"),
+    ],
+)
+def test_docked_coordinate_flag_requires_enabled_docking_tool(
+    tmp_path, caplog, docking_yaml, expected_error
+):
+    """Docked-coordinate evaluation must fail closed without an active engine."""
+    filter_cfg = tmp_path / "config_docking_filters.yml"
+    filter_cfg.write_text("run: true\n", encoding="utf-8")
+    docking_cfg = tmp_path / "config_docking.yml"
+    docking_cfg.write_text(docking_yaml, encoding="utf-8")
+
+    config = {
+        "folder_to_save": str(tmp_path),
+        "config_docking": str(docking_cfg),
+        "config_docking_filters": str(filter_cfg),
+        "evaluate_docked_coordinates": True,
+    }
+    runner = PipelineStageRunner(config, DataChecker(config))
+
+    with caplog.at_level("ERROR"):
+        assert runner.run_docking_filters() is False
+    assert expected_error in caplog.text
+
+
+def test_stage_runner_optionally_adds_docked_coordinate_branch(tmp_path, monkeypatch):
+    """The new flag should add docked coordinates without replacing input poses."""
+    filter_cfg = tmp_path / "config_docking_filters.yml"
+    filter_cfg.write_text("run: true\n", encoding="utf-8")
+    docking_cfg = tmp_path / "config_docking.yml"
+    docking_cfg.write_text("run: true\ntools: smina\n", encoding="utf-8")
+
+    input_sdf = tmp_path / "input" / "ligands.sdf"
+    input_sdf.parent.mkdir()
+    input_sdf.write_text("indexed input sdf", encoding="utf-8")
+    docking_dir = tmp_path / "stages" / "05_docking"
+    docking_output = docking_dir / "smina" / "smina_out.sdf"
+    docking_output.parent.mkdir(parents=True)
+    docking_output.write_text("redocked sdf", encoding="utf-8")
+    docking_dir.joinpath("filtered_molecules.csv").write_text(
+        "smiles,model_name,mol_idx\nCCO,model-a,LP-0001-00001\n",
+        encoding="utf-8",
+    )
+
+    config = {
+        "folder_to_save": str(tmp_path),
+        "config_docking": str(docking_cfg),
+        "config_docking_filters": str(filter_cfg),
+        "evaluate_docked_coordinates": True,
+        "docking_source_sdf": str(input_sdf),
+    }
+    calls = []
+
+    def fake_docking_filters(_config, reporter=None, **kwargs):
+        calls.append(kwargs)
+        return pd.DataFrame({"mol_idx": ["LP-0001-00001"]})
+
+    monkeypatch.setattr("hedgehog.pipeline.docking_filters_main", fake_docking_filters)
+    monkeypatch.setattr(
+        PipelineStageRunner,
+        "_merge_coordinate_branch_passes",
+        lambda *_args: None,
+    )
+    runner = PipelineStageRunner(config, DataChecker(config))
+
+    assert runner.run_docking_filters() is True
+    assert len(calls) == 2
+    assert calls[0]["input_sdf_override"] == input_sdf.resolve()
+    assert calls[0]["admission_csv_override"] == (
+        docking_dir / "filtered_molecules.csv"
+    )
+    assert calls[0]["pose_source"] == "input"
+    assert calls[1]["pose_source"] == "docked"
+    assert calls[1]["output_dir_override"] == (
+        tmp_path / "stages" / "06_docking_filters" / "docked"
+    )
+
+
+def test_coordinate_branch_passes_are_merged_with_any_semantics(tmp_path):
+    """A molecule passing either coordinate branch must remain downstream."""
+    root = tmp_path / "stages" / "06_docking_filters"
+    docked = root / "docked"
+    docked.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCC"],
+            "model_name": ["model-a", "model-a"],
+            "mol_idx": ["input-only", "both"],
+            "pose_source": ["input", "input"],
+        }
+    ).to_csv(root / "filtered_molecules.csv", index=False)
+    pd.DataFrame(
+        {
+            "smiles": ["CCN", "CCC"],
+            "model_name": ["model-a", "model-a"],
+            "mol_idx": ["docked-only", "both"],
+            "pose_source": ["docked", "docked"],
+        }
+    ).to_csv(docked / "filtered_molecules.csv", index=False)
+    pd.DataFrame(
+        {
+            "source_mol_idx": ["docked-only", "neither"],
+            "pose_source": ["input", "input"],
+            "pass": [False, False],
+        }
+    ).to_csv(root / "failed_molecules.csv", index=False)
+
+    config = {"folder_to_save": str(tmp_path)}
+    runner = PipelineStageRunner(config, DataChecker(config))
+    runner._merge_coordinate_branch_passes(docked)
+
+    merged = pd.read_csv(root / "filtered_molecules.csv").set_index("mol_idx")
+    assert set(merged.index) == {"input-only", "docked-only", "both"}
+    assert merged.loc["input-only", "pose_source"] == "input"
+    assert merged.loc["docked-only", "pose_source"] == "docked"
+    assert merged.loc["both", "pose_source"] == "input+docked"
+    failed = pd.read_csv(root / "failed_molecules.csv")
+    assert failed["source_mol_idx"].tolist() == ["neither"]

@@ -413,7 +413,6 @@ class TestDescriptorsStage:
                 {
                     "filter_data": True,
                     "n_jobs": 1,
-                    "batch_size": 1000,
                     "preprocess": {
                         "remove_radicals": False,
                         "remove_stereochemistry": False,
@@ -445,14 +444,16 @@ class TestDescriptorsStage:
 
         descriptors_stage.run(data, config)
 
-        passed = pd.read_csv(
-            tmp_path
-            / "stages"
-            / "02_descriptors_initial"
-            / "filtered"
-            / FILE_FILTERED_MOLECULES
-        )
+        stage_dir = tmp_path / "stages" / "02_descriptors_initial"
+        passed = pd.read_csv(stage_dir / FILE_FILTERED_MOLECULES)
+        failed = pd.read_csv(stage_dir / "failed_molecules.csv")
         assert passed[COL_SMILES].tolist() == [SMILES_ETHANOL]
+        assert failed[COL_SMILES].tolist() == ["CS(=O)(=O)C"]
+        assert not (stage_dir / "filtered" / FILE_FILTERED_MOLECULES).exists()
+        assert not (stage_dir / "filtered" / "failed_molecules.csv").exists()
+        assert (stage_dir / "filtered" / "descriptors_passed.csv").exists()
+        assert (stage_dir / "filtered" / "descriptors_failed.csv").exists()
+        assert (stage_dir / "filtered" / "pass_flags.csv").exists()
 
 
 class TestFilterMolecules:
@@ -600,3 +601,77 @@ class TestDescriptorValues:
         result = _compute_single_molecule_descriptors(mol, MODEL_TEST, "idx")
 
         assert result["qed"] > 0.3
+
+
+class TestDrawFilteredMols:
+    """Tests for descriptor distribution plotting."""
+
+    def _write_config(self, tmp_path, payload):
+        path = tmp_path / "config_descriptors.yml"
+        path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        return {
+            "config_descriptors": str(path),
+        }
+
+    def _sample_df(self):
+        return pd.DataFrame(
+            {
+                "model_name": [MODEL_TEST] * 6,
+                "molWt": [80.0, 120.0, 160.0, 180.0, 200.0, 240.0],
+                "n_rings": [0, 1, 1, 2, 2, 3],
+                "qed": [0.2, 0.4, 0.5, 0.6, 0.7, 0.8],
+            }
+        )
+
+    def test_writes_plot_without_config_plot_lists(self, tmp_path):
+        """Borders alone should be enough to choose columns and render."""
+        from hedgehog.descriptors.plotting import draw_filtered_mols
+
+        config = self._write_config(
+            tmp_path,
+            {
+                "borders": {
+                    "molWt_min": 100,
+                    "molWt_max": 220,
+                    "n_rings_min": 0,
+                    "n_rings_max": 2,
+                }
+            },
+        )
+        out = tmp_path / "plots"
+        progress = []
+        draw_filtered_mols(
+            self._sample_df(),
+            out,
+            config,
+            progress_cb=lambda done, total: progress.append((done, total)),
+        )
+        assert (out / "descriptors_distribution.png").exists()
+        assert progress[-1] == (2, 2)
+
+    def test_single_column_grid_does_not_crash(self, tmp_path):
+        """A 1x1 subplot must flatten to an axes array."""
+        from hedgehog.descriptors.plotting import draw_filtered_mols
+
+        config = self._write_config(
+            tmp_path,
+            {
+                "borders": {"qed_min": 0.3, "qed_max": 0.9},
+                "filtered_cols_to_plot": ["qed"],
+            },
+        )
+        out = tmp_path / "plots"
+        draw_filtered_mols(self._sample_df(), out, config)
+        assert (out / "descriptors_distribution.png").exists()
+
+    def test_empty_column_list_is_a_noop(self, tmp_path):
+        """Empty plot list should not divide by zero or write a file."""
+        from hedgehog.descriptors.plotting import draw_filtered_mols
+
+        config = self._write_config(
+            tmp_path,
+            {"borders": {"molWt_min": 0}, "filtered_cols_to_plot": []},
+        )
+        out = tmp_path / "plots"
+        draw_filtered_mols(self._sample_df(), out, config)
+        assert not (out / "descriptors_distribution.png").exists()

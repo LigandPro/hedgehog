@@ -1,123 +1,133 @@
 # Hedgehog TUI
 
-Terminal User Interface for the Hedgehog molecular design pipeline.
+Terminal UI for configuring and running the Hedgehog pipeline without hand-editing
+every YAML file.
 
-## Features
+If the CLI feels opaque, start here — then open the stage configs only when you
+need a precise knob.
 
-- **Configuration Editor**: Edit pipeline settings for all stages (descriptors, filters, synthesis, docking)
-- **Pipeline Wizard**: Step-by-step guided setup for new runs
-- **Pipeline Runner**: Execute pipeline with real-time progress tracking
-- **File Browser**: Navigate and select input files
-- **History**: View past pipeline runs and results
+---
+
+## What you can do
+
+| Screen / flow | Purpose |
+| --- | --- |
+| Config editors | Edit mol prep, descriptors, structural filters, synthesis, docking, … |
+| Wizard | Guided setup for a new run |
+| Pipeline runner | Launch a run and watch progress |
+| File browser | Pick molecule / receptor inputs |
+| History | Reopen past runs |
+
+Backend lives in `src/hedgehog/tui_backend/` (JSON-RPC over stdin/stdout).
+
+---
 
 ## Requirements
 
-- Node.js 18+
-- Python 3.10+ with Hedgehog installed
+- Node.js **18+** and npm  
+- Python **3.10+** with a Hedgehog checkout (`uv sync` from repo root)
 
-## Installation
+---
+
+## Install & run
+
+From the repo:
 
 ```bash
 cd tui
 npm install
 ```
 
-## Running
-
-### Development mode (with auto-reload)
+**Dev (auto-reload)**
 
 ```bash
 npm run dev
 ```
 
-### Production build
+**Production build**
 
 ```bash
 npm run build
 npm start
 ```
 
-### From project root
+**From project root**
 
 ```bash
-cd tui
-npm run tui
+uv run hedgehog tui
+# or
+cd tui && npm run tui
 ```
 
-### Smoke checks
-
-From project root:
+**Smoke check** (build + can the TUI talk to Python?)
 
 ```bash
-# Build + startup smoke (starts TUI in PTY and exits automatically)
 uv run python scripts/check_pipeline.py --mode quick
 ```
 
-This is the recommended way to verify that the TUI can start and connect to
-the Python backend in automation-friendly environments.
+---
 
-## Project Structure
+## Everyday recipes
 
-```
-tui/
-├── src/
-│   ├── components/     # Reusable UI components
-│   │   ├── Header.tsx
-│   │   ├── Footer.tsx
-│   │   ├── FileBrowser.tsx
-│   │   ├── ProgressBar.tsx
-│   │   └── ...
-│   ├── screens/        # Main application screens
-│   │   ├── Welcome.tsx
-│   │   ├── ConfigMain.tsx
-│   │   ├── ConfigDescriptors.tsx
-│   │   ├── ConfigFilters.tsx
-│   │   ├── ConfigSynthesis.tsx
-│   │   ├── ConfigDocking.tsx
-│   │   ├── PipelineRunner.tsx
-│   │   ├── History.tsx
-│   │   └── wizard/     # Wizard flow screens
-│   ├── hooks/          # Custom React hooks
-│   ├── services/       # Backend communication
-│   │   ├── python-bridge.ts
-│   │   └── rpc-client.ts
-│   ├── store/          # Zustand state management
-│   ├── types/          # TypeScript types
-│   ├── utils/          # Utility functions
-│   ├── App.tsx         # Main application component
-│   └── index.tsx       # Entry point
-├── bin/                # CLI entry point
-├── package.json
-└── tsconfig.json
+```bash
+# 1) Open TUI, pick moses_1000 / your CSV, enable stages you care about
+uv run hedgehog tui
+
+# 2) Prefer a safe first run: mol prep + descriptors + structural filters
+#    (leave synthesis/docking off until optional tools are set up)
+
+# 3) If a stage looks “dead”, check its `run: true/false` in the matching YAML
+#    under src/hedgehog/configs/
 ```
 
-## Key Bindings
+Configs the TUI edits are the same files the CLI uses
+(`config_mol_prep.yml`, `config_structFilters.yml`, …).
+
+For Common Alerts SMARTS / rulesets, see  
+`src/hedgehog/struct_filters/data/README.md`.
+
+---
+
+## Key bindings
 
 | Key | Action |
-|-----|--------|
-| `↑/↓` | Navigate lists |
-| `Enter` | Select/Confirm |
-| `→ / e` | Edit path in file browser |
-| `Space` | Toggle options or quick search/select-folder in file browser |
-| `Esc / ←` | Go back (most screens) |
-| `Esc` | Quit (Welcome screen) |
-| `q` | Quit (Welcome screen) |
-| `Ctrl+C` | Quit (global) |
-| `Ctrl+F` | Search/filter (list screens) |
-| `/` | Open command palette |
-| `?` | Toggle help overlay |
+| --- | --- |
+| `↑` / `↓` | Move in lists |
+| `Enter` | Select / confirm |
+| `→` / `e` | Edit path in file browser |
+| `Space` | Toggle option / quick search in file browser |
+| `Esc` / `←` | Back (most screens) |
+| `Esc` or `q` | Quit on Welcome |
+| `Ctrl+C` | Quit anywhere |
+| `Ctrl+F` | Search / filter |
+| `/` | Command palette |
+| `?` | Help overlay |
 
-## Architecture
+---
 
-The TUI communicates with a Python backend (`src/hedgehog/tui_backend/`) via JSON-RPC over stdin/stdout. The backend handles:
+## Project map (short)
 
-- Configuration file read/write
-- Pipeline execution
-- File system operations
-- Run history management
+```text
+tui/
+├── src/
+│   ├── screens/      # Welcome, configs, runner, history, wizard
+│   ├── components/   # Shared UI bits
+│   ├── services/     # python-bridge / RPC
+│   ├── store/        # Zustand state
+│   └── types/
+├── bin/              # CLI entry
+└── package.json
+```
 
-## Technologies
+---
 
-- [Ink](https://github.com/vadimdemedes/ink) - React for CLI
-- [Zustand](https://github.com/pmndrs/zustand) - State management
-- TypeScript
+## Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| TUI starts but configs don’t save | Run from a full repo checkout; configs are relative paths |
+| Backend / RPC errors | `uv sync` at repo root, then `npm run tui` again |
+| Node too old | Upgrade to Node 18+ |
+| “It works in CLI, not in TUI” | Confirm both use the same `src/hedgehog/configs/*.yml` |
+
+More detail: [docs TUI page](../docs/content/tui.mdx) and [public docs](https://hedgehog.ligandpro.ru).

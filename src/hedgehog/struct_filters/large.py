@@ -27,10 +27,22 @@ from hedgehog.large_dataset import (
     write_stage_counts,
 )
 from hedgehog.struct_filters.utils import (
+    attach_structural_enforcement_pass,
+    build_structural_policy_pass_masks,
     filter_function_applier,
+    finalize_structural_liability_profile,
     get_basic_stats,
+    initialize_structural_liability_profile,
+    merge_structural_liability_profile,
+    merge_structural_policy_aliases,
     prepare_structfilters_input,
     process_prepared_payload,
+)
+from hedgehog.utils.parallel import resolve_n_jobs
+from hedgehog.struct_filters.waves.registry import (
+    get_aligned_enforced_filters,
+    get_calculated_policy_names,
+    policy_calculation_filter,
 )
 from hedgehog.utils.paths import process_path
 
@@ -57,12 +69,16 @@ def _struct_input_chunks(config: dict, stage_dir: str, chunk_rows: int):
     )
     if is_post_descriptors:
         descriptors_output = stage_output_or_parts(
-            base
-            / "stages"
-            / "02_descriptors_initial"
-            / "filtered"
-            / "filtered_molecules.csv"
+            base / "stages" / "02_descriptors_initial" / "filtered_molecules.csv"
         )
+        if descriptors_output is None:
+            descriptors_output = stage_output_or_parts(
+                base
+                / "stages"
+                / "02_descriptors_initial"
+                / "filtered"
+                / "filtered_molecules.csv"
+            )
         if descriptors_output is not None:
             if descriptors_output.is_file() and descriptors_output.stat().st_size == 0:
                 return
@@ -86,36 +102,20 @@ def _struct_input_chunks(config: dict, stage_dir: str, chunk_rows: int):
         assigner.close()
 
 
-def _pass_mask(filter_extended: pd.DataFrame) -> pd.DataFrame:
-    id_cols = [c for c in IDENTITY_COLUMNS if c in filter_extended.columns]
-    if "pass" in filter_extended.columns:
-        pass_col = "pass"
-    elif "pass_filter" in filter_extended.columns:
-        pass_col = "pass_filter"
-    else:
-        return pd.DataFrame(columns=id_cols + ["pass"])
-    out = filter_extended[id_cols + [pass_col]].copy()
-    if pass_col != "pass":
-        out = out.rename(columns={pass_col: "pass"})
-    out["pass"] = out["pass"].fillna(False).astype(bool)
-    return out.drop_duplicates(subset=id_cols, keep="last")
-
-
-def _merge_filter_pass(
-    combined: pd.DataFrame, filter_name: str, filter_extended: pd.DataFrame
+def _merge_named_pass_mask(
+    combined: pd.DataFrame, policy_name: str, mask: pd.DataFrame
 ) -> pd.DataFrame:
     id_cols = [
         c
         for c in IDENTITY_COLUMNS
-        if c in combined.columns and c in filter_extended.columns
+        if c in combined.columns and c in mask.columns
     ]
-    mask = _pass_mask(filter_extended)
     if mask.empty or not id_cols:
-        combined[filter_name] = False
+        combined[policy_name] = False
         return combined
-    mask = mask[id_cols + ["pass"]].rename(columns={"pass": filter_name})
-    out = combined.merge(mask, on=id_cols, how="left")
-    out[filter_name] = out[filter_name].fillna(False).astype(bool)
+    selected = mask[id_cols + ["pass"]].rename(columns={"pass": policy_name})
+    out = combined.merge(selected, on=id_cols, how="left")
+    out[policy_name] = out[policy_name].fillna(False).astype(bool)
     return out
 
 
@@ -187,15 +187,36 @@ def run_large(
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    base = Path(process_path(config[KEY_FOLDER_TO_SAVE]))
     chunk_rows = get_chunk_rows(config)
     single_csv_limit = get_single_csv_limit(config)
-    work_dir = base / "_workdir" / "large_dataset" / "struct_filters"
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
-    work_dir.mkdir(parents=True, exist_ok=True)
 
     filters = list(_enabled_filters(config_struct_filters, config))
+    policy_filters = get_calculated_policy_names(filters, config_struct_filters)
+    policies_by_calculation = {
+        filter_name: [
+            policy_name
+            for policy_name in policy_filters
+            if policy_calculation_filter(policy_name) == filter_name
+        ]
+        for filter_name in filters
+    }
+    aligned_enforced = get_aligned_enforced_filters(config, config_struct_filters)
+    if aligned_enforced is not None:
+        missing_enforced = {
+            name
+            for name in aligned_enforced
+            if policy_calculation_filter(name) not in filters
+        }
+        if missing_enforced:
+            names = ", ".join(sorted(missing_enforced))
+            raise ValueError(
+                f"Structural filter flag enabled but calculation disabled: {names}"
+            )
+    enforced_filters = (
+        policy_filters
+        if aligned_enforced is None
+        else [name for name in policy_filters if name in aligned_enforced]
+    )
     filter_outputs = should_filter_large_outputs(config)
     filter_writers = {
         name: ShardedCsvWriter(output_dir / "intermediate" / name, config)
@@ -204,12 +225,15 @@ def run_large(
     filtered_writer = ShardedCsvWriter(
         parts_dir_for_csv(output_dir / "filtered_molecules.csv"), config
     )
+    liability_writer = ShardedCsvWriter(
+        parts_dir_for_csv(output_dir / "structural_liability_profile.csv"), config
+    )
 
     manifest_rows: list[dict[str, Any]] = []
     stage_rows: list[dict[str, Any]] = []
     failure_rows: list[dict[str, Any]] = []
     processed_total = 0
-    parse_n_jobs = int(config_struct_filters.get("parse_input_n_jobs", -1) or -1)
+    n_jobs = resolve_n_jobs(config_struct_filters, config)
 
     logger.info(
         "StructFilters large mode: chunk_rows=%d, filters=%s",
@@ -230,9 +254,10 @@ def run_large(
                 message=f"StructFilters chunk {chunk_index}",
             )
 
-        prepared_payload = prepare_structfilters_input(chunk, None, parse_n_jobs)
+        prepared_payload = prepare_structfilters_input(chunk, None, n_jobs)
         id_cols = [c for c in IDENTITY_COLUMNS if c in chunk.columns]
         combined = chunk[id_cols].copy()
+        liability_profile = initialize_structural_liability_profile(chunk)
 
         for filter_name in filters:
             try:
@@ -254,10 +279,12 @@ def run_large(
                         "error": str(exc),
                     }
                 )
-                combined[filter_name] = False
+                for policy_name in policies_by_calculation[filter_name]:
+                    combined[policy_name] = False
                 continue
             if filter_results is None:
-                combined[filter_name] = False
+                for policy_name in policies_by_calculation[filter_name]:
+                    combined[policy_name] = False
                 continue
             model_names = sorted(
                 chunk["model_name"].dropna().astype(str).unique().tolist()
@@ -269,11 +296,35 @@ def run_large(
                 model_name,
                 filter_name=filter_name,
             )
+            final_extended, _enforcement_mask = attach_structural_enforcement_pass(
+                config_struct_filters, filter_name, final_extended
+            )
             filter_writers[filter_name].write(final_extended)
-            combined = _merge_filter_pass(combined, filter_name, final_extended)
+            policy_masks = build_structural_policy_pass_masks(
+                config_struct_filters,
+                filter_name,
+                final_extended,
+                default_mask=_enforcement_mask,
+            )
+            for policy_name, policy_mask in policy_masks.items():
+                combined = _merge_named_pass_mask(
+                    combined, policy_name, policy_mask
+                )
+            liability_profile = merge_structural_liability_profile(
+                liability_profile, filter_name, final_extended
+            )
+            liability_profile = merge_structural_policy_aliases(
+                liability_profile, filter_name
+            )
 
-        if filters and filter_outputs:
-            pass_all = combined[filters].all(axis=1)
+        if config_struct_filters.get("write_structural_liability_profile", True):
+            liability_profile = finalize_structural_liability_profile(
+                liability_profile, aligned_enforced, policy_filters
+            )
+            liability_writer.write(liability_profile)
+
+        if enforced_filters and filter_outputs:
+            pass_all = combined[enforced_filters].all(axis=1)
             passed_ids = combined.loc[pass_all, id_cols]
             filtered = chunk.merge(passed_ids, on=id_cols, how="inner")
         else:
@@ -322,6 +373,13 @@ def run_large(
 
     write_stage_counts(summary_dir / "stage_counts.tsv", stage_rows)
     write_manifest(output_dir / "manifest.tsv", manifest_rows)
+    if config_struct_filters.get("write_structural_liability_profile", True):
+        materialize_csv_if_small(
+            liability_writer.parts_dir,
+            output_dir / "structural_liability_profile.csv",
+            single_csv_limit,
+            columns=["smiles", "model_name", "mol_idx"],
+        )
     materialize_csv_if_small(
         filtered_writer.parts_dir,
         output_dir / "filtered_molecules.csv",

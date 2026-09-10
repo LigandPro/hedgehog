@@ -48,27 +48,58 @@ uv run hedgehog run [OPTIONS]
 
 | Option | Short | Type | Default | Description |
 |--------|-------|------|---------|-------------|
-| `--config` | `-c` | `TEXT` | `src/hedgehog/configs/config.yml` | Master YAML config path. |
+| `--config` | `-c` | `TEXT` | context-dependent | Master YAML config path. Normally uses `src/hedgehog/configs/config.yml`; with `--continue`, uses the saved run config unless explicitly overridden. |
 | `--mols` | `-m` | `TEXT` | `None` | Input molecule table path or glob. Overrides config input. Prefer CSV/TSV with a `smiles` header. |
-| `--out` | `-o` | `TEXT` | `None` | Output directory override (`folder_to_save`). |
+| `--out` | `-o` | `TEXT` | `None` | Output directory naming base; each run receives a fresh numbered folder. |
 | `--stage` | `-s` | `STAGE` | `None` | Run one or more stages only. Repeat `--stage` to select multiple stages. Uses config molecules unless `--mols` is provided. See `hedgehog info` for stage descriptions. |
 | `--reuse` | | `FLAG` | `False` | Reuse existing results folder. |
-| `--force-new` | | `FLAG` | `False` | Create a new results folder. |
+| `--continue` | | `RUN_FOLDER` | `None` | Continue an unfinished run from its first incomplete enabled stage. |
+| `--force-new` | | `FLAG` | `False` | Explicitly request the default fresh-folder behavior. |
 | `--auto-install` | | `FLAG` | `False` | Auto-install missing optional tools without prompts. |
 | `--progress` | | `FLAG` | `False` | Show live progress bar. |
 | `--large-dataset` | | `FLAG` | `False` | Stream large molecule libraries in chunks, write row-level `.parts` shards, and skip plots/report-heavy outputs. Filters are calculated by default but do not remove molecules unless `large_dataset_filter_data: true`. |
+| `--align-config` | | `PERCENT` | `None` | Enable target alignment and override `alignment.target_coverage_percent` from the master config for this run. |
 
 The `--reuse` and `--force-new` flags are mutually exclusive. Using both will produce an error.
 
 The `--out` option cannot be used together with `--reuse` or `--force-new`.
 
+`--continue` cannot be combined with `--mols`, `--out`, `--stage`, `--reuse`, `--force-new`, `--large-dataset`, or `--align-config`. You may combine it with `--config` when you intentionally want to replace the saved master config.
+
+Every run creates a fresh numbered results folder by default, including stage-only runs and runs using `--out`. For example, `--out results/my_run` creates `results/my_run_1`, then `results/my_run_2`. An existing run directory is used only when `--reuse` is passed explicitly.
+
 The progress bar is disabled by default in CLI runs. Use `--progress` when you want live stage progress rendering.
 
 Use `--large-dataset` for PubChem/Enamine-scale statistics runs. It stores intermediate row-level tables as compressed shard directories such as `filtered_molecules.parts/` and `descriptors_all.parts/`, uses `large_dataset_chunk_rows` from the master config, and skips plots plus HTML report generation. Without an explicit `--stage` selection, large-dataset mode runs the scalable statistics path: `mol_prep`, `descriptors`, `struct_filters`, and `synthesis`. Descriptor, structural, and synthesis filters are calculated by default, but downstream large-mode outputs keep all molecules unless `large_dataset_filter_data: true`. The synthesis stage skips AiZynthFinder retrosynthesis in large-dataset mode.
 
-When you request any stage other than `mol_prep`, the pipeline run `mol_prep` first if the Mol Prep stage is enabled in `config_mol_prep.yml`. This is intentional because downstream stages operate on standardized molecules when that preprocessing stage is active.
+Set `alignment.enabled: true` and `alignment.target_coverage_percent: PERCENT` in the master config to align thresholds and structural rules to `target_mols_path`. The `--align-config PERCENT` option provides a one-run enable-and-percentage override. HEDGEHOG first runs the reference molecules with numeric filtering relaxed and every structural filter and common-alert ruleset enabled in measurement-only mode. The reference synthesis pass calculates every configured score, writes `synthesis_scores.csv`, and skips AiZynthFinder; the generated candidate config retains the source retrosynthesis setting. Numeric stages select one shared central/best subset containing `ceil(PERCENT / 100 * molecule_count)` rows, then derive every two-sided descriptor/synthesis range from that subset. Docking pivots poses to one affinity per unique molecule and configured tool, selects one shared best subset using the worst normalized tool rank, and writes one `minimizedAffinity.max` cutoff per tool; candidate molecules must pass all generated tool cutoffs. Generated continuous thresholds use at most two decimal places and are rounded outward; integer-valued thresholds are rounded up. After structural filtering, HEDGEHOG first recalculates ring-infraction, stereocenter, halogenicity, and symmetry parameters, then greedily enables the least disruptive rules only when their recomputed combined pass mask still retains the required target count; common-alert rulesets are selected independently. MolPrep categorical rules are preserved. Alignment cannot be combined with `large_dataset_mode` or `--large-dataset`.
+
+Aligned stage configs are created one by one under `target_alignment/aligned_configs/`: descriptors after the descriptor stage, structural rules after structural filtering, synthesis after synthesis, docking after docking, and docking filters after the docking-filter stage. No complete config bundle is generated upfront or regenerated in bulk at the end. The aligned master and `alignment_thresholds.yml` are updated after each alignable stage, while unfinished stages remain `pending_metrics`. Structural alignment also writes `structural_filter_failures.csv`, with one row for every target molecule/rule failure.
+
+When you request stages with `--stage`, only the selected stages run. Mol Prep is not forced on automatically; include `--stage mol_prep` if you want standardization first.
 
 Every run writes a transient `.RUN_INCOMPLETE` marker in the results folder. The marker is removed on successful completion. If it remains present, the run was interrupted or failed and the run log should be checked.
+
+### Continue an Interrupted Run
+
+Stop the active process first with `Ctrl-C`, edit the copied YAML files under the unfinished run's `configs/` directory, and continue in place:
+
+```bash
+uv run hedge run --continue /absolute/path/to/results/run_1
+```
+
+Continuation loads `input/sampled_molecules.csv`; it does not preprocess or sample the input again. Enabled stages are checked in pipeline order. Completed stages are skipped, and execution starts at the first stage without a completion marker or complete output artifact. Every newly completed stage writes `.STAGE_COMPLETE.yml`, so later interruptions can be resumed reliably.
+
+By default, continuation loads `configs/master_config_resolved.yml` and the run-local stage configs, so changes such as reducing AiZynthFinder workers should be made in those copied files. To use a different master config instead, pass it explicitly:
+
+```bash
+uv run hedge run --continue /absolute/path/to/results/run_1 \
+  --config /absolute/path/to/changed_config.yml
+```
+
+If the interruption happened inside target alignment, you may pass the outer run folder; HEDGEHOG resumes the nested target run, updates the remaining aligned stage configs, and then starts the candidate pipeline in the original folder. If `alignment.target_coverage_percent` was changed in the saved target-run master, completed aligned stages are recalibrated from their saved metrics without rerunning those stages.
+
+Synthesis continuation reuses a compatible AiZynthFinder work directory. Finished shards are not launched again, and partial JSONL checkpoints resume from their last complete molecule. HEDGEHOG refuses continuation when `.RUN_INCOMPLETE` is absent or another continuation process holds the run lock.
 
 ### Available Stages
 
@@ -103,7 +134,7 @@ uv run hedgehog --config src/hedgehog/configs/config.yml
 # Run with a custom molecule set
 uv run hedgehog --mols input/my_molecules.csv
 
-# Run into a custom output directory
+# Use a custom output naming base (creates results/my_run_1, then _2, ...)
 uv run hedgehog --out results/my_run
 
 # Run with a glob pattern
@@ -121,11 +152,18 @@ uv run hedge --stage descriptors --mols input/candidates.csv
 # Rerun into the same results folder
 uv run hedge --reuse
 
-# Force a fresh results folder for a stage rerun
+# Continue an interrupted run after editing its copied configs
+uv run hedge run --continue /absolute/path/to/results/run_1
+
+# Explicit form of the default fresh-folder behavior
 uv run hedge --stage synthesis --force-new
 
 # Enable live progress bar
 uv run hedge --progress
+
+# Retain at least 95% of targets at each aligned stage; docking uses one
+# shared molecule subset and requires all generated tool cutoffs
+uv run hedge --align-config 95
 
 # Stream a large library without monolithic intermediate CSVs or plots
 uv run hedge --large-dataset --mols input/pubchem.csv
