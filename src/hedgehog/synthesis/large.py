@@ -26,16 +26,12 @@ from hedgehog.large_dataset import (
 )
 from hedgehog.synthesis.utils import (
     _build_score_filter_mask,
+    _iter_score_filter_specs,
     calculate_synthesis_scores,
 )
 from hedgehog.utils.paths import process_path
 
 IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
-SCORE_FILTERS = [
-    ("sa_score", "sa_score_min", "sa_score_max"),
-    ("ra_score", "ra_score_min", "ra_score_max"),
-    ("syba_score", "syba_score_min", "syba_score_max"),
-]
 
 
 def _synthesis_input_chunks(config: dict, chunk_rows: int):
@@ -73,13 +69,8 @@ def _score_pass_flags(
     flags = scored_df[id_cols].copy()
     pass_mask = pd.Series(True, index=scored_df.index)
 
-    for column, min_key, max_key in SCORE_FILTERS:
-        mask = _build_score_filter_mask(
-            scored_df,
-            column,
-            config_synthesis.get(min_key, 0),
-            config_synthesis.get(max_key, "inf"),
-        )
+    for column, min_val, max_val in _iter_score_filter_specs(config_synthesis):
+        mask = _build_score_filter_mask(scored_df, column, min_val, max_val)
         if mask is None:
             column_pass = pd.Series(True, index=scored_df.index)
         else:
@@ -190,7 +181,6 @@ def run_large(
 
         scored_df = calculate_synthesis_scores(
             chunk,
-            str(base),
             config_synthesis,
             progress_cb=None,
         )

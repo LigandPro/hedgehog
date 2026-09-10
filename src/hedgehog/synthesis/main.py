@@ -107,7 +107,6 @@ def main(config: dict, reporter=None) -> None:
 
     scored_df = calculate_synthesis_scores(
         input_df,
-        folder_to_save,
         config_synthesis,
         progress_cb=_progress_scores if reporter is not None else None,
     )
@@ -115,13 +114,7 @@ def main(config: dict, reporter=None) -> None:
     synthesis_scores_output = output_folder / "synthesis_scores.csv"
     _save_ordered_csv(scored_df, synthesis_scores_output)
     logger.info("Saved synthesis scores to %s", synthesis_scores_output)
-    if config_synthesis.get("apply_score_filters", True):
-        score_filtered_df = apply_synthesis_score_filters(scored_df, config_synthesis)
-    else:
-        score_filtered_df = scored_df.copy()
-        logger.info(
-            "Synthesis score filtering disabled explicitly (apply_score_filters=false)"
-        )
+    score_filtered_df = apply_synthesis_score_filters(scored_df, config_synthesis)
     _report_progress(total_input_mols, total_input_mols, "Applying score filters")
 
     if len(score_filtered_df) == 0:
