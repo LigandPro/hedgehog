@@ -1,52 +1,40 @@
 run: true
 
-# Target alignment calibrates one affinity cutoff for every configured tool.
-calculate_score_thresholds_from_targets: true
-# Intentionally empty before the target docking run. The generated aligned config
-# fills smina, gnina, and matcha entries from alignment.target_coverage_percent.
-# Generated shape (values are calculated, never hard-coded):
-#   smina:  {score_property: minimizedAffinity, max: calculated}
-#   gnina:  {score_property: minimizedAffinity, max: calculated}
-#   matcha: {score_property: minimizedAffinity, max: calculated}
-score_thresholds: {}
-tools: all  # Options: all, gnina, smina, matcha, or a comma-separated list such as gnina,matcha
-receptor_pdb: /home/dorochka/data/targets/KRAS/7EW9_prepared_apo.pdb
+calculate_score_thresholds_from_targets: true # Target alignment calibrates one affinity cutoff for every configured tool
+score_thresholds:
+  smina:  {score_property: minimizedAffinity, max: -6.5}
+  gnina:  {score_property: minimizedAffinity, max: -6.5}
+  matcha: {score_property: minimizedAffinity, max: -6.5}
+tools: all  # all | [gnina, smina, matcha] | a comma-separated list as gnina,matcha
+receptor_pdb: examples/7EW9_apo.pdb
 auto_run: true
 run_in_background: false
-prepare_ligands: false  # If true, use ligand_preparation_tool for conformer generation (may expand molecules 4x times).
-                        # If false, use input molecules directly (1:1 mapping)
-gnina_per_process_cpu: 12
-gnina_parallel_jobs_max: 8
+prepare_ligands: false   # true: use ligand_preparation_tool for conformer generation (may expand molecules 4x times).
+                         # false: use input molecules directly (1:1 mapping)
 smina_config:
   bin: smina
-  autobox_ligand: /home/dorochka/data/targets/KRAS/05C_from_7EW9.sdf
+  autobox_ligand: examples/05C_from_7EW9.sdf
   autobox_add: 4
   cpu: 32
   seed: 42
   exhaustiveness: 8
   num_modes: 1
+
+gnina_parallel_jobs_max: 8 # max concurrent gnina processes; omit to auto from CPUs/GPUs
 gnina_config:
   bin: gnina
-  autobox_ligand: /home/dorochka/data/targets/KRAS/05C_from_7EW9.sdf
+  autobox_ligand: examples/05C_from_7EW9.sdf
   autobox_add: 4
-  cpu: 8
+  cpu: 2                   # 2 cpus per job x jobs_max = total cpus required
   seed: 42
   no_gpu: false
   num_modes: 1
+
 matcha_config:
-  backend: docking
-  checkout_dir: modules/docking
-  repo_url: https://github.com/LigandPro/docking.git
-  update_checkout: false
-  training_config: /mnt/ligandpro/data/esevriugov/docking/train_results/2026-08-24-00:04:12-pocket-tune-base/config.yaml
-  checkpoint_root: /mnt/ligandpro/data/esevriugov/docking/train_results
-  checkpoint_run: 2026-08-24-00:04:12-pocket-tune-base
-  checkpoint_name: checkpoint-latest
-  uv_bin: uv
-  autobox_ligand: /home/dorochka/data/targets/KRAS/05C_from_7EW9.sdf
+  checkout_dir: modules/matcha_remote
+  autobox_ligand: examples/05C_from_7EW9.sdf
+  device: auto
   n_samples: 20
-  sample_timeout_seconds: 180
-  data_workers: 16
-  concurrency: 64
-  batch_size: 256
-  gpus: "0"
+  scorer: gnina
+  scorer_minimize: true
+  keep_workdir: false

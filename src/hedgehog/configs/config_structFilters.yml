@@ -1,75 +1,54 @@
-# Structural filters config - exploration profile (default)
-#
-# Goal:
-# - keep only the most useful alert core;
-# - avoid broad toxicology and library-style overfiltering;
-# - retain as much chemistry diversity as possible.
-
 run: true
+n_jobs: 16
+
+# Survival flags are independent from calculate_* diagnostic flags
+# Hard gate:
+  # PAINS
+  #       AND NIBR AND Lilly160
+  #       AND MolGraph AND Protecting Groups
+  #       AND undefined stereocenters <= 2
 filter_data: true
-
-parse_input_n_jobs: -1
 write_per_filter_outputs: true
-
+write_structural_liability_profile: true
 generate_plots: true
 generate_failure_analysis: true
 
-combine_in_memory: true
-parallel_scheduler: processes
+# --------------------------------------------------
+filter_common_alerts: true
+filter_molgraph_stats: true
+filter_NIBR: true
+filter_lilly: true
+filter_protecting_groups: true
+filter_bredt: false
+filter_molcomplexity: false
+filter_ring_infraction: false
+filter_stereo_center: false
+filter_undefined_stereo_center: true
+filter_halogenicity: false
+filter_symmetry: false
 
-alerts_data_path: src/hedgehog/struct_filters/data/common_alerts_collection.csv
 calculate_common_alerts: true
-
-common_alerts_auto_n_jobs: true
-common_alerts_small_input_threshold: 1000
-common_alerts_small_input_n_jobs: 1
-common_alerts_large_input_n_jobs: 12
-
-include_rulesets:
-  - Dundee
-  - BMS
-  - Inpharmatica
-  - LD50-Oral
-  - Glaxo
+alerts_data_path: src/hedgehog/struct_filters/data/common_alerts_collection.csv
+include_rulesets: all                     # all | []/null | [Ruleset1, ...]
+exclude_smarts: []                        # Exact SMARTS strings to drop from calculation
+common_alerts_filter_include_rulesets:    # Empty: filter by every calculated ruleset when filter_common_alerts is true
   - PAINS
-  - AlphaScreen-Hitters
-  - Frequent-Hitter
-  - Chelator
-  - SureChEMBL
-  - GST-Hitters
-  - HIS-Hitters
-  - LuciferaseInhibitor
-
-exclude_descriptions:
-  Dundee:
-    - Aliphatic long chain
-    - isolated alkene
-    - triple bond
-
-  Inpharmatica:
-    - Filter82_pyridinium
-
-  LD50-Oral:
-    - phenylpiperazine
-
-  SureChEMBL:
-    - aminothiazole
-
-  HIS-Hitters:
-    - Picolylamines_A
+common_alerts_filter_exclude_rulesets: [] # Removes listed rulesets from filtering when filter_common_alerts is true
 
 calculate_molgraph_stats: true
-calculate_molcomplexity: true
+molgraph_max_severity: 5
+
 calculate_NIBR: true
+nibr_max_severity: 10
 
-molgraph_scheduler: processes
-nibr_scheduler: processes
-
-calculate_bredt: true
 calculate_lilly: true
-lilly_scheduler: threads
+lilly_demerit_cutoff: 160
 
 calculate_protecting_groups: true
+
+calculate_bredt: true
+
+calculate_molcomplexity: true
 
 calculate_ring_infraction: true
 ring_infraction_hetcycle_min_size: 4
@@ -83,5 +62,8 @@ halogenicity_thresh_F: 6
 halogenicity_thresh_Br: 3
 halogenicity_thresh_Cl: 3
 
-calculate_symmetry: false
+calculate_symmetry: true
 symmetry_threshold: 0.8
+symmetry_max_automorphisms: 10000
+symmetry_timeout_seconds: 5.0
+symmetry_timeout_policy: pass

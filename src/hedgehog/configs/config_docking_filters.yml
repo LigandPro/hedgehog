@@ -1,86 +1,69 @@
-# Docking Filters Configuration
-# Filters applied to docking poses to select high-quality candidates
-
 run: true
-run_after_docking: true  # Run automatically after docking stage
 
-# Input/output settings
-input_sdf: null  # If null, uses docking output (smina_out.sdf or gnina_out.sdf)
-receptor_pdb: null  # If null, uses receptor from docking config
+input_sdf: null               # Optional explicit override; model-provided SDF coordinates take priority
+receptor_pdb: null            # null: uses receptor from docking config
 
-# Filter 1: Search Box (Fast)
-# Ensures the final docked pose is inside the configured docking search box.
-# The box is resolved from docking config (center/size) or autobox_ligand + autobox_add.
+# Aggregation settings
+aggregation:
+  mode: "all"                 # all: pass all filters | any: pass at least one filter
+  save_metrics: true          # Save detailed metrics CSV
+  save_failed: true           # Save molecules that failed filtering
+
+
+# Filter 1: Search Box
+# Ensures the final docked pose is inside the configured docking search box
+# The box is resolved from docking config (center/size) or autobox_ligand + autobox_add
 search_box:
   enabled: true
-  max_outside_fraction: 0.0  # 0.0 = all atoms must be inside the box
-  short_circuit: true  # When aggregation.mode == "all", skip heavy filters for failed poses
+  max_outside_fraction: 0.0   # 0.0 = all atoms must be inside the box
+  short_circuit: true         # When aggregation.mode == "all", skip heavy filters for failed poses
 
-# Filter 2: Pose Quality
-# backend: "posebusters_fast" (fast, default) or "posecheck" (legacy, ~100x slower)
+# Filter 2: Pose Quality, posecheck-fast
 pose_quality:
   enabled: true
-  backend: "posebusters_fast"
-  # posebusters_fast params:
-  clash_cutoff: 0.75           # relative VDW distance threshold for clash detection
-  volume_clash_cutoff: 0.075   # ShapeTverskyIndex overlap threshold
-  max_distance: 5.0            # max min-distance to protein (Angstrom)
-  # posecheck params (legacy backend only):
-  max_clashes: 2
-  max_strain_energy: 50.0
-  strain_forcefield: "UFF"
-  clash_tolerance: 0.5
+  clash_cutoff: 0.75          # Relative VDW distance threshold for clash detection
+  volume_clash_cutoff: 0.075  # ShapeTverskyIndex overlap threshold
+  max_distance: 5.0           # max min-distance to protein (Angstrom)
+  short_circuit: true         # When aggregation.mode == "all", skip later filters on fail
 
-# Filter 3: Interactions (ProLIF)
-# Checks for required protein-ligand interactions
+# Filter 3: Interactions
 interactions:
   enabled: true
-  reference_ligand: null  # Path to reference SDF for similarity comparison
-  min_hbonds: 0  # Minimum H-bonds required (0 = no requirement)
-  required_residues: ['ASP12']  # e.g., ["ASP123", "SER45"] - must have interaction
-  forbidden_residues: []  # e.g., ["CYS200"] - must NOT have interaction
-  interaction_types:  # Which types to check
+  reference_ligand: null      # Path to reference SDF for similarity comparison
+  min_hbonds: 0               # Minimum H-bonds required (0 = no requirement)
+  required_residues: []       # e.g., ["ASP123", "SER45"] - must have interaction
+  forbidden_residues: []      # e.g., ["CYS200"] - must NOT have interaction
+  interaction_types:
     - HBDonor
     - HBAcceptor
     - Hydrophobic
     - VdWContact
   reporting:
-    enabled: true  # Generate interaction reporting artifacts in stage output
-  similarity_threshold: 0.0  # Tanimoto to reference (0 = disabled)
-  # Note: FaceToFace interaction excluded due to edge cases causing errors
+    enabled: true             # Generate interaction reporting artifacts in stage output
+  similarity_threshold: 0.0   # Tanimoto to reference (0 = disabled)
 
 # Filter 4: Shepherd-Score (3D Similarity)
 # Compares molecular shape to reference ligand
-# backend: "auto" (worker -> in-process -> skip), "worker", or "inprocess"
-# shepherd-score is optional and should be installed in isolated worker venv:
-#   uv run hedgehog setup shepherd-worker --yes
 shepherd_score:
-  enabled: false  # Requires reference ligand
-  backend: "auto"
-  auto_install_worker: true  # If worker command is missing, attempt setup automatically
-  worker_python: null  # Optional override, e.g. "python3.12"
-  reference_ligand: null  # Required: path to reference SDF
-  min_shape_score: 0.5  # Minimum Gaussian overlap Tanimoto
-  alpha: 0.81  # Gaussian width parameter (default from paper)
-  align_before_scoring: true  # Reserved for compatibility
+  enabled: false              # Requires reference ligand
+  backend: "auto"             # auto (worker -> in-process -> skip), worker, inprocess
+  auto_install_worker: true   # If worker command is missing, attempt setup automatically
+  worker_python: null         # Optional override, e.g. "python3.12"
+  reference_ligand: null      # Required: path to reference SDF
+  min_shape_score: 0.5        # Minimum Gaussian overlap Tanimoto
+  alpha: 0.81                 # Gaussian width parameter (default from paper)
+  align_before_scoring: true  # Align each pose onto the reference ligand before shape scoring
 
 # Filter 5: Conformer Deviation
-# backend: "symmetry_rmsd" (correct, default) or "naive" (legacy)
 conformer_deviation:
   enabled: true
-  use_nvmolkit: true  # Use nvMolKit acceleration when available; fallback to RDKit
-  backend: "symmetry_rmsd"
+  use_nvmolkit: true          # Use nvMolKit acceleration when available; fallback to RDKit
+  backend: "symmetry_rmsd"    # symmetry_rmsd | naive
   num_conformers: 50
-  conformer_method: "ETKDGv3"  # ETKDG, ETKDGv2, ETKDGv3
-  max_rmsd_to_conformer: 3.0   # Angstrom - reject if pose is too different
+  conformer_method: "ETKDGv3" # ETKDG | ETKDGv2 | ETKDGv3
+  max_rmsd_to_conformer: 3.0  # reject if pose is too different, Angstrom
   random_seed: 42
-  include_hydrogens: false  # false is much faster; true can be combinatorially expensive
-  max_matches: 10000  # cap symmetry matching complexity in GetBestRMS
-  early_stop_on_pass: true  # stop as soon as RMSD <= threshold
-  optimize_conformers: false  # UFF optimization (slow, often fails)
-
-# Aggregation settings
-aggregation:
-  mode: "all"  # "all" = pass all filters, "any" = pass at least one
-  save_metrics: true  # Save detailed metrics CSV
-  save_failed: true  # Save molecules that failed filtering
+  include_hydrogens: false    # false: faster | true: combinatorially expensive
+  max_matches: 10000          # cap symmetry matching complexity in GetBestRMS
+  early_stop_on_pass: true    # stop as soon as RMSD <= threshold
+  optimize_conformers: false  # UFF-relax ETKDG conformers before RMSD (not the docked pose), failed UFF steps are skipped, not fatal

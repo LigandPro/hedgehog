@@ -1,41 +1,43 @@
 run: true
-n_jobs: 64
-enabled_scores:
+n_jobs: 32
+
+apply_score_filters: true
+enabled_scores: # all | [sa, syba, rascore, sync, scscore, nonpher, fsscore, gasa]
   - sa
   - syba
   - rascore
-  # - sync
-  # - scscore
-  # - nonpher
-  # - fsscore
-  # - gasa
-apply_score_filters: true
-# Validate optional Nonpher runtime:
-#   uv run hedgehog setup nonpher-check
-# uv-only optional env bootstrap uses HEDGEHOG_OPTIONAL_ENV_ROOT/nonpher.
-# Set HEDGEHOG_OPTIONAL_ENV_ROOT to a writable host-local path (example: ~/work/hedgehog_optional_envs).
-# If uv-only is blocked by native dependencies, probe a validated external runtime:
-#   uv run hedgehog setup nonpher-check --python /abs/path/to/nonpher-hybrid/bin/python
+
 run_retrosynthesis: true
 filter_solved_only: true
-aizynthfinder_max_transforms: 15  # Maximum retrosynthesis tree depth, > 0
-aizynthfinder_time_limit: 2000  # Search time limit per molecule, in seconds, > 0
-sa_score_min: 1  # SA score scale is 1-10 (1 = easy to synthesize)
-sa_score_max: 10 # prev 4.5
-syba_score_min: -150 # prev 0
+aizynthfinder_max_transforms: 5     # Maximum retrosynthesis tree depth, > 0
+aizynthfinder_time_limit: 300       # Search time limit per molecule, in seconds, > 0
+aizynthfinder_iteration_limit: 300  # Maximum MCTS iterations per molecule, > 0
+aizynthfinder_return_first: true    # Stop search after the first solved route
+aizynthfinder_charge_mode: both     # preserve | neutralize | both
+# Optional second pass: 
+  # retry only molecules unsolved across every charge form during single run
+aizynthfinder_retry_unsolved: false
+aizynthfinder_reuse_pass1: false
+aizynthfinder_retry_time_limit: 600
+aizynthfinder_retry_iteration_limit: 10000
+
+sa_score_min: 1
+sa_score_max: 4.5
+
+syba_score_min: 0  
 syba_score_max: inf
-ra_score_min: 0.0 # prev 0.5
+
+ra_score_min: 0.5
 ra_score_max: 1
-# Optional FSScore isolated worker configuration.
-# Leave unset to keep FSScore disabled with graceful np.nan fallback.
-# fsscore_python: /abs/path/to/fsscore-env/bin/python
-# fsscore_model_path: /abs/path/to/pretrain_graph_GGLGGL_ep242_best_valloss.ckpt
-# fsscore_repo_path: /abs/path/to/fsscore
-# fsscore_batch_size: 128
-# fsscore_num_workers:
-# HEDGEHOG_OPTIONAL_ENV_ROOT should point to a writable host-local directory.
+
+fsscore_python: null
+fsscore_model_path: null
+fsscore_repo_path: null
+fsscore_batch_size: 128
+fsscore_num_workers:
+# HEDGEHOG_OPTIONAL_ENV_ROOT should point to a writable host-local directory
 sync_auto_install: true
-sync_device: cpu
+sync_device: gpu:0 # gpu | cpu
 sync_conformer_seed: 61453
 # Optional scorer filters belong here only when their scorer is enabled above.
 # Example:

@@ -1,4 +1,4 @@
-run: true
+run: false
 n_jobs: 96
 device: cpu  # cpu or cuda:0
 max_molecules: 2000  # subsample for O(N^2) metrics if N exceeds this
