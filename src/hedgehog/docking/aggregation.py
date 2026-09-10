@@ -20,22 +20,36 @@ def _load_rdkit():
     return Chem
 
 
-def _extract_pose_affinity_value(mol) -> float | None:
-    for prop_name in ("minimizedAffinity", "affinity", "score"):
-        if mol.HasProp(prop_name):
-            try:
-                return float(mol.GetProp(prop_name))
-            except Exception:
-                continue
+def _read_pose_float_props(mol, property_names) -> float | None:
+    for prop_name in dict.fromkeys(name for name in property_names if name):
+        if not mol.HasProp(prop_name):
+            continue
+        try:
+            return float(mol.GetProp(prop_name))
+        except Exception:
+            continue
     return None
+
+
+def _extract_pose_affinity_value(mol) -> float | None:
+    """Pick-best ranking uses docking affinity props only, never BALMUS metadata."""
+    return _read_pose_float_props(mol, ("minimizedAffinity", "affinity", "score"))
+
+
+def _extract_pose_score_value(mol, preferred_property: str = "") -> float | None:
+    """Read a lower-is-better docking score without conflating score scales."""
+    if preferred_property:
+        property_names = [preferred_property]
+    else:
+        property_names = []
+        if mol.HasProp("source_score_property"):
+            property_names.append(mol.GetProp("source_score_property").strip())
+        property_names.extend(("minimizedAffinity", "affinity", "score"))
+    return _read_pose_float_props(mol, property_names)
 
 
 def _build_matcha_metadata_map(ligands_csv: Path | None) -> dict[str, tuple[str, str]]:
     if ligands_csv is None or not ligands_csv.exists():
-        return {}
-    try:
-        import pandas as pd
-    except Exception:
         return {}
 
     try:
@@ -59,12 +73,56 @@ def _build_matcha_metadata_map(ligands_csv: Path | None) -> dict[str, tuple[str,
     return metadata
 
 
+def _read_docking_sdf_molecules(result_file: Path, Chem):
+    """Read docking poses and repair a known charged-sulfoxide bond encoding."""
+    from rdkit import rdBase
+
+    with rdBase.BlockLogs():
+        supplier = Chem.SDMolSupplier(
+            str(result_file),
+            removeHs=False,
+            sanitize=False,
+        )
+        for mol in supplier:
+            if mol is None:
+                continue
+
+            for bond in mol.GetBonds():
+                if bond.GetBondType() != Chem.BondType.DOUBLE:
+                    continue
+                begin = bond.GetBeginAtom()
+                end = bond.GetEndAtom()
+                charged_sulfoxide = (
+                    begin.GetSymbol() == "S"
+                    and begin.GetFormalCharge() > 0
+                    and end.GetSymbol() == "O"
+                    and end.GetFormalCharge() < 0
+                ) or (
+                    end.GetSymbol() == "S"
+                    and end.GetFormalCharge() > 0
+                    and begin.GetSymbol() == "O"
+                    and begin.GetFormalCharge() < 0
+                )
+                if charged_sulfoxide:
+                    bond.SetBondType(Chem.BondType.SINGLE)
+
+            try:
+                Chem.SanitizeMol(mol)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to sanitize docking result %s: %s",
+                    result_file,
+                    exc,
+                )
+                continue
+            yield mol
+
+
 def _aggregate_sdf_files(
     result_files: list[Path],
     output_sdf: Path,
     *,
     pick_best_pose: bool,
-    name_from_filename: bool = False,
     model_name: str | None = None,
     canonical_map: dict[str, str] | None = None,
 ) -> int:
@@ -80,9 +138,7 @@ def _aggregate_sdf_files(
     def _pick_best_pose(result_file: Path):
         best_mol = None
         best_affinity = float("inf")
-        for mol in Chem.SDMolSupplier(str(result_file)):
-            if mol is None:
-                continue
+        for mol in _read_docking_sdf_molecules(result_file, Chem):
             affinity = _extract_pose_affinity_value(mol)
             affinity_sort = affinity if affinity is not None else float("inf")
             if best_mol is None or affinity_sort < best_affinity:
@@ -117,16 +173,14 @@ def _aggregate_sdf_files(
             if pick_best_pose:
                 output_mol = _pick_best_pose(result_file)
             else:
-                supplier = Chem.SDMolSupplier(str(result_file), removeHs=False)
-                output_mol = next((mol for mol in supplier if mol is not None), None)
+                output_mol = next(
+                    _read_docking_sdf_molecules(result_file, Chem),
+                    None,
+                )
             if output_mol is not None:
                 _restore_per_molecule_source_id(
                     output_mol, result_file, canonical_map=canonical_map
                 )
-                if name_from_filename:
-                    output_mol.SetProp("_Name", result_file.stem)
-                    if not output_mol.HasProp("mol_idx"):
-                        output_mol.SetProp("mol_idx", result_file.stem)
                 if model_name:
                     output_mol.SetProp("model_name", model_name)
                 writer.write(output_mol)
@@ -181,8 +235,10 @@ def _aggregate_matcha_results(
 
     for result_file in result_files:
         try:
-            supplier = Chem.SDMolSupplier(str(result_file), removeHs=False)
-            output_mol = next((mol for mol in supplier if mol is not None), None)
+            output_mol = next(
+                _read_docking_sdf_molecules(result_file, Chem),
+                None,
+            )
             if output_mol is None:
                 continue
 
@@ -198,8 +254,8 @@ def _aggregate_matcha_results(
             elif not output_mol.HasProp("mol_idx"):
                 output_mol.SetProp("mol_idx", stem)
 
-            affinity = _extract_pose_affinity_value(output_mol)
-            output_mol.SetProp("affinity", "" if affinity is None else str(affinity))
+            if output_mol.HasProp("minimizedAffinity"):
+                output_mol.SetProp("source_score_property", "minimizedAffinity")
 
             writer.write(output_mol)
             count += 1
@@ -299,18 +355,11 @@ def _collect_docking_stage_results(
                 score_property = str(
                     configured_thresholds.get(tool, {}).get("score_property", "")
                 ).strip()
-                affinity = None
-                if score_property and mol.HasProp(score_property):
-                    try:
-                        affinity = float(mol.GetProp(score_property))
-                    except (TypeError, ValueError):
-                        affinity = None
-                if affinity is None:
-                    affinity = _extract_pose_affinity_value(mol)
-                if affinity is not None:
+                score = _extract_pose_score_value(mol, score_property)
+                if score is not None:
                     previous = scores_by_tool[tool].get(canonical_id)
-                    if previous is None or affinity < previous:
-                        scores_by_tool[tool][canonical_id] = affinity
+                    if previous is None or score < previous:
+                        scores_by_tool[tool][canonical_id] = score
                 mol.SetProp("_Name", canonical_id)
                 mol.SetProp("mol_idx", canonical_id)
                 mol.SetProp("source_mol_idx", canonical_id)

@@ -2,12 +2,14 @@ from pathlib import Path
 
 from hedgehog._constants import TOOL_GNINA
 from hedgehog.configs.logger import logger
+from hedgehog.docking.configuration import engine_arguments, validate_engine_config
 from hedgehog.docking.paths import _resolve_autobox_path, _resolve_path
 
 
 def _skip_keys_for_tool(tool_name: str) -> set[str]:
     """Return the set of config keys to skip for a given docking tool."""
-    keys = {"bin", "center", "size"}
+    # autobox_ligand is emitted separately via the resolved autobox_path argument.
+    keys = {"bin", "center", "size", "autobox_ligand"}
     if tool_name == TOOL_GNINA:
         keys.update({"env_path", "ld_library_path", "activate", "output_dir", "no_gpu"})
     return keys
@@ -19,6 +21,7 @@ def _build_config_lines(
     output: str,
     tool_config: dict,
     cfg: dict,
+    tool_name: str,
     skip_keys: set[str],
     autobox_path=None,
 ) -> list[str]:
@@ -48,8 +51,11 @@ def _build_config_lines(
     if autobox_path:
         lines.append(f"autobox_ligand = {autobox_path}")
 
-    for key, value in tool_config.items():
-        if value is None or key in skip_keys or key == "autobox_ligand":
+    for key in sorted(engine_arguments(tool_name)):
+        value = tool_config.get(key)
+        if value is None and key == "autobox_add":
+            value = cfg.get(key)
+        if value is None or key in skip_keys:
             continue
         if isinstance(value, (list, tuple)):
             lines.append(f"{key} = [{', '.join(str(v) for v in value)}]")
@@ -61,9 +67,9 @@ def _build_config_lines(
     return lines
 
 
-def _resolve_tool_autobox(tool_config: dict) -> str | None:
-    """Resolve the autobox_ligand path from tool config, returning absolute path or None."""
-    autobox_ligand = tool_config.get("autobox_ligand")
+def _resolve_tool_autobox(tool_config: dict, cfg: dict) -> str | None:
+    """Resolve a tool-specific or shared autobox ligand path."""
+    autobox_ligand = tool_config.get("autobox_ligand") or cfg.get("autobox_ligand")
     if not autobox_ligand:
         return None
     project_root = Path(__file__).parent.parent.parent.parent
@@ -86,19 +92,24 @@ def _create_docking_config_file(
     Path(output_sdf).parent.mkdir(parents=True, exist_ok=True)
 
     tool_config = dict(cfg.get(f"{tool_name}_config", {}) or {})
-    tool_config["num_modes"] = 1
+    validate_engine_config(tool_name, tool_config)
+    tool_config.setdefault("num_modes", 1)
 
     receptor = _resolve_path(receptor, ligands_dir)
     ligands_path = _resolve_path(ligands_path, ligands_dir)
     output_sdf = _resolve_path(output_sdf, ligands_dir)
 
-    autobox_path = _resolve_tool_autobox(tool_config)
-    if autobox_path:
-        tool_config["autobox_ligand"] = autobox_path
-
+    autobox_path = _resolve_tool_autobox(tool_config, cfg)
     skip_keys = _skip_keys_for_tool(tool_name)
     lines = _build_config_lines(
-        receptor, ligands_path, output_sdf, tool_config, cfg, skip_keys, autobox_path
+        receptor,
+        ligands_path,
+        output_sdf,
+        tool_config,
+        cfg,
+        tool_name,
+        skip_keys,
+        autobox_path,
     )
 
     with open(config_path, "w") as f:
@@ -123,12 +134,13 @@ def _create_per_molecule_configs(
     results_dir.mkdir(parents=True, exist_ok=True)
 
     tool_config = dict(cfg.get(f"{tool_name}_config", {}) or {})
+    validate_engine_config(tool_name, tool_config)
     if cpu_override is not None:
         tool_config["cpu"] = int(cpu_override)
-    tool_config["num_modes"] = 1
+    tool_config.setdefault("num_modes", 1)
 
     receptor_abs = _resolve_path(receptor, ligands_dir)
-    autobox_path = _resolve_tool_autobox(tool_config)
+    autobox_path = _resolve_tool_autobox(tool_config, cfg)
     skip_keys = _skip_keys_for_tool(tool_name)
     config_entries = []
 
@@ -143,6 +155,7 @@ def _create_per_molecule_configs(
             str(output_sdf.resolve()),
             tool_config,
             cfg,
+            tool_name,
             skip_keys,
             autobox_path,
         )
@@ -156,24 +169,6 @@ def _create_per_molecule_configs(
         "Created %d per-molecule config files in %s", len(config_entries), configs_dir
     )
     return config_entries
-
-
-def _create_smina_config_file(
-    cfg, ligands_dir, receptor, ligands_path, config_path, output_sdf
-):
-    """Create SMINA config file from configuration arguments."""
-    return _create_docking_config_file(
-        cfg, ligands_dir, receptor, ligands_path, output_sdf, config_path, "smina"
-    )
-
-
-def _create_gnina_config_file(
-    cfg, ligands_dir, receptor, ligands_path, output_sdf, config_path
-):
-    """Create GNINA config file from configuration arguments."""
-    return _create_docking_config_file(
-        cfg, ligands_dir, receptor, ligands_path, output_sdf, config_path, "gnina"
-    )
 
 
 def _parse_bool_config(value, default: bool = False) -> bool:

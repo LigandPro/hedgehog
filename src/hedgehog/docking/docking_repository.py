@@ -1,16 +1,16 @@
 """Run the LigandPro/docking screening API behind Hedgehog's Matcha contract."""
 
 import argparse
+import concurrent.futures
 import gzip
 import json
-import os
 import shutil
 import subprocess
 import time
 from collections import defaultdict
 from pathlib import Path
 
-from rdkit import Chem
+from rdkit import Chem, rdBase
 
 
 def _safe_ligand_id(name: str, index: int, seen: dict[str, int]) -> str:
@@ -99,30 +99,73 @@ def _score_value(mol: Chem.Mol, property_name: str) -> float | None:
         return None
 
 
-def _select_best_pose(poses: list[Chem.Mol]) -> Chem.Mol:
-    stage_priority = {"Model 1": 1, "Model 2": 2, "OpenMM": 3, "BALMUS": 4}
-    best_stage = max(
-        (stage_priority.get(mol.GetProp("stage"), 0) for mol in poses),
-        default=0,
-    )
-    candidates = [
-        mol
-        for mol in poses
-        if stage_priority.get(mol.GetProp("stage"), 0) == best_stage
-    ]
+def _count_sdf_records(path: Path) -> int:
+    with path.open("rb") as sdf_file:
+        return sum(line.strip() == b"$$$$" for line in sdf_file)
 
-    def ranking_key(mol: Chem.Mol) -> tuple[float, float]:
-        final_score = _score_value(mol, "final_score")
-        cnn_affinity = _score_value(mol, "cnn_affinity")
-        return (
-            float("-inf") if final_score is None else final_score,
-            float("-inf") if cnn_affinity is None else cnn_affinity,
+
+def _run_gnina_minimization(
+    gnina_bin: Path,
+    receptor: Path,
+    input_sdf: Path,
+    output_sdf: Path,
+    cpu: int,
+) -> None:
+    command = [
+        str(gnina_bin),
+        "--receptor",
+        str(receptor),
+        "--ligand",
+        str(input_sdf),
+        "--cnn_scoring",
+        "none",
+        "--minimize",
+        "--cpu",
+        str(cpu),
+        "--out",
+        str(output_sdf),
+    ]
+    completed = subprocess.run(
+        command,
+        check=False,
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0 or not output_sdf.is_file():
+        error = completed.stderr.strip() or "GNINA did not create an output SDF"
+        raise RuntimeError(f"GNINA minimization failed for {input_sdf.name}: {error}")
+
+    expected_records = _count_sdf_records(input_sdf)
+    output_records = _count_sdf_records(output_sdf)
+    if output_records != expected_records:
+        raise RuntimeError(
+            f"GNINA minimized {output_records}/{expected_records} poses "
+            f"for {input_sdf.name}"
         )
 
-    return max(candidates, key=ranking_key)
+
+def _best_minimized_pose(path: Path) -> Chem.Mol:
+    with rdBase.BlockLogs():
+        poses = [
+            mol
+            for mol in Chem.SDMolSupplier(str(path), removeHs=False, sanitize=False)
+            if mol is not None and _score_value(mol, "minimizedAffinity") is not None
+        ]
+    if not poses:
+        raise ValueError(f"GNINA output has no minimizedAffinity values: {path}")
+    return min(poses, key=lambda mol: _score_value(mol, "minimizedAffinity"))
 
 
-def _write_matcha_outputs(predictions_path: Path, run_dir: Path) -> int:
+def _write_matcha_outputs(
+    predictions_path: Path,
+    run_dir: Path,
+    *,
+    receptor: Path,
+    gnina_bin: Path,
+    gnina_cpu: int = 1,
+    gnina_jobs: int = 1,
+) -> int:
     poses_by_ligand: dict[str, list[Chem.Mol]] = defaultdict(list)
     with gzip.open(predictions_path, "rb") as sdf_file:
         supplier = Chem.ForwardSDMolSupplier(sdf_file, removeHs=False, sanitize=False)
@@ -131,101 +174,140 @@ def _write_matcha_outputs(predictions_path: Path, run_dir: Path) -> int:
                 continue
             poses_by_ligand[mol.GetProp("ligand_name")].append(Chem.Mol(mol))
 
-    best_dir = run_dir / "best_poses"
+    generated_dir = run_dir / "generated_poses"
     all_dir = run_dir / "all_poses"
-    best_dir.mkdir(parents=True, exist_ok=True)
-    all_dir.mkdir(parents=True, exist_ok=True)
+    best_dir = run_dir / "best_poses"
+    failures_path = run_dir / "minimization_failures.json"
+    failures_path.unlink(missing_ok=True)
+    for directory in (generated_dir, all_dir, best_dir):
+        if directory.exists():
+            shutil.rmtree(directory)
+        directory.mkdir(parents=True)
 
-    written = 0
+    minimization_jobs: list[tuple[str, Path, Path]] = []
     for ligand_id, poses in sorted(poses_by_ligand.items()):
-        all_writer = Chem.SDWriter(str(all_dir / f"{ligand_id}_poses.sdf"))
+        generated_path = generated_dir / f"{ligand_id}_poses.sdf"
+        minimized_path = all_dir / f"{ligand_id}_poses.sdf"
+        all_writer = Chem.SDWriter(str(generated_path))
         for pose in poses:
             all_writer.write(pose)
         all_writer.close()
+        minimization_jobs.append((ligand_id, generated_path, minimized_path))
 
-        best = _select_best_pose(poses)
-        cnn_affinity = _score_value(best, "cnn_affinity")
-        balmus_score = _score_value(best, "balmus_score")
-        if balmus_score is not None:
-            minimized_affinity = balmus_score
-            source_score_property = "balmus_score"
-        elif cnn_affinity is not None:
-            minimized_affinity = -cnn_affinity
-            source_score_property = "cnn_affinity"
-        else:
-            raise ValueError(
-                f"Best pose for {ligand_id} has neither balmus_score nor cnn_affinity"
+    def minimize(job: tuple[str, Path, Path]) -> tuple[str, Path]:
+        ligand_id, generated_path, minimized_path = job
+        _run_gnina_minimization(
+            gnina_bin,
+            receptor,
+            generated_path,
+            minimized_path,
+            max(1, gnina_cpu),
+        )
+        return ligand_id, minimized_path
+
+    minimized_outputs: list[tuple[str, Path]] = []
+    failures: list[dict[str, str]] = []
+    total_jobs = len(minimization_jobs)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, gnina_jobs)) as pool:
+        futures = {
+            pool.submit(minimize, job): job[0] for job in minimization_jobs
+        }
+        for completed, future in enumerate(
+            concurrent.futures.as_completed(futures),
+            start=1,
+        ):
+            ligand_id = futures[future]
+            try:
+                minimized_outputs.append(future.result())
+            except Exception as exc:
+                failures.append(
+                    {
+                        "ligand_id": ligand_id,
+                        "phase": "gnina_minimization",
+                        "error": str(exc),
+                    }
+                )
+                print(f"WARNING: Matcha post-minimization failed for {ligand_id}: {exc}")
+            if completed % 25 == 0 or completed == total_jobs:
+                print(f"GNINA minimized Matcha poses: {completed}/{total_jobs}")
+
+    written = 0
+    for ligand_id, minimized_path in sorted(minimized_outputs):
+        try:
+            best = _best_minimized_pose(minimized_path)
+        except Exception as exc:
+            failures.append(
+                {"ligand_id": ligand_id, "phase": "best_pose", "error": str(exc)}
             )
+            print(f"WARNING: Matcha best-pose selection failed for {ligand_id}: {exc}")
+            continue
         best.SetProp("_Name", ligand_id)
         best.SetProp("mol_idx", ligand_id)
-        best.SetProp("affinity", str(minimized_affinity))
-        best.SetProp("minimizedAffinity", str(minimized_affinity))
-        best.SetProp("source_score_property", source_score_property)
+        best.SetProp("source_score_property", "minimizedAffinity")
 
         writer = Chem.SDWriter(str(best_dir / f"{ligand_id}.sdf"))
         writer.write(best)
         writer.close()
         written += 1
+
+    if failures:
+        failures_path.write_text(json.dumps(failures, indent=2) + "\n", encoding="utf-8")
+    if not written:
+        raise RuntimeError("Matcha post-processing produced no usable best poses")
     return written
 
 
 def _screening_command(
     args: argparse.Namespace, dataset_root: Path, results_dir: Path
 ) -> list[str]:
+    uv_executable = shutil.which("uv")
+    if uv_executable is None:
+        raise FileNotFoundError("The docking backend requires uv on PATH.")
+    training_config = (
+        args.checkpoint_root / args.checkpoint_run / "config.yaml"
+    ).resolve()
     return [
-        args.uv_bin,
+        uv_executable,
         "run",
         "--project",
         str(args.repo),
         "screening",
         f"user.results={args.checkpoint_root}",
         f"user.cache={dataset_root.parent / 'cache'}",
-        f"inference.stages.docking-1.training_config={args.training_config}",
+        f"inference.stages.docking-1.training_config={training_config}",
         f"inference.stages.docking-1.exp_name={args.checkpoint_run}",
-        f"inference.stages.docking-1.checkpoint={args.checkpoint_name}",
         "inference.stages.docking-1.integrator.name=single_step_coord",
         "inference.stages.docking-1.integrator.num_steps=1",
         "inference.stages.docking-1.collect_extra_scores=false",
         "+inference.stages.docking-2.skip=true",
         "+inference.stages.openmm.skip=true",
         "+inference.stages.gnina.skip=true",
-        "+inference.stages.balmus.skip=false",
+        "+inference.stages.balmus.skip=true",
         f"datasets.dekois2.root={dataset_root}",
         f"datasets.dekois2.target={args.target_name}",
         f"datasets.dekois2.pocket_centers={dataset_root / 'pocket_centers.json'}",
         f"screening.inference_results={results_dir}",
         "screening.skip_existing=false",
-        f"screening.data_workers={args.data_workers}",
-        f"pipe.samples_per_complex={args.n_samples}",
-        f"pipe.sample_timeout_seconds={args.sample_timeout_seconds}",
-        f"inference.concurrency={args.concurrency}",
-        f"inference.batching.batch_size={args.batch_size}",
     ]
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--uv-bin", required=True)
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--receptor", type=Path, required=True)
     parser.add_argument("--ligands", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--run-name", default="matcha_run")
-    parser.add_argument("--training-config", type=Path, required=True)
     parser.add_argument("--checkpoint-root", type=Path, required=True)
     parser.add_argument("--checkpoint-run", required=True)
-    parser.add_argument("--checkpoint-name", default="checkpoint-latest")
     parser.add_argument("--target-name", default="hedgehog_target")
     parser.add_argument("--autobox-ligand", type=Path)
     parser.add_argument("--center-x", type=float)
     parser.add_argument("--center-y", type=float)
     parser.add_argument("--center-z", type=float)
-    parser.add_argument("--n-samples", type=int, default=20)
-    parser.add_argument("--sample-timeout-seconds", type=float, default=180.0)
-    parser.add_argument("--data-workers", type=int, default=16)
-    parser.add_argument("--concurrency", type=int, default=64)
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--gpus")
+    parser.add_argument("--gnina-bin", type=Path, required=True)
+    parser.add_argument("--gnina-cpu", type=int, default=1)
+    parser.add_argument("--gnina-jobs", type=int, default=1)
     return parser.parse_args()
 
 
@@ -256,11 +338,8 @@ def main() -> None:
     )
     dataset_preparation_seconds = time.perf_counter() - preparation_started
     command = _screening_command(args, dataset_root, results_dir)
-    environment = os.environ.copy()
-    if args.gpus:
-        environment["CUDA_VISIBLE_DEVICES"] = args.gpus
     screening_started = time.perf_counter()
-    subprocess.run(command, cwd=args.repo, env=environment, check=True)
+    subprocess.run(command, cwd=args.repo, check=True)
     screening_seconds = time.perf_counter() - screening_started
 
     predictions_path = results_dir / "dekois2" / args.target_name / "predictions.sdf.gz"
@@ -269,10 +348,15 @@ def main() -> None:
             f"Docking screening output is missing: {predictions_path}"
         )
     conversion_started = time.perf_counter()
-    written = _write_matcha_outputs(predictions_path, run_dir)
+    written = _write_matcha_outputs(
+        predictions_path,
+        run_dir,
+        receptor=args.receptor,
+        gnina_bin=args.gnina_bin,
+        gnina_cpu=args.gnina_cpu,
+        gnina_jobs=args.gnina_jobs,
+    )
     output_conversion_seconds = time.perf_counter() - conversion_started
-    if written == 0:
-        raise RuntimeError("Docking screening produced no usable poses")
 
     timing = {
         "backend": "LigandPro/docking screening",
