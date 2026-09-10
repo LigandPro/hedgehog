@@ -9,7 +9,6 @@ from pathlib import Path
 import matplotlib as mpl
 import pandas as pd
 import typer
-from rdkit import Chem
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -29,11 +28,13 @@ from hedgehog._constants import (
 )
 from hedgehog.config_alignment import (
     ALIGNMENT_DIR_NAME,
+    SOURCE_MASTER_PATH_KEY,
     TARGET_CALIBRATION_RUN_DIR_NAME,
     create_aligned_stage_config,
     create_probe_config,
     finalize_global_alignment,
     set_probe_molprep_allowed_atoms,
+    validate_descriptor_bounds_mode,
     validate_target_coverage_percent,
 )
 from hedgehog.configs.logger import LoggerSingleton, load_config, logger
@@ -70,8 +71,6 @@ SMI_EXTENSIONS = {"smi", "ismi", "cmi", "txt"}
 CONFIG_PATH_KEYS = {
     "generated_mols_path",
     "target_mols_path",
-    "pains_file_path",
-    "mcf_file_path",
     "ligand_preparation_tool",
     "protein_preparation_tool",
 }
@@ -237,17 +236,9 @@ def _get_unique_results_folder(base_folder) -> Path:
     return parent / f"{base_name}_{max_number + 1}"
 
 
-def _canonicalize_smiles(smi: str) -> str | None:
-    """Canonicalize a SMILES string using RDKit. Returns None if invalid."""
-    mol = Chem.MolFromSmiles(smi)
-    if mol is None:
-        return None
-    return Chem.MolToSmiles(mol)
-
-
 def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
     """
-    Preprocess input CSV file using RDKit.
+    Preprocess input CSV without an external ligand-preparation tool.
 
     Fallback when ligand_preparation_tool is not provided.
     For CSV inputs, performs lightweight schema normalization and duplicate
@@ -291,7 +282,10 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
         else:
             df["model_name"] = input_path_obj.stem
 
-        output_df = df[["smiles", "model_name"]].copy()
+        # Keep stable molecule IDs and provenance columns. CSV preprocessing is
+        # schema normalization only; downstream stages must remain traceable to
+        # frozen input manifests.
+        output_df = df.copy()
         smiles_series = output_df["smiles"].astype("string").str.strip()
         if smiles_series.isna().any() or smiles_series.eq("").any():
             invalid_rows = int((smiles_series.isna() | smiles_series.eq("")).sum())
@@ -321,7 +315,7 @@ def preprocess_input_with_rdkit(input_path, folder_to_save, log) -> str | None:
         )
         return str(prepared_output)
     except Exception as e:
-        log.debug("RDKit preprocessing failed: %s", e)
+        log.debug("CSV preprocessing failed: %s", e)
         return None
 
 
@@ -557,8 +551,6 @@ def _resolve_output_folder(
     config_dict: dict,
     reuse_folder: bool,
     force_new_folder: bool,
-    stages: "Stage | list[Stage] | tuple[Stage, ...] | None",
-    generated_mols_path: str | None,
 ) -> Path:
     """Resolve a fresh output folder unless explicit reuse was requested."""
     original_folder = Path(config_dict[KEY_FOLDER_TO_SAVE])
@@ -674,10 +666,7 @@ def _align_config_with_target_molecules(
         target_data = assign_mol_idx(target_data, run_base=target_run, logger=logger)
     _save_sampled_molecules(target_data, target_run, should_save=True)
 
-    latest_aligned: tuple[dict, Path, Path] | None = None
-
     def alignment_progress(event: dict) -> None:
-        nonlocal latest_aligned
         if event.get("type") != "stage_complete" or event.get("ok") is False:
             return
         stage_name = str(event.get("stage", ""))
@@ -685,7 +674,6 @@ def _align_config_with_target_molecules(
             "mol_prep": "config_mol_prep",
             "descriptors": "config_descriptors",
             "struct_filters": "config_structFilters",
-            "synthesis": "config_synthesis",
             "docking": "config_docking",
         }.get(stage_name)
         try:
@@ -699,12 +687,11 @@ def _align_config_with_target_molecules(
             )
             if created is None:
                 return
-            latest_aligned = created
-            _aligned, stage_master, stage_thresholds = created
+            aligned_cfg, stage_master, stage_thresholds = created
             logger.info(
                 "[bold]Created aligned config after %s:[/bold] %s",
                 stage_name,
-                _aligned.get(stage_config_key, stage_master)
+                aligned_cfg.get(stage_config_key, stage_master)
                 if stage_config_key
                 else stage_master,
             )
@@ -719,7 +706,7 @@ def _align_config_with_target_molecules(
         logger.error("[red]Error:[/red] Target alignment pipeline failed.")
         raise typer.Exit(code=1)
     try:
-        latest_aligned = finalize_global_alignment(
+        aligned, master_path, thresholds_path = finalize_global_alignment(
             config_dict,
             target_run,
             alignment_root,
@@ -733,13 +720,14 @@ def _align_config_with_target_molecules(
         )
         raise typer.Exit(code=1) from exc
 
-    if latest_aligned is None:
-        logger.warning(
-            "Target run completed without an alignable stage; using source configs."
-        )
-        return config_dict
-
-    aligned, master_path, thresholds_path = latest_aligned
+    # Aligned YAML files stay reusable and therefore omit transient CLI keys.
+    # The candidate phase of this same command must still obey --stage.
+    for key in (STAGE_OVERRIDE_KEY, STAGE_SELECTION_KEY):
+        if key in config_dict:
+            value = config_dict[key]
+            aligned[key] = list(value) if isinstance(value, list) else value
+        else:
+            aligned.pop(key, None)
     aligned[KEY_FOLDER_TO_SAVE] = str(folder_to_save)
     logger.info("[bold]Aligned config:[/bold] %s", master_path)
     logger.info("[bold]Alignment thresholds:[/bold] %s", thresholds_path)
@@ -763,14 +751,18 @@ def _alignment_target_coverage_from_config(
     cli_percentile: float | None,
 ) -> float | None:
     """Resolve target alignment settings, with the CLI taking precedence."""
+    settings = config_dict.get("alignment")
+    if settings is not None and not isinstance(settings, dict):
+        raise ValueError("alignment must be a mapping in the master config")
+    if isinstance(settings, dict) and "descriptor_bounds_mode" in settings:
+        validate_descriptor_bounds_mode(settings["descriptor_bounds_mode"])
+    if isinstance(settings, dict):
+        settings.pop("synthesis_bounds_mode", None)
+
     if cli_percentile is not None:
         return validate_target_coverage_percent(cli_percentile)
-
-    settings = config_dict.get("alignment")
     if settings is None:
         return None
-    if not isinstance(settings, dict):
-        raise ValueError("alignment must be a mapping in the master config")
 
     enabled = settings.get("enabled", False)
     if not isinstance(enabled, bool):
@@ -989,8 +981,10 @@ class CliProgressTracker:
             self._current_stage_done = None
             self._current_stage_total = None
             done_total = "-/-"
-        self._progress.update(
+        self._progress.reset(
             task_id,
+            start=True,
+            total=100,
             completed=0,
             description=self._progress_description(
                 stage_index, total_stages, short_name, message
@@ -1193,6 +1187,7 @@ def _run_pipeline_command(
     auto_install: bool,
     show_progress: bool,
     large_dataset: bool,
+    evaluate_docked_coordinates: bool = False,
     align_config_percentile: float | None = None,
     continue_folder: str | None = None,
     generated_mols_paths: list[str] | None = None,
@@ -1211,12 +1206,14 @@ def _run_pipeline_command(
             reuse_folder,
             force_new_folder,
             large_dataset,
+            evaluate_docked_coordinates,
             align_config_percentile,
         )
     ):
         logger.error(
             "[red]Error:[/red] --continue cannot be combined with --mols, --out, "
-            "--stage, --reuse, --force-new, --large-dataset, or --align-config."
+            "--stage, --reuse, --force-new, --large-dataset, "
+            "--evaluate-docked-coordinates, or --align-config."
         )
         raise typer.Exit(code=1)
 
@@ -1278,6 +1275,7 @@ def _run_pipeline_command(
 
     config_dict = load_config(str(selected_config_path))
     _resolve_config_paths(config_dict, str(selected_config_path))
+    config_dict[SOURCE_MASTER_PATH_KEY] = str(selected_config_path.resolve())
     if continue_path is not None and config_path is None:
         run_configs = continue_path / "configs"
         for key, raw_path in list(config_dict.items()):
@@ -1293,6 +1291,8 @@ def _run_pipeline_command(
             stage,
             generated_mols_paths=generated_mols_paths,
         )
+    if evaluate_docked_coordinates:
+        config_dict["evaluate_docked_coordinates"] = True
     try:
         effective_alignment_percentile = (
             None
@@ -1361,15 +1361,13 @@ def _run_pipeline_command(
         )
     else:
         folder_to_save = _resolve_output_folder(
-            config_dict, reuse_folder, force_new_folder, stage, generated_mols_path
+            config_dict, reuse_folder, force_new_folder
         )
     config_dict[KEY_FOLDER_TO_SAVE] = str(folder_to_save)
     LoggerSingleton().configure_log_directory(folder_to_save)
 
     if continue_path is not None:
-        completed_stages, resume_stages = resolve_continuation_stages(
-            config_dict, folder_to_save
-        )
+        completed_stages, resume_stages = resolve_continuation_stages(config_dict)
         if not resume_stages:
             logger.error(
                 "[red]Error:[/red] No unfinished enabled stage was found in %s",
@@ -1624,6 +1622,14 @@ def run(
         "--large-dataset",
         help="Stream large libraries in chunks and write row-level shard outputs.",
     ),
+    evaluate_docked_coordinates: bool = typer.Option(
+        False,
+        "--evaluate-docked-coordinates",
+        help=(
+            "For SDF inputs, also apply 3D filters to docked coordinates; "
+            "requires enabled docking with at least one tool."
+        ),
+    ),
     align_config_percentile: float | None = typer.Option(
         None,
         "--align-config",
@@ -1631,8 +1637,8 @@ def run(
         min=0.000001,
         max=100.0,
         help=(
-            "Align thresholds and structural rules to cover this percentage of the "
-            "target_mols_path molecules before running candidates."
+            "Align numeric thresholds to cover this percentage of the "
+            "target_mols_path molecules; structural policy remains unchanged."
         ),
     ),
 ) -> None:
@@ -1695,6 +1701,7 @@ def run(
             auto_install=auto_install,
             show_progress=show_progress,
             large_dataset=large_dataset,
+            evaluate_docked_coordinates=evaluate_docked_coordinates is True,
             align_config_percentile=alignment_percentile,
         )
 
@@ -1770,6 +1777,14 @@ def run_command(
         "--large-dataset",
         help="Stream large libraries in chunks and write row-level shard outputs.",
     ),
+    evaluate_docked_coordinates: bool = typer.Option(
+        False,
+        "--evaluate-docked-coordinates",
+        help=(
+            "For SDF inputs, also apply 3D filters to docked coordinates; "
+            "requires enabled docking with at least one tool."
+        ),
+    ),
     align_config_percentile: float | None = typer.Option(
         None,
         "--align-config",
@@ -1777,8 +1792,8 @@ def run_command(
         min=0.000001,
         max=100.0,
         help=(
-            "Align thresholds and structural rules to cover this percentage of the "
-            "target_mols_path molecules before running candidates."
+            "Align numeric thresholds to cover this percentage of the "
+            "target_mols_path molecules; structural policy remains unchanged."
         ),
     ),
 ) -> None:
@@ -1799,6 +1814,8 @@ def run_command(
         show_progress=show_progress,
         large_dataset=large_dataset,
     )
+    if evaluate_docked_coordinates is True:
+        kwargs["evaluate_docked_coordinates"] = True
     normalized_continue_folder = _optional_string_value(continue_folder)
     if normalized_continue_folder is not None:
         kwargs["continue_folder"] = normalized_continue_folder
@@ -2177,8 +2194,6 @@ def tui(
     uv run hedgehog tui -s job_123
     """
     import shutil
-    import subprocess
-    from pathlib import Path
 
     def _find_tui_dir() -> Path | None:
         """Find the `tui/` directory in a source checkout."""
