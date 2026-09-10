@@ -9,7 +9,11 @@ import seaborn as sns
 
 from hedgehog._constants import CFG_DESCRIPTORS
 from hedgehog.configs.logger import load_config
-from hedgehog.descriptors.constants import _DESCRIPTOR_KEY_MAP
+from hedgehog.descriptors.constants import (
+    _DESCRIPTOR_KEY_MAP,
+    DESCRIPTOR_DISPLAY_NAMES,
+    DISCRETE_DESCRIPTOR_COLUMNS,
+)
 from hedgehog.descriptors.filtering import (
     _build_structural_constraint_borders,
     _extract_borders_and_constraints,
@@ -128,23 +132,19 @@ def _plot_discrete_numeric(
         ax._discrete_tick_values = complete_counts.index
 
 
-def _plot_continuous(ax, values, col, color, label):
+def _plot_continuous(ax, values, color, label):
     """Plot continuous distribution using KDE."""
-    clip = (0, 1.0) if col in ["fsp3", "qed"] else (0, None)
-    sns.kdeplot(
-        values, label=label, fill=True, alpha=0.4, ax=ax, color=color, clip=clip
-    )
+    sns.kdeplot(values, label=label, fill=True, alpha=0.4, ax=ax, color=color)
 
 
-def _get_boundary_position(ax, val, col, discrete_feats, fallback_offset=0):
+def _get_boundary_position(ax, val, col, discrete_feats):
     """Calculate boundary position for vertical lines and spans.
 
     Args:
         ax: Matplotlib axis
         val: Boundary value
         col: Column name
-        discrete_feats: List of discrete feature names
-        fallback_offset: Offset to add for continuous features
+        discrete_feats: Discrete feature names
 
     Returns:
         float or None: Position for the boundary
@@ -163,15 +163,14 @@ def _get_boundary_position(ax, val, col, discrete_feats, fallback_offset=0):
 
 def _draw_boundary_lines(ax, col, min_val, max_val, discrete_feats):
     """Draw vertical lines at min/max boundaries."""
-    # Small nudge offsets for continuous max boundaries that need
-    # a tiny shift to avoid sitting exactly on the data edge.
-    _MAX_NUDGE = {"fsp3": 0.01, "n_rigid_bonds": 0.0000001}
+    # Small nudge for continuous max boundaries that sit on the data edge.
+    _MAX_NUDGE = {"fsp3": 0.01}
 
     boundaries = [
-        (min_val, "red", "min", -0.5, 0),
-        (max_val, "blue", "max", +0.5, None),
+        (min_val, "red", "min", -0.5),
+        (max_val, "blue", "max", +0.5),
     ]
-    for val, color, label_prefix, discrete_offset, _fallback_pos in boundaries:
+    for val, color, label_prefix, discrete_offset in boundaries:
         if val is None or val == "inf":
             continue
 
@@ -260,7 +259,7 @@ def _style_axis(ax):
 
 
 def _plot_single_column(
-    ax, df, col, model_names, colors, borders, discrete_feats, renamer, is_multi
+    ax, df, col, model_names, colors, borders, discrete_feats, is_multi
 ):
     """Plot distribution for a single column across all models.
 
@@ -271,8 +270,7 @@ def _plot_single_column(
         model_names: List of model names
         colors: Color mapping for models
         borders: Border configurations
-        discrete_feats: List of discrete feature names
-        renamer: Column name mapping for display
+        discrete_feats: Discrete feature names
         is_multi: Whether multiple models exist
     """
     min_val, max_val = _get_border_values(col, borders)
@@ -291,8 +289,7 @@ def _plot_single_column(
             continue
 
         values_after = _filter_values_by_bounds(values_before, min_val, max_val)
-        total = len(values_before)
-        mols_passed = len(values_after) / total * 100 if total > 0 else 0
+        mols_passed = len(values_after) / len(values_before) * 100
 
         label_name = name_map_lc.get(str(model).lower(), str(model).upper())
         label = f"{label_name}, pass: {mols_passed:.1f}%"
@@ -320,10 +317,10 @@ def _plot_single_column(
                 model_index,
             )
         else:
-            _plot_continuous(ax, values_before, col, color, label)
+            _plot_continuous(ax, values_before, color, label)
 
     # Set title and labels
-    display_name = renamer.get(col, col)
+    display_name = DESCRIPTOR_DISPLAY_NAMES.get(col, col)
     title = f"{display_name} ({minmax_str})"
     ax.set_title(title, fontsize=12)
     ax.set_xlabel(display_name, fontsize=10)
@@ -368,9 +365,26 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     borders = dict(normalized_borders)
     borders.update(_build_structural_constraint_borders(constraints))
 
-    cols_to_plot = descriptors_config["filtered_cols_to_plot"]
-    discrete_feats = descriptors_config["discrete_features_to_plot"]
-    renamer = descriptors_config["renamer"]
+    configured_columns = descriptors_config.get("filtered_cols_to_plot")
+    if configured_columns is None:
+        cols_to_plot = list(
+            dict.fromkeys(
+                key.rsplit("_", 1)[0]
+                for key in borders
+                if key.endswith(("_min", "_max"))
+            )
+        )
+    else:
+        cols_to_plot = list(configured_columns)
+
+    if not cols_to_plot:
+        if progress_cb is not None:
+            progress_cb(1, 1)
+        return
+
+    discrete_feats = set(
+        descriptors_config.get("discrete_features_to_plot", DISCRETE_DESCRIPTOR_COLUMNS)
+    )
 
     model_names = sorted(
         [m.lower() for m in df["model_name"].dropna().unique().tolist()]
@@ -378,17 +392,16 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
     is_multi = len(model_names) > 1
     colors = _get_model_colors(model_names)
 
-    # Calculate grid dimensions
     n_cols = min(5, len(cols_to_plot))
     n_rows = (len(cols_to_plot) + n_cols - 1) // n_cols
     fig, axes = plt.subplots(
         nrows=n_rows, ncols=n_cols, figsize=(n_rows * n_cols, n_rows * n_cols)
     )
-    axes = axes.flatten()
+    # ``plt.subplots`` returns a single Axes object for a 1x1 grid.
+    axes = np.atleast_1d(axes).ravel()
 
-    # Plot each column
     plotted_count = 0
-    total_to_plot = max(len(cols_to_plot), 1)
+    total_to_plot = len(cols_to_plot)
     for i, col in enumerate(cols_to_plot):
         col_lower = col.lower()
         canonical = _DESCRIPTOR_KEY_MAP.get(col_lower, col).lower()
@@ -403,23 +416,25 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
                 progress_cb(i + 1, total_to_plot)
             continue
         _plot_single_column(
-            axes[i],
+            axes[plotted_count],
             df,
             col,
             model_names,
             colors,
             borders,
             discrete_feats,
-            renamer,
             is_multi,
         )
         plotted_count += 1
         if progress_cb is not None:
             progress_cb(i + 1, total_to_plot)
 
-    # Remove unused axes
-    for j in range(len(cols_to_plot), len(axes)):
+    for j in range(plotted_count, len(axes)):
         fig.delaxes(axes[j])
+
+    if plotted_count == 0:
+        plt.close(fig)
+        return
 
     plt.tight_layout()
     plt.subplots_adjust(top=0.93, bottom=0.05, left=0.05, right=0.98)
@@ -429,5 +444,4 @@ def draw_filtered_mols(df, folder_to_save, config, progress_cb=None):
         bbox_inches="tight",
         format="png",
     )
-    if progress_cb is not None and plotted_count == 0:
-        progress_cb(total_to_plot, total_to_plot)
+    plt.close(fig)
