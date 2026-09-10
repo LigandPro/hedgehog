@@ -571,14 +571,17 @@ class TestApplySymmetry:
             assert result["symmetry_score"].iloc[idx] == pytest.approx(expected)
 
     def test_molecule_error_is_reported_without_aborting(self, tmp_path, monkeypatch):
-        import hedgehog.struct_filters.utils as utils_module
+        import medchem.utils.graph as medchem_graph
+        import yaml
 
         def broken_score(*_args, **_kwargs):
             raise ValueError("not enough values to unpack")
 
-        monkeypatch.setattr(utils_module.mc.utils.graph, "score_symmetry", broken_score)
+        monkeypatch.setattr(medchem_graph, "score_symmetry", broken_score)
+        config_path = tmp_path / "config_sf.yml"
+        config_path.write_text(yaml.dump({"symmetry_threshold": 0.8, "n_jobs": 1}))
         result = apply_symmetry(
-            _make_config(tmp_path),
+            {CFG_STRUCT_FILTERS: str(config_path)},
             [dm.to_mol("c1ccccc1")],
         )
 

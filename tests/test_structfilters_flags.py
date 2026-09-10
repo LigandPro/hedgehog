@@ -72,22 +72,17 @@ def _mock_filter_processing(monkeypatch):
 
 def test_flags_disable_outputs_and_plots(tmp_path, monkeypatch):
     _mock_filter_processing(monkeypatch)
-    thresholds_path = tmp_path / "alignment_thresholds.yml"
-    _write_yaml(
-        thresholds_path,
-        {"stages": {"struct_filters": {"thresholds": {"enabled_rules": []}}}},
-    )
     config = _build_base_config(
         tmp_path,
         {
             "filter_data": True,
             "calculate_bredt": True,
+            "enforced_filters": [],
             "write_per_filter_outputs": False,
             "generate_plots": True,
             "generate_failure_analysis": True,
         },
     )
-    config["alignment"] = {"thresholds_path": str(thresholds_path)}
 
     save_mock = MagicMock()
     plot_stats_mock = MagicMock()
