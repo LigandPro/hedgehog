@@ -209,9 +209,7 @@ def _write_matcha_outputs(
     failures: list[dict[str, str]] = []
     total_jobs = len(minimization_jobs)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, gnina_jobs)) as pool:
-        futures = {
-            pool.submit(minimize, job): job[0] for job in minimization_jobs
-        }
+        futures = {pool.submit(minimize, job): job[0] for job in minimization_jobs}
         for completed, future in enumerate(
             concurrent.futures.as_completed(futures),
             start=1,
@@ -227,7 +225,9 @@ def _write_matcha_outputs(
                         "error": str(exc),
                     }
                 )
-                print(f"WARNING: Matcha post-minimization failed for {ligand_id}: {exc}")
+                print(
+                    f"WARNING: Matcha post-minimization failed for {ligand_id}: {exc}"
+                )
             if completed % 25 == 0 or completed == total_jobs:
                 print(f"GNINA minimized Matcha poses: {completed}/{total_jobs}")
 
@@ -251,7 +251,9 @@ def _write_matcha_outputs(
         written += 1
 
     if failures:
-        failures_path.write_text(json.dumps(failures, indent=2) + "\n", encoding="utf-8")
+        failures_path.write_text(
+            json.dumps(failures, indent=2) + "\n", encoding="utf-8"
+        )
     if not written:
         raise RuntimeError("Matcha post-processing produced no usable best poses")
     return written

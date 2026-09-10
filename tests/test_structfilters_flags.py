@@ -264,6 +264,7 @@ def test_per_filter_flags_control_survival_independently_of_calculation(
     assert bool(profile["bredt__filter_enabled"].iloc[0]) is False
     assert bool(profile["protecting_groups__filter_enabled"].iloc[0]) is True
 
+
 def test_undefined_stereo_is_hard_while_total_is_diagnostic(tmp_path, monkeypatch):
     _mock_filter_processing(monkeypatch)
     stereo_df = pd.DataFrame(
@@ -278,9 +279,7 @@ def test_undefined_stereo_is_hard_while_total_is_diagnostic(tmp_path, monkeypatc
             "stereo_max_centers": [4],
             "stereo_max_undefined": [2],
             "undefined_stereo_pass": [False],
-            "undefined_stereo_reason": [
-                "undefined_stereocenters=3 > maximum=2"
-            ],
+            "undefined_stereo_reason": ["undefined_stereocenters=3 > maximum=2"],
         }
     )
     metrics_df = pd.DataFrame(

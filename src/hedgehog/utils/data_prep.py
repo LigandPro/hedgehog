@@ -485,7 +485,9 @@ def prepare_input_data(config: dict, logger: logging.Logger) -> pd.DataFrame:
     config["generated_mols_paths"] = matched_paths
     if not generated_mols_path:
         config["generated_mols_path"] = (
-            matched_paths[0] if len(matched_paths) == 1 else str(Path(matched_paths[0]).parent)
+            matched_paths[0]
+            if len(matched_paths) == 1
+            else str(Path(matched_paths[0]).parent)
         )
         generated_mols_path = config["generated_mols_path"]
 
@@ -546,8 +548,7 @@ def materialize_named_sdf_from_sources(
     missing = required.difference(identity_df.columns)
     if missing:
         raise ValueError(
-            "Identity table is missing required columns: "
-            + ", ".join(sorted(missing))
+            "Identity table is missing required columns: " + ", ".join(sorted(missing))
         )
 
     from collections import defaultdict, deque

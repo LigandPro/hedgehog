@@ -7,7 +7,6 @@ from hedgehog.docking.receptor_sanitize import (
     sanitize_receptor_pdb,
 )
 
-
 MAESTRO_SAMPLE = """\
 ANISOU  839  NZ ALYS A  56     3449   1983   3690   -789  -1310   -278
 ATOM    839  NZ ALYS A  56      12.885   6.281  29.997  0.50 24.01           N1+

@@ -755,9 +755,7 @@ def apply_interaction_filter(
             passed = n_hbonds >= min_hbonds and has_required and not has_forbidden
             similarity = float("nan")
             if ref_bits is not None:
-                similarity = _tanimoto_bits(
-                    _active_interaction_bits(row), ref_bits
-                )
+                similarity = _tanimoto_bits(_active_interaction_bits(row), ref_bits)
                 passed = passed and similarity >= similarity_threshold
             active_labels = _collect_active_labels(row)
             interactions_str = ",".join(item["label"] for item in active_labels)

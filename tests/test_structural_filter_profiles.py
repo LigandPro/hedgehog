@@ -121,9 +121,9 @@ def test_main_profiles_declare_expected_hard_gates():
             if key.startswith("filter_") and key != "filter_data"
         }
         assert set(flags) == FILTER_FLAG_KEYS
-        assert {key for key, value in flags.items() if value} == EXPECTED_HARD_BY_PROFILE[
-            name
-        ]
+        assert {
+            key for key, value in flags.items() if value
+        } == EXPECTED_HARD_BY_PROFILE[name]
         assert config["nibr_max_severity"] == 10
         assert config["molgraph_max_severity"] == 5
         assert config["lilly_demerit_cutoff"] == EXPECTED_LILLY_CUTOFF[name]

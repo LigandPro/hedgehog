@@ -38,12 +38,12 @@ from hedgehog.struct_filters.utils import (
     prepare_structfilters_input,
     process_prepared_payload,
 )
-from hedgehog.utils.parallel import resolve_n_jobs
 from hedgehog.struct_filters.waves.registry import (
     get_aligned_enforced_filters,
     get_calculated_policy_names,
     policy_calculation_filter,
 )
+from hedgehog.utils.parallel import resolve_n_jobs
 from hedgehog.utils.paths import process_path
 
 IDENTITY_COLUMNS = ["smiles", "model_name", "mol_idx"]
@@ -106,9 +106,7 @@ def _merge_named_pass_mask(
     combined: pd.DataFrame, policy_name: str, mask: pd.DataFrame
 ) -> pd.DataFrame:
     id_cols = [
-        c
-        for c in IDENTITY_COLUMNS
-        if c in combined.columns and c in mask.columns
+        c for c in IDENTITY_COLUMNS if c in combined.columns and c in mask.columns
     ]
     if mask.empty or not id_cols:
         combined[policy_name] = False
@@ -307,9 +305,7 @@ def run_large(
                 default_mask=_enforcement_mask,
             )
             for policy_name, policy_mask in policy_masks.items():
-                combined = _merge_named_pass_mask(
-                    combined, policy_name, policy_mask
-                )
+                combined = _merge_named_pass_mask(combined, policy_name, policy_mask)
             liability_profile = merge_structural_liability_profile(
                 liability_profile, filter_name, final_extended
             )

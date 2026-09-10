@@ -48,6 +48,4 @@ def test_undefined_stereo_toggle_makes_total_stereo_diagnostic_in_legacy_config(
         "filter_undefined_stereo_center": True,
     }
 
-    assert get_aligned_enforced_filters({}, structural) == {
-        "undefined_stereo_center"
-    }
+    assert get_aligned_enforced_filters({}, structural) == {"undefined_stereo_center"}

@@ -1161,6 +1161,7 @@ class TestMatchaCommand:
         assert command[command.index("--n-samples") + 1] == "20"
         assert "--gpus" not in command
         assert "hedgehog.docking.docking_repository" not in command
+
     def test_build_matcha_command_uses_docking_repository_adapter(
         self, tmp_path, monkeypatch
     ):
