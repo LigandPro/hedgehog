@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 import yaml
 from rdkit import Chem
+from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 
 from hedgehog._constants import (
     KEY_ALIGNMENT_SKIP_FINAL_DESCRIPTORS,
@@ -29,6 +30,19 @@ THRESHOLDS_NAME = "alignment_thresholds.yml"
 PROBE_CONFIGS_DIR_NAME = "calibration_configs_unfiltered"
 SOURCE_CONFIGS_DIR_NAME = "source_configs"
 TARGET_CALIBRATION_RUN_DIR_NAME = "calibration_target_run"
+SOURCE_MASTER_PATH_KEY = "_source_master_path"
+_RUNTIME_STAGE_OVERRIDE_KEYS = (
+    "_run_single_stage_override",
+    "_run_stage_selection_override",
+)
+
+DESCRIPTOR_BOUNDS_MODE_TARGET = "target"
+DESCRIPTOR_BOUNDS_MODE_EXPAND = "expand"
+DEFAULT_DESCRIPTOR_BOUNDS_MODE = DESCRIPTOR_BOUNDS_MODE_EXPAND
+DESCRIPTOR_BOUNDS_MODES = {
+    DESCRIPTOR_BOUNDS_MODE_TARGET,
+    DESCRIPTOR_BOUNDS_MODE_EXPAND,
+}
 
 _CONFIG_MOL_PREP = "config_mol_prep"
 _CONFIG_DESCRIPTORS = "config_descriptors"
@@ -37,50 +51,17 @@ _CONFIG_SYNTHESIS = "config_synthesis"
 _CONFIG_DOCKING = "config_docking"
 _CONFIG_DOCKING_FILTERS = "config_docking_filters"
 
-_SYNTHESIS_LEGACY_FILTERS = {
-    "sa_score": ("sa_score_min", "sa_score_max"),
-    "syba_score": ("syba_score_min", "syba_score_max"),
-    "ra_score": ("ra_score_min", "ra_score_max"),
-}
-
-_DEFAULT_SYNTHESIS_SCORERS = ("sa", "syba", "rascore")
-_SYNTHESIS_SCORER_COLUMNS = {
-    "sa": "sa_score",
-    "syba": "syba_score",
-    "rascore": "ra_score",
-    "ra": "ra_score",
-    "sync": "sync_score",
-    "scscore": "sc_score",
-    "sc": "sc_score",
-    "nonpher": "nonpher_complexity_score",
-    "fsscore": "fs_score",
-    "fs": "fs_score",
-    "gasa": "gasa_score",
-}
-
-
-def _enabled_synthesis_score_columns(config: dict[str, Any]) -> set[str]:
-    """Return score columns calculated by the source synthesis config."""
-    raw_enabled = config.get("enabled_scores")
-    if raw_enabled is None:
-        raw_enabled = _DEFAULT_SYNTHESIS_SCORERS
-    if isinstance(raw_enabled, str):
-        names = raw_enabled.replace(",", " ").split()
-    else:
-        names = raw_enabled
-    return {
-        column
-        for raw_name in names
-        if (column := _SYNTHESIS_SCORER_COLUMNS.get(str(raw_name).strip().lower()))
-        is not None
-    }
-
-
 _DOCKING_SCORE_PROPERTIES = {
     TOOL_SMINA: ("minimizedAffinity", "affinity", "score"),
     TOOL_GNINA: ("minimizedAffinity", "affinity", "score"),
     TOOL_MATCHA: ("minimizedAffinity", "affinity", "score"),
 }
+_DEFAULT_DOCKING_SCORE_PROPERTY = "minimizedAffinity"
+
+
+def _configured_docking_score_properties(selected_tools: list[str]) -> dict[str, str]:
+    return {tool: _DEFAULT_DOCKING_SCORE_PROPERTY for tool in selected_tools}
+
 
 _STRUCTURAL_ELEMENT_COLUMNS = {
     "N": "n_N_atoms",
@@ -117,6 +98,266 @@ def _dump_yaml(data: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True)
+
+
+class GeneratedConfigShapeError(ValueError):
+    """Raised when generated data would change a source config's schema."""
+
+
+def _source_shaped_value(source: Any, updated: Any, path: tuple[str, ...] = ()) -> Any:
+    """Project updated values onto the exact mapping shape of the source YAML."""
+    if isinstance(source, dict):
+        if not isinstance(updated, dict):
+            raise GeneratedConfigShapeError(
+                f"Generated config changes mapping {'.'.join(path) or '<root>'} "
+                f"into {type(updated).__name__}."
+            )
+        # An explicitly empty mapping is a supported placeholder for generated
+        # values such as score_thresholds.
+        if not source:
+            return copy.deepcopy(updated)
+        return {
+            key: _source_shaped_value(
+                source_value,
+                updated.get(key, source_value),
+                (*path, str(key)),
+            )
+            for key, source_value in source.items()
+        }
+    if isinstance(source, list):
+        if not isinstance(updated, list):
+            raise GeneratedConfigShapeError(
+                f"Generated config changes list {'.'.join(path)} into "
+                f"{type(updated).__name__}."
+            )
+        return copy.deepcopy(updated)
+    if isinstance(updated, (dict, list)):
+        raise GeneratedConfigShapeError(
+            f"Generated config changes scalar {'.'.join(path)} into a collection."
+        )
+    return copy.deepcopy(updated)
+
+
+def _render_yaml_node(value: Any, node: ScalarNode | SequenceNode | MappingNode) -> str:
+    """Render one replacement value without rewriting the surrounding YAML."""
+    flow_style = (
+        bool(node.flow_style) if isinstance(node, (SequenceNode, MappingNode)) else None
+    )
+    rendered = yaml.safe_dump(
+        value,
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=flow_style,
+        width=4096,
+    )
+    lines = rendered.rstrip().splitlines()
+    if lines and lines[-1] == "...":
+        lines.pop()
+    if not lines:
+        return "null"
+    padding = " " * node.start_mark.column
+    replacement = ("\n" + padding).join(lines)
+    if isinstance(node, (SequenceNode, MappingNode)) and not node.flow_style:
+        replacement += "\n"
+    return replacement
+
+
+def _yaml_replacements(
+    source: Any,
+    updated: Any,
+    node: ScalarNode | SequenceNode | MappingNode,
+    path: tuple[str, ...] = (),
+) -> list[tuple[int, int, str]]:
+    """Return source-text slices needed to materialize updated values."""
+    if isinstance(node, MappingNode):
+        if not isinstance(source, dict) or not isinstance(updated, dict):
+            return [
+                (
+                    node.start_mark.index,
+                    node.end_mark.index,
+                    _render_yaml_node(updated, node),
+                )
+            ]
+        source_keys = list(source)
+        updated_keys = list(updated)
+        if source_keys != updated_keys:
+            if source:
+                raise GeneratedConfigShapeError(
+                    f"Generated config changes keys under {'.'.join(path) or '<root>'}."
+                )
+            return [
+                (
+                    node.start_mark.index,
+                    node.end_mark.index,
+                    _render_yaml_node(updated, node),
+                )
+            ]
+        replacements: list[tuple[int, int, str]] = []
+        for (_key_node, value_node), key in zip(node.value, source_keys, strict=True):
+            replacements.extend(
+                _yaml_replacements(
+                    source[key],
+                    updated[key],
+                    value_node,
+                    (*path, str(key)),
+                )
+            )
+        return replacements
+
+    if isinstance(node, SequenceNode):
+        if not isinstance(source, list) or not isinstance(updated, list):
+            return [
+                (
+                    node.start_mark.index,
+                    node.end_mark.index,
+                    _render_yaml_node(updated, node),
+                )
+            ]
+        if len(source) != len(updated):
+            return [
+                (
+                    node.start_mark.index,
+                    node.end_mark.index,
+                    _render_yaml_node(updated, node),
+                )
+            ]
+        replacements = []
+        for index, (source_item, updated_item, item_node) in enumerate(
+            zip(source, updated, node.value, strict=True)
+        ):
+            replacements.extend(
+                _yaml_replacements(
+                    source_item,
+                    updated_item,
+                    item_node,
+                    (*path, str(index)),
+                )
+            )
+        return replacements
+
+    if not isinstance(node, ScalarNode):
+        raise GeneratedConfigShapeError(
+            f"Unsupported YAML node under {'.'.join(path) or '<root>'}."
+        )
+    if source == updated and type(source) is type(updated):
+        return []
+    return [
+        (
+            node.start_mark.index,
+            node.end_mark.index,
+            _render_yaml_node(updated, node),
+        )
+    ]
+
+
+def _dump_generated_yaml(
+    data: dict[str, Any],
+    target: Path,
+    *,
+    source: Path | None,
+) -> dict[str, Any]:
+    """Write a generated config by patching values into source YAML text."""
+    if source is None or not source.is_file():
+        _dump_yaml(data, target)
+        return copy.deepcopy(data)
+
+    source_text = source.read_text(encoding="utf-8")
+    source_data = yaml.safe_load(source_text)
+    source_node = yaml.compose(source_text)
+    if not isinstance(source_data, dict) or not isinstance(source_node, MappingNode):
+        raise GeneratedConfigShapeError(f"Source config must be a mapping: {source}")
+
+    shaped = _source_shaped_value(source_data, data)
+    replacements = _yaml_replacements(source_data, shaped, source_node)
+    generated = source_text
+    for start, end, replacement in sorted(replacements, reverse=True):
+        # PyYAML includes the indentation before the next mapping key in the
+        # end mark of an indentless block sequence. Keep that indentation in
+        # the source text instead of consuming it with the replaced list.
+        while end > start and source_text[end - 1] in " \t":
+            end -= 1
+        generated = generated[:start] + replacement + generated[end:]
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(generated, encoding="utf-8")
+    return shaped
+
+
+def _changed_value_paths(
+    source: Any,
+    updated: Any,
+    path: tuple[str, ...] = (),
+) -> set[tuple[str, ...]]:
+    """Return the smallest source paths whose rendered values would change."""
+    if isinstance(source, dict) and isinstance(updated, dict):
+        if not source:
+            return {path} if source != updated else set()
+        changed: set[tuple[str, ...]] = set()
+        for key, source_value in source.items():
+            changed.update(
+                _changed_value_paths(
+                    source_value,
+                    updated.get(key, source_value),
+                    (*path, str(key)),
+                )
+            )
+        return changed
+    if isinstance(source, list) and isinstance(updated, list):
+        return {path} if source != updated else set()
+    return {path} if source != updated or type(source) is not type(updated) else set()
+
+
+def _aligned_threshold_paths(
+    config_key: str,
+    source: dict[str, Any],
+) -> set[tuple[str, ...]]:
+    """Return source fields that target alignment may replace."""
+    if config_key == _CONFIG_MOL_PREP:
+        return {("filters", "allowed_atoms")}
+    if config_key == _CONFIG_DESCRIPTORS:
+        borders = source.get("borders")
+        if not isinstance(borders, dict):
+            return set()
+        return {
+            ("borders", str(key))
+            for key in borders
+            if str(key).endswith(("_min", "_max"))
+        }
+    if config_key == _CONFIG_STRUCT_FILTERS:
+        return set()
+    if config_key == _CONFIG_DOCKING and isinstance(
+        source.get("score_thresholds"), dict
+    ):
+        return {("score_thresholds",)}
+    return set()
+
+
+def _dump_aligned_stage_yaml(
+    data: dict[str, Any],
+    target: Path,
+    *,
+    source: Path,
+    config_key: str,
+) -> dict[str, Any]:
+    """Copy a source stage config while replacing threshold values only."""
+    source_data = load_config(str(source))
+    shaped = _source_shaped_value(source_data, data)
+    changed_paths = _changed_value_paths(source_data, shaped)
+    allowed_paths = _aligned_threshold_paths(config_key, source_data)
+    unexpected = sorted(
+        changed_path
+        for changed_path in changed_paths
+        if not any(
+            changed_path[: len(allowed_path)] == allowed_path
+            for allowed_path in allowed_paths
+        )
+    )
+    if unexpected:
+        formatted = ", ".join(".".join(path) or "<root>" for path in unexpected)
+        raise GeneratedConfigShapeError(
+            f"Aligned {config_key} changes non-threshold source fields: {formatted}."
+        )
+    return _dump_generated_yaml(shaped, target, source=source)
 
 
 def _copy_master_configs(master: dict[str, Any], destination: Path) -> dict[str, Any]:
@@ -217,8 +458,32 @@ def create_probe_config(
 ) -> dict[str, Any]:
     """Create a copied, non-filtering config for observing target metrics."""
     source_dir = alignment_root / SOURCE_CONFIGS_DIR_NAME
-    source = _copy_master_configs(master, source_dir)
-    _dump_yaml(source, source_dir / "source_config.yml")
+    source_master_raw = master.get(SOURCE_MASTER_PATH_KEY)
+    clean_master = copy.deepcopy(master)
+    clean_master.pop(SOURCE_MASTER_PATH_KEY, None)
+    runtime_stage_overrides = {
+        key: copy.deepcopy(clean_master[key])
+        for key in _RUNTIME_STAGE_OVERRIDE_KEYS
+        if key in clean_master
+    }
+    source = _copy_master_configs(clean_master, source_dir)
+    source_master_path = source_dir / "source_config.yml"
+    raw_template = (
+        Path(str(source_master_raw))
+        if isinstance(source_master_raw, str) and Path(str(source_master_raw)).is_file()
+        else None
+    )
+    persisted_source = copy.deepcopy(source)
+    for key in _RUNTIME_STAGE_OVERRIDE_KEYS:
+        persisted_source.pop(key, None)
+    source = _write_generated_master(
+        persisted_source,
+        source_master_path,
+        source=raw_template,
+    )
+    # Runtime CLI stage selection is intentionally absent from reusable source
+    # YAML, but the current target probe must obey the user's selected stages.
+    source.update(runtime_stage_overrides)
 
     probe_dir = alignment_root / PROBE_CONFIGS_DIR_NAME
     probe = _copy_master_configs(source, probe_dir)
@@ -246,7 +511,6 @@ def create_probe_config(
         config["run"] = True
         config["filter_data"] = False
         config["write_per_filter_outputs"] = True
-        config["combine_in_memory"] = True
         config["generate_plots"] = False
         config["generate_failure_analysis"] = False
         for key in list(config):
@@ -257,19 +521,12 @@ def create_probe_config(
         if isinstance(alerts_path, str) and Path(alerts_path).exists():
             alerts = _read_csv(Path(alerts_path))
             if alerts is not None and "rule_set_name" in alerts.columns:
-                config["include_rulesets"] = sorted(
-                    alerts["rule_set_name"].dropna().astype(str).unique().tolist()
-                )
-        config["exclude_descriptions"] = {}
+                config["include_rulesets"] = "all"
+        config["exclude_smarts"] = []
 
-    def relax_synthesis(config: dict[str, Any]) -> None:
-        # Calibration needs every configured score for every target molecule,
-        # but it must not reject molecules using the source thresholds. Keep
-        # those numeric thresholds visible and disable filtering explicitly.
-        config["alignment_measurement_mode"] = True
-        config["apply_score_filters"] = False
-        config["filter_solved_only"] = False
-        config["run_retrosynthesis"] = False
+    def skip_synthesis(config: dict[str, Any]) -> None:
+        """Bypass synthesis during target calibration without changing its policy."""
+        config["run"] = False
 
     def relax_docking(config: dict[str, Any]) -> None:
         calculate_thresholds = (
@@ -284,10 +541,11 @@ def create_probe_config(
 
     _update_yaml(probe.get(_CONFIG_DESCRIPTORS), relax_descriptors)
     _update_yaml(probe.get(_CONFIG_STRUCT_FILTERS), enable_structural_filters)
-    _update_yaml(probe.get(_CONFIG_SYNTHESIS), relax_synthesis)
+    _update_yaml(probe.get(_CONFIG_SYNTHESIS), skip_synthesis)
     _update_yaml(probe.get(_CONFIG_DOCKING), relax_docking)
     _update_yaml(probe.get(_CONFIG_DOCKING_FILTERS), disable_docking_filters)
 
+    _drop_synthesis_bounds_mode(probe)
     _dump_yaml(probe, probe_dir / "probe_config.yml")
     return probe
 
@@ -303,7 +561,9 @@ def _read_csv(path: Path) -> pd.DataFrame | None:
 
 
 def _read_docking_score_metrics(
-    path: Path, selected_tools: list[str]
+    path: Path,
+    selected_tools: list[str],
+    score_properties: dict[str, str] | None = None,
 ) -> pd.DataFrame | None:
     """Read one best docking score per target molecule and docking tool."""
     if not path.exists():
@@ -329,7 +589,13 @@ def _read_docking_score_metrics(
             if not mol_idx:
                 continue
             score = None
-            for property_name in _DOCKING_SCORE_PROPERTIES[tool]:
+            configured_property = (score_properties or {}).get(tool)
+            property_names = (
+                (configured_property,)
+                if configured_property
+                else _DOCKING_SCORE_PROPERTIES[tool]
+            )
+            for property_name in property_names:
                 if not mol.HasProp(property_name):
                     continue
                 try:
@@ -348,8 +614,9 @@ def _read_docking_score_metrics(
         return None
 
     long_metrics = pd.DataFrame(rows)
-    # Every docking score used here is an affinity where lower is better. If a
-    # tool emitted multiple poses, retain its best pose for the molecule.
+    # All configured docking scores use lower-is-better semantics. GNINA can
+    # emit multiple poses, so retain the lowest minimizedAffinity per molecule
+    # before deriving its target threshold.
     long_metrics = long_metrics.groupby(
         ["mol_idx", "tool"], as_index=False, sort=False
     )["score"].min()
@@ -554,6 +821,14 @@ def _read_structural_rule_masks(stage_dir: Path) -> pd.DataFrame | None:
             index=keys.to_numpy(),
         )
         rule_masks[filter_name] = mask.groupby(level=0).last()
+        if filter_name == "stereo_center" and "undefined_stereo_pass" in data:
+            undefined_mask = pd.Series(
+                _boolean_pass_values(data["undefined_stereo_pass"]).to_numpy(),
+                index=keys.to_numpy(),
+            )
+            rule_masks["undefined_stereo_center"] = (
+                undefined_mask.groupby(level=0).last()
+            )
 
     if not rule_masks or not identities:
         return None
@@ -566,107 +841,64 @@ def _read_structural_rule_masks(stage_dir: Path) -> pd.DataFrame | None:
     )
 
 
-def _align_structural_numeric_parameters(
-    config: dict[str, Any],
-    masks: pd.DataFrame,
-    percentile: float,
-) -> dict[str, int | float]:
-    """Calibrate parameterized rule limits and refresh their pass masks."""
-    parameters: dict[str, int | float] = {}
-    rule_columns = set(_structural_rule_columns(masks))
+def _configured_structural_rule_columns(
+    config: dict[str, Any], masks: pd.DataFrame
+) -> list[str]:
+    """Return the hard structural rules enabled by the source config."""
 
-    stereo_metrics = {
-        f"{_STRUCTURAL_METRIC_PREFIX}stereo_centers": "stereo_max_centers",
-        f"{_STRUCTURAL_METRIC_PREFIX}stereo_undefined": "stereo_max_undefined",
+    def calculation_enabled(policy_name: str) -> bool:
+        calculation_name = (
+            "stereo_center"
+            if policy_name == "undefined_stereo_center"
+            else policy_name
+        )
+        return bool(config.get(f"calculate_{calculation_name}", False))
+
+    def hard_enabled(policy_name: str) -> bool:
+        key = f"filter_{policy_name}"
+        if key in config:
+            return bool(config[key])
+        return calculation_enabled(policy_name)
+
+    raw_include = config.get("include_rulesets")
+    if isinstance(raw_include, str) and raw_include.strip().lower() == "all":
+        # Scalar "all" means every catalog ruleset is calculated.
+        calculated_rulesets: set[str] = set()
+        calculated_unrestricted = True
+    else:
+        calculated_rulesets = {
+            str(value)
+            for value in (raw_include or [])
+            if value is not None
+        }
+        calculated_unrestricted = not calculated_rulesets
+    filter_rulesets = {
+        str(value)
+        for value in config.get("common_alerts_filter_include_rulesets", []) or []
+        if value is not None
     }
-    if "stereo_center" in rule_columns:
-        retained = _select_stage_subset(
-            masks,
-            {column: {"max"} for column in stereo_metrics},
-            percentile,
-        )
-        for column, key in stereo_metrics.items():
-            values = _numeric_values(retained, column)
-            if key not in config or values is None:
-                continue
-            threshold = math.ceil(float(values.max())) + 1
-            config[key] = threshold
-            parameters[key] = threshold
-        if all(key in parameters for key in stereo_metrics.values()):
-            centers = pd.to_numeric(
-                masks[f"{_STRUCTURAL_METRIC_PREFIX}stereo_centers"],
-                errors="coerce",
-            )
-            undefined = pd.to_numeric(
-                masks[f"{_STRUCTURAL_METRIC_PREFIX}stereo_undefined"],
-                errors="coerce",
-            )
-            masks["stereo_center"] = (centers < parameters["stereo_max_centers"]) & (
-                undefined < parameters["stereo_max_undefined"]
-            )
-
-    halogen_metrics = {
-        f"{_STRUCTURAL_METRIC_PREFIX}halogen_F": "halogenicity_thresh_F",
-        f"{_STRUCTURAL_METRIC_PREFIX}halogen_Br": "halogenicity_thresh_Br",
-        f"{_STRUCTURAL_METRIC_PREFIX}halogen_Cl": "halogenicity_thresh_Cl",
+    excluded_rulesets = {
+        str(value)
+        for value in config.get("common_alerts_filter_exclude_rulesets", []) or []
+        if value is not None
     }
-    if "halogenicity" in rule_columns:
-        retained = _select_stage_subset(
-            masks,
-            {column: {"max"} for column in halogen_metrics},
-            percentile,
-        )
-        for column, key in halogen_metrics.items():
-            if key not in config:
-                continue
-            threshold = _observed_bound(retained, column, "max")
-            if threshold is None:
-                continue
-            config[key] = threshold
-            parameters[key] = threshold
-        if all(key in parameters for key in halogen_metrics.values()):
-            masks["halogenicity"] = pd.Series(True, index=masks.index)
-            for column, key in halogen_metrics.items():
-                values = pd.to_numeric(masks[column], errors="coerce")
-                masks["halogenicity"] &= values <= parameters[key]
 
-    symmetry_column = f"{_STRUCTURAL_METRIC_PREFIX}symmetry"
-    if "symmetry" in rule_columns and "symmetry_threshold" in config:
-        retained = _select_stage_subset(
-            masks,
-            {symmetry_column: {"max"}},
-            percentile,
-        )
-        threshold = _observed_bound(retained, symmetry_column, "max")
-        if threshold is not None:
-            config["symmetry_threshold"] = threshold
-            parameters["symmetry_threshold"] = threshold
-            symmetry = pd.to_numeric(masks[symmetry_column], errors="coerce")
-            masks["symmetry"] = symmetry <= threshold
-
-    ring_size_column = f"{_STRUCTURAL_METRIC_PREFIX}ring_problem_size"
-    ring_hard_column = f"{_STRUCTURAL_METRIC_PREFIX}ring_hard_failure"
-    ring_key = "ring_infraction_hetcycle_min_size"
-    if "ring_infraction" in rule_columns and ring_key in config:
-        required_count = math.ceil(len(masks) * percentile / 100.0)
-        problem_sizes = pd.to_numeric(masks[ring_size_column], errors="coerce").fillna(
-            math.inf
-        )
-        hard_failures = _boolean_pass_values(masks[ring_hard_column])
-        finite_sizes = problem_sizes[problem_sizes.map(math.isfinite)]
-        largest_size = int(finite_sizes.max()) if not finite_sizes.empty else 0
-        threshold = 0
-        ring_pass = (~hard_failures) & (problem_sizes > threshold)
-        for candidate in range(largest_size + 1):
-            proposed = (~hard_failures) & (problem_sizes > candidate)
-            if int(proposed.sum()) >= required_count:
-                threshold = candidate
-                ring_pass = proposed
-        config[ring_key] = threshold
-        parameters[ring_key] = threshold
-        masks["ring_infraction"] = ring_pass
-
-    return parameters
+    selected: list[str] = []
+    for rule in _structural_rule_columns(masks):
+        if rule.startswith("common_alerts:"):
+            ruleset = rule.split(":", 1)[1]
+            enabled = (
+                calculation_enabled("common_alerts")
+                and hard_enabled("common_alerts")
+                and (calculated_unrestricted or ruleset in calculated_rulesets)
+                and (not filter_rulesets or ruleset in filter_rulesets)
+                and ruleset not in excluded_rulesets
+            )
+        else:
+            enabled = calculation_enabled(rule) and hard_enabled(rule)
+        if enabled:
+            selected.append(rule)
+    return selected
 
 
 def _align_structural_filter_config(
@@ -674,66 +906,35 @@ def _align_structural_filter_config(
     masks: pd.DataFrame | None,
     percentile: float,
 ) -> dict[str, Any]:
-    """Enable the largest low-impact greedy rule set meeting target retention."""
+    """Audit the fixed source structural policy without changing its config."""
     if masks is None or masks.empty:
         return {}
-    parameters = _align_structural_numeric_parameters(config, masks, percentile)
-    rule_columns = _structural_rule_columns(masks)
+
+    rule_columns = _configured_structural_rule_columns(config, masks)
     required_count = math.ceil(len(masks) * percentile / 100.0)
     retained = pd.Series(True, index=masks.index)
-    selected: list[str] = []
     rule_audit: dict[str, Any] = {}
-
-    ordered_rules = sorted(
-        rule_columns,
-        key=lambda rule: (int((~masks[rule].astype(bool)).sum()), rule.lower()),
-    )
-    for rule in ordered_rules:
+    for rule in rule_columns:
         pass_mask = masks[rule].astype(bool)
-        proposed = retained & pass_mask
-        enabled = int(proposed.sum()) >= required_count
-        if enabled:
-            retained = proposed
-            selected.append(rule)
+        retained &= pass_mask
         rule_audit[rule] = {
-            "enabled": enabled,
+            "enabled": True,
             "failed_molecules": int((~pass_mask).sum()),
             "failed_percent": float((~pass_mask).mean() * 100.0),
-            "combined_retained_if_enabled": int(proposed.sum()),
+            "combined_retained_if_enabled": int(retained.sum()),
         }
 
-    calculation_keys = {
-        key.removeprefix("calculate_").lower(): key
-        for key in config
-        if key.startswith("calculate_")
-    }
-    for key in calculation_keys.values():
-        config[key] = False
-
-    common_rulesets: list[str] = []
-    for rule in selected:
-        if rule.startswith("common_alerts:"):
-            common_rulesets.append(rule.split(":", 1)[1])
-            continue
-        config_key = calculation_keys.get(rule.lower())
-        if config_key is not None:
-            config[config_key] = True
-
-    common_key = calculation_keys.get("common_alerts")
-    if common_key is not None:
-        config[common_key] = bool(common_rulesets)
-    config["include_rulesets"] = sorted(common_rulesets)
-    config["exclude_descriptions"] = {}
-    config["run"] = True
-
+    retained_count = int(retained.sum())
     return {
         "target_molecules": len(masks),
         "required_retained_molecules": required_count,
-        "retained_molecules": int(retained.sum()),
+        "retained_molecules": retained_count,
         "retained_percent": float(retained.mean() * 100.0),
-        "parameters": parameters,
-        "enabled_rules": selected,
-        "disabled_rules": [rule for rule in ordered_rules if rule not in selected],
+        "coverage_met": retained_count >= required_count,
+        "policy": "source_config_preserved",
+        "parameters": {},
+        "enabled_rules": rule_columns,
+        "disabled_rules": [],
         "rules": rule_audit,
     }
 
@@ -905,8 +1106,90 @@ def _observed_bound(
     )
 
 
+def _validate_bounds_mode(value: object, config_key: str) -> str:
+    """Validate how target-derived bounds modify source bounds."""
+    if not isinstance(value, str) or value not in DESCRIPTOR_BOUNDS_MODES:
+        choices = ", ".join(sorted(DESCRIPTOR_BOUNDS_MODES))
+        raise ValueError(f"alignment.{config_key} must be one of: {choices}")
+    return value
+
+
+def validate_descriptor_bounds_mode(value: object) -> str:
+    """Validate how target-derived descriptor borders modify source borders."""
+    return _validate_bounds_mode(value, "descriptor_bounds_mode")
+
+
+def descriptor_bounds_mode_from_master(master: dict[str, Any]) -> str:
+    """Return the descriptor mode, defaulting to expand when unset."""
+    alignment = master.get("alignment")
+    if not isinstance(alignment, dict):
+        return DEFAULT_DESCRIPTOR_BOUNDS_MODE
+    return validate_descriptor_bounds_mode(
+        alignment.get("descriptor_bounds_mode", DEFAULT_DESCRIPTOR_BOUNDS_MODE)
+    )
+
+
+def _drop_synthesis_bounds_mode(config: dict[str, Any]) -> None:
+    """Remove leftover synthesis_bounds_mode so it is never written back out."""
+    alignment = config.get("alignment")
+    if isinstance(alignment, dict):
+        alignment.pop("synthesis_bounds_mode", None)
+
+
+def _drop_synthesis_bounds_mode_from_yaml_text(text: str) -> str:
+    """Drop leftover synthesis_bounds_mode lines copied from a source YAML template."""
+    return "".join(
+        line
+        for line in text.splitlines(keepends=True)
+        if not line.lstrip().startswith("synthesis_bounds_mode:")
+    )
+
+
+def _write_generated_master(
+    aligned: dict[str, Any],
+    master_path: Path,
+    source: Path | None,
+) -> dict[str, Any]:
+    """Write an aligned/probe master without leftover synthesis_bounds_mode."""
+    _drop_synthesis_bounds_mode(aligned)
+    written = _dump_generated_yaml(aligned, master_path, source=source)
+    _drop_synthesis_bounds_mode(written)
+    text = master_path.read_text(encoding="utf-8")
+    stripped = _drop_synthesis_bounds_mode_from_yaml_text(text)
+    if stripped != text:
+        master_path.write_text(stripped, encoding="utf-8")
+    return written
+
+
+def _merge_numeric_bound(
+    source_value: object,
+    target_value: int | float,
+    side: str,
+    label: str,
+) -> object:
+    """Keep the source bound unless the target requires an outward expansion."""
+    if isinstance(source_value, bool):
+        raise ValueError(f"{label} bounds must be numeric, not boolean")
+    try:
+        source_numeric = float(source_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} bound must be numeric: {source_value!r}") from exc
+    if side == "min":
+        return target_value if float(target_value) < source_numeric else source_value
+    return target_value if float(target_value) > source_numeric else source_value
+
+
+def _merge_descriptor_bound(
+    source_value: object,
+    target_value: int | float,
+    side: str,
+) -> object:
+    """Keep the descriptor source bound unless target requires expansion."""
+    return _merge_numeric_bound(source_value, target_value, side, "Descriptor")
+
+
 def _align_molprep_config(
-    config: dict[str, Any], metrics: pd.DataFrame | None, _percentile: float
+    config: dict[str, Any], metrics: pd.DataFrame | None
 ) -> dict[str, Any]:
     """Write the complete target atom union into MolPrep allowed_atoms."""
     if config.get("set_allowed_atoms_from_targets", True) is False:
@@ -928,135 +1211,51 @@ def _align_molprep_config(
 
 
 def _align_descriptor_config(
-    config: dict[str, Any], metrics: pd.DataFrame | None, percentile: float
+    config: dict[str, Any],
+    metrics: pd.DataFrame | None,
+    percentile: float,
+    bounds_mode: str = DEFAULT_DESCRIPTOR_BOUNDS_MODE,
 ) -> dict[str, Any]:
+    """Align configured borders to target values, optionally only widening them."""
+    bounds_mode = validate_descriptor_bounds_mode(bounds_mode)
     aligned: dict[str, Any] = {}
     borders = config.get("borders")
     if not isinstance(borders, dict):
         return aligned
 
-    constraints = config.get("structural_constraints")
-    structural_range_columns: set[str] = set()
-    if isinstance(constraints, dict):
-        type_limits = constraints.get("type_limits")
-        if isinstance(type_limits, dict):
-            structural_range_columns.update(str(key) for key in type_limits)
-
-        element_limits = constraints.get("element_limits")
-        if isinstance(element_limits, dict):
-            structural_range_columns.update(
-                column
-                for element, column in _STRUCTURAL_ELEMENT_COLUMNS.items()
-                if element in element_limits
-            )
-
-        structural_range_columns.update(
-            column
-            for key, column in _STRUCTURAL_DIRECT_COLUMNS.items()
-            if key in constraints
-        )
-
     specs: dict[str, set[str]] = {}
     for key in borders:
         if key.endswith("_min"):
-            _add_threshold_side(specs, key[: -len("_min")], "min")
+            _add_threshold_side(specs, key.removesuffix("_min"), "min")
         elif key.endswith("_max"):
-            _add_threshold_side(specs, key[: -len("_max")], "max")
-    for column in structural_range_columns:
-        _add_threshold_side(specs, column, "min")
-        _add_threshold_side(specs, column, "max")
+            _add_threshold_side(specs, key.removesuffix("_max"), "max")
 
-    # Select one common reference subset for the complete descriptor stage,
-    # then derive every range from that same subset.
     retained = _select_stage_subset(metrics, specs, percentile)
-    for key in list(borders):
+    for key in borders:
         if key.endswith("_min"):
-            column, side = key[: -len("_min")], "min"
+            column, side = key.removesuffix("_min"), "min"
         elif key.endswith("_max"):
-            column, side = key[: -len("_max")], "max"
+            column, side = key.removesuffix("_max"), "max"
         else:
             continue
         value = _observed_bound(retained, column, side)
         if value is None:
             continue
+        if bounds_mode == DESCRIPTOR_BOUNDS_MODE_EXPAND:
+            value = _merge_descriptor_bound(borders[key], value, side)
         borders[key] = value
         aligned[key] = value
-
-    for column in sorted(structural_range_columns):
-        for side in ("min", "max"):
-            value = _observed_bound(retained, column, side)
-            if value is None:
-                continue
-            key = f"{column}_{side}"
-            borders[key] = value
-            aligned[key] = value
-
-    if isinstance(constraints, dict):
-        constraints["enabled"] = False
-        aligned["structural_constraints.enabled"] = False
-    return aligned
-
-
-def _align_synthesis_config(
-    config: dict[str, Any], metrics: pd.DataFrame | None, percentile: float
-) -> dict[str, Any]:
-    aligned: dict[str, Any] = {}
-    enabled_columns = _enabled_synthesis_score_columns(config)
-    specs: dict[str, set[str]] = {}
-    for column, (min_key, max_key) in _SYNTHESIS_LEGACY_FILTERS.items():
-        if column not in enabled_columns:
-            continue
-        if min_key in config:
-            _add_threshold_side(specs, column, "min")
-        if max_key in config:
-            _add_threshold_side(specs, column, "max")
-
-    nested = config.get("score_filters")
-    if isinstance(nested, dict):
-        for column, thresholds in nested.items():
-            if column not in enabled_columns or not isinstance(thresholds, dict):
-                continue
-            if "min" in thresholds:
-                _add_threshold_side(specs, column, "min")
-            if "max" in thresholds:
-                _add_threshold_side(specs, column, "max")
-
-    retained = _select_stage_subset(metrics, specs, percentile)
-    for column, (min_key, max_key) in _SYNTHESIS_LEGACY_FILTERS.items():
-        if column not in enabled_columns:
-            continue
-        if min_key in config:
-            value = _observed_bound(retained, column, "min")
-            config[min_key] = value
-            if value is not None:
-                aligned[min_key] = value
-        if max_key in config:
-            value = _observed_bound(retained, column, "max")
-            config[max_key] = value
-            if value is not None:
-                aligned[max_key] = value
-
-    if isinstance(nested, dict):
-        for column, thresholds in nested.items():
-            if column not in enabled_columns or not isinstance(thresholds, dict):
-                continue
-            applied: dict[str, int | float] = {}
-            for side in ("min", "max"):
-                if side not in thresholds:
-                    continue
-                value = _observed_bound(retained, column, side)
-                thresholds[side] = value
-                if value is not None:
-                    applied[side] = value
-            if applied:
-                aligned[column] = applied
     return aligned
 
 
 def _align_docking_config(
     config: dict[str, Any], metrics: pd.DataFrame | None, percentile: float
 ) -> dict[str, Any]:
-    """Derive one affinity cutoff per configured tool from one shared subset."""
+    """Derive one affinity cutoff per configured tool from one shared subset.
+
+    Target calibration may relax a configured upper bound, but never tighten it.
+    For lower-is-better affinity scores this is ``max(calibrated, configured)``.
+    """
     if config.get("calculate_score_thresholds_from_targets") is not True:
         return {}
     if metrics is None or metrics.empty:
@@ -1106,19 +1305,40 @@ def _align_docking_config(
     selected_index = worst.sort_values(kind="stable").index[:required_count]
     retained_subset = complete.loc[selected_index]
 
+    configured_thresholds = config.get("score_thresholds")
+    if not isinstance(configured_thresholds, dict):
+        configured_thresholds = {}
+
     thresholds: dict[str, dict[str, str | int | float]] = {}
+    calibrated_thresholds: dict[str, dict[str, str | int | float]] = {}
     pass_mask = pd.Series(True, index=numeric.index)
     for tool in selected_tools:
-        maximum = _observed_bound(retained_subset, tool, "max")
-        if maximum is None:
+        calibrated_maximum = _observed_bound(retained_subset, tool, "max")
+        if calibrated_maximum is None:
             continue
+        maximum = calibrated_maximum
+        configured_tool_threshold = configured_thresholds.get(tool)
+        if isinstance(configured_tool_threshold, dict):
+            configured_maximum = configured_tool_threshold.get("max")
+            if isinstance(configured_maximum, (int, float)) and not isinstance(
+                configured_maximum, bool
+            ):
+                maximum = max(float(calibrated_maximum), float(configured_maximum))
+                maximum = _yaml_number(maximum)
+
+        score_property = _DEFAULT_DOCKING_SCORE_PROPERTY
+        calibrated_thresholds[tool] = {
+            "score_property": score_property,
+            "max": calibrated_maximum,
+        }
         thresholds[tool] = {
-            "score_property": "minimizedAffinity",
+            "score_property": score_property,
             "max": maximum,
         }
         pass_mask &= numeric[tool].notna() & (numeric[tool] <= float(maximum))
 
-    config["score_thresholds"] = thresholds
+    if isinstance(config.get("score_thresholds"), dict):
+        config["score_thresholds"] = thresholds
     retained_count = int(pass_mask.sum())
     return {
         "target_molecules": target_count,
@@ -1127,6 +1347,7 @@ def _align_docking_config(
         "retained_percent": float(retained_count / target_count * 100.0),
         "combination": "all_configured_tools_must_pass",
         "available_scores": available_by_tool,
+        "calibrated_score_thresholds": calibrated_thresholds,
         "score_thresholds": thresholds,
     }
 
@@ -1171,27 +1392,6 @@ def _descriptor_threshold_specs(config: dict[str, Any]) -> dict[str, set[str]]:
         if key in constraints:
             _add_threshold_side(specs, column, "min")
             _add_threshold_side(specs, column, "max")
-    return specs
-
-
-def _synthesis_threshold_specs(config: dict[str, Any]) -> dict[str, set[str]]:
-    specs: dict[str, set[str]] = {}
-    enabled_columns = _enabled_synthesis_score_columns(config)
-    for column, (min_key, max_key) in _SYNTHESIS_LEGACY_FILTERS.items():
-        if column not in enabled_columns:
-            continue
-        if min_key in config:
-            _add_threshold_side(specs, column, "min")
-        if max_key in config:
-            _add_threshold_side(specs, column, "max")
-    nested = config.get("score_filters")
-    if isinstance(nested, dict):
-        for column, thresholds in nested.items():
-            if column not in enabled_columns or not isinstance(thresholds, dict):
-                continue
-            for side in ("min", "max"):
-                if side in thresholds:
-                    _add_threshold_side(specs, column, side)
     return specs
 
 
@@ -1273,7 +1473,17 @@ def _select_global_protected_cohort(
     target_molecules: pd.DataFrame,
     percentile: float,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
-    """Select one fixed target cohort using every available aligned stage."""
+    """Select one fixed target cohort from configurable numeric score stages."""
+    raw_selected_stages = master.get("_run_stage_selection_override")
+    selected_stages = (
+        {str(stage) for stage in raw_selected_stages}
+        if isinstance(raw_selected_stages, (list, tuple, set))
+        else None
+    )
+
+    def stage_selected(stage: str) -> bool:
+        return selected_stages is None or stage in selected_stages
+
     target_ids = pd.Index(target_molecules["mol_idx"].astype(str), name="mol_idx")
     required_count = math.ceil(len(target_ids) * percentile / 100.0)
     penalties: dict[str, pd.Series] = {}
@@ -1281,7 +1491,11 @@ def _select_global_protected_cohort(
     eligible = pd.Series(True, index=target_ids)
 
     descriptor_source = _config_from_master(master, _CONFIG_DESCRIPTORS)
-    if descriptor_source is not None and descriptor_source[0].get("run", True):
+    if (
+        stage_selected("descriptors")
+        and descriptor_source is not None
+        and descriptor_source[0].get("run", True)
+    ):
         raw = _read_csv(
             target_run
             / "stages"
@@ -1297,35 +1511,26 @@ def _select_global_protected_cohort(
         stage_metrics["descriptors"] = metrics
 
     structural_source = _config_from_master(master, _CONFIG_STRUCT_FILTERS)
-    if structural_source is not None and structural_source[0].get("run", False):
+    if (
+        stage_selected("struct_filters")
+        and structural_source is not None
+        and structural_source[0].get("run", False)
+    ):
         raw = _read_structural_rule_masks(
             target_run / "stages" / "03_structural_filters_post"
         )
         if raw is None:
             raise ValueError("Structural-filter target metrics are missing.")
-        metrics = _metrics_by_target_id(raw, target_ids, "Structural-filter")
-        rules = _structural_rule_columns(metrics)
-        if rules:
-            pass_matrix = pd.DataFrame(
-                {rule: _boolean_pass_values(metrics[rule]) for rule in rules},
-                index=metrics.index,
-            )
-            penalties["struct_filters"] = 1.0 - pass_matrix.mean(axis=1)
-        stage_metrics["struct_filters"] = metrics
-
-    synthesis_source = _config_from_master(master, _CONFIG_SYNTHESIS)
-    if synthesis_source is not None and synthesis_source[0].get("run", False):
-        raw = _read_csv(target_run / "stages" / "04_synthesis" / "synthesis_scores.csv")
-        if raw is None:
-            raise ValueError("Synthesis-score target metrics are missing.")
-        metrics = _metrics_by_target_id(raw, target_ids, "Synthesis")
-        specs = _synthesis_threshold_specs(synthesis_source[0])
-        penalties["synthesis"] = _metric_extremeness(metrics, specs)
-        stage_metrics["synthesis"] = metrics
+        # Structural filters are a fixed policy. Keep their measurements for
+        # diagnostics, but never use them to choose the percentile cohort.
+        stage_metrics["struct_filters"] = _metrics_by_target_id(
+            raw, target_ids, "Structural-filter"
+        )
 
     docking_source = _config_from_master(master, _CONFIG_DOCKING)
     if (
-        docking_source is not None
+        stage_selected("docking")
+        and docking_source is not None
         and docking_source[0].get("run", False)
         and docking_source[0].get("calculate_score_thresholds_from_targets") is True
     ):
@@ -1337,6 +1542,7 @@ def _select_global_protected_cohort(
         raw = _read_docking_score_metrics(
             target_run / "stages" / "05_docking" / "docking_out.sdf",
             selected_tools,
+            _configured_docking_score_properties(selected_tools),
         )
         if raw is None:
             raise ValueError("Docking target metrics are missing.")
@@ -1387,15 +1593,9 @@ def _protected_numeric_pass_count(
     metrics: pd.DataFrame,
     specs: dict[str, set[str]],
     config: dict[str, Any],
-    *,
-    synthesis: bool = False,
 ) -> int:
     passed = pd.Series(True, index=metrics.index)
-    borders = config.get("borders", {}) if not synthesis else {}
-    nested = config.get("score_filters", {}) if synthesis else {}
-    legacy_by_column = {
-        column: keys for column, keys in _SYNTHESIS_LEGACY_FILTERS.items()
-    }
+    borders = config.get("borders", {})
     for column, sides in specs.items():
         if column == "ring_size":
             values_by_side = {
@@ -1406,24 +1606,19 @@ def _protected_numeric_pass_count(
             values = pd.to_numeric(metrics.get(column), errors="coerce")
             values_by_side = {"min": values, "max": values}
         for side in sides:
-            if synthesis:
-                threshold = None
-                keys = legacy_by_column.get(column)
-                if keys is not None:
-                    threshold = config.get(keys[0 if side == "min" else 1])
-                if isinstance(nested, dict) and isinstance(nested.get(column), dict):
-                    threshold = nested[column].get(side, threshold)
-            else:
-                threshold = borders.get(f"{column}_{side}")
+            threshold = borders.get(f"{column}_{side}")
             if threshold is None:
                 continue
             values = values_by_side[side]
             if values is None:
                 passed &= False
-            elif side == "min":
-                passed &= values.isna() | (values >= float(threshold))
-            else:
-                passed &= values.isna() | (values <= float(threshold))
+                continue
+            comparison = (
+                values >= float(threshold)
+                if side == "min"
+                else values <= float(threshold)
+            )
+            passed &= values.isna() | comparison
     return int(passed.sum())
 
 
@@ -1442,6 +1637,11 @@ def finalize_global_alignment(
         if source_master_path.is_file()
         else copy.deepcopy(master)
     )
+    for runtime_key in _RUNTIME_STAGE_OVERRIDE_KEYS:
+        if runtime_key in master:
+            source_master[runtime_key] = copy.deepcopy(master[runtime_key])
+    descriptor_bounds_mode = descriptor_bounds_mode_from_master(source_master)
+    _drop_synthesis_bounds_mode(source_master)
     target_molecules = _read_csv(target_run / "input" / "sampled_molecules.csv")
     if target_molecules is None or target_molecules.empty:
         raise ValueError("Saved target molecules are missing for global alignment.")
@@ -1470,6 +1670,7 @@ def finalize_global_alignment(
         aligned.pop(runtime_key, None)
     summary = _new_threshold_summary(target_run, target_mols_path, percentile)
     summary["selection_method"] = "global_protected_target_cohort"
+    summary["descriptor_bounds_mode"] = descriptor_bounds_mode
     verified_stages: list[str] = []
 
     def write_stage(
@@ -1485,7 +1686,12 @@ def finalize_global_alignment(
         target_path = aligned_dir / f"{config_key}{source_path.suffix or '.yml'}"
         protected_metrics = metrics.reindex(protected_ids).copy()
         thresholds = updater(config, protected_metrics, 100.0)
-        _dump_yaml(config, target_path)
+        config = _dump_aligned_stage_yaml(
+            config,
+            target_path,
+            source=source_path,
+            config_key=config_key,
+        )
         aligned[config_key] = str(target_path.resolve())
         summary["stages"][stage] = {
             "thresholds": thresholds,
@@ -1502,7 +1708,12 @@ def finalize_global_alignment(
         filters = molprep_config.setdefault("filters", {})
         filters["allowed_atoms"] = allowed_atoms
         target_path = aligned_dir / f"{_CONFIG_MOL_PREP}{source_path.suffix or '.yml'}"
-        _dump_yaml(molprep_config, target_path)
+        molprep_config = _dump_aligned_stage_yaml(
+            molprep_config,
+            target_path,
+            source=source_path,
+            config_key=_CONFIG_MOL_PREP,
+        )
         aligned[_CONFIG_MOL_PREP] = str(target_path.resolve())
         summary["stages"]["mol_prep"] = {
             "thresholds": {"filters.allowed_atoms": allowed_atoms},
@@ -1515,9 +1726,15 @@ def finalize_global_alignment(
         config, thresholds = write_stage(
             "descriptors",
             _CONFIG_DESCRIPTORS,
-            _align_descriptor_config,
+            lambda config, metrics, value: _align_descriptor_config(
+                config,
+                metrics,
+                value,
+                bounds_mode=descriptor_bounds_mode,
+            ),
             stage_metrics["descriptors"],
         )
+        summary["stages"]["descriptors"]["bounds_mode"] = descriptor_bounds_mode
         protected_metrics = stage_metrics["descriptors"].reindex(protected_ids)
         retained = _protected_numeric_pass_count(
             protected_metrics, _descriptor_threshold_specs(config), config
@@ -1529,50 +1746,33 @@ def finalize_global_alignment(
             )
 
     if "struct_filters" in stage_metrics:
-        config, thresholds = write_stage(
-            "struct_filters",
-            _CONFIG_STRUCT_FILTERS,
-            _align_structural_filter_config,
-            stage_metrics["struct_filters"],
+        source = _config_from_master(source_master, _CONFIG_STRUCT_FILTERS)
+        if source is None:
+            raise ValueError("Missing source config for structural filters.")
+        config, source_path = source
+        target_path = aligned_dir / (
+            f"{_CONFIG_STRUCT_FILTERS}{source_path.suffix or '.yml'}"
         )
-        retained = int(thresholds.get("retained_molecules", 0))
-        summary["stages"]["struct_filters"]["protected_retained_molecules"] = retained
+        shutil.copyfile(source_path, target_path)
+        aligned[_CONFIG_STRUCT_FILTERS] = str(target_path.resolve())
+        thresholds = _align_structural_filter_config(
+            config,
+            stage_metrics["struct_filters"],
+            percentile,
+        )
         failure_audit_path = aligned_dir / "structural_filter_failures.csv"
         _write_structural_failure_audit(
             stage_metrics["struct_filters"], failure_audit_path
         )
         thresholds["failure_audit_path"] = str(failure_audit_path.resolve())
-        if retained < required_count:
-            raise ValueError(
-                f"Structural alignment protects only {retained}/{required_count} molecules."
-            )
-
-    if "synthesis" in stage_metrics:
-        config, _thresholds = write_stage(
-            "synthesis",
-            _CONFIG_SYNTHESIS,
-            _align_synthesis_config,
-            stage_metrics["synthesis"],
-        )
-        config["filter_solved_only"] = False
-        synthesis_path = Path(aligned[_CONFIG_SYNTHESIS])
-        _dump_yaml(config, synthesis_path)
-        retained = _protected_numeric_pass_count(
-            stage_metrics["synthesis"].reindex(protected_ids),
-            _synthesis_threshold_specs(config),
-            config,
-            synthesis=True,
-        )
-        summary["stages"]["synthesis"].update(
-            {
-                "protected_retained_molecules": retained,
-                "retrosynthesis_policy": "report_only_not_retention_filter",
-            }
-        )
-        if retained < required_count:
-            raise ValueError(
-                f"Synthesis alignment protects only {retained}/{required_count} molecules."
-            )
+        summary["stages"]["struct_filters"] = {
+            "thresholds": thresholds,
+            "status": "source_config_preserved",
+            "note": (
+                "Structural hard filters and their parameters are copied unchanged "
+                "and are not calibrated by target_coverage_percent."
+            ),
+        }
 
     if "docking" in stage_metrics:
         _config, thresholds = write_stage(
@@ -1591,21 +1791,17 @@ def finalize_global_alignment(
     docking_filters_source = _config_from_master(source_master, _CONFIG_DOCKING_FILTERS)
     if docking_filters_source is not None:
         config, source_path = docking_filters_source
-        was_enabled = bool(config.get("run", False))
-        config["run"] = False
         target_path = (
             aligned_dir / f"{_CONFIG_DOCKING_FILTERS}{source_path.suffix or '.yml'}"
         )
-        _dump_yaml(config, target_path)
+        shutil.copyfile(source_path, target_path)
         aligned[_CONFIG_DOCKING_FILTERS] = str(target_path.resolve())
         summary["stages"]["docking_filters"] = {
             "thresholds": {},
-            "status": "disabled_unaligned_filter"
-            if was_enabled
-            else "disabled_by_config",
+            "status": "source_config_preserved",
             "note": (
-                "Disabled in the retention-guaranteed run because pose filters "
-                "were not measured during target calibration."
+                "Copied unchanged because pose-filter thresholds were not measured "
+                "during target calibration."
             ),
         }
 
@@ -1622,17 +1818,24 @@ def finalize_global_alignment(
     }
     thresholds_path = aligned_dir / THRESHOLDS_NAME
     master_path = aligned_dir / ALIGNED_CONFIG_NAME
-    aligned["target_mols_path"] = str(Path(target_mols_path).resolve())
-    aligned["alignment"] = {
-        "enabled": False,
-        "target_coverage_percent": percentile,
-        "selection_method": "global_protected_target_cohort",
-        "thresholds_path": str(thresholds_path.resolve()),
-        "protected_cohort_path": str(protected_path.resolve()),
-        "target_run": str(target_run.resolve()),
-    }
+    if "target_mols_path" in aligned:
+        aligned["target_mols_path"] = str(Path(target_mols_path).resolve())
+    alignment = aligned.get("alignment")
+    if isinstance(alignment, dict):
+        if "enabled" in alignment:
+            alignment["enabled"] = False
+        if "target_coverage_percent" in alignment:
+            alignment["target_coverage_percent"] = percentile
+        alignment.pop("synthesis_bounds_mode", None)
     _dump_yaml(summary, thresholds_path)
-    _dump_yaml(aligned, master_path)
+    source_master_template = (
+        source_master_path if source_master_path.is_file() else None
+    )
+    aligned = _write_generated_master(
+        aligned,
+        master_path,
+        source=source_master_template,
+    )
     logger.info(
         "Verified global target coverage: %d/%d molecules (%.2f%%) are protected.",
         required_count,
@@ -1668,7 +1871,6 @@ def _new_threshold_summary(
                 "thresholds": {},
                 "status": "pending_metrics",
             },
-            "synthesis": {"thresholds": {}, "status": "pending_metrics"},
             "docking": {"thresholds": {}, "status": "pending_metrics"},
             "docking_filters": {
                 "thresholds": {},
@@ -1694,6 +1896,8 @@ def create_aligned_stage_config(
 ) -> tuple[dict[str, Any], Path, Path] | None:
     """Create only the aligned config belonging to one completed target stage."""
     percentile = validate_target_coverage_percent(percentile)
+    descriptor_bounds_mode = descriptor_bounds_mode_from_master(master)
+    _drop_synthesis_bounds_mode(master)
     aligned_dir = alignment_root / "aligned_configs"
     aligned_dir.mkdir(parents=True, exist_ok=True)
     master_path = aligned_dir / ALIGNED_CONFIG_NAME
@@ -1702,6 +1906,7 @@ def create_aligned_stage_config(
     aligned = (
         load_config(str(master_path)) if master_path.exists() else copy.deepcopy(master)
     )
+    _drop_synthesis_bounds_mode(aligned)
     summary = (
         load_config(str(thresholds_path))
         if thresholds_path.exists()
@@ -1709,6 +1914,8 @@ def create_aligned_stage_config(
     )
     summary.pop("retention_percentile", None)
     summary["target_coverage_percent"] = percentile
+    summary["descriptor_bounds_mode"] = descriptor_bounds_mode
+    summary.pop("synthesis_bounds_mode", None)
 
     if stage == "mol_prep":
         molprep_config_path = master.get(_CONFIG_MOL_PREP)
@@ -1728,7 +1935,14 @@ def create_aligned_stage_config(
         else:
             allowed_atoms = _target_atom_symbols(target_molecules)
             metrics = pd.DataFrame({"atomic_symbol": allowed_atoms})
-        specs = [(_CONFIG_MOL_PREP, _align_molprep_config)]
+        specs = [
+            (
+                _CONFIG_MOL_PREP,
+                lambda config, metrics, _coverage: _align_molprep_config(
+                    config, metrics
+                ),
+            )
+        ]
     elif stage == "descriptors":
         metrics = _read_csv(
             target_run
@@ -1737,17 +1951,22 @@ def create_aligned_stage_config(
             / "metrics"
             / "descriptors_all.csv"
         )
-        specs = [(_CONFIG_DESCRIPTORS, _align_descriptor_config)]
+        specs = [
+            (
+                _CONFIG_DESCRIPTORS,
+                lambda config, values, coverage: _align_descriptor_config(
+                    config,
+                    values,
+                    coverage,
+                    bounds_mode=descriptor_bounds_mode,
+                ),
+            )
+        ]
     elif stage == "struct_filters":
         metrics = _read_structural_rule_masks(
             target_run / "stages" / "03_structural_filters_post"
         )
         specs = [(_CONFIG_STRUCT_FILTERS, _align_structural_filter_config)]
-    elif stage == "synthesis":
-        metrics = _read_csv(
-            target_run / "stages" / "04_synthesis" / "synthesis_scores.csv"
-        )
-        specs = [(_CONFIG_SYNTHESIS, _align_synthesis_config)]
     elif stage == "docking":
         docking_config_path = master.get(_CONFIG_DOCKING)
         docking_config = (
@@ -1764,9 +1983,11 @@ def create_aligned_stage_config(
             )
             _dump_yaml(summary, thresholds_path)
             return None
+        selected_tools = _parse_tools_config(docking_config)
         metrics = _read_docking_score_metrics(
             target_run / "stages" / "05_docking" / "docking_out.sdf",
-            _parse_tools_config(docking_config),
+            selected_tools,
+            _configured_docking_score_properties(selected_tools),
         )
         specs = [(_CONFIG_DOCKING, _align_docking_config)]
     else:
@@ -1786,26 +2007,48 @@ def create_aligned_stage_config(
         if not source.exists() or not source.is_file():
             continue
         target = aligned_dir / f"{config_key}{source.suffix or '.yml'}"
-        if source.resolve() != target.resolve():
-            shutil.copyfile(source, target)
-        config = load_config(str(target))
+        config = load_config(str(source))
         thresholds = updater(config, metrics, percentile)
         if stage == "struct_filters":
             failure_audit_path = aligned_dir / "structural_filter_failures.csv"
             _write_structural_failure_audit(metrics, failure_audit_path)
             thresholds["failure_audit_path"] = str(failure_audit_path.resolve())
-        _dump_yaml(config, target)
+        config = _dump_aligned_stage_yaml(
+            config,
+            target,
+            source=source,
+            config_key=config_key,
+        )
         aligned[config_key] = str(target.resolve())
         summary["stages"][stage]["thresholds"] = thresholds
-        summary["stages"][stage]["status"] = "ready"
+        if stage == "struct_filters":
+            summary["stages"][stage]["status"] = "source_config_preserved"
+            summary["stages"][stage]["note"] = (
+                "Structural hard filters and their parameters are copied unchanged "
+                "and are not calibrated by target_coverage_percent."
+            )
+        else:
+            summary["stages"][stage]["status"] = "ready"
+        if stage == "descriptors":
+            summary["stages"][stage]["bounds_mode"] = descriptor_bounds_mode
 
-    aligned["target_mols_path"] = str(Path(target_mols_path).resolve())
-    aligned["alignment"] = {
-        "enabled": False,
-        "target_coverage_percent": percentile,
-        "thresholds_path": str(thresholds_path.resolve()),
-        "target_run": str(target_run.resolve()),
-    }
+    if "target_mols_path" in aligned:
+        aligned["target_mols_path"] = str(Path(target_mols_path).resolve())
+    alignment = aligned.get("alignment")
+    if isinstance(alignment, dict):
+        if "enabled" in alignment:
+            alignment["enabled"] = False
+        if "target_coverage_percent" in alignment:
+            alignment["target_coverage_percent"] = percentile
+        alignment.pop("synthesis_bounds_mode", None)
     _dump_yaml(summary, thresholds_path)
-    _dump_yaml(aligned, master_path)
+    master_template = master_path if master_path.is_file() else None
+    if master_template is None:
+        candidate = alignment_root / SOURCE_CONFIGS_DIR_NAME / "source_config.yml"
+        master_template = candidate if candidate.is_file() else None
+    aligned = _write_generated_master(
+        aligned,
+        master_path,
+        source=master_template,
+    )
     return aligned, master_path, thresholds_path
