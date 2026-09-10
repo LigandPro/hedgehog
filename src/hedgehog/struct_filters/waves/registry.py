@@ -3,9 +3,6 @@
 Provides wave-based execution patterns for the struct_filters pipeline.
 """
 
-from hedgehog._constants import CFG_STRUCT_FILTERS
-from hedgehog.alignment_runtime import alignment_stage_thresholds
-
 # Wave definitions: ordered groups of filters that can run together.
 # Each wave is a list of filter names; waves execute sequentially,
 # filters within a wave may execute in parallel in the future.
@@ -56,8 +53,9 @@ def get_aligned_enforced_filters(
 
     Per-filter ``filter_<name>`` booleans are the preferred policy. The legacy
     ``enforced_filters`` list remains supported when no filter flags are
-    present. Target alignment cannot change an explicit generic policy.
+    present. Alignment never overrides structural hard-gate policy.
     """
+    del config  # kept for call-site compatibility; structural policy is config-only
     if config_struct_filters is not None:
         catalog_filters = [name for wave in DEFAULT_WAVES for name in wave]
         known_filters = [*catalog_filters, *POLICY_CALCULATION_FILTER]
@@ -101,19 +99,11 @@ def get_aligned_enforced_filters(
             return _normalize_enforced_filters(
                 config_struct_filters.get("enforced_filters") or []
             )
-
-    thresholds = alignment_stage_thresholds(
-        config,
-        CFG_STRUCT_FILTERS,
-        "struct_filters",
-    )
-    if isinstance(thresholds, dict) and "enabled_rules" in thresholds:
-        return _normalize_enforced_filters(thresholds.get("enabled_rules") or [])
     return None
 
 
 def _normalize_enforced_filters(raw_rules) -> set[str]:
-    """Normalize rule-level alignment entries to structural filter names."""
+    """Normalize rule-level entries to structural filter names."""
     enabled: set[str] = set()
     for raw_rule in raw_rules:
         rule = str(raw_rule)

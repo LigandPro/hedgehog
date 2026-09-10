@@ -1439,35 +1439,21 @@ def apply_halogenicity(config, mols, smiles_model_name_mols=None):
 
 
 def _compute_symmetry_row(args):
-    (
-        mol_idx,
-        mol,
-        threshold,
-        max_automorphisms,
-        timeout_seconds,
-        timeout_policy,
-    ) = args
+    mol_idx, mol, threshold = args
     if mol is None:
         return {
             "_mol_idx": mol_idx,
             "pass": False,
             "symmetry_score": np.nan,
             "symmetry_threshold": threshold,
-            "symmetry_automorphisms_examined": 0,
-            "symmetry_nonidentity_automorphisms": 0,
-            "symmetry_truncated": False,
-            "symmetry_timed_out": False,
             "status": "warning",
             "reason": "invalid molecule",
         }
 
-    symmetry_module = importlib.import_module("hedgehog.struct_filters.symmetry")
     try:
-        details = symmetry_module.score_symmetry_bounded(
-            mol,
-            max_automorphisms=max_automorphisms,
-            timeout_seconds=timeout_seconds,
-        )
+        from medchem.utils.graph import score_symmetry
+
+        score = float(score_symmetry(mol))
     except Exception as exc:
         return {
             "_mol_idx": mol_idx,
@@ -1476,37 +1462,20 @@ def _compute_symmetry_row(args):
             "pass": True,
             "symmetry_score": np.nan,
             "symmetry_threshold": threshold,
-            "symmetry_automorphisms_examined": 0,
-            "symmetry_nonidentity_automorphisms": 0,
-            "symmetry_truncated": True,
-            "symmetry_timed_out": False,
             "status": "warning",
             "reason": f"symmetry calculation failed: {type(exc).__name__}: {exc}",
         }
-    score = float(details.score)
-    passed = timeout_policy == "pass" if details.timed_out else score <= threshold
+
+    passed = score <= threshold
     reasons = []
-    if not details.timed_out and not passed:
+    if not passed:
         reasons.append(f"symmetry={score:.6g} > cutoff={threshold}")
-    if details.timed_out:
-        reasons.append(
-            f"symmetry calculation exceeded timeout={timeout_seconds:g}s; "
-            f"timeout_policy={timeout_policy}"
-        )
-    elif details.truncated:
-        reasons.append(
-            f"automorphism_limit={max_automorphisms} reached; score is a lower bound"
-        )
     return {
         "_mol_idx": mol_idx,
         "pass": passed,
         "symmetry_score": score,
         "symmetry_threshold": threshold,
-        "symmetry_automorphisms_examined": details.mappings_examined,
-        "symmetry_nonidentity_automorphisms": details.nonidentity_mappings,
-        "symmetry_truncated": details.truncated,
-        "symmetry_timed_out": details.timed_out,
-        "status": "ok" if passed and not details.truncated else "warning",
+        "status": "ok" if passed else "warning",
         "reason": "; ".join(reasons),
     }
 
@@ -1516,31 +1485,10 @@ def apply_symmetry(config, mols, smiles_model_name_mols=None):
     config_sf = load_config(config[CFG_STRUCT_FILTERS])
     n_jobs = resolve_n_jobs(config_sf, config)
     threshold = float(config_sf.get("symmetry_threshold", 0.8))
-    max_automorphisms = max(1, int(config_sf.get("symmetry_max_automorphisms", 10_000)))
-    timeout_seconds = max(0.0, float(config_sf.get("symmetry_timeout_seconds", 5.0)))
-    timeout_policy = str(config_sf.get("symmetry_timeout_policy", "pass")).lower()
-    if timeout_policy not in {"pass", "fail"}:
-        raise ValueError("symmetry_timeout_policy must be 'pass' or 'fail'")
-    logger.info(
-        "Symmetry workers: %d; max automorphisms: %d; timeout: %.3gs; timeout policy: %s",
-        n_jobs,
-        max_automorphisms,
-        timeout_seconds,
-        timeout_policy,
-    )
+    logger.info("Symmetry workers: %d; threshold: %g", n_jobs, threshold)
     rows = parallel_map(
         _compute_symmetry_row,
-        [
-            (
-                mol_idx,
-                mol,
-                threshold,
-                max_automorphisms,
-                timeout_seconds,
-                timeout_policy,
-            )
-            for mol_idx, mol in enumerate(mols)
-        ],
+        [(mol_idx, mol, threshold) for mol_idx, mol in enumerate(mols)],
         n_jobs,
         chunksize=1,
     )
