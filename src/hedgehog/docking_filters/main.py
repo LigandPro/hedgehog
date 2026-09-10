@@ -898,20 +898,23 @@ def docking_filters_main(
 
     # Filter 0: Search-box containment (fast)
     search_total = len(mols)
-    try:
-        if reporter is not None:
-            reporter.progress(0, search_total, message="DockingFilters: search_box")
-        sb_df = apply_search_box_filter(mols, base_folder, docking_config, sb_config)
-        results_df = results_df.merge(sb_df, on="mol_idx", how="left")
-        filters_applied.append("search_box")
-    except Exception as e:
-        logger.error("Search-box filter failed: %s", e)
+    if sb_config.get("enabled", True):
+        try:
+            if reporter is not None:
+                reporter.progress(0, search_total, message="DockingFilters: search_box")
+            sb_df = apply_search_box_filter(mols, base_folder, docking_config, sb_config)
+            results_df = results_df.merge(sb_df, on="mol_idx", how="left")
+            filters_applied.append("search_box")
+        except Exception as e:
+            logger.error("Search-box filter failed: %s", e)
+            results_df["pass_search_box"] = True
+        finally:
+            if reporter is not None:
+                reporter.progress(
+                    search_total, search_total, message="DockingFilters: search_box"
+                )
+    else:
         results_df["pass_search_box"] = True
-    finally:
-        if reporter is not None:
-            reporter.progress(
-                search_total, search_total, message="DockingFilters: search_box"
-            )
 
     # Optional optimization: under aggregation mode "all", if a pose fails search-box
     # containment it cannot pass the overall filter, so we can skip heavier checks.
@@ -955,8 +958,11 @@ def docking_filters_main(
     # Filter 2: Interactions
     if int_config.get("enabled", True):
 
-        def _run_interactions(mols_active, _progress_cb):
-            return apply_interaction_filter(mols_active, protein_pdb, int_config)
+        def _run_interactions(mols_active, progress_cb):
+            result = apply_interaction_filter(mols_active, protein_pdb, int_config)
+            if progress_cb is not None:
+                progress_cb(len(mols_active), len(mols_active))
+            return result
 
         results_df = _run_single_filter(
             filter_name="interactions",
