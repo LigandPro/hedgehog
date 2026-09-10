@@ -4,7 +4,6 @@ from pathlib import Path
 import pandas as pd
 
 from hedgehog._constants import CFG_DOCKING, KEY_FOLDER_TO_SAVE
-from hedgehog.alignment_runtime import alignment_stage_thresholds
 from hedgehog.configs.logger import load_config, logger
 from hedgehog.docking.aggregation import _collect_docking_stage_results
 from hedgehog.docking.binaries import _validate_optional_tool_path
@@ -57,18 +56,6 @@ def run(config, reporter=None):
     try:
         tools_list = _parse_tools_config(cfg)
         cfg = normalize_docking_config(cfg, docking_config_path, tools_list)
-        aligned_thresholds = alignment_stage_thresholds(
-            config,
-            CFG_DOCKING,
-            "docking",
-        )
-        score_thresholds = (
-            aligned_thresholds.get("score_thresholds")
-            if isinstance(aligned_thresholds, dict)
-            else None
-        )
-        if isinstance(score_thresholds, dict):
-            cfg["score_thresholds"] = score_thresholds
     except (DockingConfigError, ValueError) as exc:
         logger.error("%s", exc)
         return False
