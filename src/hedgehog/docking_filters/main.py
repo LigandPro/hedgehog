@@ -22,17 +22,15 @@ from hedgehog.utils.parallel import resolve_n_jobs
 
 from .utils import (
     _resolve_conformer_backend,
+    _resolve_existing_path,
     apply_conformer_deviation_filter,
     apply_interaction_filter,
-    apply_pose_quality_filter,
     apply_posebusters_fast_filter,
     apply_search_box_filter,
     apply_shepherd_score_filter,
     apply_symmetry_rmsd_filter,
     load_molecules_from_sdf,
 )
-
-apply_posecheck_fast_filter = apply_posebusters_fast_filter
 
 _INTERACTION_REPORT_FILES = (
     "interaction_events.csv",
@@ -53,32 +51,32 @@ _MOL_IDX_KEYS = (
 _INPUT_SMILES_KEYS = ("input_smiles", "source_smiles")
 
 
-def _project_root() -> Path:
-    # src/hedgehog/docking_filters/main.py -> project root
-    return Path(__file__).resolve().parent.parent.parent.parent
+def _resolve_filter_protein_pdb(
+    base_folder: Path,
+    docking_dir: Path,
+    filter_config: dict[str, Any],
+    docking_config: dict[str, Any],
+) -> Path | None:
+    """Resolve the receptor used by protein-dependent post-docking filters."""
+    explicit_receptor = filter_config.get("receptor_pdb")
+    if explicit_receptor:
+        return _resolve_existing_path(base_folder, explicit_receptor)
 
+    prepared_candidates = (
+        docking_dir / "_workdir" / "protein_prepared.pdb",
+        docking_dir / "protein_prepared.pdb",
+        docking_dir / "_workdir" / "receptor_gnina.pdb",
+    )
+    prepared_receptor = next(
+        (path for path in prepared_candidates if path.exists()), None
+    )
+    if prepared_receptor is not None:
+        return prepared_receptor.resolve()
 
-def _resolve_existing_path(base: Path, path: str | Path) -> Path:
-    """Resolve a possibly-relative path to an existing absolute path.
-
-    Important: repository configs typically use paths relative to project root,
-    while runtime artifacts are relative to the results folder.
-    """
-    p = Path(path)
-    if p.is_absolute():
-        return p
-
-    candidates = [
-        (base / p).resolve(),
-        (_project_root() / p).resolve(),
-        (Path.cwd() / p).resolve(),
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-
-    # Fall back to base-relative absolute path for better error messages
-    return (base / p).resolve()
+    docking_receptor = docking_config.get("receptor_pdb")
+    if docking_receptor:
+        return _resolve_existing_path(base_folder, docking_receptor)
+    return None
 
 
 def _get_first_prop_value(
@@ -157,6 +155,59 @@ def _collapse_to_single_pose(
     return selected_mols, collapsed_df
 
 
+def _restrict_to_admitted_molecules(
+    mols: list[Chem.Mol],
+    results_df: pd.DataFrame,
+    passed_csv: Path,
+) -> tuple[list[Chem.Mol], pd.DataFrame]:
+    """Keep only molecules accepted by the latest preceding pipeline stage.
+
+    ``docking_out.sdf`` intentionally stores every successfully generated tool
+    pose, including poses for molecules that later fail one or more configured
+    score thresholds. Post-docking filters must therefore use
+    ``05_docking/filtered_molecules.csv`` as their molecule-level admission
+    list instead of treating every pose in the raw SDF as accepted input.
+    """
+    if not passed_csv.exists():
+        return mols, results_df
+
+    passed_df = pd.read_csv(passed_csv)
+    if "mol_idx" not in passed_df.columns:
+        raise RuntimeError(
+            f"Admission CSV is missing required mol_idx column: {passed_csv}"
+        )
+
+    passed_ids = passed_df["mol_idx"].dropna().astype(str).str.strip()
+    allowed_ids = set(passed_ids.loc[passed_ids != ""])
+    source_ids = results_df["source_mol_idx"].fillna("").astype(str).str.strip()
+    keep_mask = source_ids.isin(allowed_ids)
+
+    present_ids = set(source_ids.loc[keep_mask])
+    missing_ids = allowed_ids - present_ids
+    if missing_ids:
+        missing_preview = ", ".join(sorted(missing_ids)[:5])
+        raise RuntimeError(
+            "Previously admitted molecules are missing from the pose SDF. "
+            f"Missing mol_idx values: {missing_preview}"
+        )
+
+    keep_positions = [i for i, keep in enumerate(keep_mask.tolist()) if keep]
+    restricted_mols = [mols[i] for i in keep_positions]
+    restricted_df = results_df.loc[keep_mask].copy().reset_index(drop=True)
+    restricted_df["mol_idx"] = range(len(restricted_df))
+    return restricted_mols, restricted_df
+
+
+def _save_pose_input_snapshot(mols: list[Chem.Mol], output_sdf: Path) -> None:
+    """Save the exact pose set admitted to a separate Stage 6 branch."""
+    writer = Chem.SDWriter(str(output_sdf))
+    try:
+        for mol in mols:
+            writer.write(mol)
+    finally:
+        writer.close()
+
+
 def _run_single_filter(
     *,
     filter_name: str,
@@ -168,6 +219,7 @@ def _run_single_filter(
     filters_applied: list[str],
     pass_col: str,
     run_fn,
+    fail_on_error: bool = False,
 ) -> pd.DataFrame:
     """Run a single filter with standard progress/error/short-circuit handling.
 
@@ -183,8 +235,10 @@ def _run_single_filter(
         filters_applied: Accumulator list of successfully applied filter names.
         pass_col: Name of the boolean pass column (e.g. ``"pass_pose_quality"``).
         run_fn: Callable ``(mols_active, progress_cb) -> pd.DataFrame`` that runs the
-            actual filter logic.  Must return a DataFrame with ``mol_idx`` and
+            actual filter logic. Must return a DataFrame with ``mol_idx`` and
             ``pass_col``.
+        fail_on_error: Raise when the filter backend fails instead of admitting
+            molecules without the configured check.
 
     Returns:
         Updated ``results_df``.
@@ -206,6 +260,8 @@ def _run_single_filter(
             filters_applied.append(filter_name)
         except Exception as e:
             logger.error("%s filter failed: %s", filter_name, e)
+            if fail_on_error:
+                raise RuntimeError(f"{filter_name} filter failed") from e
             results_df[pass_col] = True
     else:
         results_df[pass_col] = False
@@ -549,7 +605,16 @@ def _write_interaction_reporting_artifacts(
         json.dump(meta, f, indent=2, sort_keys=True)
 
 
-def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame | None:
+def docking_filters_main(
+    config: dict[str, Any],
+    reporter=None,
+    *,
+    input_sdf_override: str | Path | None = None,
+    output_dir_override: str | Path | None = None,
+    restrict_to_docking_passes: bool = False,
+    admission_csv_override: str | Path | None = None,
+    pose_source: str | None = None,
+) -> pd.DataFrame | None:
     """
     Main entry point for docking filters stage.
 
@@ -560,6 +625,12 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             - config_docking_filters: Filter settings
             - folder_to_save: Output directory path
             - config_docking: Docking configuration (for receptor path)
+        reporter: Optional stage progress reporter.
+        input_sdf_override: Optional pose SDF used instead of configured/docking output.
+        output_dir_override: Optional separate directory for branch artifacts.
+        restrict_to_docking_passes: Restrict poses to Stage 5 accepted molecule IDs.
+        admission_csv_override: Restrict poses to molecule IDs in this stage output.
+        pose_source: Coordinate provenance stored in pose-level output artifacts.
 
     Returns:
         DataFrame with filtered molecules and metrics, or None if no molecules pass
@@ -591,14 +662,23 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             sub["n_jobs"] = n_jobs
 
     # Determine paths
-    output_dir = base_folder / "stages" / "06_docking_filters"
+    output_dir = (
+        Path(output_dir_override).resolve()
+        if output_dir_override is not None
+        else base_folder / "stages" / "06_docking_filters"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     docking_dir = base_folder / "stages" / "05_docking"
 
     # Find input SDF
-    input_sdf = filter_config.get("input_sdf")
-    if input_sdf is None:
+    input_sdf = (
+        input_sdf_override
+        if input_sdf_override is not None
+        else filter_config.get("input_sdf")
+    )
+    uses_default_docking_output = input_sdf is None
+    if uses_default_docking_output:
         # Try to find docking output from known locations
         candidates = [
             docking_dir / "docking_out.sdf",
@@ -635,18 +715,12 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
 
     protein_pdb: Path | None = None
     if needs_protein:
-        protein_pdb_raw = filter_config.get("receptor_pdb") or docking_config.get(
-            "receptor_pdb"
+        protein_pdb = _resolve_filter_protein_pdb(
+            base_folder,
+            docking_dir,
+            filter_config,
+            docking_config,
         )
-        if protein_pdb_raw:
-            protein_pdb = _resolve_existing_path(base_folder, protein_pdb_raw)
-        else:
-            prepared_pdb = docking_dir / "_workdir" / "protein_prepared.pdb"
-            if not prepared_pdb.exists():
-                # Legacy fallback
-                prepared_pdb = docking_dir / "protein_prepared.pdb"
-            if prepared_pdb.exists():
-                protein_pdb = prepared_pdb
 
         if protein_pdb is None or not protein_pdb.exists():
             logger.error("No protein PDB found (required by enabled filters)")
@@ -749,6 +823,43 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         }
     )
 
+    resolved_pose_source = pose_source or (
+        "docked" if uses_default_docking_output else "input"
+    )
+    results_df["pose_source"] = resolved_pose_source
+    for mol in mols:
+        mol.SetProp("pose_source", resolved_pose_source)
+
+    admission_csv = None
+    if admission_csv_override is not None:
+        admission_csv = _resolve_existing_path(base_folder, admission_csv_override)
+    elif uses_default_docking_output or restrict_to_docking_passes:
+        admission_csv = docking_dir / "filtered_molecules.csv"
+
+    if admission_csv is not None:
+        raw_pose_count = len(mols)
+        mols, results_df = _restrict_to_admitted_molecules(
+            mols,
+            results_df,
+            admission_csv,
+        )
+        if not mols:
+            logger.warning(
+                "No poses remain after applying docking score-stage admission"
+            )
+            return None
+        if len(mols) != raw_pose_count:
+            logger.info(
+                "Restricted raw docking poses to score-passed molecules: %d -> %d poses",
+                raw_pose_count,
+                len(mols),
+            )
+
+        if input_sdf_override is not None:
+            admitted_sdf = output_dir / "input_poses.sdf"
+            _save_pose_input_snapshot(mols, admitted_sdf)
+            logger.info("Saved %d admitted source poses to %s", len(mols), admitted_sdf)
+
     initial_pose_count = len(mols)
     mols, results_df = _collapse_to_single_pose(mols, results_df)
     if not mols:
@@ -811,16 +922,12 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             results_df["pass_search_box"] == True, "mol_idx"  # noqa: E712
         ].tolist()
 
-    # Filter 1: Pose Quality -- dispatch by backend
+    # Filter 1: Pose quality
     if pq_config.get("enabled", True):
-        pq_backend = pq_config.get("backend", "posebusters_fast")
-
         def _run_pose_quality(mols_active, progress_cb):
-            if pq_backend == "posebusters_fast":
-                return apply_posebusters_fast_filter(
-                    mols_active, protein_pdb, pq_config, progress_cb=progress_cb
-                )
-            return apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
+            return apply_posebusters_fast_filter(
+                mols_active, protein_pdb, pq_config, progress_cb=progress_cb
+            )
 
         results_df = _run_single_filter(
             filter_name="pose_quality",
@@ -861,6 +968,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
             filters_applied=filters_applied,
             pass_col="pass_interactions",
             run_fn=_run_interactions,
+            fail_on_error=True,
         )
 
     # Filter 3: Shepherd-Score
@@ -967,7 +1075,7 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     filtered_path = output_dir / "filtered_molecules.csv"
 
     if filtered_df.empty:
-        pd.DataFrame(columns=["smiles", "model_name", "mol_idx"]).to_csv(
+        pd.DataFrame(columns=["smiles", "model_name", "mol_idx", "pose_source"]).to_csv(
             filtered_path, index=False
         )
         logger.info("Saved 0 filtered molecules to %s", filtered_path)
@@ -978,10 +1086,14 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         # and fail fast if identity was lost instead of regenerating from 3D poses.
         ligands_path = docking_dir / "ligands.csv"
         canonical_map = build_canonical_mol_idx_map(ligands_path)
-        smiles_lookup = build_smiles_lookup(ligands_path) if ligands_path.exists() else {}
+        smiles_lookup = (
+            build_smiles_lookup(ligands_path) if ligands_path.exists() else {}
+        )
 
-        canonical_ids = filtered_df["source_mol_idx"].astype(str).map(
-            lambda dock_id: resolve_canonical_mol_idx(dock_id, canonical_map)
+        canonical_ids = (
+            filtered_df["source_mol_idx"]
+            .astype(str)
+            .map(lambda dock_id: resolve_canonical_mol_idx(dock_id, canonical_map))
         )
         resolved_smiles = canonical_ids.map(smiles_lookup).fillna("")
         unresolved_mask = resolved_smiles.eq("")
@@ -1023,7 +1135,9 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
         if aff_col in filtered_df.columns:
             filtered_df = filtered_df.sort_values(aff_col, ascending=True)
         dedup_df = filtered_df.drop_duplicates(subset=["mol_idx"], keep="first")
-        dedup_df[["smiles", "model_name", "mol_idx"]].to_csv(filtered_path, index=False)
+        dedup_df[["smiles", "model_name", "mol_idx", "pose_source"]].to_csv(
+            filtered_path, index=False
+        )
         logger.info(
             "Saved %d unique molecules to %s (from %d poses)",
             len(dedup_df),
@@ -1043,9 +1157,8 @@ def docking_filters_main(config: dict[str, Any], reporter=None) -> pd.DataFrame 
     # Save failed molecules if configured
     if filter_config.get("aggregation", {}).get("save_failed", False):
         failed_df = results_df[~results_df["pass"]]
-        if not failed_df.empty:
-            failed_path = output_dir / "failed_molecules.csv"
-            failed_df.to_csv(failed_path, index=False)
-            logger.info("Saved %d failed molecules to %s", len(failed_df), failed_path)
+        failed_path = output_dir / "failed_molecules.csv"
+        failed_df.to_csv(failed_path, index=False)
+        logger.info("Saved %d failed molecules to %s", len(failed_df), failed_path)
 
     return results_df
