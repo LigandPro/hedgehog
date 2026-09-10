@@ -415,26 +415,6 @@ def build_stage_audit_notebook() -> dict[str, Any]:
                         }
                     )
 
-                pose_quality = DOCKING_FILTERS_CONFIG.get("pose_quality", {})
-                if "max_clashes" in pose_quality:
-                    rows.append(
-                        {
-                            "metric": "clashes",
-                            "bound": "max",
-                            "value": pose_quality["max_clashes"],
-                            "config_key": "pose_quality.max_clashes",
-                        }
-                    )
-                if "max_strain_energy" in pose_quality:
-                    rows.append(
-                        {
-                            "metric": "strain_energy",
-                            "bound": "max",
-                            "value": pose_quality["max_strain_energy"],
-                            "config_key": "pose_quality.max_strain_energy",
-                        }
-                    )
-
                 interactions = DOCKING_FILTERS_CONFIG.get("interactions", {})
                 if "min_hbonds" in interactions:
                     rows.append(

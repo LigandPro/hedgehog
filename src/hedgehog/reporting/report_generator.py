@@ -23,10 +23,6 @@ from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
 from hedgehog.reporting.model_scope import (
     filter_df_by_model,
-    load_input_molecules_df,
-    load_model_index_map,
-)
-from hedgehog.reporting.model_scope import (
     get_available_models as get_generative_models,
 )
 from hedgehog.reporting.stage_audit_notebook import write_stage_audit_notebook
@@ -805,14 +801,8 @@ class ReportGenerator:
             df = filter_df_by_model(df, model_name, self.base_path)
         return len(df)
 
-    def _load_model_index_map(self) -> dict[str, int]:
-        return load_model_index_map(self.base_path)
-
     def _get_available_models(self) -> list[str]:
         return get_generative_models(self.base_path)
-
-    def _load_input_molecules_df(self) -> pd.DataFrame | None:
-        return load_input_molecules_df(self.base_path)
 
     def _filter_df_by_model(self, df: pd.DataFrame, model: str) -> pd.DataFrame:
         filtered = filter_df_by_model(df, model, self.base_path)
@@ -3156,8 +3146,6 @@ class ReportGenerator:
 
         # Numeric metric distributions for histograms
         metric_columns = [
-            "clashes",
-            "strain_energy",
             "min_conformer_rmsd",
             "shape_score",
             "n_hbonds",
@@ -3176,12 +3164,6 @@ class ReportGenerator:
         # Extract thresholds from config for display
         thresholds = {}
         if isinstance(dock_filt_config, dict):
-            pq = dock_filt_config.get("pose_quality", {})
-            if isinstance(pq, dict):
-                if pq.get("max_clashes") is not None:
-                    thresholds["clashes"] = {"max": pq["max_clashes"]}
-                if pq.get("max_strain_energy") is not None:
-                    thresholds["strain_energy"] = {"max": pq["max_strain_energy"]}
             cd = dock_filt_config.get("conformer_deviation", {})
             if isinstance(cd, dict):
                 if cd.get("max_rmsd_to_conformer") is not None:
@@ -3228,7 +3210,9 @@ class ReportGenerator:
             Dictionary with 'by_stage', 'stages', 'metrics' keys, or empty dict.
         """
         if any(
-            getattr(stage, "enabled", False) and not getattr(stage, "completed", False)
+            getattr(stage, "enabled", False)
+            and not getattr(stage, "completed", False)
+            and not getattr(stage, "skipped", False)
             for stage in self.stages
         ):
             logger.warning(
