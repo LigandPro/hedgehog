@@ -38,7 +38,6 @@ def _build_single_core_config(
 
     descriptors_cfg = _load_yaml(default_cfg_dir / "config_descriptors.yml")
     descriptors_cfg["n_jobs"] = 1
-    descriptors_cfg["batch_size"] = 1
     structural_constraints = descriptors_cfg.get("structural_constraints")
     if isinstance(structural_constraints, dict):
         structural_constraints["enabled"] = False
@@ -46,22 +45,24 @@ def _build_single_core_config(
     _dump_yaml(descriptors_cfg_path, descriptors_cfg)
 
     struct_filters_cfg = _load_yaml(default_cfg_dir / "config_structFilters.yml")
-    struct_filters_cfg["parse_input_n_jobs"] = 1
-    struct_filters_cfg["common_alerts_auto_n_jobs"] = False
-    struct_filters_cfg["common_alerts_small_input_n_jobs"] = 1
-    struct_filters_cfg["common_alerts_large_input_n_jobs"] = 1
+    struct_filters_cfg["run"] = True
+    struct_filters_cfg["n_jobs"] = 1
     struct_filters_cfg_path = cfg_dir / "config_structFilters.yml"
     _dump_yaml(struct_filters_cfg_path, struct_filters_cfg)
 
     synthesis_cfg = _load_yaml(default_cfg_dir / "config_synthesis.yml")
+    synthesis_cfg["run"] = True
     synthesis_cfg["n_jobs"] = 1
     synthesis_cfg_path = cfg_dir / "config_synthesis.yml"
     _dump_yaml(synthesis_cfg_path, synthesis_cfg)
 
     docking_cfg = _load_yaml(default_cfg_dir / "config_docking.yml")
+    docking_cfg["run"] = True
     docking_cfg["tools"] = "gnina"
+    docking_cfg["score_thresholds"] = {}
     docking_cfg["run_in_background"] = False
     docking_cfg["gnina_parallel_jobs"] = 1
+    docking_cfg["gnina_per_process_cpu"] = 1
     docking_cfg["receptor_pdb"] = str(
         repo_root / "src" / "hedgehog" / "configs" / "examples" / "7EW9_apo.pdb"
     )
@@ -76,6 +77,15 @@ def _build_single_core_config(
     docking_filters_cfg = _load_yaml(default_cfg_dir / "config_docking_filters.yml")
     docking_filters_cfg["n_jobs"] = 1
     docking_filters_cfg_path = cfg_dir / "config_docking_filters.yml"
+    docking_filters_cfg["run"] = True
+    for filter_name in (
+        "search_box",
+        "pose_quality",
+        "interactions",
+        "shepherd_score",
+        "conformer_deviation",
+    ):
+        docking_filters_cfg[filter_name]["enabled"] = False
     _dump_yaml(docking_filters_cfg_path, docking_filters_cfg)
 
     moleval_cfg = _load_yaml(default_cfg_dir / "config_moleval.yml")
@@ -173,19 +183,22 @@ def test_cli_full_pipeline_for_single_molecule_single_core(tmp_path: Path):
         f"stderr:\n{proc.stderr[-4000:]}"
     )
 
-    run_logs = sorted(output_dir.glob("run_*.log"))
+    run_dirs = sorted(tmp_path.glob(f"{output_dir.name}_*"))
+    assert len(run_dirs) == 1, "Expected one numbered results folder"
+    actual_output_dir = run_dirs[0]
+    run_logs = sorted(actual_output_dir.glob("run_*.log"))
     assert run_logs, "Expected run log to be created"
 
     log_text = run_logs[-1].read_text(encoding="utf-8", errors="ignore")
     assert SUCCESS_MARKER in log_text
     expected_stage_lines = [
-        "mol_prep: \u2713 COMPLETED",
-        "descriptors: \u2713 COMPLETED",
-        "struct_filters: \u2713 COMPLETED",
-        "synthesis: \u2713 COMPLETED",
-        "docking: \u2713 COMPLETED",
-        "docking_filters: \u2713 COMPLETED",
-        "final_descriptors: \u2713 COMPLETED",
+        "mol_prep: COMPLETED",
+        "descriptors: COMPLETED",
+        "struct_filters: COMPLETED",
+        "synthesis: COMPLETED",
+        "docking: COMPLETED",
+        "docking_filters: COMPLETED",
+        "final_descriptors: COMPLETED",
     ]
     for expected_line in expected_stage_lines:
         assert expected_line in log_text
@@ -197,9 +210,9 @@ def test_cli_full_pipeline_for_single_molecule_single_core(tmp_path: Path):
     assert "Descriptors workers: 1" in log_text
     assert "cpu_per_process=1, parallel_jobs=1" in log_text
 
-    final_csv = output_dir / "output" / "final_molecules.csv"
+    final_csv = actual_output_dir / "output" / "final_molecules.csv"
     assert final_csv.exists(), "Expected final_molecules.csv to exist"
     final_df = pd.read_csv(final_csv)
     assert len(final_df) == 1
 
-    assert not (output_dir / ".RUN_INCOMPLETE").exists()
+    assert not (actual_output_dir / ".RUN_INCOMPLETE").exists()

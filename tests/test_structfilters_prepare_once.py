@@ -28,11 +28,9 @@ def test_prepare_payload_called_once_for_multiple_filters(tmp_path, monkeypatch)
             "filter_data": False,
             "calculate_bredt": True,
             "calculate_halogenicity": True,
-            "parse_input_n_jobs": 1,
             "write_per_filter_outputs": False,
             "generate_plots": False,
             "generate_failure_analysis": False,
-            "combine_in_memory": True,
         },
     )
 
@@ -54,8 +52,8 @@ def test_prepare_payload_called_once_for_multiple_filters(tmp_path, monkeypatch)
         "base_df": input_df.copy(),
     }
 
-    def fake_prepare(df, subsample, parse_n_jobs, progress_cb=None):
-        del subsample, parse_n_jobs, progress_cb
+    def fake_prepare(df, subsample, n_jobs, progress_cb=None):
+        del subsample, n_jobs, progress_cb
         call_counts["prepare"] += 1
         assert len(df) == 3
         return prepared_payload

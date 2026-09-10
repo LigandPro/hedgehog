@@ -297,7 +297,7 @@ def test_struct_filters_large_computes_without_filtering_outputs(tmp_path, monke
             "large_dataset_output_format": "csv.gz",
         },
         "stages/03_structural_filters_post",
-        {"calculate_dummy": False, "parse_input_n_jobs": 1},
+        {"calculate_dummy": False},
         out_dir,
     )
 
@@ -307,6 +307,9 @@ def test_struct_filters_large_computes_without_filtering_outputs(tmp_path, monke
         "LP-0001-00002",
     ]
     assert (out_dir / "intermediate" / "dummy").exists()
+    liability = pd.read_csv(out_dir / "structural_liability_profile.csv")
+    assert liability["dummy__pass"].tolist() == [False, True]
+    assert liability["stage3_hard_pass"].tolist() == [False, True]
 
 
 def test_struct_filters_large_records_filter_failures_without_dropping(
@@ -353,7 +356,7 @@ def test_struct_filters_large_records_filter_failures_without_dropping(
             "large_dataset_output_format": "csv.gz",
         },
         "stages/03_structural_filters_post",
-        {"calculate_unavailable": False, "parse_input_n_jobs": 1},
+        {"calculate_unavailable": False},
         out_dir,
     )
 
@@ -423,9 +426,7 @@ def test_synthesis_large_skips_retrosynthesis_and_keeps_score_failures(
     assert not (out_dir / "retrosynthesis_results.json").exists()
 
 
-def test_descriptors_large_writes_molecule_tables_at_stage_root(
-    tmp_path, monkeypatch
-):
+def test_descriptors_large_writes_molecule_tables_at_stage_root(tmp_path, monkeypatch):
     input_df = pd.DataFrame(
         {
             "smiles": ["CCO", "CCCCCCCC"],
@@ -472,3 +473,81 @@ def test_descriptors_large_writes_molecule_tables_at_stage_root(
     assert (stage_dir / "filtered" / "descriptors_passed.csv").exists()
     assert (stage_dir / "filtered" / "descriptors_failed.csv").exists()
     assert (stage_dir / "filtered" / "pass_flags.csv").exists()
+
+def test_struct_filters_large_splits_total_and_undefined_stereo(
+    tmp_path, monkeypatch
+):
+    input_df = pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCN"],
+            "model_name": ["model_a", "model_a"],
+            "mol_idx": ["LP-0001-00001", "LP-0001-00002"],
+        }
+    )
+    monkeypatch.setattr(
+        struct_large,
+        "_struct_input_chunks",
+        lambda *_args, **_kwargs: iter([input_df]),
+    )
+    monkeypatch.setattr(
+        struct_large,
+        "prepare_structfilters_input",
+        lambda *_args, **_kwargs: {"mols": [object(), object()]},
+    )
+    monkeypatch.setattr(
+        struct_large,
+        "filter_function_applier",
+        lambda _name: lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        struct_large,
+        "process_prepared_payload",
+        lambda *_args, **_kwargs: pd.DataFrame({"raw": [1, 2]}),
+    )
+
+    def _fake_basic_stats(*_args, **_kwargs):
+        extended = input_df.copy()
+        extended["pass"] = [False, True]
+        extended["n_stereo_centers"] = [5, 3]
+        extended["n_undefined_stereo_centers"] = [0, 3]
+        extended["stereo_max_centers"] = 4
+        extended["stereo_max_undefined"] = 2
+        extended["undefined_stereo_pass"] = [True, False]
+        extended["undefined_stereo_reason"] = [
+            "",
+            "undefined_stereocenters=3 > maximum=2",
+        ]
+        return pd.DataFrame(), extended
+
+    monkeypatch.setattr(struct_large, "get_basic_stats", _fake_basic_stats)
+
+    out_dir = tmp_path / "stages" / "03_structural_filters_post"
+    struct_large.run_large(
+        {
+            "folder_to_save": str(tmp_path),
+            "generated_mols_path": "unused.csv",
+            "large_dataset_filter_data": True,
+            "large_dataset_output_format": "csv.gz",
+        },
+        "stages/03_structural_filters_post",
+        {
+            "calculate_stereo_center": True,
+            "filter_stereo_center": False,
+            "filter_undefined_stereo_center": True,
+            "write_structural_liability_profile": True,
+        },
+        out_dir,
+    )
+
+    filtered = pd.read_csv(out_dir / "filtered_molecules.csv")
+    assert filtered["mol_idx"].tolist() == ["LP-0001-00001"]
+    liability = pd.read_csv(out_dir / "structural_liability_profile.csv")
+    assert liability["stage3_hard_pass"].tolist() == [True, False]
+    assert liability["hard_failed_filters"].fillna("").tolist() == [
+        "",
+        "undefined_stereo_center",
+    ]
+    assert liability["diagnostic_failed_filters"].fillna("").tolist() == [
+        "stereo_center",
+        "",
+    ]

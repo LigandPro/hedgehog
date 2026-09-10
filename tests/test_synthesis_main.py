@@ -75,7 +75,9 @@ def test_main_raises_for_unsupported_python_autoinstall(monkeypatch, tmp_path: P
         synthesis_main.main(config)
 
 
-def test_main_skips_score_filters_when_disabled_explicitly(monkeypatch, tmp_path: Path):
+def test_main_with_no_thresholds_keeps_all_scored_molecules(
+    monkeypatch, tmp_path: Path
+):
     output_dir = tmp_path / "results"
     input_csv = tmp_path / "input.csv"
     input_csv.write_text(
@@ -84,12 +86,7 @@ def test_main_skips_score_filters_when_disabled_explicitly(monkeypatch, tmp_path
     )
     synthesis_config = tmp_path / "synthesis.yml"
     synthesis_config.write_text(
-        "run: true\n"
-        "enabled_scores: [sa]\n"
-        "apply_score_filters: false\n"
-        "run_retrosynthesis: false\n"
-        "sa_score_min: 9\n"
-        "sa_score_max: 10\n",
+        "run: true\nenabled_scores: [sa]\nrun_retrosynthesis: false\n",
         encoding="utf-8",
     )
 
@@ -103,12 +100,6 @@ def test_main_skips_score_filters_when_disabled_explicitly(monkeypatch, tmp_path
         "calculate_synthesis_scores",
         lambda input_df, *_args, **_kwargs: input_df.assign(sa_score=[2.0, 3.0]),
     )
-    monkeypatch.setattr(
-        synthesis_main,
-        "apply_synthesis_score_filters",
-        lambda *_args, **_kwargs: pytest.fail("score filters must not be called"),
-    )
-
     synthesis_main.main(
         {
             "folder_to_save": str(output_dir),

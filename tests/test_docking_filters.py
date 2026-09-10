@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -93,11 +94,11 @@ def _write_minimal_docking_filters_cfg(path: Path, *, save_metrics: bool) -> Non
 
 
 class TestPosebustersFastFilter:
-    """Tests for apply_posecheck_fast_filter."""
+    """Tests for apply_posebusters_fast_filter."""
 
     def test_basic_returns_correct_schema(self, tmp_path):
         """Filter should return DataFrame with all expected columns."""
-        from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
+        from hedgehog.docking_filters.utils import apply_posebusters_fast_filter
 
         mol = _mol_with_3d(SMILES_ETHANOL)
         conf = mol.GetConformer()
@@ -114,7 +115,7 @@ class TestPosebustersFastFilter:
             "max_distance": 5.0,
             "n_jobs": 1,
         }
-        df = apply_posecheck_fast_filter([mol], pdb_path, config)
+        df = apply_posebusters_fast_filter([mol], pdb_path, config)
 
         assert len(df) == 1
         expected_cols = {
@@ -131,7 +132,7 @@ class TestPosebustersFastFilter:
 
     def test_too_far_away_fails(self, tmp_path):
         """A molecule placed far from the protein should fail not_too_far_away."""
-        from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
+        from hedgehog.docking_filters.utils import apply_posebusters_fast_filter
 
         mol = _mol_with_3d(SMILES_ETHANOL)
         # Place protein atoms very far away
@@ -142,7 +143,7 @@ class TestPosebustersFastFilter:
             "max_distance": 5.0,
             "n_jobs": 1,
         }
-        df = apply_posecheck_fast_filter([mol], pdb_path, config)
+        df = apply_posebusters_fast_filter([mol], pdb_path, config)
         assert (
             df["not_too_far_away"].iloc[0] is False
             or not df["not_too_far_away"].iloc[0]
@@ -150,13 +151,13 @@ class TestPosebustersFastFilter:
 
     def test_none_mol_fails(self, tmp_path):
         """None molecules should fail gracefully."""
-        from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
+        from hedgehog.docking_filters.utils import apply_posebusters_fast_filter
 
         protein_coords = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]])
         pdb_path = _write_protein_pdb(tmp_path, protein_coords)
 
         config: dict[str, Any] = {"n_jobs": 1}
-        df = apply_posecheck_fast_filter([None], pdb_path, config)
+        df = apply_posebusters_fast_filter([None], pdb_path, config)
 
         assert len(df) == 1
         assert (
@@ -166,7 +167,7 @@ class TestPosebustersFastFilter:
 
     def test_multiple_molecules(self, tmp_path):
         """Should process multiple molecules and return correct length."""
-        from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
+        from hedgehog.docking_filters.utils import apply_posebusters_fast_filter
 
         mols = [
             _mol_with_3d(SMILES_ETHANOL),
@@ -180,21 +181,21 @@ class TestPosebustersFastFilter:
         pdb_path = _write_protein_pdb(tmp_path, protein_coords)
 
         config: dict[str, Any] = {"n_jobs": 1}
-        df = apply_posecheck_fast_filter(mols, pdb_path, config)
+        df = apply_posebusters_fast_filter(mols, pdb_path, config)
 
         assert len(df) == 3
         assert list(df["mol_idx"]) == [0, 1, 2]
 
     def test_bad_protein_pdb_returns_all_fail(self, tmp_path):
         """An unreadable protein PDB should mark all molecules as failed."""
-        from hedgehog.docking_filters.utils import apply_posecheck_fast_filter
+        from hedgehog.docking_filters.utils import apply_posebusters_fast_filter
 
         bad_pdb = tmp_path / "protein.pdb"
         bad_pdb.write_text("NOT A VALID PDB")
 
         mol = _mol_with_3d(SMILES_ETHANOL)
         config: dict[str, Any] = {"n_jobs": 1}
-        df = apply_posecheck_fast_filter([mol], bad_pdb, config)
+        df = apply_posebusters_fast_filter([mol], bad_pdb, config)
 
         assert len(df) == 1
         assert not df["pass_pose_quality"].iloc[0]
@@ -348,67 +349,6 @@ class TestSymmetryRmsdFilter:
 
 class TestBackendDispatch:
     """Tests that main.py dispatches to the correct backend."""
-
-    def test_pose_quality_dispatch_posecheck_fast(self, tmp_path):
-        """backend=posecheck_fast should call apply_posecheck_fast_filter."""
-        with (
-            patch(
-                "hedgehog.docking_filters.main.apply_posecheck_fast_filter"
-            ) as mock_pb,
-            patch("hedgehog.docking_filters.main.apply_pose_quality_filter") as mock_pc,
-        ):
-            mock_pb.return_value = pd.DataFrame(
-                {"mol_idx": [0], "pass_pose_quality": [True]}
-            )
-            mock_pc.return_value = pd.DataFrame(
-                {"mol_idx": [0], "pass_pose_quality": [True]}
-            )
-
-            # Simulate the dispatch logic from main.py
-            pq_config: dict[str, Any] = {"enabled": True, "backend": "posecheck_fast"}
-            mols_active = [_mol_with_3d(SMILES_ETHANOL)]
-            protein_pdb = tmp_path / "protein.pdb"
-
-            pq_backend = pq_config.get("backend", "posecheck_fast")
-            if pq_backend == "posecheck_fast":
-                apply_posecheck_fast_filter = mock_pb
-                apply_posecheck_fast_filter(mols_active, protein_pdb, pq_config)
-            else:
-                apply_pose_quality_filter = mock_pc
-                apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
-
-            mock_pb.assert_called_once()
-            mock_pc.assert_not_called()
-
-    def test_pose_quality_dispatch_posecheck(self, tmp_path):
-        """backend=posecheck should call apply_pose_quality_filter."""
-        with (
-            patch(
-                "hedgehog.docking_filters.main.apply_posecheck_fast_filter"
-            ) as mock_pb,
-            patch("hedgehog.docking_filters.main.apply_pose_quality_filter") as mock_pc,
-        ):
-            mock_pb.return_value = pd.DataFrame(
-                {"mol_idx": [0], "pass_pose_quality": [True]}
-            )
-            mock_pc.return_value = pd.DataFrame(
-                {"mol_idx": [0], "pass_pose_quality": [True]}
-            )
-
-            pq_config: dict[str, Any] = {"enabled": True, "backend": "posecheck"}
-            mols_active = [_mol_with_3d(SMILES_ETHANOL)]
-            protein_pdb = tmp_path / "protein.pdb"
-
-            pq_backend = pq_config.get("backend", "posecheck_fast")
-            if pq_backend == "posecheck_fast":
-                apply_posecheck_fast_filter = mock_pb
-                apply_posecheck_fast_filter(mols_active, protein_pdb, pq_config)
-            else:
-                apply_pose_quality_filter = mock_pc
-                apply_pose_quality_filter(mols_active, protein_pdb, pq_config)
-
-            mock_pc.assert_called_once()
-            mock_pb.assert_not_called()
 
     def test_conformer_dispatch_symmetry_rmsd(self):
         """backend=symmetry_rmsd should call apply_symmetry_rmsd_filter."""
@@ -687,6 +627,125 @@ class TestShepherdBackends:
         assert bool(df["pass_shepherd_score"].iloc[0]) is True
         assert pd.isna(df["shape_score"].iloc[0])
 
+    def test_align_before_scoring_true_moves_coords_before_scorer(
+        self, monkeypatch
+    ) -> None:
+        from hedgehog.docking_filters.utils import apply_shepherd_score_filter
+
+        ref = _mol_with_3d(SMILES_ETHANOL)
+        mol = Chem.Mol(ref)
+        conf = mol.GetConformer()
+        for i in range(mol.GetNumAtoms()):
+            pos = conf.GetAtomPosition(i)
+            conf.SetAtomPosition(i, (pos.x + 10.0, pos.y, pos.z))
+        translated = np.array(mol.GetConformer().GetPositions())
+        ref_coords = np.array(ref.GetConformer().GetPositions())
+        seen: dict[str, np.ndarray] = {}
+
+        def _capture(mols, _reference_mol, _config, progress_cb=None):
+            seen["coords"] = np.array(mols[0].GetConformer().GetPositions())
+            return pd.DataFrame(
+                {
+                    "mol_idx": [0],
+                    "shape_score": [1.0],
+                    "pass_shepherd_score": [True],
+                }
+            )
+
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.utils._apply_shepherd_score_filter_worker",
+            _capture,
+        )
+        apply_shepherd_score_filter(
+            [mol],
+            ref,
+            {"backend": "worker", "align_before_scoring": True},
+        )
+
+        scored = seen["coords"]
+        assert np.linalg.norm(translated.mean(axis=0) - ref_coords.mean(axis=0)) > 5.0
+        assert np.linalg.norm(scored.mean(axis=0) - ref_coords.mean(axis=0)) < 1.0
+
+    def test_align_before_scoring_false_keeps_unaligned_coords(
+        self, monkeypatch
+    ) -> None:
+        from hedgehog.docking_filters.utils import apply_shepherd_score_filter
+
+        ref = _mol_with_3d(SMILES_ETHANOL)
+        mol = Chem.Mol(ref)
+        conf = mol.GetConformer()
+        for i in range(mol.GetNumAtoms()):
+            pos = conf.GetAtomPosition(i)
+            conf.SetAtomPosition(i, (pos.x + 10.0, pos.y, pos.z))
+        translated = np.array(mol.GetConformer().GetPositions())
+        seen: dict[str, np.ndarray] = {}
+
+        def _capture(mols, _reference_mol, _config, progress_cb=None):
+            seen["coords"] = np.array(mols[0].GetConformer().GetPositions())
+            return pd.DataFrame(
+                {
+                    "mol_idx": [0],
+                    "shape_score": [1.0],
+                    "pass_shepherd_score": [True],
+                }
+            )
+
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.utils._apply_shepherd_score_filter_worker",
+            _capture,
+        )
+        apply_shepherd_score_filter(
+            [mol],
+            ref,
+            {"backend": "worker", "align_before_scoring": False},
+        )
+
+        np.testing.assert_allclose(seen["coords"], translated, atol=1e-6)
+
+
+class TestPostDockingSafety:
+    """Safety checks at the docking to post-docking boundary."""
+
+    def test_prefers_sanitized_docking_receptor_over_raw_fallback(self, tmp_path):
+        from hedgehog.docking_filters.main import _resolve_filter_protein_pdb
+
+        docking_dir = tmp_path / "stages" / "05_docking"
+        workdir = docking_dir / "_workdir"
+        workdir.mkdir(parents=True)
+        raw_receptor = tmp_path / "raw.pdb"
+        raw_receptor.write_text("RAW")
+        sanitized_receptor = workdir / "receptor_gnina.pdb"
+        sanitized_receptor.write_text("SANITIZED")
+
+        resolved = _resolve_filter_protein_pdb(
+            tmp_path,
+            docking_dir,
+            {"receptor_pdb": None},
+            {"receptor_pdb": str(raw_receptor)},
+        )
+
+        assert resolved == sanitized_receptor.resolve()
+
+    def test_required_filter_backend_error_is_fail_closed(self):
+        from hedgehog.docking_filters.main import _run_single_filter
+
+        def fail_backend(_mols, _progress):
+            raise ValueError("backend broke")
+
+        with pytest.raises(RuntimeError, match="interactions filter failed"):
+            _run_single_filter(
+                filter_name="interactions",
+                reporter=None,
+                step_progress_fn=lambda *_: None,
+                mols=[Chem.MolFromSmiles("CCO")],
+                active_pose_indices=[0],
+                results_df=pd.DataFrame({"mol_idx": [0]}),
+                filters_applied=[],
+                pass_col="pass_interactions",
+                run_fn=fail_backend,
+                fail_on_error=True,
+            )
+
 
 class TestSinglePoseCollapse:
     """Tests for pre-filter single-pose collapse helper."""
@@ -720,6 +779,55 @@ class TestSinglePoseCollapse:
 
 class TestDockingFiltersIdentityRegression:
     """Regression tests for identity/SMILES preservation in docking filters."""
+
+    def test_default_docking_output_excludes_score_failed_molecules(self, tmp_path):
+        """Raw poses must not re-admit molecules rejected by docking scores."""
+        from hedgehog.docking_filters.main import docking_filters_main
+
+        base = tmp_path
+        docking_dir = base / "stages" / "05_docking"
+        docking_dir.mkdir(parents=True)
+
+        ligands_df = pd.DataFrame(
+            {
+                "smiles": ["CCO", "CCN"],
+                "model_name": ["model-a", "model-a"],
+                "mol_idx": ["passed", "score-failed"],
+            }
+        )
+        ligands_df.to_csv(docking_dir / "ligands.csv", index=False)
+        ligands_df.iloc[[0]].to_csv(docking_dir / "filtered_molecules.csv", index=False)
+
+        writer = Chem.SDWriter(str(docking_dir / "docking_out.sdf"))
+        for mol_idx, smiles, score in (
+            ("passed", "CCO", -9.0),
+            ("score-failed", "CCN", -5.0),
+        ):
+            mol = Chem.MolFromSmiles(smiles)
+            mol.SetProp("mol_idx", mol_idx)
+            mol.SetProp("source_mol_idx", mol_idx)
+            mol.SetProp("model_name", "model-a")
+            mol.SetProp("input_smiles", smiles)
+            mol.SetDoubleProp("minimizedAffinity", score)
+            writer.write(mol)
+        writer.close()
+
+        filter_cfg = base / "config_docking_filters.yml"
+        _write_minimal_docking_filters_cfg(filter_cfg, save_metrics=True)
+
+        result = docking_filters_main(
+            {
+                "folder_to_save": str(base),
+                "config_docking_filters": str(filter_cfg),
+            }
+        )
+
+        assert result is not None
+        assert result["source_mol_idx"].tolist() == ["passed"]
+        filtered_df = pd.read_csv(
+            base / "stages" / "06_docking_filters" / "filtered_molecules.csv"
+        )
+        assert filtered_df["mol_idx"].tolist() == ["passed"]
 
     def test_filtered_smiles_comes_from_ligands_csv_not_pose_smiles(self, tmp_path):
         """Output SMILES should be restored from ligands.csv by source molecule identity."""
@@ -1008,3 +1116,544 @@ class TestInteractionReportingArtifacts:
 
         for filename in _INTERACTION_REPORT_FILES:
             assert not (tmp_path / filename).exists()
+
+
+def test_input_sdf_uses_latest_stage_admission_and_records_pose_source(tmp_path):
+    """Input coordinates must keep only admitted IDs and record their provenance."""
+    from hedgehog.docking_filters.main import docking_filters_main
+
+    docking_dir = tmp_path / "stages" / "05_docking"
+    docking_dir.mkdir(parents=True)
+    ligands_df = pd.DataFrame(
+        {
+            "smiles": ["CCO", "CCN"],
+            "model_name": ["model-a", "model-a"],
+            "mol_idx": ["passed", "stage-failed"],
+        }
+    )
+    ligands_df.to_csv(docking_dir / "ligands.csv", index=False)
+    admission_csv = tmp_path / "previous_stage.csv"
+    ligands_df.iloc[[0]].to_csv(admission_csv, index=False)
+
+    input_sdf = tmp_path / "input" / "ligands.sdf"
+    input_sdf.parent.mkdir()
+    writer = Chem.SDWriter(str(input_sdf))
+    for mol_idx, smiles in (("passed", "CCO"), ("stage-failed", "CCN")):
+        mol = _mol_with_3d(smiles)
+        mol.SetProp("_Name", mol_idx)
+        mol.SetProp("mol_idx", mol_idx)
+        mol.SetProp("model_name", "model-a")
+        mol.SetProp("input_smiles", smiles)
+        writer.write(mol)
+    writer.close()
+
+    filter_cfg = tmp_path / "config_docking_filters.yml"
+    _write_minimal_docking_filters_cfg(filter_cfg, save_metrics=True)
+    output_dir = tmp_path / "stages" / "06_docking_filters"
+
+    result = docking_filters_main(
+        {
+            "folder_to_save": str(tmp_path),
+            "config_docking_filters": str(filter_cfg),
+        },
+        input_sdf_override=input_sdf,
+        output_dir_override=output_dir,
+        admission_csv_override=admission_csv,
+        pose_source="input",
+    )
+
+    assert result is not None
+    assert result["source_mol_idx"].tolist() == ["passed"]
+    assert result["pose_source"].tolist() == ["input"]
+    metrics = pd.read_csv(output_dir / "metrics.csv")
+    filtered = pd.read_csv(output_dir / "filtered_molecules.csv")
+    assert metrics["source_mol_idx"].tolist() == ["passed"]
+    assert metrics["pose_source"].tolist() == ["input"]
+    assert filtered[["mol_idx", "pose_source"]].to_dict("records") == [
+        {"mol_idx": "passed", "pose_source": "input"}
+    ]
+    admitted = [
+        mol
+        for mol in Chem.SDMolSupplier(str(output_dir / "input_poses.sdf"))
+        if mol is not None
+    ]
+    assert [mol.GetProp("mol_idx") for mol in admitted] == ["passed"]
+    assert [mol.GetProp("pose_source") for mol in admitted] == ["input"]
+
+
+def _install_fake_prolif(monkeypatch, query_rows: list[dict], ref_row: dict) -> None:
+    """Stub MDAnalysis + ProLIF so interaction filter can run without a protein."""
+    import sys
+    import types
+
+    mda_mod = types.ModuleType("MDAnalysis")
+
+    class FakeUniverse:
+        def __init__(self, _path):
+            return None
+
+    mda_mod.Universe = FakeUniverse
+
+    plf_mod = types.ModuleType("prolif")
+    call_count = {"n": 0}
+
+    class FakeMolecule:
+        @staticmethod
+        def from_mda(_universe):
+            return "protein"
+
+        @staticmethod
+        def from_rdkit(_mol):
+            return "ligand"
+
+    class FakeFingerprint:
+        def __init__(self, interactions=None):
+            self.interactions = interactions
+
+        def run_from_iterable(self, *_args, **_kwargs):
+            return None
+
+        def to_dataframe(self, drop_empty=False):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return pd.DataFrame(query_rows)
+            return pd.DataFrame([ref_row])
+
+    plf_mod.Molecule = FakeMolecule
+    plf_mod.Fingerprint = FakeFingerprint
+    monkeypatch.setitem(sys.modules, "MDAnalysis", mda_mod)
+    monkeypatch.setitem(sys.modules, "prolif", plf_mod)
+
+
+class TestInteractionSimilarity:
+    """Tanimoto to the reference ligand when similarity_threshold is on."""
+
+    _QUERY_ROWS = [
+        {
+            ("UNL1", "ASP123", "HBDonor"): True,
+            ("UNL1", "SER45", "Hydrophobic"): True,
+            ("UNL1", "CYS200", "HBDonor"): False,
+        },
+        {
+            ("UNL1", "ASP123", "HBDonor"): False,
+            ("UNL1", "SER45", "Hydrophobic"): False,
+            ("UNL1", "CYS200", "HBDonor"): True,
+        },
+    ]
+    _REF_ROW = {
+        ("UNL1", "ASP123", "HBDonor"): True,
+        ("UNL1", "SER45", "Hydrophobic"): True,
+        ("UNL1", "CYS200", "HBDonor"): False,
+    }
+
+    def test_default_threshold_skips_tanimoto(self, tmp_path, monkeypatch):
+        from hedgehog.docking_filters.utils import apply_interaction_filter
+
+        mols = [_mol_with_3d(SMILES_ETHANOL), _mol_with_3d("CCN")]
+        pdb_path = _write_protein_pdb(tmp_path)
+        ref_sdf = tmp_path / "ref.sdf"
+        writer = Chem.SDWriter(str(ref_sdf))
+        writer.write(mols[0])
+        writer.close()
+        _install_fake_prolif(monkeypatch, self._QUERY_ROWS, self._REF_ROW)
+
+        df = apply_interaction_filter(
+            mols,
+            pdb_path,
+            {
+                "min_hbonds": 0,
+                "reference_ligand": str(ref_sdf),
+                "similarity_threshold": 0.0,
+                "n_jobs": 1,
+            },
+        )
+
+        assert df["interaction_similarity"].isna().all()
+        assert df["pass_interactions"].all()
+
+    def test_enabled_threshold_computes_tanimoto_and_filters(
+        self, tmp_path, monkeypatch
+    ):
+        from hedgehog.docking_filters.utils import apply_interaction_filter
+
+        mols = [_mol_with_3d(SMILES_ETHANOL), _mol_with_3d("CCN")]
+        pdb_path = _write_protein_pdb(tmp_path)
+        ref_sdf = tmp_path / "ref.sdf"
+        writer = Chem.SDWriter(str(ref_sdf))
+        writer.write(mols[0])
+        writer.close()
+        _install_fake_prolif(monkeypatch, self._QUERY_ROWS, self._REF_ROW)
+
+        df = apply_interaction_filter(
+            mols,
+            pdb_path,
+            {
+                "min_hbonds": 0,
+                "reference_ligand": str(ref_sdf),
+                "similarity_threshold": 0.5,
+                "n_jobs": 1,
+            },
+        )
+
+        assert df["interaction_similarity"].iloc[0] == pytest.approx(1.0)
+        assert df["interaction_similarity"].iloc[1] == pytest.approx(0.0)
+        assert bool(df["pass_interactions"].iloc[0]) is True
+        assert bool(df["pass_interactions"].iloc[1]) is False
+
+    def test_threshold_without_reference_skips_tanimoto(self, tmp_path, monkeypatch):
+        from hedgehog.docking_filters.utils import apply_interaction_filter
+
+        mols = [_mol_with_3d(SMILES_ETHANOL)]
+        pdb_path = _write_protein_pdb(tmp_path)
+        _install_fake_prolif(monkeypatch, [self._QUERY_ROWS[0]], self._REF_ROW)
+
+        df = apply_interaction_filter(
+            mols,
+            pdb_path,
+            {
+                "min_hbonds": 0,
+                "reference_ligand": None,
+                "similarity_threshold": 0.5,
+                "n_jobs": 1,
+            },
+        )
+
+        assert df["interaction_similarity"].isna().all()
+        assert df["pass_interactions"].all()
+
+
+_DEFAULT_DOCKING_FILTERS_YAML = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "hedgehog"
+    / "configs"
+    / "config_docking_filters.yml"
+)
+
+_LIVE_CONFIG_KEYS = {
+    "run",
+    "input_sdf",
+    "receptor_pdb",
+    "search_box.enabled",
+    "search_box.max_outside_fraction",
+    "search_box.short_circuit",
+    "pose_quality.enabled",
+    "pose_quality.clash_cutoff",
+    "pose_quality.volume_clash_cutoff",
+    "pose_quality.max_distance",
+    "pose_quality.short_circuit",
+    "interactions.enabled",
+    "interactions.min_hbonds",
+    "interactions.required_residues",
+    "interactions.forbidden_residues",
+    "interactions.interaction_types",
+    "interactions.reporting.enabled",
+    "interactions.reference_ligand",
+    "interactions.similarity_threshold",
+    "shepherd_score.enabled",
+    "shepherd_score.backend",
+    "shepherd_score.auto_install_worker",
+    "shepherd_score.worker_python",
+    "shepherd_score.reference_ligand",
+    "shepherd_score.min_shape_score",
+    "shepherd_score.alpha",
+    "shepherd_score.align_before_scoring",
+    "conformer_deviation.enabled",
+    "conformer_deviation.use_nvmolkit",
+    "conformer_deviation.backend",
+    "conformer_deviation.num_conformers",
+    "conformer_deviation.conformer_method",
+    "conformer_deviation.max_rmsd_to_conformer",
+    "conformer_deviation.random_seed",
+    "conformer_deviation.include_hydrogens",
+    "conformer_deviation.max_matches",
+    "conformer_deviation.early_stop_on_pass",
+    "conformer_deviation.optimize_conformers",
+    "aggregation.mode",
+    "aggregation.save_metrics",
+    "aggregation.save_failed",
+}
+
+
+class TracingDict(dict):
+    """Dict that records behavioral reads via get/__getitem__."""
+
+    def __init__(self, data: dict[str, Any], *, accessed: set[str], prefix: str = ""):
+        super().__init__()
+        self._accessed = accessed
+        self._prefix = prefix
+        for key, value in data.items():
+            if isinstance(value, dict):
+                super().__setitem__(
+                    key,
+                    TracingDict(value, accessed=accessed, prefix=f"{prefix}{key}."),
+                )
+            else:
+                super().__setitem__(key, value)
+
+    def _mark(self, key: str) -> None:
+        self._accessed.add(f"{self._prefix}{key}")
+
+    def __getitem__(self, key: str) -> Any:
+        self._mark(key)
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        self._mark(key)
+        return super().get(key, default)
+
+
+def _flatten_yaml_keys(data: dict[str, Any], prefix: str = "") -> set[str]:
+    keys: set[str] = set()
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        keys.add(path)
+        if isinstance(value, dict):
+            keys.update(_flatten_yaml_keys(value, f"{path}."))
+    return keys
+
+
+class TestDefaultDockingFiltersYamlKeys:
+    """Runtime audit: every key in config_docking_filters.yml is consumed."""
+
+    def test_yaml_keys_are_consumed(self, tmp_path, monkeypatch):
+        import sys
+        import types
+
+        import yaml
+        from hedgehog.docking_filters.main import docking_filters_main
+        from hedgehog.docking_filters.utils import (
+            apply_conformer_deviation_filter,
+            apply_interaction_filter,
+            apply_posebusters_fast_filter,
+            apply_search_box_filter,
+            apply_shepherd_score_filter,
+            apply_symmetry_rmsd_filter,
+        )
+        from hedgehog.pipeline import DataChecker, PipelineStageRunner
+
+        raw = yaml.safe_load(_DEFAULT_DOCKING_FILTERS_YAML.read_text())
+        yaml_keys = _flatten_yaml_keys(raw)
+        accessed: set[str] = set()
+        traced = TracingDict(raw, accessed=accessed)
+        traced["conformer_deviation"]["num_conformers"] = 2
+
+        mol = _mol_with_3d(SMILES_ETHANOL)
+        pdb_path = _write_protein_pdb(tmp_path)
+
+        apply_search_box_filter(
+            [mol],
+            tmp_path,
+            {"center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0]},
+            traced["search_box"],
+        )
+
+        apply_posebusters_fast_filter([mol], pdb_path, traced["pose_quality"])
+
+        mda_mod = types.ModuleType("MDAnalysis")
+
+        class FakeUniverse:
+            def __init__(self, _path):
+                return None
+
+        mda_mod.Universe = FakeUniverse
+        plf_mod = types.ModuleType("prolif")
+
+        class FakeMolecule:
+            @staticmethod
+            def from_mda(_universe):
+                return "protein"
+
+            @staticmethod
+            def from_rdkit(_mol):
+                return "ligand"
+
+        class FakeFingerprint:
+            def __init__(self, interactions=None):
+                self.interactions = interactions
+
+            def run_from_iterable(self, *_args, **_kwargs):
+                return None
+
+            def to_dataframe(self, drop_empty=False):
+                return pd.DataFrame(
+                    [{("UNL1", "ASP123", "HBDonor"): True, ("UNL1", "SER45", "Hydrophobic"): True}]
+                )
+
+        plf_mod.Molecule = FakeMolecule
+        plf_mod.Fingerprint = FakeFingerprint
+        monkeypatch.setitem(sys.modules, "MDAnalysis", mda_mod)
+        monkeypatch.setitem(sys.modules, "prolif", plf_mod)
+        apply_interaction_filter([mol], pdb_path, traced["interactions"])
+
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.utils._resolve_shepherd_worker_command",
+            lambda: ["fake-worker"],
+        )
+
+        def _fake_run(cmd, check, capture_output, text, timeout):
+            output_json = Path(cmd[cmd.index("--output-json") + 1])
+            output_json.write_text(
+                json.dumps(
+                    [
+                        {
+                            "mol_idx": 0,
+                            "shape_score": 0.91,
+                            "pass_shepherd_score": True,
+                            "error": None,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("hedgehog.docking_filters.utils.subprocess.run", _fake_run)
+        apply_shepherd_score_filter([mol], mol, traced["shepherd_score"])
+
+        uff_calls = {"count": 0}
+
+        def _count_uff(*_args, **_kwargs):
+            uff_calls["count"] += 1
+            return 0
+
+        monkeypatch.setattr(AllChem, "UFFOptimizeMolecule", _count_uff, raising=False)
+        apply_symmetry_rmsd_filter([mol], traced["conformer_deviation"])
+        apply_conformer_deviation_filter([mol], traced["conformer_deviation"])
+
+        docking_dir = tmp_path / "stages" / "05_docking"
+        docking_dir.mkdir(parents=True)
+        ligands_df = pd.DataFrame(
+            {
+                "smiles": [SMILES_ETHANOL],
+                "model_name": ["model-a"],
+                "mol_idx": ["mol-1"],
+            }
+        )
+        ligands_df.to_csv(docking_dir / "ligands.csv", index=False)
+        ligands_df.to_csv(docking_dir / "filtered_molecules.csv", index=False)
+        writer = Chem.SDWriter(str(docking_dir / "docking_out.sdf"))
+        mol.SetProp("mol_idx", "mol-1")
+        mol.SetProp("source_mol_idx", "mol-1")
+        mol.SetProp("model_name", "model-a")
+        mol.SetProp("input_smiles", SMILES_ETHANOL)
+        writer.write(mol)
+        writer.close()
+        (tmp_path / "receptor.pdb").write_text(pdb_path.read_text())
+
+        def _pass_search(mols, *_args, **_kwargs):
+            return pd.DataFrame(
+                {
+                    "mol_idx": range(len(mols)),
+                    "frac_atoms_outside_box": [0.0] * len(mols),
+                    "pass_search_box": [True] * len(mols),
+                }
+            )
+
+        def _pass_named(pass_col: str):
+            def _inner(mols, *_args, **_kwargs):
+                return pd.DataFrame(
+                    {"mol_idx": range(len(mols)), pass_col: [True] * len(mols)}
+                )
+
+            return _inner
+
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.main.apply_search_box_filter", _pass_search
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.main.apply_posebusters_fast_filter",
+            _pass_named("pass_pose_quality"),
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.main.apply_interaction_filter",
+            _pass_named("pass_interactions"),
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.main.apply_shepherd_score_filter",
+            _pass_named("pass_shepherd_score"),
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.main.apply_symmetry_rmsd_filter",
+            _pass_named("pass_conformer_deviation"),
+        )
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.main.apply_conformer_deviation_filter",
+            _pass_named("pass_conformer_deviation"),
+        )
+        def _load_traced_or_docking(path):
+            if "config_docking_filters" in str(path):
+                return traced
+            return {
+                "receptor_pdb": str(tmp_path / "receptor.pdb"),
+                "center": [0, 0, 0],
+                "size": [20, 20, 20],
+            }
+
+        monkeypatch.setattr(
+            "hedgehog.docking_filters.main.load_config",
+            _load_traced_or_docking,
+        )
+        traced["receptor_pdb"] = str(tmp_path / "receptor.pdb")
+        traced["shepherd_score"]["reference_ligand"] = str(tmp_path / "ref.sdf")
+        ref_writer = Chem.SDWriter(str(tmp_path / "ref.sdf"))
+        ref_writer.write(mol)
+        ref_writer.close()
+
+        docking_filters_main(
+            {
+                "folder_to_save": str(tmp_path),
+                "config_docking_filters": str(tmp_path / "config_docking_filters.yml"),
+                "config_docking": str(tmp_path / "config_docking.yml"),
+            }
+        )
+
+        filter_cfg = tmp_path / "pipeline_filters.yml"
+        filter_cfg.write_text(
+            yaml.safe_dump({"run": True, "input_sdf": None})
+        )
+        checker = DataChecker.__new__(DataChecker)
+        checker.base_path = tmp_path
+        runner = PipelineStageRunner(
+            {
+                "config_docking_filters": str(filter_cfg),
+                "folder_to_save": str(tmp_path),
+            },
+            checker,
+        )
+        monkeypatch.setattr(runner, "docking_results_present", lambda: False)
+        runner.run_docking_filters()
+
+        unused = sorted(yaml_keys - accessed)
+        missing_live = sorted(_LIVE_CONFIG_KEYS - accessed)
+
+        assert not missing_live, f"Live YAML keys were not read: {missing_live}"
+        assert not unused, f"YAML keys were not consumed: {unused}"
+        assert uff_calls["count"] == 0
+
+    def test_optimize_conformers_calls_uff(self, monkeypatch):
+        from hedgehog.docking_filters.utils import apply_symmetry_rmsd_filter
+
+        mol = _mol_with_3d(SMILES_ETHANOL)
+        uff_calls = {"count": 0}
+
+        def _count_uff(*_args, **_kwargs):
+            uff_calls["count"] += 1
+            return 0
+
+        monkeypatch.setattr(AllChem, "UFFOptimizeMolecule", _count_uff, raising=False)
+        df = apply_symmetry_rmsd_filter(
+            [mol],
+            {
+                "num_conformers": 2,
+                "max_rmsd_to_conformer": 5.0,
+                "random_seed": 42,
+                "conformer_method": "ETKDGv3",
+                "include_hydrogens": False,
+                "use_nvmolkit": False,
+                "optimize_conformers": True,
+                "n_jobs": 1,
+            },
+        )
+        assert len(df) == 1
+        assert uff_calls["count"] > 0

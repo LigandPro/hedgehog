@@ -361,6 +361,7 @@ class TestRunDockingProteinPrepFallback:
         docking_cfg = tmp_path / "config_docking.yml"
         docking_cfg.write_text(
             f"run: true\ntools: smina\nauto_run: true\nreceptor_pdb: {receptor}\n"
+            "center: [0, 0, 0]\nsize: [20, 20, 20]\n"
         )
 
         run_config = {
@@ -607,6 +608,46 @@ class TestPerMoleculeArchitecture:
         mols = [m for m in suppl if m is not None]
         assert len(mols) == 2
 
+    def test_aggregate_repairs_charged_sulfoxide_from_gnina(self, tmp_path):
+        """GNINA S(+)=O(-) output should be repaired instead of silently dropped."""
+        from rdkit import Chem
+
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        result_path = results_dir / "000000_ligand_out.sdf"
+
+        mol = Chem.MolFromSmiles("C[S+](C)[O-]")
+        mol.SetProp("minimizedAffinity", "-12.3")
+        sulfur = next(atom for atom in mol.GetAtoms() if atom.GetSymbol() == "S")
+        oxygen = next(atom for atom in mol.GetAtoms() if atom.GetSymbol() == "O")
+        writer = Chem.SDWriter(str(result_path))
+        writer.write(mol)
+        writer.close()
+
+        single_bond = f"{sulfur.GetIdx() + 1:>3}{oxygen.GetIdx() + 1:>3}{1:>3}"
+        double_bond = f"{sulfur.GetIdx() + 1:>3}{oxygen.GetIdx() + 1:>3}{2:>3}"
+        raw = result_path.read_text(encoding="utf-8")
+        assert single_bond in raw
+        result_path.write_text(
+            raw.replace(single_bond, double_bond, 1),
+            encoding="utf-8",
+        )
+        assert next(iter(Chem.SDMolSupplier(str(result_path))), None) is None
+
+        output_sdf = tmp_path / "aggregated.sdf"
+        count = _aggregate_docking_results(results_dir, output_sdf)
+
+        assert count == 1
+        repaired = next(
+            mol for mol in Chem.SDMolSupplier(str(output_sdf)) if mol is not None
+        )
+        assert repaired.GetProp("minimizedAffinity") == "-12.3"
+        repaired_bond = repaired.GetBondBetweenAtoms(
+            sulfur.GetIdx(),
+            oxygen.GetIdx(),
+        )
+        assert repaired_bond.GetBondType() == Chem.BondType.SINGLE
+
     def test_collects_all_tools_and_writes_stage_pass_fail_files(self, tmp_path):
         """Docking stage should classify every input using all tool outputs."""
         from rdkit import Chem
@@ -717,6 +758,45 @@ class TestPerMoleculeArchitecture:
         assert bool(metrics.loc["mol-c", "pass_gnina"]) is False
         assert metrics.loc["mol-a", "score_smina"] == -9.0
 
+    def test_matcha_affinity_threshold_ignores_balmus_metadata(self, tmp_path):
+        """Matcha filtering must use GNINA affinity, never the BALMUS loss."""
+        from rdkit import Chem
+
+        ligands_dir = tmp_path / "05_docking"
+        ligands_dir.mkdir()
+        inputs = pd.DataFrame(
+            {
+                "smiles": ["CCO"],
+                "model_name": ["model"],
+                "mol_idx": ["mol-a"],
+            }
+        )
+        inputs.to_csv(ligands_dir / "ligands.csv", index=False)
+        inputs.to_csv(ligands_dir / "input_molecules.csv", index=False)
+
+        output = ligands_dir / "matcha.sdf"
+        writer = Chem.SDWriter(str(output))
+        mol = Chem.MolFromSmiles("CCO")
+        mol.SetProp("mol_idx", "mol-a")
+        mol.SetDoubleProp("balmus_score", -250.0)
+        mol.SetDoubleProp("minimizedAffinity", -12.0)
+        mol.SetProp("source_score_property", "minimizedAffinity")
+        writer.write(mol)
+        writer.close()
+
+        passed, failed = _collect_docking_stage_results(
+            ligands_dir,
+            ["matcha"],
+            {"matcha": output},
+            score_thresholds={
+                "matcha": {"score_property": "minimizedAffinity", "max": -10.0}
+            },
+        )
+
+        assert (passed, failed) == (1, 0)
+        metrics = pd.read_csv(ligands_dir / "docking_results.csv")
+        assert metrics.loc[0, "score_matcha"] == -12.0
+
     def test_aggregate_empty_results_dir(self, tmp_path):
         """Should handle empty results directory gracefully."""
         results_dir = tmp_path / "empty_results"
@@ -789,6 +869,33 @@ class TestPerMoleculeArchitecture:
         suppl = Chem.SDMolSupplier(str(output_sdf))
         names = [m.GetProp("_Name") for m in suppl if m is not None]
         assert names == ["mol-1", "mol-2"]
+
+    def test_aggregate_matcha_keeps_affinity_and_balmus_metadata(self, tmp_path):
+        """GNINA affinity is the source score while BALMUS remains metadata."""
+        from rdkit import Chem
+
+        best_dir = tmp_path / "best_poses"
+        best_dir.mkdir()
+        mol = Chem.MolFromSmiles("CCO")
+        mol.SetDoubleProp("balmus_score", -250.0)
+        mol.SetDoubleProp("minimizedAffinity", -12.0)
+        mol.SetProp("source_score_property", "balmus_score")
+        writer = Chem.SDWriter(str(best_dir / "mol-1.sdf"))
+        writer.write(mol)
+        writer.close()
+
+        output_sdf = tmp_path / "matcha_out.sdf"
+        assert _aggregate_matcha_results(best_dir, output_sdf) == 1
+
+        aggregated = next(
+            mol
+            for mol in Chem.SDMolSupplier(str(output_sdf), removeHs=False)
+            if mol is not None
+        )
+        assert float(aggregated.GetProp("balmus_score")) == -250.0
+        assert float(aggregated.GetProp("minimizedAffinity")) == -12.0
+        assert aggregated.GetProp("source_score_property") == "minimizedAffinity"
+        assert not aggregated.HasProp("affinity")
 
     def test_aggregate_docking_results_restores_mol_idx_from_result_filename(
         self, tmp_path
@@ -876,6 +983,7 @@ class TestGninaNoGpuFlag:
             "gnina_config": {
                 "cpu": 4,
                 "no_gpu": True,
+                "num_modes": 9,
             }
         }
 
@@ -891,6 +999,7 @@ class TestGninaNoGpuFlag:
         config_text = config_path.read_text()
         assert "no_gpu" not in config_text
         assert "cpu = 4" in config_text
+        assert "num_modes = 9" in config_text
 
     def test_aggregate_with_invalid_files(self, tmp_path):
         """Should skip invalid SDF files during aggregation."""
@@ -1017,8 +1126,8 @@ class TestMatchaCommand:
         cfg = {
             "matcha_config": {
                 "checkout_dir": "modules/matcha_remote",
-                "n_samples": 12,
                 "device": "cuda:0",
+                "n_samples": 20,
                 "scorer": "gnina",
             },
             "gnina_config": {"bin": "gnina"},
@@ -1049,28 +1158,26 @@ class TestMatchaCommand:
             str(managed_repo),
             "matcha",
         ]
-        assert "--n-samples" in command
-        assert "12" in command
-
+        assert command[command.index("--n-samples") + 1] == "20"
+        assert "--gpus" not in command
+        assert "hedgehog.docking.docking_repository" not in command
     def test_build_matcha_command_uses_docking_repository_adapter(
         self, tmp_path, monkeypatch
     ):
         """The new repository backend should invoke Hedgehog's screening adapter."""
         docking_repo = tmp_path / "docking"
         docking_repo.mkdir()
-        training_config = tmp_path / "training.yaml"
-        training_config.write_text("seed: 777\n", encoding="utf-8")
         checkpoint_root = tmp_path / "train_results"
-        checkpoint_root.mkdir()
+        run_dir = checkpoint_root / "model-run"
+        run_dir.mkdir(parents=True)
+        training_config = run_dir / "config.yaml"
+        training_config.write_text("seed: 777\n", encoding="utf-8")
         cfg = {
             "matcha_config": {
                 "backend": "docking",
                 "checkout_dir": "modules/docking",
-                "training_config": str(training_config),
                 "checkpoint_root": str(checkpoint_root),
                 "checkpoint_run": "model-run",
-                "n_samples": 20,
-                "gpus": "0",
                 "center": [1.0, 2.0, 3.0],
             }
         }
@@ -1102,10 +1209,22 @@ class TestMatchaCommand:
         assert command[1:4] == [
             "-m",
             "hedgehog.docking.docking_repository",
-            "--uv-bin",
+            "--repo",
         ]
         assert "--checkpoint-run" in command
         assert "model-run" in command
+        for removed_option in (
+            "--uv-bin",
+            "--training-config",
+            "--checkpoint-name",
+            "--n-samples",
+            "--sample-timeout-seconds",
+            "--data-workers",
+            "--concurrency",
+            "--batch-size",
+            "--gpus",
+        ):
+            assert removed_option not in command
         assert command[-6:] == [
             "--center-x",
             "1.0",

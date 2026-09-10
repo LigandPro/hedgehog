@@ -10,7 +10,6 @@ import yaml
 
 from hedgehog.main import (
     Stage,
-    _canonicalize_smiles,
     _folder_is_empty,
     _get_input_format_flag,
     _get_unique_results_folder,
@@ -29,6 +28,7 @@ class _FakeProgress:
 
     def __init__(self, *args, **kwargs):
         self.add_calls: list[dict] = []
+        self.reset_calls: list[dict] = []
         self.update_calls: list[dict] = []
         _FakeProgress.instances.append(self)
 
@@ -44,6 +44,9 @@ class _FakeProgress:
             {"task_id": task_id, "description": description, **kwargs}
         )
         return task_id
+
+    def reset(self, task_id: int, **kwargs) -> None:
+        self.reset_calls.append({"task_id": task_id, **kwargs})
 
     def update(self, task_id: int, **kwargs) -> None:
         self.update_calls.append({"task_id": task_id, **kwargs})
@@ -70,47 +73,6 @@ def test_resolve_config_paths_relative_to_config_file(tmp_path):
     assert config["generated_mols_path"] == str(input_file.resolve())
     assert config["config_descriptors"] == str(sub_config.resolve())
     assert config["folder_to_save"] == "results/run"
-
-
-class TestCanonicalizeSmiles:
-    """Tests for _canonicalize_smiles function."""
-
-    def test_valid_smiles_benzene(self):
-        """Valid benzene SMILES - should return canonical form."""
-        result = _canonicalize_smiles("c1ccccc1")
-        assert result is not None
-        assert result == "c1ccccc1"
-
-    def test_valid_smiles_ethanol(self):
-        """Valid ethanol SMILES - should return canonical form."""
-        result = _canonicalize_smiles("CCO")
-        assert result is not None
-        assert result == "CCO"
-
-    def test_valid_smiles_aspirin(self):
-        """Valid aspirin SMILES - should return canonical form."""
-        result = _canonicalize_smiles("CC(=O)Oc1ccccc1C(=O)O")
-        assert result is not None
-
-    def test_invalid_smiles(self):
-        """Invalid SMILES string - should return None."""
-        result = _canonicalize_smiles("invalid")
-        assert result is None
-
-    def test_empty_smiles(self):
-        """Empty SMILES string - should return empty string."""
-        result = _canonicalize_smiles("")
-        assert result == ""
-
-    def test_smiles_with_stereochemistry(self):
-        """SMILES with stereochemistry should be preserved."""
-        result = _canonicalize_smiles("[C@@H](O)(F)Cl")
-        assert result is not None
-
-    def test_malformed_smiles(self):
-        """Malformed SMILES - should return None."""
-        result = _canonicalize_smiles("C(C)(C)(C)(C)C")  # invalid valence
-        assert result is None
 
 
 class TestFolderIsEmpty:
@@ -193,8 +155,6 @@ class TestResolveOutputFolder:
             {"folder_to_save": str(base)},
             reuse_folder=False,
             force_new_folder=False,
-            stages=[Stage.docking],
-            generated_mols_path=None,
         )
 
         assert result == tmp_path / "run_2"
@@ -208,8 +168,6 @@ class TestResolveOutputFolder:
             {"folder_to_save": str(base)},
             reuse_folder=True,
             force_new_folder=False,
-            stages=[Stage.docking],
-            generated_mols_path=None,
         )
 
         assert result == base
@@ -295,6 +253,64 @@ def test_continue_command_loads_saved_input_and_skips_completed_stages(
     ]
 
 
+
+
+def test_target_alignment_preserves_cli_stage_selection_in_probe_and_candidates(
+    tmp_path, monkeypatch
+):
+    from hedgehog import main as main_mod
+
+    target = tmp_path / "targets.csv"
+    target.write_text("smiles,mol_idx\nCCO,target-1\n", encoding="utf-8")
+    target_run = tmp_path / "outer" / "target_alignment" / "calibration_target_run"
+    stage_selection = ["mol_prep", "descriptors"]
+    config = {
+        "generated_mols_path": str(target),
+        "target_mols_path": str(target),
+        "folder_to_save": str(tmp_path / "outer"),
+        "save_sampled_mols": True,
+        "_run_stage_selection_override": stage_selection,
+    }
+    captured = {}
+
+    def fake_create_probe(master, _target_path, _alignment_root):
+        probe = dict(master)
+        probe["folder_to_save"] = str(target_run)
+        captured["probe_created"] = probe
+        return probe
+
+    def fake_calculate(data, probe, _callback):
+        captured["probe_run"] = dict(probe)
+        return True
+
+    def fake_finalize(*_args, **_kwargs):
+        return (
+            {"folder_to_save": str(tmp_path / "discarded")},
+            tmp_path / "aligned.yml",
+            tmp_path / "thresholds.yml",
+        )
+
+    monkeypatch.setattr(main_mod, "create_probe_config", fake_create_probe)
+    monkeypatch.setattr(main_mod, "_preprocess_input", lambda *_args: None)
+    monkeypatch.setattr(
+        main_mod,
+        "prepare_input_data",
+        lambda *_args: pd.DataFrame(
+            {"smiles": ["CCO"], "mol_idx": ["target-1"]}
+        ),
+    )
+    monkeypatch.setattr(main_mod, "set_probe_molprep_allowed_atoms", lambda *_args: None)
+    monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
+    monkeypatch.setattr(main_mod, "finalize_global_alignment", fake_finalize)
+
+    aligned = main_mod._align_config_with_target_molecules(
+        config, tmp_path / "outer", 95
+    )
+
+    assert captured["probe_created"]["_run_stage_selection_override"] == stage_selection
+    assert captured["probe_run"]["_run_stage_selection_override"] == stage_selection
+    assert aligned["_run_stage_selection_override"] == stage_selection
+
 def test_continue_nested_alignment_then_starts_candidates(tmp_path, monkeypatch):
     """An interrupted target probe should finish alignment and resume its outer run."""
     from hedgehog import main as main_mod
@@ -359,6 +375,7 @@ def test_continue_nested_alignment_then_starts_candidates(tmp_path, monkeypatch)
 
     monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
     monkeypatch.setattr(main_mod, "create_aligned_stage_config", fake_create)
+    monkeypatch.setattr(main_mod, "finalize_global_alignment", fake_create)
 
     main_mod._run_pipeline_command(
         config_path=None,
@@ -443,6 +460,25 @@ class TestPreprocessInputWithRdkit:
 
         assert result is not None
         assert Path(result).exists()
+
+    def test_preserves_existing_identity_and_provenance_columns(
+        self, tmp_path, mock_logger
+    ):
+        """Schema normalization must not replace stable upstream molecule IDs."""
+        input_file = tmp_path / "input.csv"
+        input_file.write_text(
+            "smiles,model_name,mol_idx,source_row\n"
+            "CCO,test,zinc-17,17\n"
+            "c1ccccc1,test,zinc-29,29\n"
+        )
+
+        result = preprocess_input_with_rdkit(
+            str(input_file), tmp_path / "output", mock_logger
+        )
+
+        output_df = pd.read_csv(result)
+        assert output_df["mol_idx"].tolist() == ["zinc-17", "zinc-29"]
+        assert output_df["source_row"].tolist() == [17, 29]
 
     def test_removes_duplicates(self, tmp_path, mock_logger):
         """Should remove duplicate SMILES within models."""
@@ -803,7 +839,7 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
-        ctx=SimpleNamespace(invoked_subcommand=None),
+        ctx=SimpleNamespace(invoked_subcommand=None, args=[]),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,
@@ -817,6 +853,9 @@ def test_run_uses_single_progress_task_and_consistent_stage_numbers(
 
     progress_instance = _FakeProgress.instances[-1]
     assert len(progress_instance.add_calls) == 1
+    assert len(progress_instance.reset_calls) == 2
+    assert all(call["start"] is True for call in progress_instance.reset_calls)
+    assert all(call["completed"] == 0 for call in progress_instance.reset_calls)
 
     descriptions = [
         call["description"]
@@ -900,7 +939,7 @@ def test_run_progress_strips_duplicate_stage_prefix(tmp_path, monkeypatch):
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
-        ctx=SimpleNamespace(invoked_subcommand=None),
+        ctx=SimpleNamespace(invoked_subcommand=None, args=[]),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,
@@ -983,7 +1022,7 @@ def test_run_disables_progress_bar_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(main_mod, "calculate_metrics", _fake_calculate_metrics)
 
     main_mod.run(
-        ctx=SimpleNamespace(invoked_subcommand=None),
+        ctx=SimpleNamespace(invoked_subcommand=None, args=[]),
         config_path="unused.yml",
         generated_mols_path=None,
         out_dir=None,
@@ -1097,6 +1136,7 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
     monkeypatch.setattr(main_mod, "_run_pipeline_command", _fake_run_pipeline_command)
 
     main_mod.run_command(
+        ctx=SimpleNamespace(args=[]),
         config_path="cfg.yml",
         generated_mols_path="input.csv",
         out_dir="results/x",
@@ -1111,6 +1151,7 @@ def test_run_subcommand_delegates_to_pipeline_command(monkeypatch):
     assert captured == {
         "config_path": "cfg.yml",
         "generated_mols_path": "input.csv",
+        "generated_mols_paths": None,
         "out_dir": "results/x",
         "stage": [main_mod.Stage.docking],
         "reuse_folder": True,
