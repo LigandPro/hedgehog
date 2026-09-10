@@ -474,9 +474,8 @@ def test_descriptors_large_writes_molecule_tables_at_stage_root(tmp_path, monkey
     assert (stage_dir / "filtered" / "descriptors_failed.csv").exists()
     assert (stage_dir / "filtered" / "pass_flags.csv").exists()
 
-def test_struct_filters_large_splits_total_and_undefined_stereo(
-    tmp_path, monkeypatch
-):
+
+def test_struct_filters_large_splits_total_and_undefined_stereo(tmp_path, monkeypatch):
     input_df = pd.DataFrame(
         {
             "smiles": ["CCO", "CCN"],

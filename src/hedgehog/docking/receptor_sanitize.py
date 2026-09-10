@@ -120,7 +120,10 @@ def _select_alt_conformers(atoms: list[_AtomRecord]) -> list[_AtomRecord]:
         if atom.occupancy > current.occupancy:
             best[key] = atom
             continue
-        if atom.occupancy == current.occupancy and atom.altloc_rank < current.altloc_rank:
+        if (
+            atom.occupancy == current.occupancy
+            and atom.altloc_rank < current.altloc_rank
+        ):
             best[key] = atom
     return list(best.values())
 
@@ -142,7 +145,9 @@ def sanitize_receptor_pdb(source: Path, destination: Path) -> Path:
     atoms.sort(key=lambda atom: (atom.chain, int(atom.resseq), atom.name, atom.altloc))
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    lines = [_format_atom_line(atom, serial) for serial, atom in enumerate(atoms, start=1)]
+    lines = [
+        _format_atom_line(atom, serial) for serial, atom in enumerate(atoms, start=1)
+    ]
     destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return destination
 

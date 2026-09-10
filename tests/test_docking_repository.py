@@ -195,9 +195,7 @@ def test_write_matcha_outputs_records_one_failed_ligand(tmp_path, monkeypatch):
     def minimize(_gnina_bin, _receptor, input_sdf, output_sdf, _cpu):
         if input_sdf.name.startswith("bad_"):
             raise RuntimeError("invalid aromatic ligand")
-        _fake_gnina_minimization(
-            _gnina_bin, _receptor, input_sdf, output_sdf, _cpu
-        )
+        _fake_gnina_minimization(_gnina_bin, _receptor, input_sdf, output_sdf, _cpu)
 
     monkeypatch.setattr(
         "hedgehog.docking.docking_repository._run_gnina_minimization", minimize

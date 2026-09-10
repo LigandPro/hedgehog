@@ -1927,9 +1927,7 @@ class MolecularAnalysisPipeline:
             logger.info("No data source found for final descriptors (skipping)")
             return self._mark_stage_skipped(STAGE_FINAL_DESCRIPTORS)
         if len(final_data) == 0:
-            logger.info(
-                "No molecules from previous steps; skipping final descriptors"
-            )
+            logger.info("No molecules from previous steps; skipping final descriptors")
             return self._mark_stage_skipped(STAGE_FINAL_DESCRIPTORS)
 
         def _run_final_desc():

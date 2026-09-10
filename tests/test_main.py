@@ -253,8 +253,6 @@ def test_continue_command_loads_saved_input_and_skips_completed_stages(
     ]
 
 
-
-
 def test_target_alignment_preserves_cli_stage_selection_in_probe_and_candidates(
     tmp_path, monkeypatch
 ):
@@ -295,11 +293,11 @@ def test_target_alignment_preserves_cli_stage_selection_in_probe_and_candidates(
     monkeypatch.setattr(
         main_mod,
         "prepare_input_data",
-        lambda *_args: pd.DataFrame(
-            {"smiles": ["CCO"], "mol_idx": ["target-1"]}
-        ),
+        lambda *_args: pd.DataFrame({"smiles": ["CCO"], "mol_idx": ["target-1"]}),
     )
-    monkeypatch.setattr(main_mod, "set_probe_molprep_allowed_atoms", lambda *_args: None)
+    monkeypatch.setattr(
+        main_mod, "set_probe_molprep_allowed_atoms", lambda *_args: None
+    )
     monkeypatch.setattr(main_mod, "calculate_metrics", fake_calculate)
     monkeypatch.setattr(main_mod, "finalize_global_alignment", fake_finalize)
 
@@ -310,6 +308,7 @@ def test_target_alignment_preserves_cli_stage_selection_in_probe_and_candidates(
     assert captured["probe_created"]["_run_stage_selection_override"] == stage_selection
     assert captured["probe_run"]["_run_stage_selection_override"] == stage_selection
     assert aligned["_run_stage_selection_override"] == stage_selection
+
 
 def test_continue_nested_alignment_then_starts_candidates(tmp_path, monkeypatch):
     """An interrupted target probe should finish alignment and resume its outer run."""

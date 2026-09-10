@@ -1421,6 +1421,7 @@ class TestDefaultDockingFiltersYamlKeys:
         import types
 
         import yaml
+
         from hedgehog.docking_filters.main import docking_filters_main
         from hedgehog.docking_filters.utils import (
             apply_conformer_deviation_filter,
@@ -1477,7 +1478,12 @@ class TestDefaultDockingFiltersYamlKeys:
 
             def to_dataframe(self, drop_empty=False):
                 return pd.DataFrame(
-                    [{("UNL1", "ASP123", "HBDonor"): True, ("UNL1", "SER45", "Hydrophobic"): True}]
+                    [
+                        {
+                            ("UNL1", "ASP123", "HBDonor"): True,
+                            ("UNL1", "SER45", "Hydrophobic"): True,
+                        }
+                    ]
                 )
 
         plf_mod.Molecule = FakeMolecule
@@ -1581,6 +1587,7 @@ class TestDefaultDockingFiltersYamlKeys:
             "hedgehog.docking_filters.main.apply_conformer_deviation_filter",
             _pass_named("pass_conformer_deviation"),
         )
+
         def _load_traced_or_docking(path):
             if "config_docking_filters" in str(path):
                 return traced
@@ -1609,9 +1616,7 @@ class TestDefaultDockingFiltersYamlKeys:
         )
 
         filter_cfg = tmp_path / "pipeline_filters.yml"
-        filter_cfg.write_text(
-            yaml.safe_dump({"run": True, "input_sdf": None})
-        )
+        filter_cfg.write_text(yaml.safe_dump({"run": True, "input_sdf": None}))
         checker = DataChecker.__new__(DataChecker)
         checker.base_path = tmp_path
         runner = PipelineStageRunner(

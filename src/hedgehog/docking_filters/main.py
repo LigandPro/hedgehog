@@ -902,7 +902,9 @@ def docking_filters_main(
         try:
             if reporter is not None:
                 reporter.progress(0, search_total, message="DockingFilters: search_box")
-            sb_df = apply_search_box_filter(mols, base_folder, docking_config, sb_config)
+            sb_df = apply_search_box_filter(
+                mols, base_folder, docking_config, sb_config
+            )
             results_df = results_df.merge(sb_df, on="mol_idx", how="left")
             filters_applied.append("search_box")
         except Exception as e:
@@ -927,6 +929,7 @@ def docking_filters_main(
 
     # Filter 1: Pose quality
     if pq_config.get("enabled", True):
+
         def _run_pose_quality(mols_active, progress_cb):
             return apply_posebusters_fast_filter(
                 mols_active, protein_pdb, pq_config, progress_cb=progress_cb

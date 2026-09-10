@@ -397,21 +397,15 @@ class TestCalculateSynthesisScoresRegistry:
         """Scalar or one-item 'all' should enable every public scorer once."""
         expected = list(synthesis_utils.ALL_SYNTHESIS_SCORER_NAMES)
         for raw in ("all", ["all"]):
-            scorers = synthesis_utils._resolve_enabled_scorers(
-                {"enabled_scores": raw}
-            )
+            scorers = synthesis_utils._resolve_enabled_scorers({"enabled_scores": raw})
             assert [scorer.name for scorer in scorers] == expected
 
     def test_enabled_scores_rejects_mixed_all(self):
         """'all' must not be mixed with named scorers."""
         with pytest.raises(ValueError, match="scalar 'all'"):
-            synthesis_utils._resolve_enabled_scorers(
-                {"enabled_scores": ["all", "sa"]}
-            )
+            synthesis_utils._resolve_enabled_scorers({"enabled_scores": ["all", "sa"]})
         with pytest.raises(ValueError, match="scalar 'all'"):
-            synthesis_utils._resolve_enabled_scorers(
-                {"enabled_scores": "all, sa"}
-            )
+            synthesis_utils._resolve_enabled_scorers({"enabled_scores": "all, sa"})
 
     def test_fsscore_repo_path_resolves_default_model(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

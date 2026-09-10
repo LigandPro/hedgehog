@@ -10,9 +10,9 @@ import pandas as pd
 def dock_mol_idx_aliases(mol_idx: str) -> tuple[str, ...]:
     """Return lookup aliases for a molecule id across docking path sanitization.
 
-    Per-molecule docking files sanitize ``_Name`` by replacing characters outside
-  ``[A-Za-z0-9_-]`` with underscores. Numeric ``mol_idx`` values like ``9487.0``
-    therefore appear as ``9487_0`` in SDF filenames and aggregated pose metadata.
+      Per-molecule docking files sanitize ``_Name`` by replacing characters outside
+    ``[A-Za-z0-9_-]`` with underscores. Numeric ``mol_idx`` values like ``9487.0``
+      therefore appear as ``9487_0`` in SDF filenames and aggregated pose metadata.
     """
     key = str(mol_idx).strip()
     if not key:

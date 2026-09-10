@@ -826,9 +826,9 @@ def _read_structural_rule_masks(stage_dir: Path) -> pd.DataFrame | None:
                 _boolean_pass_values(data["undefined_stereo_pass"]).to_numpy(),
                 index=keys.to_numpy(),
             )
-            rule_masks["undefined_stereo_center"] = (
-                undefined_mask.groupby(level=0).last()
-            )
+            rule_masks["undefined_stereo_center"] = undefined_mask.groupby(
+                level=0
+            ).last()
 
     if not rule_masks or not identities:
         return None
@@ -848,9 +848,7 @@ def _configured_structural_rule_columns(
 
     def calculation_enabled(policy_name: str) -> bool:
         calculation_name = (
-            "stereo_center"
-            if policy_name == "undefined_stereo_center"
-            else policy_name
+            "stereo_center" if policy_name == "undefined_stereo_center" else policy_name
         )
         return bool(config.get(f"calculate_{calculation_name}", False))
 
@@ -867,9 +865,7 @@ def _configured_structural_rule_columns(
         calculated_unrestricted = True
     else:
         calculated_rulesets = {
-            str(value)
-            for value in (raw_include or [])
-            if value is not None
+            str(value) for value in (raw_include or []) if value is not None
         }
         calculated_unrestricted = not calculated_rulesets
     filter_rulesets = {

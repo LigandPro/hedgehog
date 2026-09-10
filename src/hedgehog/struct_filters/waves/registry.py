@@ -74,9 +74,7 @@ def get_aligned_enforced_filters(
                 f"filter_{name}" in config_struct_filters for name in calculated
             )
             if not calculated or fully_explicit:
-                return {
-                    name for name, enabled in explicit_flags.items() if enabled
-                }
+                return {name for name, enabled in explicit_flags.items() if enabled}
 
             # Older configs calculated every listed method as a hard filter.
             # Preserve that behavior for missing flags while applying new flags

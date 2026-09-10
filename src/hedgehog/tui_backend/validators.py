@@ -275,9 +275,7 @@ class ConfigValidator:
         pose_quality = data.get("pose_quality", {}) or {}
         for key in ("clash_cutoff", "volume_clash_cutoff", "max_distance"):
             value = pose_quality.get(key)
-            if value is not None and (
-                not isinstance(value, (int, float)) or value < 0
-            ):
+            if value is not None and (not isinstance(value, (int, float)) or value < 0):
                 result["errors"].append(
                     f"pose_quality.{key} must be a non-negative number"
                 )

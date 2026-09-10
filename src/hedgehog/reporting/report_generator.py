@@ -23,6 +23,8 @@ from hedgehog._constants import KEY_FOLDER_TO_SAVE
 from hedgehog.reporting import moleval_metrics, plots
 from hedgehog.reporting.model_scope import (
     filter_df_by_model,
+)
+from hedgehog.reporting.model_scope import (
     get_available_models as get_generative_models,
 )
 from hedgehog.reporting.stage_audit_notebook import write_stage_audit_notebook

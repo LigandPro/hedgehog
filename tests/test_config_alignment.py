@@ -220,11 +220,7 @@ def test_generated_yaml_preserves_source_shape_comments_and_disabled_fields(tmp_
 def test_generated_yaml_keeps_separator_after_replaced_block_list(tmp_path):
     source = tmp_path / "source.yml"
     source.write_text(
-        "include_rulesets:\n"
-        "  - Dundee\n"
-        "  - BMS\n"
-        "exclude_smarts:\n"
-        "  - ignored\n",
+        "include_rulesets:\n  - Dundee\n  - BMS\nexclude_smarts:\n  - ignored\n",
         encoding="utf-8",
     )
     target = tmp_path / "generated.yml"
@@ -240,21 +236,14 @@ def test_generated_yaml_keeps_separator_after_replaced_block_list(tmp_path):
 
     assert yaml.safe_load(target.read_text(encoding="utf-8")) == generated
     assert target.read_text(encoding="utf-8") == (
-        "include_rulesets:\n"
-        "  - AlphaScreen-Hitters\n"
-        "exclude_smarts:\n"
-        "  - kept\n"
+        "include_rulesets:\n  - AlphaScreen-Hitters\nexclude_smarts:\n  - kept\n"
     )
 
 
 def test_generated_yaml_preserves_key_indent_after_indentless_block_list(tmp_path):
     source = tmp_path / "source.yml"
     source.write_text(
-        "filters:\n"
-        "  allowed_atoms:\n"
-        "  - C\n"
-        "  - N\n"
-        "  reject_radicals: true\n",
+        "filters:\n  allowed_atoms:\n  - C\n  - N\n  reject_radicals: true\n",
         encoding="utf-8",
     )
     target = tmp_path / "generated.yml"
@@ -272,12 +261,7 @@ def test_generated_yaml_preserves_key_indent_after_indentless_block_list(tmp_pat
 
     assert yaml.safe_load(target.read_text(encoding="utf-8")) == generated
     assert target.read_text(encoding="utf-8") == (
-        "filters:\n"
-        "  allowed_atoms:\n"
-        "  - C\n"
-        "  - N\n"
-        "  - Cl\n"
-        "  reject_radicals: true\n"
+        "filters:\n  allowed_atoms:\n  - C\n  - N\n  - Cl\n  reject_radicals: true\n"
     )
 
 
@@ -425,9 +409,7 @@ def test_descriptor_alignment_expand_never_narrows_source_borders():
     config = {"borders": {"metric_min": 0, "metric_max": 10}}
     metrics = pd.DataFrame({"metric": [2, 4, 8]})
 
-    thresholds = _align_descriptor_config(
-        config, metrics, 100, bounds_mode="expand"
-    )
+    thresholds = _align_descriptor_config(config, metrics, 100, bounds_mode="expand")
 
     assert thresholds == {"metric_min": 0, "metric_max": 10}
     assert config["borders"] == thresholds
@@ -437,9 +419,7 @@ def test_descriptor_alignment_expand_expands_only_required_sides():
     config = {"borders": {"metric_min": 0, "metric_max": 10}}
     metrics = pd.DataFrame({"metric": [-5, 2, 8]})
 
-    thresholds = _align_descriptor_config(
-        config, metrics, 100, bounds_mode="expand"
-    )
+    thresholds = _align_descriptor_config(config, metrics, 100, bounds_mode="expand")
 
     assert thresholds == {"metric_min": -5, "metric_max": 10}
     assert config["borders"] == thresholds
@@ -449,14 +429,14 @@ def test_descriptor_alignment_target_keeps_existing_replacement_behavior():
     config = {"borders": {"metric_min": 0, "metric_max": 10}}
     metrics = pd.DataFrame({"metric": [2, 4, 8]})
 
-    thresholds = _align_descriptor_config(
-        config, metrics, 100, bounds_mode="target"
-    )
+    thresholds = _align_descriptor_config(config, metrics, 100, bounds_mode="target")
 
     assert thresholds == {"metric_min": 2, "metric_max": 8}
 
 
-@pytest.mark.parametrize("value", ["full", "", None, True, "expand_only", "target_only"])
+@pytest.mark.parametrize(
+    "value", ["full", "", None, True, "expand_only", "target_only"]
+)
 def test_validate_descriptor_bounds_mode_rejects_unknown_values(value):
     with pytest.raises(ValueError, match="descriptor_bounds_mode"):
         validate_descriptor_bounds_mode(value)
@@ -970,11 +950,7 @@ def test_leftover_synthesis_bounds_mode_is_stripped_from_generated_master(tmp_pa
     targets = tmp_path / "targets.csv"
     targets.write_text("smiles\nCCO\n", encoding="utf-8")
     metrics_dir = (
-        tmp_path
-        / "target_run"
-        / "stages"
-        / "02_descriptors_initial"
-        / "metrics"
+        tmp_path / "target_run" / "stages" / "02_descriptors_initial" / "metrics"
     )
     metrics_dir.mkdir(parents=True)
     pd.DataFrame({"metric": [1.0]}).to_csv(
