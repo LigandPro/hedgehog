@@ -144,12 +144,6 @@ class ConfigValidator:
             result["errors"].append("n_jobs must be -1 or a positive integer")
 
     @staticmethod
-    def _validate_filters(data: dict[str, Any], result: dict[str, Any]) -> None:
-        """Validate structural filters configuration."""
-        # No specific validation rules defined yet
-        pass
-
-    @staticmethod
     def _validate_synthesis(data: dict[str, Any], result: dict[str, Any]) -> None:
         """Validate synthesis configuration."""
         if "sa_score_min" in data:
@@ -238,15 +232,6 @@ class ConfigValidator:
         return float(value)
 
     @staticmethod
-    def _validate_retrosynthesis(data: dict[str, Any], result: dict[str, Any]) -> None:
-        """Validate retrosynthesis configuration.
-
-        Retrosynthesis config uses complex nested AiZynthFinder format;
-        detailed validation is not yet implemented.
-        """
-        pass
-
-    @staticmethod
     def _validate_docking(data: dict[str, Any], result: dict[str, Any]) -> None:
         """Validate docking configuration."""
         if data.get("run", False):
@@ -288,13 +273,14 @@ class ConfigValidator:
             result["errors"].append("aggregation.mode must be 'all' or 'any'")
 
         pose_quality = data.get("pose_quality", {}) or {}
-        max_clashes = pose_quality.get("max_clashes")
-        if max_clashes is not None and (
-            not isinstance(max_clashes, int) or max_clashes < 0
-        ):
-            result["errors"].append(
-                "pose_quality.max_clashes must be a non-negative integer"
-            )
+        for key in ("clash_cutoff", "volume_clash_cutoff", "max_distance"):
+            value = pose_quality.get(key)
+            if value is not None and (
+                not isinstance(value, (int, float)) or value < 0
+            ):
+                result["errors"].append(
+                    f"pose_quality.{key} must be a non-negative number"
+                )
 
         conformer_dev = data.get("conformer_deviation", {}) or {}
         max_rmsd = conformer_dev.get("max_rmsd_to_conformer")
