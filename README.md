@@ -196,6 +196,7 @@ Best-performing generators within each model class, ranked by the number of mole
     <tr><td align="right">7</td> <td>TGM-DLM</td><td align="right">3.0 ± 0.0</td>         <td>—</td><td align="right">—</td>                          <td>TargetDiff</td><td align="right">0.3 ± 0.6</td></tr>
     <tr><td align="right">8</td> <td>EDM</td><td align="right">0.3 ± 0.6</td>             <td>—</td> <td align="right">—</td>                         <td>ResGen</td><td align="right">0.0 ± 0.0</td></tr>
   </tbody>
+</table>
 
 ## Documentation
 
