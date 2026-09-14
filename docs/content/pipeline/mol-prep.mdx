@@ -4,33 +4,50 @@ title: Preprocessing
 
 # Preprocessing
 
-Preprocessing is the first stage of the HEDGEHOG pipeline. It standardizes input molecules and removes entries that are unsuitable for downstream descriptor, structural filtering, synthesis, and docking analysis.
+Stage 1 standardizes input molecules and rejects entries that are unsuitable for later stages.
+It defines the clean population that descriptors, structural filters, synthesis, and docking see.
 
-## What Preprocessing Does
+## Behavior
 
-The stage combines normalization and strict filtering:
+Controlled by `config_mol_prep.yml`.
 
-- converts input SMILES into RDKit molecules
-- removes salts and solvents
-- keeps the largest organic fragment
-- disconnects metals
-- normalizes and sanitize molecules
-- filters out unsupported elements, radicals, isotopes, invalid valence states, and unresolved multi-fragment artifacts when configured
+Normalization (`steps.*`):
 
-This stage is intentionally conservative because it defines the clean molecular population that later stages see.
+- Parse SMILES to RDKit molecules (`to_mol`)
+- Optional fix / sanitize
+- Remove salts and solvents; keep the largest fragment
+- Standardize: disconnect metals, normalize, reionize
+- Preserve formal charge by default (`standardize_mol.uncharge: false`)
+- Preserve stereochemistry by default (`remove_stereochemistry: false`)
+- Write standardized SMILES
 
-## Key Configuration Areas
+Hard filters (`filters.*`):
 
-Preprocessing is controlled by `config_mol_prep.yml`.
+| Key | Default | Effect |
+|-----|---------|--------|
+| `allowed_atoms` | `C,N,O,S,F,Cl,Br,I,P,H,Si` | Reject unsupported elements |
+| `reject_radicals` | `true` | Reject radical electrons |
+| `reject_isotopes` | `false` | Keep isotopes by default |
+| `require_single_fragment` | `true` | Reject multi-fragment leftovers |
 
-Important sections:
+`set_allowed_atoms_from_targets: true` replaces `filters.allowed_atoms` with the union of atoms seen in `target_mols_path` during target alignment only. Outside alignment it has no effect.
 
-- `steps.*` controls normalization and cleanup operations
-- `filters.*` controls hard rejection rules
-- `output.write_duplicates_removed` controls whether duplicate removals are written to disk
+`output.write_duplicates_removed: true` writes `duplicates_removed.csv` in normal mode. In large-dataset mode the duplicates file is always written; this flag is ignored there.
 
 ## Output
 
-Preprocessing writes its output under `stages/01_mol_prep/`, including `filtered_molecules.csv`, `failed_molecules.csv`, `duplicates_removed.csv` when duplicate output writing is enabled.
+Under `stages/01_mol_prep/`:
 
-If Mol Prep finishes successfully but produces zero molecules, the pipeline exits early instead of running later stages on an empty set.
+- `filtered_molecules.csv` — survivors
+- `failed_molecules.csv` — rejects
+- `duplicates_removed.csv` — when duplicate writing is enabled
+
+If MolPrep finishes with zero molecules, the pipeline exits early.
+
+## Usage
+
+```bash
+uv run hedgehog
+uv run hedgehog --stage mol_prep
+uv run hedge --stage mol_prep
+```

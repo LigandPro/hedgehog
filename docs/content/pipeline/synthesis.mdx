@@ -40,7 +40,7 @@ The synthesis stage evaluates whether generated molecules can be practically syn
 
 - **Range**: 1--5 (lower is less complex)
 - **Method**: Standalone numpy SCScore model trained on Reaxys reactions
-- **How it works**: Scores synthetic complexity from Morgan fingerprints using the published SCScore neural model. The default configuration computes the score but does not filter on it unless `score_filters.sc_score` thresholds are set.
+- **How it works**: Scores synthetic complexity from Morgan fingerprints using the published SCScore neural model. When `scscore` is included in `enabled_scores`, the score is computed and is filtered only when `score_filters.sc_score` thresholds are present.
 
 ### Nonpher Complexity Flag
 
@@ -88,18 +88,26 @@ uv run hedgehog setup nonpher-check --python /mnt/ligandpro/shared_storage/data/
 When `run_retrosynthesis: true`, the pipeline runs AiZynthFinder to search for actual retrosynthetic routes:
 
 1. Input SMILES are written to `input_smiles.smi`.
-2. Hedgehog searches the configured charge and isotope representations. By default this includes original and neutralized charge forms plus isotope-preserved and isotope-stripped forms; atom stereochemistry is retained and results map back to the original SMILES.
-3. Targets are divided into isolated, resumable shards. Each shard has a private working directory, checkpoint, and log, and failed shards are retried without discarding completed molecules. Hedgehog polls checkpoint rows while searches run, so progress is visible before a whole shard finishes.
-4. The configured USPTO and ring-breaking expansion policies search for routes against every configured stock.
-5. Variant results are merged back onto the original input SMILES, preferring a solved route from either charge representation.
+2. With `aizynthfinder_charge_mode: both`, Hedgehog searches the original SMILES and a stereochemistry-preserving neutralized form when it differs.
+3. AiZynthFinder runs the variants as one normal multiprocessing batch against its configured policies and stocks.
+4. Variant results are merged back onto the original input row, preferring a solved route from either charge representation.
 
-The default search profile uses a maximum depth of 8, 300 seconds, and 300 MCTS iterations per representation. This is intentionally more generous than upstream AiZynthFinder defaults while avoiding the extreme runtime of deep 15-step, 1000-iteration searches.
+With `aizynthfinder_retry_unsolved: true`, Hedgehog first runs the normal search budget, removes every molecule solved by any charge representation, and reruns only the remaining representations with `aizynthfinder_retry_time_limit` and `aizynthfinder_retry_iteration_limit`. Pass-1, retry, and merged variant JSON files are retained separately.
 
-If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept. `synthesis_extended.csv` retains diagnostic statuses for every searched target: `solved`, `route_found_stock_incomplete`, `search_exhausted`, or `worker_failed`. A missing worker output no longer discards other shard results unless `aizynthfinder_fail_on_worker_error: true`.
+The shipped search profile uses the limits declared in `config_synthesis.yml`; each representation receives that search budget.
+
+If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept.
 
 Setting `run_retrosynthesis: false` skips AiZynthFinder entirely and only computes the enabled scores above, which is significantly faster.
 
+## Target-Aware Thresholds
+
+Synthesis is skipped during target alignment. The candidate run uses the source synthesis config unchanged, including SA/RA/SYBA thresholds and retrosynthesis settings.
+
 ## Filtering Logic
+
+Score thresholds from `sa_score_*`, `syba_score_*`, `ra_score_*`, and any configured `score_filters` entries are always applied when those score columns exist.
+There is no separate runtime switch that disables score filtering while scores are computed.
 
 A molecule passes the synthesis stage if **all** of the following hold:
 
@@ -109,6 +117,8 @@ A molecule passes the synthesis stage if **all** of the following hold:
 4. Any enabled `score_filters` thresholds are satisfied, including `score_filters.sync_score` when `sync` is enabled
 5. If `filter_solved_only: true` and `run_retrosynthesis: true`: AiZynthFinder found at least one valid route
 
+Optional scorers (`sync`, `fsscore`, `gasa`, `nonpher`, …) need their dependencies. With `--auto-install` / `HEDGEHOG_AUTO_INSTALL=1` (and `sync_auto_install` for SYNC), missing runtimes are bootstrapped when possible; otherwise the score column is `NaN` and synthesis continues.
+
 ## Output Files
 
 | File | Description |
@@ -117,10 +127,17 @@ A molecule passes the synthesis stage if **all** of the following hold:
 | `synthesis_extended.csv` | Scores combined with retrosynthesis results (when retrosynthesis is enabled) |
 | `filtered_molecules.csv` | Molecules passing all synthesis filters |
 | `input_smiles.smi` | SMILES input file generated for AiZynthFinder |
-| `retrosynthesis_results.json` | Raw AiZynthFinder output with route trees |
+| `retrosynthesis_results.json` | Best result per original input molecule, including its route tree |
 | `retrosynthesis_variants.json` | Raw results for preserved and neutralized search representations before union |
-| `aizynthfinder_run_manifest.json` | Shard outcomes, retry counts, failed-worker log paths, and concise log tails |
-| `aizynthfinder_subprocess.log` | Concise machine-readable run summary; full logs remain under `aizynthfinder_work/` |
+
+`synthesis_extended.csv` retains literal AiZynthFinder diagnostics for every
+target. These include `retrosynthesis_status`, `retrosynthesis_reason`, observed
+search time and iterations, best-route depth, configured limits, whether each
+limit was reached, route and node counts, precursor stock counts, and the exact
+`precursors_not_in_stock` string. The reason is assembled mechanically from the
+saved AiZynthFinder fields; it reports observed stopping conditions and the best
+saved route without claiming an unobserved chemical cause.
+
 ## Usage
 
 ```bash

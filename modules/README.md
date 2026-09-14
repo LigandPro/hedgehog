@@ -1,83 +1,95 @@
-# Adding external modules
+# Modules workspace
 
-## Add MCE-18 module:
-1.  `MCE-18` implementation file was loaded from source: 
-    [https://github.com/Tong-Du/MCE-18.git](https://github.com/Tong-Du/MCE-18.git)
+This folder is where Hedgehog keeps **optional external tools and assets**
+(AiZynthFinder data, Lilly binaries, SYBA checkout, Sync checkpoint, FSScore/GASA
+checkouts, docking helpers, …).
 
-    We thank authors for this brilliant open-source implementation of MCE-18 metric from https://pubs.acs.org/doi/10.1021/acs.jmedchem.9b00004 paper. 
-<!-- 
-## Install SYBA (required for synthesis stage)
-SYBA is automatically installed when you create the conda environment from `environment.yml` (which includes the `lich` channel).
+You usually don’t edit code here by hand. Prefer:
 
-**If installing manually:**
 ```bash
-conda activate hedge_env
-mamba install lich::syba
+uv run hedgehog setup <thing>
+# or a full pipeline with auto-bootstrap
+uv run hedgehog --auto-install
 ```
-Or with conda:
-```bash
-conda install -c lich syba
-``` -->
-<!-- 
-**If conda installation fails**, you can install from source:
-```bash
-git clone https://github.com/lich-uct/syba.git
-cd syba
-conda activate hedge_env
-pip install .
-``` -->
-<!-- Or uncomment the git pip dependency in `environment.yml` and recreate the environment.
 
-## Install Eli Lilly Medchem Rules
-Download Eli Lilly Medchem Rules via conda or mamba (preferred):
-```bash
-mamba install lilly-medchem-rules
-```
-Or with conda:
-```bash
-conda install -c conda-forge lilly-medchem-rules
-``` -->
+---
 
+## What’s typically here
 
+| Path | What it is | How it usually arrives |
+| --- | --- | --- |
+| `aizynthfinder/` | Retrosynthesis engine + public data | `uv run hedgehog setup aizynthfinder` |
+| `lilly_medchem_rules/bin/` | Lilly CLI binaries for demerit scoring | Vendored with the repo |
+| `syba/` | SYBA synthesizability scorer sources | Vendored / env install |
+| `sync/` | SYNC model checkpoint | `setup sync` or `sync_auto_install` |
+| `fsscore/` / `gasa/` | Optional score checkouts | `--auto-install` when enabled in synthesis config |
+| `mce18.py` | MCE-18 descriptor helper | Vendored from [Tong-Du/MCE-18](https://github.com/Tong-Du/MCE-18) |
+| `docking/` / `dockingTools/` / `matcha_remote/` / `sigmatcha/` | Docking-related assets | Stage/setup dependent |
 
-## Add AiZynthFinder retrosynthesis module 
-### Automated Installation (Recommended)
+Exact contents can grow as you enable optional scorers. That’s normal.
 
-**Quick setup via CLI:**
+---
+
+## AiZynthFinder (most common setup)
+
+**Recommended**
+
 ```bash
 uv run hedgehog setup aizynthfinder
 ```
 
-The setup command will automatically:
-- Install the optional `retrosynthesis` dependency into the project environment
-- Download public data 
-- Set up logging configuration
+That installs the optional retrosynthesis extra, downloads public data, and
+wires logging.
 
-Legacy fallback (script):
+**Legacy script** (same idea, older entrypoint):
 
 ```bash
 cd modules
 ./install_aizynthfinder.sh
 ```
 
-### Manual Installation
-If you prefer to install manually:
+**Manual sketch** (only if you need full control):
 
-1. **Install the optional dependency**:
-    ```bash
-    uv sync --extra retrosynthesis
-    ```
+```bash
+uv sync --extra retrosynthesis
+mkdir -p modules/aizynthfinder/public modules/aizynthfinder/aizynthfinder/data
+uv run python -m aizynthfinder.tools.download_public_data modules/aizynthfinder/public
+cp src/hedgehog/synthesis/logging.yml modules/aizynthfinder/aizynthfinder/data/logging.yml
+```
 
-2. **Download public data**:
-    ```bash
-    mkdir -p modules/aizynthfinder/public modules/aizynthfinder/aizynthfinder/data
-    uv run python -m aizynthfinder.tools.download_public_data modules/aizynthfinder/public
-    cp src/hedgehog/synthesis/logging.yml modules/aizynthfinder/aizynthfinder/data/logging.yml
-    ```
-3. **Continue environment setup** following main [README.md](../README.md)
+Then in `src/hedgehog/configs/config_synthesis.yml`:
 
-**Configure** in `src/hedgehog/configs/config_synthesis.yml`:
-    - Set `run: True` to enable the stage
-    - Adjust `nproc` for parallel processing if needed
+```yaml
+run: true
+run_retrosynthesis: true
+n_jobs: 32
+# aizynthfinder_* knobs live in the same file
+```
 
-The synthesis stage will run automatically after structural filters and before docking in the pipeline.
+---
+
+## Other optional pieces (short recipes)
+
+```bash
+uv run hedgehog setup sync
+uv run hedgehog setup fsscore
+uv run hedgehog setup gasa
+```
+
+For synthesis optional scorers (`sync` / `fsscore` / `gasa` / `nonpher`), put them
+in `enabled_scores` and prefer `--auto-install` so paths don’t have to be typed
+by hand. Override paths only when you bring your own env.
+
+---
+
+## Troubleshooting
+
+| Problem | Likely fix |
+| --- | --- |
+| Synthesis stage skips retrosynthesis | `run_retrosynthesis: true` + AiZynthFinder setup done |
+| FSScore/GASA are all `NaN` | Enable scorer in `enabled_scores` and run with `--auto-install` |
+| Lilly filter fails to start | Check `modules/lilly_medchem_rules/bin` is on PATH (Hedgehog usually sets this) |
+| “Where do I put custom models?” | Prefer config/ENV overrides; otherwise `$HEDGEHOG_OPTIONAL_ENV_ROOT/...` |
+
+Main project setup: see the root [README.md](../README.md).
+Deep stage docs: [https://hedgehog.ligandpro.ru](https://hedgehog.ligandpro.ru).

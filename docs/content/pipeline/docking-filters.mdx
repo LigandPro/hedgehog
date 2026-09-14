@@ -4,106 +4,113 @@ title: Three-dimensional Filters
 
 # Three-Dimensional Filters
 
-The docking filters stage applies a cascade of quality checks to docked poses, removing those with steric clashes, implausible geometries, or missing key interactions. It then deduplicates poses to produce a list of unique molecules.
+Stage 6 applies a cascade of pose quality checks, then deduplicates to unique molecules.
+When inputs are SDF, model-provided coordinates are the primary pose source.
+
+## Coordinate Sources
+
+For SDF model inputs, HEDGEHOG preserves original coordinates in `input/ligands.sdf`, intersects their `mol_idx` values with the latest completed upstream stage, and evaluates those poses in the main Stage 6 output.
+
+Set `evaluate_docked_coordinates: true` in the master config or pass `--evaluate-docked-coordinates` to also evaluate docking output under `stages/06_docking_filters/docked/`. That option requires `docking.run: true` and at least one selected docking tool.
+
+Every pose-level table and SDF carries `pose_source` as `input` or `docked`.
+At molecule level, the two branches use pass-if-either semantics; a molecule that passes both is marked `input+docked` in the root `filtered_molecules.csv`.
+For non-SDF inputs, docking output remains the available primary coordinate source.
 
 ## Filter Cascade
 
-When the aggregation mode is `all` (default), the search-box filter can short-circuit evaluation: poses that fail it skip all subsequent filters.
+When `aggregation.mode` is `all` (default), early filters can short-circuit: poses that fail skip later heavy filters.
 
 ### Filter 1: Search-Box Containment
 
-Verifies that the docked pose lies within the configured docking search box. This catches poses that drifted outside the binding site during optimization.
+Checks that the pose lies inside the docking search box.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enabled` | `true` | Enable/disable this filter |
-| `max_outside_fraction` | `0.0` | Maximum fraction of atoms allowed outside the box (0.0 = all atoms must be inside) |
-| `short_circuit` | `true` | Skip heavy filters for failed poses (only in `all` mode) |
+| `enabled` | `true` | Enable this filter |
+| `max_outside_fraction` | `0.0` | Maximum fraction of atoms allowed outside the box |
+| `short_circuit` | `true` | Skip later filters on fail when `mode` is `all` |
 
-The search box is resolved from the docking configuration: either explicit `center`/`size` coordinates, or computed from `autobox_ligand` + `autobox_add` (the same reference ligand used for docking).
+The box comes from docking config: explicit `center`/`size`, or `autobox_ligand` + `autobox_add`.
 
-### Filter 2: Pose Quality
+### Filter 2: Pose Quality (posecheck-fast)
 
-Fast pose-quality check from [LigandPro/posecheck-fast](https://github.com/LigandPro/posecheck-fast) for protein-ligand clashes, volume overlap, and protein distance. The legacy optional backend is `posecheck`, which exposes strain-energy parameters.
+Fast intermolecular checks from [LigandPro/posecheck-fast](https://github.com/LigandPro/posecheck-fast): clash, volume overlap, and protein distance.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enabled` | `true` | Enable/disable this filter |
-| `backend` | `posebusters_fast` | Backend: `posebusters_fast` or legacy `posecheck` |
-| `clash_cutoff` | `0.75` | Relative VDW distance cutoff for fast clash detection |
-| `volume_clash_cutoff` | `0.075` | ShapeTverskyIndex overlap threshold for volume clash detection |
-| `max_distance` | `5.0` | Maximum minimum ligand-protein distance in Angstroms |
-| `max_clashes` | `2` | Legacy PoseCheck maximum allowed steric clashes |
-| `max_strain_energy` | `50.0` | Legacy PoseCheck maximum ligand strain energy in kcal/mol |
-| `strain_forcefield` | `UFF` | Legacy PoseCheck force field for strain calculation |
-| `clash_tolerance` | `0.5` | Legacy PoseCheck VDW overlap tolerance |
+| `enabled` | `true` | Enable this filter |
+| `clash_cutoff` | `0.75` | Relative VDW distance cutoff for clash detection |
+| `volume_clash_cutoff` | `0.075` | ShapeTverskyIndex overlap threshold |
+| `max_distance` | `5.0` | Maximum minimum ligand–protein distance (Å) |
+| `short_circuit` | `true` | Skip later filters on fail when `mode` is `all` |
 
-Clashes indicate that the ligand overlaps with protein atoms in a physically impossible way. High strain energy means the ligand is in an energetically unfavorable conformation.
+Legacy PoseCheck keys such as `strain_forcefield` and `clash_tolerance` are not used.
+This stage runs posecheck-fast only.
 
 ### Filter 3: Interaction Analysis (ProLIF)
 
-Uses [ProLIF](https://prolif.readthedocs.io/) to compute a protein-ligand interaction fingerprint and check for required/forbidden contacts.
+Uses [ProLIF](https://prolif.readthedocs.io/) interaction fingerprints.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enabled` | `true` | Enable/disable this filter |
-| `reference_ligand` | `null` | Reference SDF for similarity comparison |
+| `enabled` | `true` | Enable this filter |
+| `reference_ligand` | `null` | SDF path for fingerprint similarity; required when `similarity_threshold` &gt; 0 |
 | `min_hbonds` | `0` | Minimum hydrogen bonds required |
-| `required_residues` | `[]` | Residue identifiers that must have at least one interaction |
-| `forbidden_residues` | `[]` | Residues that must NOT have any interaction |
+| `required_residues` | `[]` | Residues that must have at least one interaction |
+| `forbidden_residues` | `[]` | Residues that must not interact |
 | `interaction_types` | `[HBDonor, HBAcceptor, Hydrophobic, VdWContact]` | Interaction types to detect |
-| `reporting.enabled` | `true` | Generate interaction reporting artifacts |
-| `similarity_threshold` | `0.0` | Tanimoto similarity to reference interaction fingerprint (0 = disabled) |
+| `reporting.enabled` | `true` | Write interaction reporting artifacts |
+| `similarity_threshold` | `0.0` | Tanimoto to the reference ProLIF fingerprint (`0` disables similarity) |
 
-This filter is especially useful when you know the binding mode should involve specific residues (e.g., a catalytic aspartate) or should avoid certain contacts (e.g., a cysteine that causes covalent binding).
+`similarity_threshold` and `reference_ligand` are a pair:
 
-Residue identifiers are matched against ProLIF interaction column labels. Depending on your prepared receptor and
-ProLIF naming, identifiers may look different, e.g., `["SER45"]`, or `["SER:45"]` so inspect the generated
-interaction report before finalizing `required_residues`.
+- `similarity_threshold: 0.0` — similarity check off.
+- `similarity_threshold` &gt; 0 with a valid SDF — Tanimoto is computed on ProLIF bits vs the reference.
+- `similarity_threshold` &gt; 0 without `reference_ligand` — warning only; the similarity gate does not filter.
+
+Residue identifiers must match ProLIF column labels for your prepared receptor (for example `SER45` or `SER:45`). Inspect the interaction report before locking `required_residues`.
 
 ### Filter 4: Shepherd-Score (3D Shape Similarity)
 
-Compares the 3D molecular shape of each pose to a reference ligand using Gaussian overlap Tanimoto.
+Gaussian-overlap shape Tanimoto vs a reference ligand.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enabled` | `false` | Disabled by default (requires reference ligand) |
-| `backend` | `auto` | `auto` = worker -> in-process -> soft-skip, `worker` = worker only, `inprocess` = in-process only |
-| `auto_install_worker` | `true` | If worker command is missing, try auto-installing `.venv-shepherd-worker` |
-| `worker_python` | `null` | Optional interpreter for auto-install (`python3.12`, `python3.11`, `python3.10`) |
+| `enabled` | `false` | Requires a reference ligand |
+| `backend` | `auto` | `auto` = worker → in-process → soft-skip; `worker`; `inprocess` |
+| `auto_install_worker` | `true` | Auto-install `.venv-shepherd-worker` when missing |
+| `worker_python` | `null` | Optional interpreter for auto-install |
 | `reference_ligand` | `null` | Path to reference ligand SDF |
-| `min_shape_score` | `0.5` | Minimum shape Tanimoto score |
-| `alpha` | `0.81` | Gaussian width parameter |
-| `align_before_scoring` | `true` | Reserved for compatibility |
+| `min_shape_score` | `0.5` | Minimum shape Tanimoto |
+| `alpha` | `0.81` | Gaussian width |
+| `align_before_scoring` | `true` | Align each pose onto the reference with RDKit `AlignMol` / `GetBestRMS` before scoring; `false` scores unaligned coordinates |
 
-This filter is disabled by default because it requires a known reference ligand for comparison. Enable it when you have a co-crystallized ligand or known active compound and want to ensure poses adopt a similar shape.
-For reproducible setup, install an isolated worker environment:
+If no Shepherd backend is available, HEDGEHOG soft-skips this filter (warning; `pass_shepherd_score=true`).
 
 ```bash
 uv run hedgehog setup shepherd-worker --yes
 ```
 
-If no Shepherd backend is available at runtime, HEDGEHOG soft-skips this filter (logs a warning and marks `pass_shepherd_score=true`).
-
 ### Filter 5: Conformer Deviation
 
-Checks if the docked pose is geometrically plausible by generating multiple low-energy conformers and measuring the RMSD between the docked pose and the closest conformer.
+Generates ETKDG conformers and measures RMSD to the evaluated pose.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enabled` | `true` | Enable/disable this filter |
-| `use_nvmolkit` | `true` | Try nvMolKit acceleration when available (falls back to RDKit if unavailable) |
-| `num_conformers` | `50` | Number of conformers to generate |
-| `conformer_method` | `ETKDGv3` | Conformer generation method (ETKDG, ETKDGv2, ETKDGv3) |
-| `max_rmsd_to_conformer` | `3.0` | Maximum RMSD in Angstroms to closest conformer |
-| `random_seed` | `42` | Seed for reproducible conformer generation |
+| `enabled` | `true` | Enable this filter |
+| `use_nvmolkit` | `true` | Prefer nvMolKit when available; fall back to RDKit |
+| `backend` | `symmetry_rmsd` | `symmetry_rmsd` or `naive` |
+| `num_conformers` | `50` | Number of conformers |
+| `conformer_method` | `ETKDGv3` | `ETKDG`, `ETKDGv2`, or `ETKDGv3` |
+| `max_rmsd_to_conformer` | `3.0` | Maximum RMSD (Å) to the closest conformer |
+| `random_seed` | `42` | Conformer seed |
 | `include_hydrogens` | `false` | Include hydrogens in RMSD matching |
-| `max_matches` | `10000` | Cap symmetry matching complexity |
-| `early_stop_on_pass` | `true` | Stop comparison once any conformer passes |
-| `optimize_conformers` | `false` | UFF optimization of generated conformers |
+| `max_matches` | `10000` | Cap for `GetBestRMS` symmetry matching |
+| `early_stop_on_pass` | `true` | Stop once any conformer passes |
+| `optimize_conformers` | `false` | UFF-relax **generated ETKDG conformers** before RMSD, not the docked pose. Failed UFF steps are skipped; they are not fatal |
 
-A high minimum RMSD indicates that the docking engine placed the ligand in a conformation that is energetically unlikely for the molecule to adopt in solution. This catches docking artifacts where the scoring function found a favorable protein-ligand interaction at the cost of internal strain.
-For isolated setup of optional nvMolKit dependencies:
+High minimum RMSD means the pose is far from accessible low-energy conformers.
 
 ```bash
 uv run hedgehog setup nvmolkit-worker
@@ -113,22 +120,20 @@ uv run hedgehog setup nvmolkit-worker
 
 | File | Description |
 |------|-------------|
-| `filtered_molecules.csv` | Unique molecules (best pose per molecule) passing all filters |
-| `filtered_poses.csv` | All passing poses with full metrics (before deduplication) |
-| `filtered_poses.sdf` | 3D structures of all passing poses in SDF format |
-| `metrics.csv` | Per-pose filter metrics and pass/fail flags for every filter |
+| `filtered_molecules.csv` | Unique molecules (best pose per molecule) passing filters |
+| `filtered_poses.csv` | All passing poses with metrics |
+| `filtered_poses.sdf` | Passing poses as SDF |
+| `metrics.csv` | Per-pose metrics for the primary coordinate branch |
+| `docked/` | Optional docked-coordinate artifacts |
 
-For each tool, values are taken from the best pose per molecule (minimum affinity).
+After filtering, poses are sorted by affinity and deduplicated to one best pose per `mol_idx`.
+SMILES are taken from the original ligand table, not regenerated from 3D.
 
 ## Usage
 
 ```bash
-# Run docking filters as part of the full pipeline
 uv run hedgehog
-
-# Run docking filters stage only (requires docking output to exist)
-uv run hedgehog --stage docking_filters
-
-# Short alias
+uv run hedgehog --stage docking_filters --mols input/generated_3d.sdf
+uv run hedgehog --mols input/generated_3d.sdf --evaluate-docked-coordinates
 uv run hedge --stage docking_filters
 ```

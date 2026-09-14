@@ -24,7 +24,7 @@ intrinsic MolEval metrics.
 | **ScaffUniqueness** | Fraction of scaffolds that appear only once | 0--1 | Higher = each scaffold is represented by a single molecule. Low = scaffold over-representation. |
 | **FG** | Functional group diversity ratio | 0--1 | Higher = wider variety of functional groups across the set. |
 | **RS** | Ring system diversity ratio | 0--1 | Higher = more varied ring systems. Low values suggest reliance on a few ring types. |
-| **Filters** | Fraction passing medicinal chemistry filters (MCF + PAINS) | 0--1 | Higher = cleaner set. Molecules failing PAINS or MCF contain known promiscuous substructures. |
+| **Filters** | Fraction passing vendor MCF + PAINS CSVs shipped with MolEval | 0--1 | Higher = cleaner set under those catalogs. This is **not** Stage 3 Common Alerts PAINS (`rd_filters` / `common_alerts_collection.csv`). |
 | **MCE18** | Mean MCE-18 molecular complexity | 0--∞ | Higher = more complex structures (reported as an average over molecules). |
 
 ## Pipeline Checkpoints
@@ -56,6 +56,11 @@ The expected trend is:
 | `device` | str | `cpu` | Compute device (`cpu` or `cuda:0`) |
 | `max_molecules` | int | `2000` | Subsample threshold for O(N^2) pairwise metrics |
 | `mce18` | bool | `true` | Enable mean MCE-18 molecular complexity reporting |
+| `filters` | bool | `true` | MCF + PAINS passage rate from vendor files `src/hedgehog/vendor/moleval/metrics/mcf.csv` and `wehi_pains.csv` |
+
+There are no `pains_file_path` / `mcf_file_path` config keys.
+Paths are fixed next to the vendored MolEval metrics code.
+Stage 3 structural PAINS uses a different catalog and enforcement path.
 
 ## Deterministic Computation
 
