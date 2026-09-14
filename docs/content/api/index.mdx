@@ -1,11 +1,11 @@
 ---
 title: API Overview
-timestamp: 1781676399965
+timestamp: 1789069744383
 ---
 
 # API Overview
 
-Generated automatically at build time by `scripts/generate_api_docs.py` (2026-06-17 06:06:39 UTC).
+Generated automatically at build time by `scripts/generate_api_docs.py` (2026-09-10 19:49:04 UTC).
 
 This page is intentionally high-level and reflects the current runtime API surface.
 
@@ -55,15 +55,18 @@ Run the molecular analysis pipeline as an explicit subcommand.
 
 | Parameter | Kind | Flags | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| `config_path` | option | `--config, -c` | `STRING` | no | `src/hedgehog/configs/config.yml` | Master YAML config path (default: src/hedgehog/configs/config.yml). |
-| `generated_mols_path` | option | `--mols, -m` | `STRING` | no | `None` | SMILES file path or glob (overrides config). |
-| `out_dir` | option | `--out, -o` | `STRING` | no | `None` | Output directory (overrides config folder_to_save). |
+| `config_path` | option | `--config, -c` | `STRING` | no | `None` | Master YAML config path. Defaults to the packaged config, or to RUN_FOLDER/configs/master_config_resolved.yml with --continue. |
+| `generated_mols_path` | option | `--mols, -m` | `STRING` | no | `None` | Molecule file, directory, or glob. Shell-expanded SDF/CSV lists after --mols are accepted (overrides config). |
+| `out_dir` | option | `--out, -o` | `STRING` | no | `None` | Output naming base; creates a fresh numbered folder. |
 | `stage` | option | `--stage, -s` | `Choice(['mol_prep', 'descriptors', 'struct_filters', 'synthesis', 'docking', 'docking_filters', 'final_descriptors'])` | no | `None` | Run one or more stages only; repeat --stage. See `hedgehog info`. |
 | `reuse_folder` | option | `--reuse` | `BOOL` | no | `False` | Reuse existing results folder. |
-| `force_new_folder` | option | `--force-new` | `BOOL` | no | `False` | Always create a new results folder. |
+| `continue_folder` | option | `--continue` | `STRING` | no | `None` | Continue an unfinished run from its first incomplete stage. |
+| `force_new_folder` | option | `--force-new` | `BOOL` | no | `False` | Explicitly request the default fresh-folder behavior. |
 | `auto_install` | option | `--auto-install` | `BOOL` | no | `False` | Install missing optional tools automatically. |
 | `show_progress` | option | `--progress` | `BOOL` | no | `False` | Show live progress bar. |
 | `large_dataset` | option | `--large-dataset` | `BOOL` | no | `False` | Stream large libraries in chunks and write row-level shard outputs. |
+| `evaluate_docked_coordinates` | option | `--evaluate-docked-coordinates` | `BOOL` | no | `False` | For SDF inputs, also apply 3D filters to docked coordinates; requires enabled docking with at least one tool. |
+| `align_config_percentile` | option | `--align-config` | `<FloatRange 1e-06<=x<=100.0>` | no | `None` | Align numeric thresholds to cover this percentage of the target_mols_path molecules; structural policy remains unchanged. |
 
 ### `hedgehog setup`
 
@@ -203,10 +206,6 @@ Modules under `hedgehog.vendor.*` and `hedgehog.workers.*` are intentionally exc
 | `hedgehog.descriptors.waves` | `register` | function | - |
 | `hedgehog.descriptors.waves` | `run_waves` | function | - |
 | `hedgehog.docking` | `run` | function | - |
-| `hedgehog.docking_filters` | `apply_conformer_deviation_filter` | function | - |
-| `hedgehog.docking_filters` | `apply_interaction_filter` | function | - |
-| `hedgehog.docking_filters` | `apply_pose_quality_filter` | function | - |
-| `hedgehog.docking_filters` | `apply_shepherd_score_filter` | function | - |
 | `hedgehog.docking_filters` | `docking_filters_main` | function | - |
 | `hedgehog.molprep` | `run` | function | - |
 | `hedgehog.reporting` | `ReportGenerator` | class | - |

@@ -4,126 +4,168 @@ title: Structural Filters
 
 # Structural Filters
 
-The structural filters stage applies medicinal chemistry rules and structural alert databases to remove molecules with undesirable substructures, excessive complexity, or known toxicophores. 
+Stage 3 builds a structural liability profile and applies an explicit hard gate.
+`calculate_*` controls what is evaluated and written.
+`filter_*` controls what participates in survival.
+Enabling a diagnostic does not imply rejection.
 
-## Filter Reference
+Every enabled `filter_*` flag requires its backing `calculate_*` flag.
+Otherwise Stage 3 raises an error.
 
-### Database-Based Filters
+Parallelism uses one resolved worker count: stage `n_jobs`, else master `n_jobs`.
+There is no separate Common Alerts or parse-input worker ladder.
 
-| Filter | Config Key | What It Detects | Why It Matters |
-|--------|-----------|----------------|----------------|
-| Common Structural Alerts | `calculate_common_alerts` | Matches against curated SMARTS databases (Dundee, BMS, Glaxo, PAINS, etc.) | Flags reactive, toxic, or assay-interfering substructures from 20+ published rule sets with total 2,458 SMARTS patterns |
-| NIBR | `calculate_NIBR` | Novartis In-house structural filters | Catches chemotypes with poor developability based on Novartis medicinal chemistry experience |
-| Lilly Demerits | `calculate_lilly` | Eli Lilly Medchem Rules with demerit scoring | Assigns numeric demerit scores; molecules exceeding thresholds are rejected |
-| Bredt Rule | `calculate_bredt` | Violations of Bredt's rule at bridgehead positions | Bridgehead double bonds in small bicyclic systems are synthetically impossible |
-| Molecular Complexity | `calculate_molcomplexity` | Overly complex molecular graphs | Excessively complex molecules are difficult to synthesize and often have poor ADME |
-| Molecular Graph Stats | `calculate_molgraph_stats` | Graph-theoretic severity metrics (severities 1--11) | Detects topological anomalies like unusual ring systems or chain branching |
+## Default Hard Gate
 
-### Medchem Functional Filters
+Shipped `config_structFilters.yml`:
 
-These five filters use the `medchem.functional` API:
+```text
+hard_pass =
+  PAINS-free
+  AND native NIBR pass AND NIBR severity < 10
+  AND Lilly pass at demerit cutoff 160
+  AND MolGraph max severity < 5
+  AND no curated protecting group
+  AND undefined stereocenters ≤ 2
+```
 
-| Filter | Config Key | What It Detects | Default | Key Parameters |
-|--------|-----------|----------------|---------|----------------|
-| Protecting Groups | `calculate_protecting_groups` | Common protecting groups (Boc, Fmoc, Cbz, etc.) | On | -- |
-| Ring Infraction | `calculate_ring_infraction` | Strained ring systems and infractions | On | `ring_infraction_hetcycle_min_size: 4` |
-| Stereo Centers | `calculate_stereo_center` | Excessive or undefined stereocenters | On | `stereo_max_centers: 4`, `stereo_max_undefined: 2` |
-| Halogenicity | `calculate_halogenicity` | Excessive halogen content | On | `halogenicity_thresh_F: 6`, `halogenicity_thresh_Br: 3`, `halogenicity_thresh_Cl: 3` |
-| Symmetry | `calculate_symmetry` | Highly symmetric molecules | Off | `symmetry_threshold: 0.8` |
+| Method | Role |
+|--------|------|
+| **PAINS** | Common Alerts subset only. Other rulesets are calculated but not enforced by default. |
+| **NIBR** | Screening-deck gate. Accumulated severity ≥ 10 fails; any EXCLUDE rule sets severity to 10. Native `pass_filter` is also required. |
+| **Lilly160** | Independent medicinal-chemistry gate at demerit cutoff 160. |
+| **MolGraph** | Graph-sanity check. Severity 5, 8, or 10 fails. |
+| **Protecting groups** | Curated Fmoc / Boc-family and related terminal protecting-group SMARTS. |
+| **Undefined stereo** | Uses `calculate_stereo_center`; rejects when undefined centers &gt; `stereo_max_undefined`. |
 
-The symmetry filter is disabled by default because many approved drugs are symmetric (e.g., ibuprofen, metformin). Enable it only if your project specifically requires asymmetric scaffolds.
+Default YAML:
 
-With target alignment enabled, Hedgehog recalculates the ring cutoff, both stereocenter limits, all three halogen limits, and the symmetry threshold from the requested retained target percentile. It then recomputes those four pass masks and decides which complete structural rules can remain enabled without dropping below the combined retention target. Execution-only settings such as schedulers are not percentile parameters and remain unchanged.
+```yaml
+filter_common_alerts: true
+filter_NIBR: true
+filter_lilly: true
+filter_molgraph_stats: true
+filter_protecting_groups: true
+filter_undefined_stereo_center: true
+# All other filter_* flags are false.
 
-## Pipeline Position
+nibr_max_severity: 10
+molgraph_max_severity: 5
+lilly_demerit_cutoff: 160
+stereo_max_undefined: 2
 
-Structural filters run after the descriptor stage or independently and write results to `03_structural_filters_post/`.
+common_alerts_filter_include_rulesets:
+  - PAINS
+```
 
-## Common Alerts Configuration
+## Common Alerts: Calculate vs Filter
 
-The common alerts filter is the most configurable. It uses a curated CSV database of SMARTS patterns organized by rule set:
+These controls are independent.
 
-HEDGEHOG ships three structural alert profiles:
+| Key | Effect |
+|-----|--------|
+| `calculate_common_alerts` | Run the Common Alerts implementation. |
+| `include_rulesets` | Which rulesets to **calculate**. `all` = every ruleset in `alerts_data_path`. `[]` / `null` = calculate none. A list = only those names. |
+| `exclude_smarts` | Drop exact SMARTS strings from calculation (catalog `smarts` column). |
+| `filter_common_alerts` | Whether Common Alerts participate in the hard gate. |
+| `common_alerts_filter_include_rulesets` | Which **calculated** rulesets are enforced. Empty list = enforce every calculated ruleset. |
+| `common_alerts_filter_exclude_rulesets` | Remove rulesets from the hard gate. Exclusions win. |
 
-- `config_structFilters_strict.yml` - conservative, for high-confidence hygiene screening
-- `config_structFilters_balanced.yml` - practical mid-conservatism profile
-- `config_structFilters_exploration.yml` - least conservative, keeps more chemistry diversity
-
-The default `config_structFilters.yml` uses the exploration profile.
+Default policy: calculate all 23 rulesets / 2,458 SMARTS; enforce PAINS only.
 
 ```yaml
 calculate_common_alerts: true
-common_alerts_auto_n_jobs: true
-common_alerts_small_input_threshold: 1000
-common_alerts_small_input_n_jobs: 1
-common_alerts_large_input_n_jobs: 12
-include_rulesets:
-  - Dundee
-  - BMS
-  - Inpharmatica
-  - LD50-Oral
-  - Glaxo
+include_rulesets: all
+exclude_smarts: []
+filter_common_alerts: true
+common_alerts_filter_include_rulesets:
   - PAINS
-  - AlphaScreen-Hitters
-  - Frequent-Hitter
-  - Chelator
-  - SureChEMBL
-  - GST-Hitters
-  - HIS-Hitters
-  - LuciferaseInhibitor
-
-exclude_descriptions:
-  Dundee:
-    - Aliphatic long chain
-    - isolated alkene
-    - triple bond
-  Inpharmatica:
-    - Filter82_pyridinium
-  LD50-Oral:
-    - phenylpiperazine
-  SureChEMBL:
-    - aminothiazole
-  HIS-Hitters:
-    - Picolylamines_A
+common_alerts_filter_exclude_rulesets: []
 ```
 
-When `common_alerts_auto_n_jobs: true`, worker selection is size-aware:
+Outputs keep both views: native `pass` (all calculated alerts) and `enforcement_pass` (selected hard subset).
+Per-match rows live in `common_alerts/hits_long.csv`.
+Rule IDs are audit metadata, not configuration keys.
 
-- `< 1000` molecules: use `1` worker
-- `1000..9999` molecules: use `12` workers
-- `>= 10000` molecules: use all available workers
+Catalog notes and pitfalls: `src/hedgehog/struct_filters/data/README.md`.
 
-Set `common_alerts_auto_n_jobs: false` to use regular stage/global `n_jobs` resolution instead.
+## Profiles
 
-The `exclude_descriptions` section lets you whitelist specific alerts within a rule set. For example, if your target requires an imidazole moiety, you can exclude the Toxicophore imidazole alert while keeping all other toxicophore rules active.
+Three shipped Stage 3 configs share the same diagnostic calculations.
+Hard gates differ. The former `balanced` profile is removed.
 
-Use the strict profile when broad toxicology, sensitization, and reactivity
-rulesets should be active. Use the exploration profile when retaining chemical
-diversity matters more than conservative early rejection.
+| Profile | Config | Hard gate | Smoke on 20 MOSES (`results/profile_smoke_struct_filters/`) |
+|---------|--------|-----------|--------------------------------------------------------------|
+| **default** | `config_structFilters.yml` | PAINS + NIBR&lt;10 + Lilly160 + MolGraph&lt;5 + protecting groups + undefined stereo ≤2 | **15/20** hard pass |
+| **exploration** | `config_structFilters_exploration.yml` | NIBR + MolGraph + protecting groups + undefined stereo ≤3 (no PAINS, no Lilly) | **18/20** hard pass |
+| **strict** | `config_structFilters_strict.yml` | PAINS + LD50-Oral + Toxicophore + Skin + MLSMR + NIBR + Lilly100 + Bredt + MolGraph + protecting groups + molcomplexity + undefined ≤2 + total stereo &lt;5 | **0/20** hard pass |
+
+Exploration is softer than default.
+Strict adds high-prevalence Common Alerts rulesets (Toxicophore, Skin, MLSMR) plus Lilly100, Bredt, complexity, and total stereocenter enforcement; on this sample it rejects everything.
+
+### Why these gates
+
+Prevalence on ZINC / ChEMBL / FDA / KRAS (molecule-level hit rates, not rejection rates for diagnostic-only rulesets):
+`results/zinc250_thresholds/iteration_24_structural_ruleset_prevalence/REPORT.md`.
+
+Selected ZINC+ChEMBL hit rates from that report:
+
+| Ruleset / method | Hit rate | Role in default |
+|------------------|----------|-----------------|
+| Toxicophore | 75.85% | Diagnostic only (strict hard) |
+| Skin | 68.35% | Diagnostic only (strict hard) |
+| MLSMR | 46.04% | Diagnostic only (strict hard) |
+| Lilly | 17.36% | Hard at cutoff 160 |
+| NIBR | 5.54% | Hard |
+| PAINS | 3.56% | Hard |
+| MolGraph | 0.04% | Hard |
+
+High diagnostic prevalence must not be read as an equivalent Stage 3 rejection rate.
+Only PAINS among Common Alerts is enforced in the default profile.
+
+## Diagnostics (calculated, often not enforced)
+
+Shipped profiles calculate:
+
+- Common Alerts: all 23 rulesets
+- MolGraph, NIBR, Lilly, protecting groups
+- Bredt, MolComplexity, ring infraction
+- Stereocenter counts (total and undefined)
+- Halogenicity (F / Br / Cl counts)
+- Symmetry (MedChem `score_symmetry` heuristic)
+
+Binary methods keep native `pass`, `status`, and `reason`.
+Numeric methods also write observed values and cutoffs.
+The unified table is `structural_liability_profile.csv`.
+
+## Target-Aware Behavior
+
+Alignment does not change structural `filter_*` flags, Common Alerts enforcement lists, or structural thresholds.
+The hard gate stays the source profile policy.
+Target evidence may justify an explicit future exception for one concrete rule; absence of a motif among actives does not create a new prohibition.
+
+Descriptor bounds are aligned separately (`alignment.descriptor_bounds_mode`).
 
 ## Output Files
 
 | File | Description |
 |------|-------------|
-| `{filter_name}/metrics.csv` | Per-filter summary statistics |
-| `{filter_name}/extended.csv` | Detailed per-molecule results for each filter |
-| `{filter_name}/filtered_molecules.csv` | Molecules passing each individual filter |
-| `filtered_molecules.csv` | Molecules passing **all** enabled filters |
-| `failed_molecules.csv` | Molecules failing any filter |
-| `plots/molecule_counts_comparison.png` | Bar chart comparing molecule counts across filters |
-| `plots/restriction_ratios_comparison.png` | Restriction ratio comparison across filters |
+| `structural_liability_profile.csv` | Hard decision plus every diagnostic field |
+| `filtered_molecules.csv` / `failed_molecules.csv` | Hard-gate survivors / rejects |
+| `{filter}/metrics.csv`, `extended.csv`, `filtered_molecules.csv` | Per-method artifacts when `write_per_filter_outputs` is true |
+| `common_alerts/hits_long.csv` | One row per SMARTS match |
+
+Large-dataset mode writes the liability profile as CSV parts and materializes a single CSV when under the configured limit.
+Per-filter folders, plots, and failure analysis are ignored in large mode; the liability profile flag is still honored.
 
 ## Usage
 
 ```bash
-# Run structural filters as part of the full pipeline
 uv run hedgehog
-
-# Run structural filters stage only
 uv run hedgehog --stage struct_filters
-
-# Short alias
 uv run hedge --stage struct_filters
 ```
 
-In single-stage mode (`--stage struct_filters`), HEDGEHOG reuses existing descriptors output when available. If descriptors output is missing, it falls back to preprocessing output, or sampled input in the same run folder.
+Point `config_structFilters` in the master config at `config_structFilters_exploration.yml` or `config_structFilters_strict.yml` to switch profiles.
+
+In single-stage mode, Stage 3 reuses descriptor output when present; otherwise it falls back to MolPrep or sampled input.

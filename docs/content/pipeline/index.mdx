@@ -13,12 +13,12 @@ Retention rates are approximate and depend heavily on the input molecule set and
 
 | # | Stage | Purpose | Typical Retention |
 |---|-------|---------|-------------------|
-| 1 | [Preprocessing](/pipeline/mol-prep.mdx) | Standardize molecules and remove salts/fragments/charges/stereochemistry; canonicalize tautomers | 70--95% |
-| 2 | [Descriptors](/pipeline/descriptors.mdx) | Compute 28 physicochemical descriptors and filter by threshold ranges | 25--40% |
-| 3 | [Structural Filters](/pipeline/structural-filters.mdx) | Apply medicinal chemistry alerts, complexity checks, and structural rules | 15--30% |
-| 4 | [Synthesis Feasibility](/pipeline/synthesis.mdx) | Evaluate synthetic accessibility (SA, SYBA, RA scores) and retrosynthesis feasibility | 35--60% |
+| 1 | [Preprocessing](/pipeline/mol-prep.mdx) | Standardize molecules; remove salts/fragments; preserve charge and stereo by default | 70--95% |
+| 2 | [Descriptors](/pipeline/descriptors.mdx) | Compute physicochemical descriptors and filter by threshold ranges | 25--40% |
+| 3 | [Structural Filters](/pipeline/structural-filters.mdx) | Calculate liability diagnostics; enforce the configured hard gate (default: PAINS + NIBR + Lilly160 + MolGraph + protecting groups + undefined stereo) | 15--30% |
+| 4 | [Synthesis Feasibility](/pipeline/synthesis.mdx) | Evaluate synthetic accessibility scores and optional AiZynthFinder retrosynthesis | 35--60% |
 | 5 | [Molecular Docking](/pipeline/docking.mdx) | Dock surviving molecules into the target protein binding site | 50--75% |
-| 6 | [Three-Dimensional Filters](/pipeline/docking-filters.mdx) | Filter docked poses by search-box containment, clashes, interactions, and conformer deviation | 35--60% |
+| 6 | [Three-Dimensional Filters](/pipeline/docking-filters.mdx) | Filter poses by search-box containment, clashes, interactions, and conformer deviation | 35--60% |
 | 7' | [Final Descriptors](/pipeline/final-descriptors.mdx) | Recompute descriptors on the final molecule set for reporting | 100% (no filtering) |
 
 
@@ -70,7 +70,7 @@ Every stage config includes a `run: true/false` flag that controls whether it ex
 |-------|-------|-----------------------|--------|
 | `mol_prep` | Raw molecule table | `generated_mols_path` or sampled input | `stages/01_mol_prep/filtered_molecules.csv` |
 | `descriptors` | Molecule table | preprocessing output, sampled input | `stages/02_descriptors_initial/metrics/` and `stages/02_descriptors_initial/filtered_molecules.csv` |
-| `struct_filters` | Descriptor or molecule table | Descriptors output, then prerpocessing or sample fallback | `stages/03_structural_filters_post/filtered_molecules.csv` |
+| `struct_filters` | Descriptor or molecule table | Descriptors output, then preprocessing or sample fallback | `stages/03_structural_filters_post/filtered_molecules.csv` |
 | `synthesis` | Molecule table | Structural filters, descriptors, preprocessing output, or sampled input | `stages/04_synthesis/filtered_molecules.csv` |
 | `docking` | Molecules plus receptor or reference ligand | Latest usable filtered table | `stages/05_docking/{tool}/{tool}_out.sdf` |
 | `docking_filters` | Docking poses | `stages/05_docking/...` | `stages/06_docking_filters/filtered_molecules.csv` |

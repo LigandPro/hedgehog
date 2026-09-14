@@ -83,8 +83,8 @@ uv run hedgehog --config my_config.yml
 |------|---------|
 | `config.yml` | Global paths, parallelism, sample size, and references to all stage configs |
 | `config_mol_prep.yml` | Datamol-based molecule preprocessing and standardization |
-| `config_descriptors.yml` | Descriptor borders, filtering flags, plotting options |
-| `config_structFilters.yml` | Structural alerts, medchem filters, rulesets, SMARTS patterns inclusion/exclusion control |
+| `config_descriptors.yml` | Descriptor calculation and active filtering borders |
+| `config_structFilters.yml` | Structural alerts; `calculate_*` vs `filter_*`; Common Alerts calculate/enforce lists; profiles: default / exploration / strict |
 | `config_synthesis.yml` | Retrosynthesis toggle, enabled synthesis scorers, score thresholds |
 | `config_docking.yml` | Docking tool selection, receptor, autobox settings |
 | `config_docking_filters.yml` | Post-docking filters |

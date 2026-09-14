@@ -13,26 +13,23 @@ Set `auto_run: false` to generate docking scripts without executing them.
 
 | Feature | SMINA | GNINA | Matcha |
 |---------|-------|-------|--------|
-| Scoring | Empirical (Vina-based) | CNN-based + empirical | Learned pose generation and GNINA scoring |
-| Output scores | `minimizedAffinity` | `minimizedAffinity`, `CNNscore`, `CNNaffinity` | `minimizedAffinity`|
+| Scoring | Empirical (Vina-based) | CNN-based + empirical | Neural pose generation + GNINA empirical minimization |
+| Output scores | `minimizedAffinity` | `minimizedAffinity`, `CNNscore`, `CNNaffinity` | `minimizedAffinity` |
 | GPU support | No | Yes | Yes |
 | Output format | SDF | SDF | SDF |
 | Best for | Large-scale virtual screening | Accurate pose prediction | ML-based pose generation with optional rescoring |
 
-SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA extends SMINA with convolutional neural network (CNN) scoring functions trained on protein-ligand complexes from the PDB. Matcha is a recent neural docking method based on multi-stage Riemannian flow matching.
+SMINA is a fork of AutoDock Vina with enhanced scoring and minimization. GNINA extends SMINA with convolutional neural network (CNN) scoring functions trained on protein-ligand complexes from the PDB. For GNINA, Hedgehog generates multiple modes and uses each molecule's lowest `minimizedAffinity` pose for threshold calibration. Matcha is a recent neural docking method based on multi-stage Riemannian flow matching.
 
-Matcha can run through the legacy `LigandPro/Matcha` CLI or the
-`LigandPro/docking` screening backend. The screening backend batches ETKDG
-conformer generation through nvMolKit and enforces a per-ligand timeout, which
-avoids unbounded serial RDKit embedding attempts.
+Default Matcha path is the official `LigandPro/Matcha` CLI (`modules/matcha_remote`): Hedgehog runs `uv run --project <checkout> matcha ...`, scores poses with GNINA when `scorer: gnina`, and uses `minimizedAffinity` for threshold calibration. An optional `backend: docking` adapter can point at `LigandPro/docking` screening instead; that path needs `checkpoint_root` / `checkpoint_run` and is not the shipped default.
 
 Select the tool in the docking config:
 
 ```yaml
-tools: gnina    # Options: all, gnina, smina, matcha, or a comma-separated list
+tools: [smina, gnina, matcha]
 ```
 
-Use `tools: all` to run SMINA, GNINA, and Matcha together. For subsets, provide a comma-separated YAML value such as `gnina,matcha` or `smina,gnina`.
+`tools: all` also includes Matcha. Prefer a target-specific config when you need a non-default Matcha checkout, device, or the optional docking screening backend.
 
 ## Data Preparation
 
@@ -56,7 +53,7 @@ This produces reasonable starting geometries and keeps row counts predictable.
 The receptor PDB file is specified in the docking config:
 
 ```yaml
-receptor_pdb: src/hedgehog/configs/examples/7EW9_apo.pdb
+receptor_pdb: examples/7EW9_apo.pdb
 ```
 
 For best results, prepare the receptor with a dedicated structure-preparation tool (or PDB2PQR) before docking. Key steps include:
@@ -83,10 +80,11 @@ For custom handlers, ensure they run non-interactively and produce valid output 
 The docking search box defines the 3D region where the docking engine places ligand poses. HEDGEHOG determines the box from a reference ligand:
 
 ```yaml
-gnina_config:
-  autobox_ligand: src/hedgehog/configs/examples/05C_from_7EW9.sdf   # Reference ligand SDF
-  autobox_add: 4                                  # Padding in Angstroms
+autobox_ligand: examples/05C_from_7EW9.sdf
+autobox_add: 4
 ```
+
+Relative receptor, autobox, and checkpoint paths are resolved from the directory containing `config_docking.yml`; environment variables and `~` are expanded. The shared box applies to every selected engine and can be overridden inside one engine config when necessary.
 
 The search box is computed as the bounding box of the reference ligand's atoms, expanded by `autobox_add` Angstroms in each direction.
 

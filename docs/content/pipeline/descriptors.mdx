@@ -13,12 +13,7 @@ structural constraints such as typed atom class limits,
 element count limits, maximum 3/4-membered rings, and maximum acyclic chain
 length.
 
-Use generic borders when you want to shape broad physicochemical space
-(`molWt`, `logP`, `TPSA`, `hbd`, `hba`, `fsp3`, and related ranges). Use
-`structural_constraints` when you need direct control over concrete structural
-motifs that can be underconstrained by broad descriptors alone, such as aromatic
-carbon load, neutral donor nitrogens, sulfonyl sulfur motifs, strained small
-rings, or long non-ring appendages.
+Use generic borders when you want to shape broad physicochemical space (`molWt`, `logP`, `TPSA`, `hbd`, `hba`, `fsp3`, and related ranges). Use `structural_constraints` when you need direct control over concrete structural motifs that can be underconstrained by broad descriptors alone, such as aromatic carbon load, neutral donor nitrogens, sulfonyl sulfur motifs, strained small rings, or long non-ring appendages.
 
 
 ## Configuration
@@ -26,14 +21,10 @@ rings, or long non-ring appendages.
 The full configuration lives in `config_descriptors.yml`:
 
 ```yaml
-run: true           # Enable/disable this stage
-batch_size: 1000    # Molecules processed per batch
-filter_data: true   # Apply threshold filtering (false = compute only)
-structural_constraints:
-  enabled: true
-  # See the configuration reference for the full nested schema and defaults
+run: true          # Enable/disable this stage
+filter_data: true  # Apply borders (false = compute only)
 borders:
-  # ... threshold values for each descriptor
+  # Every configured *_min/*_max pair is an active filter
 ```
 
 Set `filter_data: false` to compute descriptors without filtering, which is useful for analysis-only runs.
@@ -43,30 +34,54 @@ Set `filter_data: false` to compute descriptors without filtering, which is usef
 
 | Descriptor | Config Key | Description | Default Min | Default Max |
 |-----------|------------|-------------|-------------|-------------|
-| Allowed Characters | `allowed_chars` | Set of allowed atom types in SMILES | C,N,S,O,F,Cl,Br,I,P,H | -- |
-| Number of Atoms | `n_atoms` | Total atom count including hydrogens | 10 | 100 |
-| Heavy Atoms | `n_heavy_atoms` | Non-hydrogen atom count | 10 | 50 |
-| Heteroatoms | `n_het_atoms` | Count of non-carbon, non-hydrogen atoms | 2 | 15 |
-| Nitrogen Atoms | `n_N_atoms` | Count of nitrogen atoms | 0 | 12 |
-| Nitrogen Fraction | `fN_atoms` | Fraction of nitrogen atoms | 0 | 0.22 |
-| Nitrogen+Sulfur Fraction | `fNS_atoms` | Fraction of nitrogen and sulfur atoms | 0 | 0.3 |
-| Molecular Weight | `molWt` | Daltons | 200 | 550 |
-| logP | `logP` | Octanol-water partition coefficient (Wildman-Crippen) | -0.4 | 5.6 |
-| Sw | `sw` | Water solubility estimate | -20 | 1 |
-| Ring Size | `ring_size` | List of all ring sizes (each must fall within min--max) | 3 | 12 |
-| Number of Rings | `n_rings` | Total ring count | 0 | 6 |
+| Allowed Characters | `allowed_chars` | Set of allowed atom types in SMILES | C,N,S,O,F,Cl,Br,I,P,H,Si | -- |
+| Number of Atoms | `n_atoms` | Total atom count including hydrogens | 19 | 81 |
+| Heavy Atoms | `n_heavy_atoms` | Non-hydrogen atom count | 11 | 43 |
+| Heteroatoms | `n_het_atoms` | Count of non-carbon, non-hydrogen atoms | 1 | 14 |
+| Nitrogen Atoms | `n_N_atoms` | Count of nitrogen atoms | 0 | 9 |
+| Nitrogen Fraction | `fN_atoms` | Fraction of nitrogen atoms | 0 | 0.334 |
+| Nitrogen+Sulfur Fraction | `fNS_atoms` | Fraction of nitrogen and sulfur atoms | 0 | 0.364 |
+| Molecular Weight | `molWt` | Daltons | 164 | 603 |
+| logP | `logP` | Octanol-water partition coefficient (Wildman-Crippen) | -2.2 | 5.5 |
+| Sw | `sw` | Water solubility estimate | -25.6 | 0 |
+| Ring Size | `ring_size` | List of all ring sizes (each must fall within min--max) | 3 | 7 |
+| Number of Rings | `n_rings` | Total ring count | 0 | 7 |
 | Aromatic Rings | `n_aroma_rings` | Count of aromatic rings | 0 | 5 |
 | Fused Aromatic Rings | `n_fused_aromatic_rings` | Count of fused aromatic ring systems | 0 | 2 |
-| Rigid Bonds | `n_rigid_bonds` | Non-rotatable bonds | 0 | 30 |
-| Rotatable Bonds | `n_rot_bonds` | Freely rotatable bonds | 0 | 8 |
-| H-Bond Donors | `hbd` | Hydrogen bond donors count | 0 | 4 |
-| H-Bond Acceptors | `hba` | Hydrogen bond acceptors count | 1 | 9 |
-| Fraction sp<sup>3</sup> | `fsp3` | Fraction of sp<sup>3</sup>-hybridized carbons | 0.15 | 0.8 |
+| Rigid Bonds | `n_rigid_bonds` | Non-rotatable bonds | 8 | 41 |
+| Rotatable Bonds | `n_rot_bonds` | Freely rotatable bonds | 0 | 10 |
+| H-Bond Donors | `hbd` | Hydrogen bond donors count | 0 | 5 |
+| H-Bond Acceptors | `hba` | Hydrogen bond acceptors count | 0 | 11 |
+| Fraction sp<sup>3</sup> | `fsp3` | Fraction of sp<sup>3</sup>-hybridized carbons | 0 | 1 |
 | Spider Side Chains | `has_spider_side_chains` | `1` when a molecule has at least two long scaffold appendages | 0 | 0 |
 | Fraction Ring System | `fraction_ring_system` | Fraction of heavy atoms in the Murcko scaffold | 0.25 | 1 |
-| MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 20 | 140 |
-| TPSA | `tpsa` | Topological Polar Surface Area (Å) | 20 | 140 |
-| QED | `qed` | Quantitative Estimation of Drug-likeness (0--1) | 0.3 | 1 |
+| MCE-18 | `mce18` | Molecular complexity estimate (J. Med. Chem. 2019) | 4 | 144 |
+| TPSA | `tpsa` | Topological Polar Surface Area (Å) | 7 | 183 |
+| QED | `qed` | Quantitative Estimation of Drug-likeness (0-1) | 0.17 | 0.942 |
+
+The generic defaults use the narrowest symmetric pooled empirical quantile envelope on a preregistered `alpha=0.0001` search grid that retains at least 95% of each calibration population jointly. The active interval is q0.29-q99.71 (`alpha=0.0029`) from frozen samples of 50,000 ZINC250k and 50,000 upstream- curated ChEMBL34 molecules, calculated directly without MolPrep. It retained 97.428% of ZINC and 95.096% of ChEMBL34 calibration; the immediately narrower q0.30-q99.70 candidate retained only 94.512% of ChEMBL34 and was rejected. After threshold freeze, the independent 50,000-molecule validation sets retained 97.548% of ZINC and 95.174% of ChEMBL34. `ring_size` pools individual ring instances. Complete IDs, hashes, thresholds, and outcomes are stored in `results/zinc250_thresholds/iteration_02_calibration95/`; the authoritative sample list is `FROZEN_SAMPLE_MANIFEST.json`. The ChEMBL34 source had already been filtered and converted to non-isomeric SMILES upstream, so this profile is conditional on that curated source rather than unrestricted ChEMBL.
+
+### Plot Labels
+
+Distribution plot titles come from `DESCRIPTOR_DISPLAY_NAMES` in
+`src/hedgehog/descriptors/constants.py`. There is no YAML `renamer`.
+
+```python
+# Example: change the logP plot title
+DESCRIPTOR_DISPLAY_NAMES["logP"] = "cLogP (Wildman–Crippen)"
+```
+
+### Target Alignment Bounds
+
+When master `alignment.enabled` is true, descriptor borders are recalculated from
+`target_mols_path`. Mode is `alignment.descriptor_bounds_mode`:
+
+| Mode | Effect |
+|------|--------|
+| `expand` (default) | Keep source borders; widen only where targets need it (`min` of mins, `max` of maxes). |
+| `target` | Replace each configured border with the target-derived value. |
+
+SA / RA / SYBA and other synthesis thresholds are not calibrated from targets.
 
 ### Structural Constraints
 
@@ -109,7 +124,7 @@ The `type_limits` map works on the following aliases:
 
 If you are unsure which typed limits to enable or tighten, use this practical sequence:
 
-1. Start from the shipped defaults in `config_descriptors.yml`. They already cover the full supported alias set and give you a balanced baseline for drug-like chemistry.
+1. Start from your target-aligned `borders`. Every listed range is active; omitted descriptors are still calculated but are not used for rejection.
 2. Tighten only the motifs that matter for your project goals. Typical first candidates are:
    - `Car` when you want to reduce aromatic density
    - `Cs3` when you want to limit long aliphatic appendages
@@ -124,7 +139,7 @@ As a rule of thumb:
 - Use `type_limits` for concrete motif selection.
 - Avoid tightening many aliases at once unless you are intentionally creating a strict medicinal-chemistry profile.
 
-The shipped defaults are:
+An optional motif-cap example is:
 
 ```yaml
 structural_constraints:

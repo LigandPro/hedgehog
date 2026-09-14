@@ -16,21 +16,19 @@ The main configuration file. Controls input/output paths, parallelism, and refer
 |-----------|------|---------|-------------|
 | `generated_mols_path` | string | `src/hedgehog/configs/examples/moses_1000.csv` | Path to the CSV file containing generated molecules |
 | `target_mols_path` | string | `src/hedgehog/configs/examples/target_mols.csv` | Path to the CSV file containing reference molecules |
-| `alignment.enabled` | bool | `false` | Calculate numeric thresholds and select structural rules from `target_mols_path` before evaluating generated molecules |
+| `alignment.enabled` | bool | `false` | Calculate numeric thresholds from `target_mols_path` before evaluating generated molecules; structural policy remains fixed |
 | `alignment.target_coverage_percent` | float | `95` | Percentage of target molecules the generated thresholds retain at each stage; must be greater than `0` and at most `100` |
 | `folder_to_save` | string | `results/run` | Output directory where all pipeline results are saved |
 | `n_jobs` | int | `-1` | Number of parallel workers for CPU-bound tasks (`-1` = all available cores. Prefer an explicit smaller number such as `4` or `8`.) |
 | `sample_size` | int | `10000` | Number of molecules to sample from the input file (`null` = use all) |
-| `batch_size` | int | `512` | Batch size for descriptor computation and other batched operations |
 | `save_sampled_mols` | bool | `true` | Whether to save the sampled molecule subset to disk |
+| `evaluate_docked_coordinates` | bool | `false` | For SDF inputs, additionally evaluate docked coordinates; requires `docking.run: true` and at least one selected docking tool |
 | `large_dataset_mode` | bool | `false` | Enable streaming chunked processing for very large pre-docking dataset statistics |
 | `large_dataset_chunk_rows` | int | `250000` | Rows per processing chunk in large dataset mode |
 | `large_dataset_single_csv_limit` | int | `1000000` | Maximum row count for also materializing compatibility CSV files from shard outputs |
 | `large_dataset_output_format` | string | `csv.gz` | Shard file format for large dataset row-level intermediate tables |
 | `large_dataset_filter_data` | bool | `false` | In large dataset mode, whether filter pass/fail results should remove molecules from downstream outputs |
 | `large_dataset_enable_all_filters` | bool | `true` | In large dataset mode, enable configured descriptor/structural filters as calculations even when they do not filter outputs |
-| `pains_file_path` | string | `src/hedgehog/vendor/moleval/metrics/wehi_pains.csv` | Path to the PAINS filter definitions file |
-| `mcf_file_path` | string | `src/hedgehog/vendor/moleval/metrics/mcf.csv` | Path to the MCF definitions file |
 | `ligand_preparation_tool` | string | _(proprietary path)_ | Absolute path to an external ligand preparation binary |
 | `protein_preparation_tool` | string | _(proprietary path)_ | Absolute path to an external protein preparation binary |
 | `config_mol_prep` | string | `src/hedgehog/configs/config_mol_prep.yml` | Path to the preprocessing stage config |
@@ -49,9 +47,12 @@ target_mols_path: data/reference_molecules.csv
 alignment:
   enabled: true
   target_coverage_percent: 95
+  # descriptor_bounds_mode: expand  # keep source borders; widen only where targets need it
+  # descriptor_bounds_mode: target  # replace each border with the target-derived value
+  descriptor_bounds_mode: expand
 ```
 
-When enabled, HEDGEHOG calculates numeric thresholds and selects structural rules with respect to the target molecules before evaluating `generated_mols_path`. The target structural probe evaluates every `calculate_*` filter and every common-alert ruleset without removing molecules. The target synthesis probe calculates all configured scores but disables AiZynthFinder so its aligned config is written immediately after scoring; the candidate config retains the original retrosynthesis setting. Immediately after that stage, the aligned structural config greedily enables rules whose combined pass mask retains at least `ceil(target_coverage_percent / 100 * target_count)` targets, and writes `structural_filter_failures.csv` beside the config. Set `enabled: false` to use the stage configs without recalculation. `--align-config PERCENT` enables alignment and overrides `target_coverage_percent` for one run. Generated aligned master configs set `alignment.enabled: false` to prevent recalibration when reused, and add the target-run and threshold-audit paths as provenance. Each aligned stage config is created immediately after its target stage completes. Continuous thresholds are normalized to at most two decimal places with outward rounding, while integer-valued thresholds are rounded up.
+When enabled, HEDGEHOG calculates numeric thresholds with respect to the target molecules before evaluating `generated_mols_path`. Structural hard filters are not percentile-calibrated. Descriptor alignment supports `descriptor_bounds_mode: target`, which replaces each configured descriptor border with the target-derived border, and `descriptor_bounds_mode: expand`, which applies `min(source_min, target_min)` and `max(source_max, target_max)`. In `expand`, generic ZINC+ChEMBL descriptor envelopes are preserved and can only become wider. If `descriptor_bounds_mode` is omitted, `expand` is used. The target structural probe evaluates every `calculate_*` filter and every common-alert ruleset without removing molecules. Synthesis is skipped during target calibration and does not participate in target-cohort selection; the candidate uses the source synthesis config unchanged, including SA/RA/SYBA thresholds and retrosynthesis settings. The calibration probe may calculate every structural method for diagnostics, but the generated candidate config copies the source `filter_*` flags, Common Alerts enforcement lists, and structural parameters unchanged. Structural pass masks do not participate in target-cohort selection or the `target_coverage_percent` guarantee. `structural_filter_failures.csv` records every measured failure. Set `enabled: false` to use the stage configs without recalculation. `--align-config PERCENT` enables alignment and overrides `target_coverage_percent` for one run. Generated aligned master configs set `alignment.enabled: false` to prevent recalibration when reused, and add the target-run and threshold-audit paths as provenance. Each aligned stage config is created immediately after its alignable stage completes. Continuous thresholds use outward rounding, while integer-valued thresholds are rounded up.
 
 ---
 
@@ -83,67 +84,86 @@ When enabled, HEDGEHOG calculates numeric thresholds and selects structural rule
 
 ## config_descriptors.yml
 
-[Descriptors](/pipeline/descriptors.mdx). Controls molecular descriptor calculation, filtering borders, and plotting options. 
+[Descriptors](/pipeline/descriptors.mdx). Controls descriptor calculation and filtering borders. Plot presentation has code defaults and only needs configuration for custom reports.
+
 ### General Settings
 
-The descriptors stage applies both layers together:
+The descriptors stage always computes the complete descriptor table. When `filter_data` is true, configured filters are applied as follows:
 
 - `borders` define generic descriptor ranges such as `molWt`, `logP`, `TPSA`,
   `hbd`, `hba`, `n_rings`, and `fsp3`.
 - `structural_constraints` are converted into additional upper bound checks on
   derived descriptor columns.
 
-Use `borders` to shape broad property space and `structural_constraints` to cap
-specific motifs that can still pass those broad ranges.
+Use `borders` for the production filtering contract. The optional legacy-compatible `structural_constraints` block can add motif caps when its own `enabled` field is true.
 
-### Plotting Settings
+### Optional Plot Overrides
 
-| Parameter | Type |  Description |
-|-----------|------|--------------|
-| `filtered_cols_to_plot` | list[string] | Descriptor columns to include in filtered distribution plots |
-| `discrete_features_to_plot` | list[string] | Columns treated as discrete (bar charts instead of KDE) |
-| `not_to_smooth_plot_by_sides` | list[string] | Columns where KDE side-smoothing is disabled |
-| `renamer` | dict[string, string] | Display names for descriptors in plot labels |
+Normally these fields should be omitted: plotted columns are derived from `borders`, while discrete-column metadata and labels come from code defaults (`DESCRIPTOR_DISPLAY_NAMES` and related constants in `src/hedgehog/descriptors/constants.py`). There is no YAML `renamer`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `filtered_cols_to_plot` | list[string] | Descriptor columns to include in distribution plots |
+| `discrete_features_to_plot` | list[string] | Columns treated as discrete |
+
+Default borders are the ZINC250k + ChEMBL34 calibration envelope (q0.29–q99.71). See [Descriptors](/pipeline/descriptors.mdx).
 
 ---
 
 ## config_structFilters.yml
 
-[Structural Filters](/pipeline/structural-filters.mdx). Controls structural alert screening and medicinal chemistry filters. Molecules flagged by enabled filters are removed from the pipeline.
+[Structural Filters](/pipeline/structural-filters.mdx). Calculates structural alerts and medicinal-chemistry diagnostics. `calculate_<name>` controls diagnostics; `filter_<name>` independently controls Stage 3 survival.
 
 ### General Settings
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the structural filters stage |
-| `filter_data` | bool | `true` | Whether to actually remove flagged molecules from downstream stages |
-| `parse_input_n_jobs` | int | `-1` | Worker count for parsing input molecules |
-| `write_per_filter_outputs` | bool | `true` | Write per filter output folders and CSVs |
+| `n_jobs` | int | `16` | Worker count for parsing and every structural filter (`-1` = all available cores; falls back to master `n_jobs` when omitted) |
+| `filter_data` | bool | `true` | Whether to apply the configured hard-filter decision to downstream molecules |
+| `filter_NIBR` | bool | `true` | Include the published NIBR severity policy in survival |
+| `filter_molgraph_stats` | bool | `true` | Include MolGraph severity policy in survival |
+| `filter_common_alerts` | bool | `true` | Enforce the configured Common Alerts subset |
+| `include_rulesets` | `all` \| list \| null | `all` | Rulesets to **calculate**: `all` = full catalog, `[]`/`null` = none, or an explicit list |
+| `exclude_smarts` | list[string] | `[]` | Exact SMARTS strings dropped from calculation |
+| `common_alerts_filter_include_rulesets` | list | `[PAINS]` | Rulesets enforced when `filter_common_alerts` is true; empty = every calculated ruleset |
+| `common_alerts_filter_exclude_rulesets` | list | `[]` | Calculated rulesets excluded from survival; exclusions win |
+| `filter_lilly` | bool | `true` | Include Lilly (cutoff from `lilly_demerit_cutoff`) in survival |
+| `filter_protecting_groups` | bool | `true` | Reject curated protecting-group matches |
+| `filter_molcomplexity`, `filter_bredt`, `filter_ring_infraction`, `filter_halogenicity`, `filter_symmetry` | bool | `false` | Optional hard-filter flags; calculations remain independent |
+| `filter_stereo_center` | bool | `false` | Optionally enforce the total-stereocenter diagnostic cutoff |
+| `filter_undefined_stereo_center` | bool | `true` | Reject underspecified structures above `stereo_max_undefined`; reuses the stereo-center calculation |
+| `lilly_demerit_cutoff` | int | `160` | Lilly demerit threshold passed as `dthresh` |
+| `nibr_max_severity` | int | `10` | Inclusive NIBR rejection threshold; pass requires accumulated severity below this value |
+| `molgraph_max_severity` | int | `5` | Inclusive MolGraph rejection threshold; pass requires maximum pattern severity below this value |
+| `write_per_filter_outputs` | bool | `true` | Write per-filter output folders and CSVs |
+| `write_structural_liability_profile` | bool | `true` | Write one molecule-level table containing the hard decision and every diagnostic field |
 | `generate_plots` | bool | `true` | Generate structural filter plots |
 | `generate_failure_analysis` | bool | `true` | Generate failure-analysis outputs |
-| `combine_in_memory` | bool | `true` | Combine enabled filter results in memory before writing the final output |
-| `parallel_scheduler` | string | `processes` | Default scheduler for parallel filter execution |
 | `ring_infraction_hetcycle_min_size` | int | `4` | Largest small-ring cutoff checked by the ring-infraction rule |
-| `stereo_max_centers` | int | `4` | Strict upper limit for total stereocenters |
-| `stereo_max_undefined` | int | `2` | Strict upper limit for undefined stereocenters |
+| `stereo_max_centers` | int | `4` | Diagnostic cutoff for total stereocenters; the total count is reported independently of hard enforcement |
+| `stereo_max_undefined` | int | `2` | Inclusive maximum for undefined stereocenters; values above it fail the undefined-stereo hard policy |
 | `halogenicity_thresh_F` | int | `6` | Inclusive fluorine-count limit |
 | `halogenicity_thresh_Br` | int | `3` | Inclusive bromine-count limit |
 | `halogenicity_thresh_Cl` | int | `3` | Inclusive chlorine-count limit |
 | `symmetry_threshold` | float | `0.8` | Inclusive maximum MedChem symmetry score |
 
-When target alignment is enabled, these seven numeric parameters are recalculated from target-molecule measurements before their four parent rules are considered for enable/disable selection. Scheduler settings such as `lilly_scheduler` are execution controls and are preserved.
+Target-aware runs keep the complete generic structural gate. Alignment audits cannot change explicit `filter_<name>` flags. Any future target-specific relaxation must be an explicit, separately justified exception for a concrete hard rule. Scheduler settings such as `lilly_scheduler` remain execution controls.
 
 
 ### Structural Filter Profiles
 
-The default structural filter configuration is the exploration profile in
-`config_structFilters.yml`. Three named ready-to-use profile files are shipped
-alongside it:
+Three shipped configs share the same diagnostic calculations. Hard gates differ. The former `balanced` profile is removed.
 
-- `config_structFilters_strict.yml` - conservative profile for high-confidence hygiene screening
-- `config_structFilters_balanced.yml` - practical mid-conservatism profile
-- `config_structFilters_exploration.yml` - least conservative profile for retaining more chemistry diversity
+| Profile | Config | Hard gate summary |
+|---------|--------|-------------------|
+| default | `config_structFilters.yml` | PAINS + NIBR&lt;10 + Lilly160 + MolGraph&lt;5 + protecting groups + undefined stereo ≤2 |
+| exploration | `config_structFilters_exploration.yml` | NIBR + MolGraph + protecting groups + undefined stereo ≤3 |
+| strict | `config_structFilters_strict.yml` | PAINS + LD50-Oral + Toxicophore + Skin + MLSMR + NIBR + Lilly100 + Bredt + MolGraph + protecting groups + molcomplexity + undefined ≤2 + total stereo &lt;5 |
 
+Smoke on 20 MOSES molecules (`results/profile_smoke_struct_filters/summary.csv`): default 15/20, exploration 18/20, strict 0/20.
+
+Prevalence evidence: `results/zinc250_thresholds/iteration_24_structural_ruleset_prevalence/REPORT.md`.
 
 ---
 
@@ -154,29 +174,24 @@ alongside it:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the synthesis stage |
-| `n_jobs` | int | `32` | Maximum concurrent isolated AiZynthFinder shards; this installation is tuned for a 192-CPU, 1 TiB server and should be reduced on smaller hosts |
-| `enabled_scores` | list | `sa`, `syba`, `rascore`, `sync`, `scscore`, `nonpher`, `fsscore`, `gasa` | Synthesis score calculators to run. Optional scorers return `NaN` with warnings when their external dependencies are not configured |
+| `n_jobs` | int | `64` | Number of AiZynthFinder worker processes; reduce this on smaller hosts |
+| `enabled_scores` | list or `all` | `[sa, syba, rascore]` | Synthesis score calculators to run. Use scalar `all` (or `['all']`) for every scorer: `sa`, `syba`, `rascore`, `sync`, `scscore`, `nonpher`, `fsscore`, `gasa`. Optional scorers return `NaN` with warnings when dependencies are unavailable |
 | `run_retrosynthesis` | bool | `true` | Run AiZynthFinder retrosynthetic analysis |
 | `filter_solved_only` | bool | `true` | Keep only molecules for which a retrosynthetic route was found |
-| `aizynthfinder_max_transforms` | int | `8` | Maximum retrosynthetic route depth; higher values can sharply increase search cost |
-| `aizynthfinder_time_limit` | float | `300` | Search time limit per target representation, in seconds |
+| `aizynthfinder_max_transforms` | int | `15` | Maximum retrosynthetic route depth; higher values can sharply increase search cost |
+| `aizynthfinder_time_limit` | float | `2000` | Search time limit per target representation, in seconds |
 | `aizynthfinder_iteration_limit` | int | `300` | Maximum MCTS iterations per target representation |
 | `aizynthfinder_return_first` | bool | `true` | Stop each representation after its first solved route |
-| `aizynthfinder_policies` | list | `uspto, ringbreaker` | Expansion policies selected explicitly for each search |
 | `aizynthfinder_charge_mode` | string | `both` | Search the preserved SMILES, a stereochemistry-preserving neutralized SMILES, or both |
-| `aizynthfinder_isotope_mode` | string | `both` | Search isotope-preserved and isotope-stripped forms while retaining the original output identity |
-| `aizynthfinder_isolated_shards` | bool | `true` | Run resumable Hedgehog-managed shards instead of AiZ's batch multiprocessing coordinator |
-| `aizynthfinder_shard_size` | int | `10` | Maximum search variants per resumable shard; smaller shards report and preserve progress more frequently |
-| `aizynthfinder_retries` | int | `1` | Retry count for a failed shard; completed checkpoint rows are reused |
-| `aizynthfinder_fail_on_worker_error` | bool | `false` | Fail the whole stage when any shard remains failed instead of retaining partial results |
-| `aizynthfinder_include_common_reagents` | bool | `true` | Add Hedgehog's documented small-reagent stock to configured AiZ stocks |
-| `aizynthfinder_extra_stock_files` | list | `[]` | Additional AiZ HDF5/CSV InChIKey stock query files |
-| `aizynthfinder_extra_stock_smiles_files` | list | `[]` | Plain SMILES, CSV, or TSV vendor/internal stock sources converted for the run |
+| `aizynthfinder_retry_unsolved` | bool | `false` | Enable a second AiZynthFinder pass only for molecules unsolved across all charge forms in pass 1 |
+| `aizynthfinder_reuse_pass1` | bool | `false` | Reuse an existing `retrosynthesis_variants_pass1.json` checkpoint when restarting an interrupted retry |
+| `aizynthfinder_retry_time_limit` | float | unset | Time limit per representation in the unsolved-only second pass |
+| `aizynthfinder_retry_iteration_limit` | int | unset | MCTS iteration limit per representation in the unsolved-only second pass |
 | `sa_score_min` | float | `1` | Minimum synthetic accessibility score (Ertl) |
 | `sa_score_max` | float | `4.5` | Maximum synthetic accessibility score (lower = easier to synthesize) |
-| `syba_score_min` | float | `0` | Minimum SYBA score (Bayesian synthesizability) |
+| `syba_score_min` | float | `0` | Minimum SYBA score |
 | `syba_score_max` | float | `inf` | Maximum SYBA score |
-| `ra_score_min` | float | `0.5` | Minimum retrosynthetic accessibility score |
+| `ra_score_min` | float | `0.5` | Practical retrosynthetic accessibility floor |
 | `ra_score_max` | float | `1` | Maximum retrosynthetic accessibility score |
 | `sync_auto_install` | bool | `true` | Download the SYNC checkpoint automatically when it is missing |
 | `sync_device` | string | `cpu` | Torch device for SYNC inference |
@@ -203,24 +218,25 @@ alongside it:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the docking stage |
-| `tools` | string | `gnina` | Docking engine selection: `all`, `gnina`, `smina`, `matcha`, or a comma-separated list such as `gnina,matcha` |
-| `receptor_pdb` | string | `src/hedgehog/configs/examples/7EW9_apo.pdb` | Path to the receptor PDB file |
+| `tools` | string or list | `[smina, gnina]` | Explicit docking engines; Matcha is opt-in because it requires a trained checkpoint |
+| `receptor_pdb` | string | `examples/7EW9_apo.pdb` | Receptor PDB; relative paths are resolved from the docking config directory |
+| `autobox_ligand` | string | `examples/05C_from_7EW9.sdf` | Shared reference ligand for every selected engine |
+| `autobox_add` | float | `4` | Shared autobox padding in Angstroms |
 | `auto_run` | bool | `true` | Automatically start docking after ligand preparation |
 | `run_in_background` | bool | `false` | Run docking as a background process |
-| `prepare_ligands` | bool | `false` | Use external ligand preparation before docking. `false` keeps the input molecule mapping as close to 1:1 as possible; `true` may expand one input molecule into multiple prepared ligands |
+| `prepare_ligands` | bool | `false` | Whether `ligand_preparation_tool` is actually invoked; `false` uses the direct SDF/RDKit path |
+| `per_molecule_docking` | bool | `true` | Generate one isolated engine config and result per molecule |
 | `gnina_per_process_cpu` | int | `gnina_config.cpu` | CPU threads per GNINA process in per molecule mode |
-| `gnina_parallel_jobs_max` | int | `6` | Upper bound for auto GNINA per molecule job count |
-| `calculate_score_thresholds_from_targets` | bool | `true` | Run configured docking tools on target molecules and generate tool-specific affinity cutoffs |
-| `score_thresholds` | mapping | `{}` before alignment | Generated `smina`, `gnina`, and `matcha` `minimizedAffinity` upper bounds. Candidate molecules must pass every generated tool cutoff; missing scores fail |
+| `gnina_parallel_jobs_max` | int or null | `null` | Optional override; by default parallelism is derived from CPU budget and capped at two jobs per visible GPU |
+| `calculate_score_thresholds_from_targets` | bool | `true` | Run configured docking tools on target molecules and generate tool-specific score cutoffs |
+| `score_thresholds` | mapping | `max: -6.5` per tool | Lower-is-better `minimizedAffinity` upper bounds for SMINA, GNINA, and Matcha. Target alignment uses `max(target_calibrated_max, configured_max)`, so it may relax the configured cutoff but never tighten it. Candidate molecules must pass every configured tool cutoff; missing scores fail |
 
 ### SMINA Configuration (`smina_config`)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `bin` | string | `smina` | Path or name of the SMINA binary (resolved via PATH if not absolute) |
-| `autobox_ligand` | string | `src/hedgehog/configs/examples/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
-| `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
-| `cpu` | int | `32` | Number of CPU threads for docking |
+| `cpu` | int | `1` | CPU threads per SMINA process |
 | `seed` | int | `42` | Random seed for reproducibility |
 | `exhaustiveness` | int | `8` | Search exhaustiveness (higher = more thorough, slower) |
 | `num_modes` | int | `1` | Maximum number of binding modes to generate per ligand |
@@ -230,35 +246,30 @@ alongside it:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `bin` | string | `gnina` | Path or name of the GNINA binary (resolved via PATH if not absolute) |
-| `autobox_ligand` | string | `src/hedgehog/configs/examples/05C_from_7EW9.sdf` | Reference ligand SDF for automatic search box definition |
-| `autobox_add` | float | `4` | Padding (Angstroms) added to each side of the autobox |
 | `cpu` | int | `8` | Number of CPU threads for docking |
 | `seed` | int | `42` | Random seed for reproducibility |
 | `no_gpu` | bool | `false` | Disable GPU acceleration (`false` keeps GPU enabled when available) |
-| `num_modes` | int | `1` | Maximum number of binding modes to generate per ligand |
+| `num_modes` | int | `9` | Binding modes generated per ligand; Hedgehog retains the pose with the lowest `minimizedAffinity` before target-threshold calibration |
 
 ### Matcha Configuration (`matcha_config`)
 
+Default path is the official Matcha CLI (`LigandPro/Matcha`), checked out under `modules/matcha_remote`. Hedgehog runs `uv run --project <checkout> matcha ...`.
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `backend` | string | `matcha_cli` | Use `docking` for the LigandPro/docking screening API or `matcha_cli` for the legacy Matcha CLI |
-| `checkout_dir` | string | `modules/matcha_remote` | Managed Matcha checkout directory populated from GitHub |
-| `update_checkout` | bool | backend-dependent | Update a managed legacy checkout; defaults to `false` for a caller-owned docking repository |
-| `uv_bin` | string | `uv` | Launcher used to invoke Matcha |
-| `autobox_ligand` | string | `src/hedgehog/configs/examples/05C_from_7EW9.sdf` | Optional Matcha autobox reference ligand |
+| `checkout_dir` | string | `modules/matcha_remote` | Managed Matcha checkout (cloned/updated from GitHub on first use) |
+| `autobox_ligand` | string | shared value | Optional per-Matcha override of the shared reference ligand |
 | `device` | string | `auto` | Matcha device selection (`auto`, `cpu`, `cuda`, `cuda:N`, `mps`) |
-| `n_samples` | int | `20` | Number of Matcha poses generated per ligand |
-| `scorer` | string | `gnina` | Matcha scorer mode (`gnina`, `custom`, `none`) |
+| `n_samples` | int | Matcha default (`20`) | Poses sampled per ligand (`--n-samples`) |
+| `scorer` | string | `gnina` | Pose scorer (`gnina`, `custom`, `none`) |
 | `scorer_minimize` | bool | `true` | Minimize poses during Matcha GNINA scoring |
-| `physical_only` | bool | `false` | Keep only physically valid poses in Matcha outputs |
 | `keep_workdir` | bool | `false` | Preserve Matcha internal work directory after the run |
+| `checkpoints` | string | Matcha package default | Optional override of the Matcha checkpoints folder |
+| `backend` | string | `matcha_cli` | Optional; set `docking` only for the LigandPro/docking screening adapter |
 
-The `docking` backend additionally requires `training_config`,
-`checkpoint_root`, and `checkpoint_run`. It uses nvMolKit to generate all
-ETKDG conformers for a ligand as one GPU batch with a real timeout. Hedgehog
-converts the resulting positive `cnn_affinity` to
-`minimizedAffinity = -cnn_affinity` so existing docking thresholds retain
-their lower-is-better meaning.
+Optional Matcha CLI knobs also accepted when set: `n_confs`, `docking_batch_limit`, `num_workers`, `prefetch_factor`, `persistent_workers`, `gnina_batch_mode`, `scorer_path`, `config`, `run_name`, `repo_url`.
+
+The optional `backend: docking` path needs `checkpoint_root` and `checkpoint_run` (training config is always `<checkpoint_root>/<checkpoint_run>/config.yaml`). Prefer `$HEDGEHOG_MATCHA_CHECKPOINT_ROOT` in YAML instead of host absolute paths. Sampling/GPU knobs for that backend come from the docking repo itself, not from Hedgehog YAML.
 
 When `prepare_ligands` is `true`, one input molecule may produce several
 prepared ligands. This can change row counts and downstream mapping. Keep it
@@ -269,17 +280,15 @@ external preparation workflow.
 
 ## config_docking_filters.yml
 
-[Three-Dimensional Filters](/pipeline/docking-filters.mdx). Post-docking 3D filters evaluate the quality of docked poses and remove poor candidates. Five independent filters can be combined with `all` (every filter must pass) or `any` (at least one must pass) aggregation.
+[Three-Dimensional Filters](/pipeline/docking-filters.mdx). Stage 6 evaluates model-provided SDF coordinates by default and can additionally evaluate docked coordinates. Five independent filters can be combined with `all` (every filter must pass) or `any` (at least one must pass) aggregation.
 
 ### General Settings
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `run` | bool | `true` | Enable or disable the docking filters stage |
-| `run_after_docking` | bool | `true` | Automatically run after the docking stage completes |
-| `input_sdf` | string \| null | `null` | Path to input SDF; if null, uses docking output |
+| `input_sdf` | string \| null | `null` | Explicit coordinate SDF override; model-provided SDF input otherwise takes priority, followed by docking output |
 | `receptor_pdb` | string \| null | `null` | Path to receptor PDB; if null, uses docking config value |
-
 
 ### Aggregation
 
@@ -287,18 +296,67 @@ external preparation workflow.
 |-----------|------|---------|-------------|
 | `mode` | string | `all` | `all` = molecule must pass every enabled filter; `any` = pass at least one |
 | `save_metrics` | bool | `true` | Save detailed per molecule metrics to a CSV file |
-| `save_failed` | bool | `false` | Save molecules that failed filtering to a separate file |
+| `save_failed` | bool | `true` | Save molecules that failed filtering to a separate file |
+
+### Pose Quality (`pose_quality`)
+
+posecheck-fast only. Legacy PoseCheck keys (`strain_forcefield`, `clash_tolerance`) are not used.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable pose-quality checks |
+| `clash_cutoff` | float | `0.75` | Relative VDW clash cutoff |
+| `volume_clash_cutoff` | float | `0.075` | Volume overlap cutoff |
+| `max_distance` | float | `5.0` | Maximum minimum ligand–protein distance (Å) |
+| `short_circuit` | bool | `true` | Skip later filters on fail when `mode` is `all` |
+
+### Interactions (`interactions`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable ProLIF interaction checks |
+| `reference_ligand` | string \| null | `null` | SDF for fingerprint similarity; required when `similarity_threshold` &gt; 0 |
+| `similarity_threshold` | float | `0.0` | Tanimoto on ProLIF bits vs reference (`0` disables). Without a reference SDF, a positive threshold only warns and does not filter |
+| `min_hbonds` | int | `0` | Minimum hydrogen bonds |
+| `required_residues` | list | `[]` | Residues that must interact |
+| `forbidden_residues` | list | `[]` | Residues that must not interact |
+| `interaction_types` | list | ProLIF defaults | Interaction types to detect |
+| `reporting.enabled` | bool | `true` | Write interaction reporting artifacts |
+
+### Shepherd Score (`shepherd_score`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `false` | Requires `reference_ligand` |
+| `reference_ligand` | string \| null | `null` | Reference SDF |
+| `min_shape_score` | float | `0.5` | Minimum Gaussian-overlap Tanimoto |
+| `alpha` | float | `0.81` | Gaussian width |
+| `align_before_scoring` | bool | `true` | Align pose onto reference with RDKit `AlignMol` / `GetBestRMS` before scoring |
+| `backend` | string | `auto` | `auto`, `worker`, or `inprocess` |
+| `auto_install_worker` | bool | `true` | Auto-install worker environment when missing |
+
+### Conformer Deviation (`conformer_deviation`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable conformer-deviation check |
+| `num_conformers` | int | `50` | ETKDG conformers to generate |
+| `conformer_method` | string | `ETKDGv3` | `ETKDG`, `ETKDGv2`, or `ETKDGv3` |
+| `max_rmsd_to_conformer` | float | `3.0` | Maximum RMSD (Å) |
+| `optimize_conformers` | bool | `false` | UFF-relax generated ETKDG conformers before RMSD (not the docked pose); failed UFF steps are skipped |
+| `backend` | string | `symmetry_rmsd` | `symmetry_rmsd` or `naive` |
+| `use_nvmolkit` | bool | `true` | Prefer nvMolKit when available |
 
 ### Deduplication
 
-Docking can produce multiple poses per molecule when `num_modes` is greater than `1` (the default config uses `num_modes: 1`). After filtering, the pipeline deduplicates to unique molecules:
+Docking can produce multiple poses per molecule. After filtering, the pipeline deduplicates to unique molecules:
 
-1. All passing poses are saved to `filtered_poses.csv` (full pose-level detail)
-2. Poses are sorted by `minimizedAffinity` (best affinity first)
+1. All passing poses are saved to `filtered_poses.csv`
+2. Poses are sorted by affinity (best first)
 3. For each unique `mol_idx`, only the best-scoring pose is kept
 4. Deduplicated molecules are saved to `filtered_molecules.csv`
 
-SMILES for the output are taken from the original `ligands.csv` (2D SMILES) rather than regenerated from 3D coordinates, which preserves the original stereochemistry encoding.
+SMILES for the output are taken from the original ligand table rather than regenerated from 3D coordinates.
 
 ---
 
@@ -419,5 +477,5 @@ Each flag enables or disables a group of related metrics.
 | `scaffold_diversity` | bool | `true` | Compute ScaffDiv and ScaffUniqueness (Murcko scaffold analysis) |
 | `functional_groups` | bool | `true` | Compute functional group diversity ratio (FG) |
 | `ring_systems` | bool | `true` | Compute ring system diversity ratio (RS) |
-| `filters` | bool | `true` | Compute MCF + PAINS filter passage rate |
+| `filters` | bool | `true` | MCF + PAINS passage rate from vendored `mcf.csv` and `wehi_pains.csv` (not Stage 3 Common Alerts PAINS; no `pains_file_path` / `mcf_file_path` keys) |
 | `mce18` | bool | `true` | Compute mean MCE-18 molecular complexity score |

@@ -236,7 +236,7 @@ A process state beginning with `T` is suspended, often after Ctrl-Z, and can ret
 
 `open3d` (required by `shepherd-score`) does not publish wheels for some Python ABIs (notably `cp313`), so installing Shepherd dependencies in the main environment can fail.
 
-HEDGEHOG base install is now decoupled from Shepherd/legacy PoseCheck dependencies. For Shepherd, use an isolated worker environment:
+HEDGEHOG base install is decoupled from Shepherd dependencies. Use an isolated worker environment:
 
 ```bash
 uv run hedgehog setup shepherd-worker --yes
