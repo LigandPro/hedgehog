@@ -166,16 +166,16 @@ Percentages are computed relative to the initial set for each model class. Uncon
 <table>
   <thead>
     <tr><th rowspan="2">Stage / Pass Rate</th> <th colspan="2">Unconditional</th> <th colspan="2">Ligand-based</th> <th colspan="2">Protein-based</th></tr>
-    <tr>                                           <th>#mols</th><th>%</th>      <th>#mols</th><th>%</th>      <th>#mols</th><th>%</th></tr>
+    <tr>                                           <th>#mols</th><th>%</th><th>#mols</th><th>%</th>  <th>#mols</th><th>%</th></tr>
   </thead>
   <tbody>
-    <tr><td>Initial</td>                           <td>8,000</td><td>100</td>    <td>6,000</td><td>100</td>    <td>8,000</td><td>100</td></tr>
-    <tr><td>Preprocessing / Init</td>              <td>60,407</td><td>75.51</td> <td>68,858</td><td>98.37</td> <td>77,396</td><td>96.75</td></tr>
-    <tr><td>Descriptors / Init</td>                <td>19,941</td><td>24.93</td> <td>19,978</td><td>28.54</td> <td>19,412</td><td>24.27</td></tr>
-    <tr><td>Structural Filters / Init</td>         <td>4,652</td><td>5.82</td>   <td>4,132</td><td>5.90</td>   <td>2,896</td><td>3.62</td></tr>
-    <tr><td>Synthesis Feasibility / Init</td>      <td>2,778</td><td>3.47</td>   <td>1,483</td><td>2.12</td>   <td>1,316</td><td>1.65</td></tr>
-    <tr><td>Docking &amp; Binding Aff. / Init</td> <td>1,441</td><td>1.80</td>   <td>1,084</td><td>1.55</td>   <td>768</td><td>0.96</td></tr>
-    <tr><td>3D Filters / Init</td>                 <td>609</td><td>0.76</td>     <td>396</td><td>0.57</td>     <td>485</td><td>0.61</td></tr>
+    <tr><td>Initial</td>                           <td>1000.0 ± 0.0</td><td>100.00 ± 0.00</td>       <td>1000.0 ± 0.0</td><td>100.00 ± 0.00</td>   <td>1000.0 ± 0.0</td><td>100.00 ± 0.00</td></tr>
+    <tr><td>Preprocessing / Init</td>              <td>802.2 ± 254.4</td><td>80.22 ± 25.44</td>      <td>682.6 ± 349.6</td><td>68.26 ± 34.96</td>  <td>653.8 ± 292.8</td><td>65.38 ± 29.28</td></tr>
+    <tr><td>Descriptors / Init</td>                <td>660.9 ± 311.2</td><td>66.09 ± 31.12</td>      <td>573.4 ± 303.9</td><td>57.34 ± 30.39</td>  <td>481.2 ± 268.2</td><td>48.12 ± 26.82</td></tr>
+    <tr><td>Structural Filters / Init</td>         <td>450.0 ± 276.7</td><td>45.00 ± 27.67</td>      <td>342.1 ± 241.5/td><td>34.20 ± 24.15</td>   <td>276.6 ± 203.3</td><td>27.66 ± 20.33</td></tr>
+    <tr><td>Synthesis Feasibility / Init</td>      <td>286.5 ± 244.9</td><td>28.65 ± 24.49</td>      <td>58.2 ± 53.0</td><td>5.82 ± 5.30</td>      <td>104.1 ± 157.1</td><td>10.41 ± 15.71</td></tr>
+    <tr><td>Docking / Init</td>                    <td>198.9 ± 162.6</td><td>19.89 ± 16.26</td>      <td>42.8 ± 42.0</td><td>4.28 ± 4.20</td>      <td>70.0 ± 95.2</td><td>7.00 ± 9.52</td></tr>
+    <tr><td>3D Filters / Init</td>                 <td>55.2 ± 43.1</td><td>5.52 ± 4.31</td>          <td>17.4 ± 22.2</td><td>1.74 ± 2.22</td>      <td>29.1 ± 43.0</td><td>2.91 ± 4.30</td></tr>
   </tbody>
 </table>
 
