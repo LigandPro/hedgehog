@@ -1,7 +1,20 @@
-# Lilly MedChem Rules Binaries
+# Lilly MedChem Rules binaries
 
-This directory vendors the command-line utilities from the [Lilly-Medchem-Rules](https://github.com/IanAWatson/Lilly-Medchem-Rules) project.
+Vendored CLI tools from
+[Lilly-Medchem-Rules](https://github.com/IanAWatson/Lilly-Medchem-Rules)
+so Hedgehog can run Lilly demerit scoring under `uv` without a conda env.
 
-The executables (`mc_first_pass`, `tsubstructure`, `iwdemerit`, `mc_summarise`) are required by the `medchem.structural.lilly_demerits` module. Shipping the compiled binaries here allows the pipeline to run under `uv` without a conda environment. The binaries were built on 2025-11-05 using the default GNU toolchain provided in this environment.
+**Binaries here:** `mc_first_pass`, `tsubstructure`, `iwdemerit`, `mc_summarise`  
+Used by `medchem.structural.lilly_demerits` when Stage 3 has:
 
-> Original project copyright (c) Eli Lilly and Company. See the upstream repository for licensing terms.
+```yaml
+calculate_lilly: true
+filter_lilly: true          # hard gate (optional)
+lilly_demerit_cutoff: 160
+```
+
+Hedgehog prepends `modules/lilly_medchem_rules/bin` to `PATH` when needed.
+
+Built 2025-11-05 with the default GNU toolchain in this environment.
+
+> Original copyright (c) Eli Lilly and Company — see the upstream repo for license terms.

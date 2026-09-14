@@ -1,6 +1,6 @@
 # Structural filters data
 
-This folder is the **cheat sheet + source of truth** for Common Alerts and protecting-group SMARTS.
+This folder is the **cheat sheet + source of truth** for xkCommon Alerts and protecting-group SMARTS.
 
 If something looks wrong in Stage 3, start here: check which file you need, copy the exact SMARTS/ruleset name, then paste it into `config_structFilters.yml` (or a strict/exploration preset).
 
@@ -221,6 +221,25 @@ Used when `calculate_protecting_groups: true`. Loaded from this folder automatic
 
 Hard reject for this filter is controlled separately with `filter_protecting_groups`.
 
+### Why this file exists (not “missing MedChem data”)
+
+MedChem already ships protecting-group entries in
+`medchem/data/chemical_groups.csv` (`amino_acid_protecting_groups`, hundreds of
+rows). Hedgehog does **not** use that dump as-is.
+
+Several MedChem rows are unusable for our Stage 3 matcher
+(`exact_match=True`, `terminal_only=True`). The worst example is
+`n-tert-butoxymethyl`: MedChem encodes the **whole protected imidazole**
+(`CC(C)(C)OC[N+]1=CNC=C1` / SMARTS that includes the ring), so the motif never
+matches a normal molecule that only carries the N‑CH₂‑O‑tBu group. Hedgehog
+ships a short curated CSV (Fmoc / Boc-family / N‑tert‑butoxymethyl) with SMARTS
+that describe the protecting-group motif itself, and keeps a small code fallback
+for `n-tert-butoxymethyl` when ChemicalGroup still misses it.
+
+So this file is a **product workaround for broken/over-specific MedChem
+patterns**, not a manuscript artifact and not a second copy of the full MedChem
+catalog.
+
 ---
 
 
@@ -228,13 +247,14 @@ Hard reject for this filter is controlled separately with `filter_protecting_gro
 ## 5. Quick troubleshooting
 
 
-| Problem                                     | Likely cause                             | Fix                                                    |
-| ------------------------------------------- | ---------------------------------------- | ------------------------------------------------------ |
-| Alert family never appears                  | Not in `include_rulesets`                | Add the family or use `all`                            |
-| Molecule still hits an alert you “excluded” | Excluded by description / typo in SMARTS | Paste **exact** `smarts` into `exclude_smarts`         |
-| Gate feels softer/harder than plots         | `calculate_*` vs `filter_*` mismatch     | Plots/diagnostics ≠ hard reject                        |
-| Empty or weird alert names                  | DNABinder / LINT-style rows              | Use SMARTS / `rule_id` from catalog                    |
-| Wrong file edited                           | Editing the JSON catalog                 | Pipeline reads the **CSV** (and protecting_groups CSV) |
+| Problem                                     | Likely cause                             | Fix                                                     |
+| ------------------------------------------- | ---------------------------------------- | ------------------------------------------------------- |
+| Alert family never appears                  | Not in `include_rulesets`                | Add the family or use `all`                             |
+| Molecule still hits an alert you “excluded” | Excluded by description / typo in SMARTS | Paste **exact** `smarts` into `exclude_smarts`          |
+| Gate feels softer/harder than plots         | `calculate_*` vs `filter_*` mismatch     | Plots/diagnostics ≠ hard reject                         |
+| Empty or weird alert names                  | DNABinder / LINT-style rows              | Use SMARTS / `rule_id` from catalog                     |
+| Wrong file edited                           | Editing the JSON catalog                 | Pipeline reads the **CSV** (and protecting_groups CSV)  |
+| “Why not use MedChem protecting groups?”    | MedChem rows over-specific / unusable    | See §4 — curated `protecting_groups.csv` is intentional |
 
 
 ---
