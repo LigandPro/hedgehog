@@ -119,6 +119,9 @@ exclude_lines = [
 
 [tool.uv]
 override-dependencies = ["pandas>=2.2.0"]
+# python-dateutil 3.0 conflicts with botocore and makes the resolver fall back
+# to boto3 0.0.3 / six 1.7.3, which breaks pandas imports.
+constraint-dependencies = ["python-dateutil<3"]
 
 [tool.uv.sources]
 syba = { path = "modules/syba", editable = true }
