@@ -1335,6 +1335,67 @@ class TestRunAizynthfinder:
             "return_first": True,
         }
 
+    def test_selected_stocks_are_passed_to_cli(self, tmp_path, monkeypatch):
+        """aizynthfinder_stocks should restrict the CLI to the configured keys."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            return None
+
+        config = _aizynth_config_path(tmp_path)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("stock:\n  zinc: zinc.hdf5\n  bld: bld_stock.csv\n")
+        monkeypatch.setattr(synthesis_utils.subprocess, "run", fake_run)
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
+
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            config,
+            synthesis_config={"n_jobs": 1, "aizynthfinder_stocks": ["bld"]},
+        )
+
+        assert ok is True
+        cmd = captured["cmd"]
+        assert cmd[cmd.index("--stocks") : cmd.index("--nproc")] == ["--stocks", "bld"]
+
+    def test_default_stocks_leave_cli_selection_to_aizynthfinder(
+        self, tmp_path, monkeypatch
+    ):
+        """Without aizynthfinder_stocks, every configured stock stays active."""
+        captured = {}
+        monkeypatch.setattr(
+            synthesis_utils.subprocess,
+            "run",
+            lambda cmd, **kwargs: captured.setdefault("cmd", cmd),
+        )
+        monkeypatch.setattr(synthesis_utils, "resolve_uv_binary", lambda: "uv")
+
+        ok = run_aizynthfinder(
+            tmp_path / "in.smi",
+            tmp_path / "out.json",
+            _aizynth_config_path(tmp_path),
+            synthesis_config={"n_jobs": 1, "aizynthfinder_stocks": None},
+        )
+
+        assert ok is True
+        assert "--stocks" not in captured["cmd"]
+
+    def test_unknown_stock_points_to_bld_setup(self, tmp_path):
+        """Selecting an unregistered bld stock should explain how to add it."""
+        config = _aizynth_config_path(tmp_path)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("stock:\n  zinc: zinc.hdf5\n")
+
+        with pytest.raises(ValueError, match="hedgehog setup bld-stock"):
+            run_aizynthfinder(
+                tmp_path / "in.smi",
+                tmp_path / "out.json",
+                config,
+                synthesis_config={"aizynthfinder_stocks": ["zinc", "bld"]},
+            )
+
     def test_uses_uv_binary_from_resolver(self, tmp_path, monkeypatch):
         """run_aizynthfinder should use the binary returned by resolve_uv_binary."""
         captured = {}

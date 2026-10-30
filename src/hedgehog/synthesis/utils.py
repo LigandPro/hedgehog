@@ -545,6 +545,43 @@ def _prepare_aizynthfinder_config(
     return effective_config
 
 
+def _resolve_aizynth_stocks(
+    config_file: Path, synthesis_config: dict[str, Any] | None
+) -> list[str]:
+    """Return the stock keys selected by ``aizynthfinder_stocks``.
+
+    An empty list means AiZynthFinder uses every stock in its config.
+    """
+    selected = (synthesis_config or {}).get("aizynthfinder_stocks")
+    if selected is None:
+        return []
+    if isinstance(selected, str):
+        selected = [selected]
+    stocks = [str(key).strip() for key in selected if str(key).strip()]
+    if not stocks:
+        return []
+
+    try:
+        with config_file.open(encoding="utf-8") as handle:
+            available = (yaml.safe_load(handle) or {}).get("stock") or {}
+    except OSError as exc:
+        raise ValueError(
+            f"Cannot read AiZynthFinder config {config_file} to check stocks"
+        ) from exc
+    missing = [key for key in stocks if key not in available]
+    if missing:
+        hint = (
+            " Run 'uv run hedgehog setup bld-stock' to add the BLDpharm stock."
+            if "bld" in missing
+            else ""
+        )
+        raise ValueError(
+            f"aizynthfinder_stocks contains unknown stocks {missing}; "
+            f"available in {config_file}: {sorted(available)}.{hint}"
+        )
+    return stocks
+
+
 def run_aizynthfinder(
     input_smiles_file,
     output_json_file,
@@ -608,6 +645,7 @@ def run_aizynthfinder(
         config_file, output_json_file.parent, synthesis_config
     )
     config_abs = effective_config.resolve()
+    stocks = _resolve_aizynth_stocks(config_file, synthesis_config)
 
     try:
         uv_binary = resolve_uv_binary()
@@ -629,6 +667,9 @@ def run_aizynthfinder(
         "--output",
         str(output_abs),
     ]
+    if stocks:
+        cmd.extend(["--stocks", *stocks])
+        logger.info("AiZynthFinder stocks: %s", ", ".join(stocks))
     nproc = _resolve_aizynth_nproc(
         os.environ.get("AIZYNTH_NPROC"), synthesis_config=synthesis_config
     )
