@@ -96,6 +96,30 @@ With `aizynthfinder_retry_unsolved: true`, Hedgehog first runs the normal search
 
 The shipped search profile uses the limits declared in `config_synthesis.yml`; each representation receives that search budget.
 
+### Building-block stocks
+
+AiZynthFinder marks a route as solved when every precursor is found in a stock listed under `stock:` in `modules/aizynthfinder/public/config.yml`. The public data provides the ZINC stock (`zinc`).
+
+The BLDpharm catalogue is available as an optional extra stock:
+
+```bash
+uv run hedgehog setup bld-stock
+```
+
+This downloads the compounds deposited in PubChem by BLD Pharm ([PubChem source 22134](https://pubchem.ncbi.nlm.nih.gov/source/22134), about 1.3 million CIDs), converts their SMILES to InChIKeys with RDKit (the same keys AiZynthFinder computes for precursors), writes `modules/aizynthfinder/bld/bld_stock.csv` with a `manifest.json` (retrieval time, counts, unparseable CIDs, checksums), and registers the file as stock `bld` in `config.yml`. Rerun with `--refresh` to rebuild from the current PubChem deposit.
+
+The BLD stock records **catalogue membership from PubChem only**. A precursor "in stock" means BLD Pharm listed the compound in its PubChem deposit; PubChem provides no current inventory, price, or delivery time, so check availability with the supplier before ordering.
+
+Use `aizynthfinder_stocks` to choose which stocks the search uses:
+
+| Value | Effect |
+|-------|--------|
+| `null` (default) | All stocks in `config.yml`; after setup this is ZINC and BLDpharm together |
+| `[zinc, bld]` | ZINC and BLDpharm explicitly |
+| `[bld]` | BLDpharm only |
+
+Unknown keys stop the stage with an error listing the stocks available in `config.yml`. Re-downloading the AiZynthFinder public data rewrites `config.yml`; run `uv run hedgehog setup bld-stock` again to re-register the existing stock without rebuilding it.
+
 If `filter_solved_only: true`, only molecules for which AiZynthFinder found at least one valid route are kept.
 
 Setting `run_retrosynthesis: false` skips AiZynthFinder entirely and only computes the enabled scores above, which is significantly faster.

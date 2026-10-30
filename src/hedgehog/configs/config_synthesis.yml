@@ -14,6 +14,10 @@ aizynthfinder_time_limit: 300       # Search time limit per molecule, in seconds
 aizynthfinder_iteration_limit: 300  # Maximum MCTS iterations per molecule, > 0
 aizynthfinder_return_first: true    # Stop search after the first solved route
 aizynthfinder_charge_mode: both     # preserve | neutralize | both
+# Stock keys from the AiZynthFinder config.yml to search; null uses all of them.
+# `hedgehog setup bld-stock` adds `bld` (BLDpharm catalogue membership from PubChem).
+# Examples: [zinc, bld] or [bld]
+aizynthfinder_stocks: null
 # Optional second pass: 
   # retry only molecules unsolved across every charge form during single run
 aizynthfinder_retry_unsolved: false
