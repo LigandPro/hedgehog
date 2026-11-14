@@ -29,9 +29,7 @@ class FSScoreRuntime:
 
 def _looks_like_fsscore_checkout(path: Path) -> bool:
     """Return True when required FSScore files are present in checkout."""
-    return (path / _FSSCORE_SCORE_SCRIPT).exists() and (
-        path / _FSSCORE_MODEL_PATH
-    ).exists()
+    return (path / _FSSCORE_SCORE_SCRIPT).exists() and (path / _FSSCORE_MODEL_PATH).exists()
 
 
 def _resolve_fsscore_env_path(project_root: Path) -> Path:
@@ -85,15 +83,7 @@ def _install_fsscore_runtime(checkout_path: Path, env_path: Path) -> Path:
 
     worker_python = env_path / "bin" / "python"
     subprocess.run(
-        [
-            uv_bin,
-            "pip",
-            "install",
-            "--python",
-            str(worker_python),
-            "-e",
-            str(checkout_path),
-        ],
+        [uv_bin, "pip", "install", "--python", str(worker_python), "-e", str(checkout_path)],
         shell=False,
         check=True,
         timeout=7200,

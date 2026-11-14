@@ -205,25 +205,6 @@ class TestApplySynthesisScoreFilters:
 class TestCalculateSynthesisScoresRegistry:
     """Tests for registry-driven synthesis score calculation."""
 
-    @pytest.fixture(autouse=True)
-    def _clean_optional_scorer_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Keep optional external scorer tests independent from host env."""
-        synthesis_utils._MISSING_EXTERNAL_SCORER_WARNINGS.clear()
-        for env_key in (
-            "HEDGEHOG_AUTO_INSTALL",
-            "HEDGEHOG_OPTIONAL_ENV_ROOT",
-            "HEDGEHOG_FSSCORE_COMMAND",
-            "HEDGEHOG_FSSCORE_PYTHON",
-            "HEDGEHOG_FSSCORE_MODEL_PATH",
-            "HEDGEHOG_FSSCORE_REPO_PATH",
-            "HEDGEHOG_GASA_COMMAND",
-            "HEDGEHOG_GASA_EXECUTABLE",
-            "HEDGEHOG_GASA_API_URL",
-            "HEDGEHOG_GASA_TIMEOUT_SECONDS",
-            "HEDGEHOG_NONPHER_PYTHON",
-        ):
-            monkeypatch.delenv(env_key, raising=False)
-
     def test_calculate_synthesis_scores_uses_enabled_registry_order(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -276,10 +257,10 @@ class TestCalculateSynthesisScoresRegistry:
     def test_fsscore_external_command_adapter(self):
         """FSScore should read scores from an explicitly configured command."""
         command = (
-            f'{sys.executable} -c "import pandas as pd, sys; '
+            f"{sys.executable} -c \"import pandas as pd, sys; "
             "df = pd.read_csv(sys.argv[1]); "
             "df['score'] = [0.25 + i for i in range(len(df))]; "
-            'df.to_csv(sys.argv[2], index=False)" {input} {output}'
+            "df.to_csv(sys.argv[2], index=False)\" {input} {output}"
         )
         df = pd.DataFrame({"smiles": [SMILES_ETHANOL, SMILES_BENZENE]})
 
@@ -293,11 +274,11 @@ class TestCalculateSynthesisScoresRegistry:
     def test_fsscore_external_command_reorders_by_smiles(self):
         """External scorer output with SMILES should be realigned to input order."""
         command = (
-            f'{sys.executable} -c "import pandas as pd, sys; '
+            f"{sys.executable} -c \"import pandas as pd, sys; "
             "df = pd.read_csv(sys.argv[1]); "
             "df['score'] = df['smiles'].map({{'CCO': 0.25, 'c1ccccc1': 1.25}}); "
             "df = df[['smiles', 'score']].iloc[::-1]; "
-            'df.to_csv(sys.argv[2], index=False)" {input} {output}'
+            "df.to_csv(sys.argv[2], index=False)\" {input} {output}"
         )
         df = pd.DataFrame({"smiles": [SMILES_ETHANOL, SMILES_BENZENE]})
 
@@ -313,9 +294,9 @@ class TestCalculateSynthesisScoresRegistry:
     ):
         """Mismatched external SMILES should soft-fail instead of misassigning scores."""
         command = (
-            f'{sys.executable} -c "import pandas as pd, sys; '
+            f"{sys.executable} -c \"import pandas as pd, sys; "
             "pd.DataFrame({{'smiles': ['CCN', 'CCC'], 'score': [0.1, 0.2]}})."
-            'to_csv(sys.argv[2], index=False)" {input} {output}'
+            "to_csv(sys.argv[2], index=False)\" {input} {output}"
         )
 
         with caplog.at_level("WARNING"):
@@ -456,7 +437,7 @@ class TestCalculateSynthesisScoresRegistry:
         script_path = tmp_path / "gasa_stub.sh"
         script_path.write_text(
             "#!/bin/sh\n"
-            'if [ "$1" != "--smiles" ] || [ -z "$2" ]; then\n'
+            "if [ \"$1\" != \"--smiles\" ] || [ -z \"$2\" ]; then\n"
             "  echo 'missing --smiles argument' >&2\n"
             "  exit 2\n"
             "fi\n"
@@ -479,10 +460,10 @@ class TestCalculateSynthesisScoresRegistry:
     def test_gasa_external_command_adapter(self):
         """GASA should read scores from an explicitly configured command."""
         command = (
-            f'{sys.executable} -c "import pandas as pd, sys; '
+            f"{sys.executable} -c \"import pandas as pd, sys; "
             "df = pd.read_csv(sys.argv[1]); "
             "df['gasa_score'] = [0.75 + i for i in range(len(df))]; "
-            'df.to_csv(sys.argv[2], index=False)" {input} {output}'
+            "df.to_csv(sys.argv[2], index=False)\" {input} {output}"
         )
         df = pd.DataFrame({"smiles": [SMILES_ETHANOL, SMILES_BENZENE]})
 
@@ -510,7 +491,9 @@ class TestCalculateSynthesisScoresRegistry:
 
         def _fake_urlopen(request, timeout):  # noqa: ANN001
             del timeout
-            requests_seen.append((request.full_url, request.data.decode("utf-8")))
+            requests_seen.append(
+                (request.full_url, request.data.decode("utf-8"))
+            )
             return _DummyResponse()
 
         monkeypatch.setattr(synthesis_utils.urllib_request, "urlopen", _fake_urlopen)
@@ -545,11 +528,8 @@ class TestCalculateSynthesisScoresRegistry:
         assert np.isnan(result.loc[0, "gasa_score"])
         assert any("not local" in record.message for record in caplog.records)
 
-    def test_missing_external_scorers_return_nan(
-        self, monkeypatch: pytest.MonkeyPatch, caplog
-    ):
+    def test_missing_external_scorers_return_nan(self, caplog):
         """Unconfigured optional external scorers should not fail the pipeline."""
-        monkeypatch.setattr(synthesis_utils, "_auto_install_enabled", lambda: False)
         df = pd.DataFrame({"smiles": [SMILES_ETHANOL]})
 
         with caplog.at_level("WARNING"):
@@ -638,9 +618,7 @@ class TestCalculateSynthesisScoresRegistry:
 
         assert result["fs_score"].tolist() == [0.33]
         command = captured["command"]
-        assert command[command.index("--worker-python") + 1] == str(
-            runtime.worker_python
-        )
+        assert command[command.index("--worker-python") + 1] == str(runtime.worker_python)
         assert command[command.index("--model-path") + 1] == str(runtime.model_path)
 
     def test_fsscore_explicit_command_skips_auto_setup(
@@ -659,10 +637,10 @@ class TestCalculateSynthesisScoresRegistry:
         )
 
         command = (
-            f'{sys.executable} -c "import pandas as pd, sys; '
+            f"{sys.executable} -c \"import pandas as pd, sys; "
             "df = pd.read_csv(sys.argv[1]); "
             "df['score'] = [0.5 for _ in range(len(df))]; "
-            'df.to_csv(sys.argv[2], index=False)" {input} {output}'
+            "df.to_csv(sys.argv[2], index=False)\" {input} {output}"
         )
         result = calculate_synthesis_scores(
             pd.DataFrame({"smiles": [SMILES_ETHANOL]}),
@@ -682,9 +660,7 @@ class TestCalculateSynthesisScoresRegistry:
         )
         setup_result.repo_path.mkdir(parents=True, exist_ok=True)
         setup_result.worker_python.parent.mkdir(parents=True, exist_ok=True)
-        setup_result.worker_python.write_text(
-            "#!/usr/bin/env python\n", encoding="utf-8"
-        )
+        setup_result.worker_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
 
         monkeypatch.setenv("HEDGEHOG_AUTO_INSTALL", "1")
         monkeypatch.setattr(setup_mod, "ensure_gasa_worker", lambda _: setup_result)
@@ -696,9 +672,7 @@ class TestCalculateSynthesisScoresRegistry:
             input_csv = Path(command[command.index("--input-csv") + 1])
             output_csv = Path(command[command.index("--output-csv") + 1])
             output_csv.parent.mkdir(parents=True, exist_ok=True)
-            pd.read_csv(input_csv).assign(gasa_score=[0.8]).to_csv(
-                output_csv, index=False
-            )
+            pd.read_csv(input_csv).assign(gasa_score=[0.8]).to_csv(output_csv, index=False)
             return SimpleNamespace(returncode=0)
 
         monkeypatch.setattr(synthesis_utils.subprocess, "run", _fake_run)
@@ -713,9 +687,7 @@ class TestCalculateSynthesisScoresRegistry:
         assert "hedgehog.workers.gasa_worker" in rendered
         assert str(setup_result.worker_python) in rendered
         assert str(setup_result.repo_path) in rendered
-        assert (
-            captured["command"][captured["command"].index("--num-workers") + 1] == "1"
-        )
+        assert captured["command"][captured["command"].index("--num-workers") + 1] == "1"
 
     def test_gasa_explicit_backend_skips_auto_setup(
         self, monkeypatch: pytest.MonkeyPatch
@@ -733,10 +705,10 @@ class TestCalculateSynthesisScoresRegistry:
         )
 
         command = (
-            f'{sys.executable} -c "import pandas as pd, sys; '
+            f"{sys.executable} -c \"import pandas as pd, sys; "
             "df = pd.read_csv(sys.argv[1]); "
             "df['gasa_score'] = [0.77 for _ in range(len(df))]; "
-            'df.to_csv(sys.argv[2], index=False)" {input} {output}'
+            "df.to_csv(sys.argv[2], index=False)\" {input} {output}"
         )
         result = calculate_synthesis_scores(
             pd.DataFrame({"smiles": [SMILES_ETHANOL]}),
@@ -795,9 +767,7 @@ class TestCalculateSynthesisScoresRegistry:
             synthesis_utils,
             "_load_nonpher_filter_impl",
             lambda: (_ for _ in ()).throw(
-                AssertionError(
-                    "Local Nonpher fallback should not run after libboost blocker"
-                )
+                AssertionError("Local Nonpher fallback should not run after libboost blocker")
             ),
         )
 
@@ -808,10 +778,7 @@ class TestCalculateSynthesisScoresRegistry:
             )
 
         assert np.isnan(result.loc[0, "nonpher_complexity_score"])
-        assert (
-            "LibMambaUnsatisfiableError: nothing provides libboost 1.65.*"
-            in caplog.text
-        )
+        assert "LibMambaUnsatisfiableError: nothing provides libboost 1.65.*" in caplog.text
 
     def test_empty_config(self):
         """Empty config - all molecules should pass."""

@@ -36,11 +36,7 @@ def test_main_sets_cpu_default_for_subprocess(monkeypatch) -> None:
     monkeypatch.setattr(fsscore_worker.subprocess, "run", _fake_run)
 
     assert fsscore_worker.main() == 0
-    assert captured["command"][0:3] == [
-        "/tmp/fsscore/bin/python",
-        "-m",
-        "fsscore.score",
-    ]
+    assert captured["command"][0:3] == ["/tmp/fsscore/bin/python", "-m", "fsscore.score"]
     env = captured["env"]
     assert isinstance(env, dict)
     assert env.get("CUDA_VISIBLE_DEVICES") == ""

@@ -60,9 +60,7 @@ def test_check_nonpher_runtime_reports_missing_dependency(monkeypatch):
     def _raise_missing():
         raise ModuleNotFoundError("No module named 'nonpher'")
 
-    monkeypatch.setattr(
-        nonpher_setup, "create_nonpher_complexity_filter", _raise_missing
-    )
+    monkeypatch.setattr(nonpher_setup, "create_nonpher_complexity_filter", _raise_missing)
 
     result = nonpher_setup.check_nonpher_runtime()
     assert result.available is False
@@ -169,11 +167,7 @@ def test_ensure_nonpher_uv_runtime_uses_existing_python(monkeypatch, tmp_path):
     python_path.write_text("#!/usr/bin/env python\n", encoding="utf-8")
     (env_prefix / "pyvenv.cfg").write_text("home = /tmp\n", encoding="utf-8")
 
-    monkeypatch.setattr(
-        nonpher_setup,
-        "_check_nonpher_external_python",
-        lambda *_: nonpher_setup.NonpherCheckResult(True, "ok"),
-    )
+    monkeypatch.setattr(nonpher_setup, "_check_nonpher_external_python", lambda *_: nonpher_setup.NonpherCheckResult(True, "ok"))
     monkeypatch.setattr(
         nonpher_setup,
         "_run_command",
@@ -203,33 +197,11 @@ def test_ensure_nonpher_uv_runtime_reports_linker_blocker(monkeypatch, tmp_path)
 
     steps = iter(
         [
-            subprocess.CompletedProcess(
-                args=["uv", "venv"], returncode=0, stdout="", stderr=""
-            ),
-            subprocess.CompletedProcess(
-                args=["uv", "pip", "install", "numpy<2"],
-                returncode=0,
-                stdout="",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["uv", "pip", "install", "rdkit-pypi==2022.9.5"],
-                returncode=0,
-                stdout="",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["uv", "pip", "install", "setuptools<81", "wheel"],
-                returncode=0,
-                stdout="",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["uv", "pip", "install", "--no-deps", "nonpher"],
-                returncode=0,
-                stdout="",
-                stderr="",
-            ),
+            subprocess.CompletedProcess(args=["uv", "venv"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["uv", "pip", "install", "numpy<2"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["uv", "pip", "install", "rdkit-pypi==2022.9.5"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["uv", "pip", "install", "setuptools<81", "wheel"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["uv", "pip", "install", "--no-deps", "nonpher"], returncode=0, stdout="", stderr=""),
             subprocess.CompletedProcess(
                 args=["uv", "pip", "install", "--no-build-isolation", "molpher-lib"],
                 returncode=1,
@@ -238,9 +210,7 @@ def test_ensure_nonpher_uv_runtime_reports_linker_blocker(monkeypatch, tmp_path)
             ),
         ]
     )
-    monkeypatch.setattr(
-        nonpher_setup, "_run_command", lambda *_args, **_kwargs: next(steps)
-    )
+    monkeypatch.setattr(nonpher_setup, "_run_command", lambda *_args, **_kwargs: next(steps))
 
     result = nonpher_setup.ensure_nonpher_uv_runtime(env_prefix=str(env_prefix))
     assert result.available is False
@@ -313,9 +283,7 @@ def test_run_nonpher_batch_external_uses_env_python(monkeypatch):
     def _fake_run(command: list[str], timeout: int = 3600):
         del timeout
         captured["command"] = command
-        return subprocess.CompletedProcess(
-            args=command, returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
 
     monkeypatch.setenv(nonpher_setup.NONPHER_PYTHON_ENV_VAR, "/tmp/nonpher/env/python")
     monkeypatch.setattr(nonpher_setup, "_run_command", _fake_run)
@@ -360,15 +328,11 @@ def test_nonpher_worker_main_scores_rows_without_pandas(monkeypatch, tmp_path):
         def isTooComplex(self, mol):
             return bool(mol == "complex")
 
-    monkeypatch.setattr(
-        nonpher_worker, "_create_complexity_filter", lambda: _FakeFilter()
-    )
+    monkeypatch.setattr(nonpher_worker, "_create_complexity_filter", lambda: _FakeFilter())
     monkeypatch.setattr(
         nonpher_worker,
         "_mol_from_smiles",
-        lambda smiles: (
-            None if smiles == "bad" else ("complex" if smiles == "CCCCC" else "simple")
-        ),
+        lambda smiles: None if smiles == "bad" else ("complex" if smiles == "CCCCC" else "simple"),
     )
 
     code = nonpher_worker.main(

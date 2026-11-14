@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -47,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
 
     try:
-        with open(args.input_csv, encoding="utf-8", newline="") as source:
+        with open(args.input_csv, "r", encoding="utf-8", newline="") as source:
             reader = csv.DictReader(source)
             fieldnames = list(reader.fieldnames or [])
             if args.smiles_column not in fieldnames:

@@ -17,9 +17,9 @@ def _write_min_checkout(repo_path: Path) -> None:
     (repo_path / "src" / "fsscore").mkdir(parents=True, exist_ok=True)
     (repo_path / "src" / "fsscore" / "score.py").write_text("", encoding="utf-8")
     (repo_path / "models").mkdir(parents=True, exist_ok=True)
-    (
-        repo_path / "models" / "pretrain_graph_GGLGGL_ep242_best_valloss.ckpt"
-    ).write_bytes(b"x")
+    (repo_path / "models" / "pretrain_graph_GGLGGL_ep242_best_valloss.ckpt").write_bytes(
+        b"x"
+    )
 
 
 class TestEnsureFsscoreCheckout:
@@ -55,9 +55,7 @@ class TestEnsureFsscoreCheckout:
     def test_raises_when_declined(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            "hedgehog.setup._fsscore.confirm_download", lambda *_: False
-        )
+        monkeypatch.setattr("hedgehog.setup._fsscore.confirm_download", lambda *_: False)
 
         with pytest.raises(RuntimeError, match="declined"):
             ensure_fsscore_checkout(tmp_path)
@@ -95,18 +93,11 @@ class TestEnsureFsscoreRuntime:
             install_called["value"] = True
             raise AssertionError("runtime install should not run")
 
-        monkeypatch.setattr(
-            "hedgehog.setup._fsscore._install_fsscore_runtime", _fail_install
-        )
+        monkeypatch.setattr("hedgehog.setup._fsscore._install_fsscore_runtime", _fail_install)
 
         runtime = ensure_fsscore_runtime(tmp_path)
         assert runtime.checkout_path == checkout_path
-        assert (
-            runtime.model_path
-            == checkout_path
-            / "models"
-            / "pretrain_graph_GGLGGL_ep242_best_valloss.ckpt"
-        )
+        assert runtime.model_path == checkout_path / "models" / "pretrain_graph_GGLGGL_ep242_best_valloss.ckpt"
         assert runtime.worker_python == worker_python
         assert runtime.env_path == env_path
         assert install_called["value"] is False
@@ -154,9 +145,7 @@ class TestEnsureFsscoreRuntime:
             worker_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
             return worker_python
 
-        monkeypatch.setattr(
-            "hedgehog.setup._fsscore._install_fsscore_runtime", _fake_install
-        )
+        monkeypatch.setattr("hedgehog.setup._fsscore._install_fsscore_runtime", _fake_install)
 
         runtime = ensure_fsscore_runtime(tmp_path)
         assert calls == [(checkout_path, env_path)]
@@ -172,9 +161,7 @@ class TestEnsureFsscoreRuntime:
             "hedgehog.setup._fsscore._check_fsscore_runtime",
             lambda *_: False,
         )
-        monkeypatch.setattr(
-            "hedgehog.setup._fsscore.confirm_download", lambda *_: False
-        )
+        monkeypatch.setattr("hedgehog.setup._fsscore.confirm_download", lambda *_: False)
 
         with pytest.raises(RuntimeError, match="declined"):
             ensure_fsscore_runtime(tmp_path)

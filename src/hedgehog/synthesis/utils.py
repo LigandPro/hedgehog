@@ -818,7 +818,9 @@ def _resolve_gasa_settings(config: dict[str, Any] | None) -> dict[str, Any]:
 
     timeout_raw = os.environ.get(GASA_TIMEOUT_ENV)
     if timeout_raw is None:
-        timeout_raw = gasa_cfg.get("timeout_seconds", cfg.get("gasa_timeout_seconds"))
+        timeout_raw = gasa_cfg.get(
+            "timeout_seconds", cfg.get("gasa_timeout_seconds")
+        )
 
     return {
         "command": None if command is None else str(command).strip(),
@@ -1603,9 +1605,7 @@ def _auto_install_enabled() -> bool:
     return os.environ.get(AUTO_INSTALL_ENV) == "1"
 
 
-def _resolve_optional_env_path(
-    project_root: Path, env_name: str, fallback: str
-) -> Path:
+def _resolve_optional_env_path(project_root: Path, env_name: str, fallback: str) -> Path:
     """Resolve optional scorer runtime env path from shared root or project fallback."""
     optional_root = os.environ.get(OPTIONAL_ENV_ROOT_ENV, "").strip()
     if optional_root:
@@ -1659,21 +1659,22 @@ def _auto_configure_fsscore_runtime(config: dict[str, Any]) -> None:
         config["fsscore_python"] = str(runtime.worker_python)
     if model_path is None:
         config["fsscore_model_path"] = str(runtime.model_path)
-    if (
-        _get_optional_config_value(
-            config,
-            "fsscore_repo_path",
-            "HEDGEHOG_FSSCORE_REPO_PATH",
-        )
-        is None
-    ):
+    if _get_optional_config_value(
+        config,
+        "fsscore_repo_path",
+        "HEDGEHOG_FSSCORE_REPO_PATH",
+    ) is None:
         config["fsscore_repo_path"] = str(runtime.checkout_path)
 
 
 def _auto_configure_gasa_runtime(config: dict[str, Any]) -> None:
     """Populate GASA command fallback when no backend is configured."""
     settings = _resolve_gasa_settings(config)
-    if settings["command"] or settings["executable"] or settings["api_url"]:
+    if (
+        settings["command"]
+        or settings["executable"]
+        or settings["api_url"]
+    ):
         return
 
     try:

@@ -143,10 +143,7 @@ def test_ensure_gasa_worker_recreates_existing_env_when_stale(
     result = ensure_gasa_worker(tmp_path)
     assert result.worker_python == tmp_path / ".venv-gasa-worker" / "bin" / "python"
     assert removed_paths == [tmp_path / ".venv-gasa-worker"]
-    assert any(
-        cmd[:3] == ["uv", "venv", "--python"] and "--clear" not in cmd
-        for cmd in commands
-    )
+    assert any(cmd[:3] == ["uv", "venv", "--python"] and "--clear" not in cmd for cmd in commands)
 
 
 def test_ensure_gasa_worker_raises_for_invalid_existing_checkout(

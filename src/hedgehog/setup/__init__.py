@@ -21,14 +21,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "FSScoreRuntime": ("hedgehog.setup._fsscore", "FSScoreRuntime"),
     "ensure_gasa_worker": ("hedgehog.setup._gasa", "ensure_gasa_worker"),
     "GasaSetupResult": ("hedgehog.setup._gasa", "GasaSetupResult"),
-    "ensure_shepherd_worker": (
-        "hedgehog.setup._shepherd_worker",
-        "ensure_shepherd_worker",
-    ),
-    "ensure_nvmolkit_worker": (
-        "hedgehog.setup._nvmolkit_worker",
-        "ensure_nvmolkit_worker",
-    ),
+    "ensure_shepherd_worker": ("hedgehog.setup._shepherd_worker", "ensure_shepherd_worker"),
+    "ensure_nvmolkit_worker": ("hedgehog.setup._nvmolkit_worker", "ensure_nvmolkit_worker"),
     "check_nonpher_runtime": ("hedgehog.setup._nonpher", "check_nonpher_runtime"),
     "create_nonpher_complexity_filter": (
         "hedgehog.setup._nonpher",
@@ -43,15 +37,9 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "hedgehog.setup._nonpher",
         "ensure_nonpher_external_runtime",
     ),
-    "ensure_nonpher_uv_runtime": (
-        "hedgehog.setup._nonpher",
-        "ensure_nonpher_uv_runtime",
-    ),
+    "ensure_nonpher_uv_runtime": ("hedgehog.setup._nonpher", "ensure_nonpher_uv_runtime"),
     "resolve_nonpher_python": ("hedgehog.setup._nonpher", "resolve_nonpher_python"),
-    "run_nonpher_batch_external": (
-        "hedgehog.setup._nonpher",
-        "run_nonpher_batch_external",
-    ),
+    "run_nonpher_batch_external": ("hedgehog.setup._nonpher", "run_nonpher_batch_external"),
     "NONPHER_PYTHON_ENV_VAR": ("hedgehog.setup._nonpher", "NONPHER_PYTHON_ENV_VAR"),
     "NonpherEnsureResult": ("hedgehog.setup._nonpher", "NonpherEnsureResult"),
 }

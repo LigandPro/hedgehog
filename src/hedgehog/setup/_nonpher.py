@@ -130,7 +130,8 @@ def _check_nonpher_external_python(
         return NonpherCheckResult(
             available=False,
             detail=(
-                f"Unable to run interpreter '{python_bin}': {_short_exc_message(exc)}"
+                f"Unable to run interpreter '{python_bin}': "
+                f"{_short_exc_message(exc)}"
             ),
         )
 
@@ -166,9 +167,7 @@ def _nonpher_worker_path() -> Path:
     return Path(__file__).resolve().parent.parent / "workers" / "nonpher_worker.py"
 
 
-def _run_command(
-    command: list[str], *, timeout: int = 3600
-) -> subprocess.CompletedProcess[str]:
+def _run_command(command: list[str], *, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         shell=False,
@@ -182,18 +181,16 @@ def _run_command(
 def _format_command_failure(
     command: list[str], completed: subprocess.CompletedProcess[str]
 ) -> str:
-    detail = (
-        _first_matching_line(
-            completed.stderr,
-            (
-                "libboost",
-                "cannot find -lmolpher",
-                "no module named 'molpher'",
-                "no module named 'pkg_resources'",
-            ),
-        )
-        or _first_nonempty_line(completed.stderr)
-        or _first_nonempty_line(completed.stdout)
+    detail = _first_matching_line(
+        completed.stderr,
+        (
+            "libboost",
+            "cannot find -lmolpher",
+            "no module named 'molpher'",
+            "no module named 'pkg_resources'",
+        ),
+    ) or _first_nonempty_line(completed.stderr) or _first_nonempty_line(
+        completed.stdout
     )
     if not detail:
         detail = f"exit code {completed.returncode}"
@@ -455,7 +452,7 @@ def nonpher_lobachevsky_setup_commands(
         "ssh lobachevsky",
         f"cd {project_dir}",
         f"export HEDGEHOG_OPTIONAL_ENV_ROOT={optional_env_root}",
-        'mkdir -p "$HEDGEHOG_OPTIONAL_ENV_ROOT"',
+        "mkdir -p \"$HEDGEHOG_OPTIONAL_ENV_ROOT\"",
         (
             "uv run python - <<'PY'\n"
             "from hedgehog.setup import ensure_nonpher_uv_runtime\n"

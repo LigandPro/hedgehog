@@ -59,9 +59,7 @@ def _resolve_python_binary(python_bin: str | None) -> str:
         if found:
             return found
         if any(sep in python_bin for sep in ("/", "\\")):
-            raise RuntimeError(
-                f"Requested Python interpreter was not found: {python_bin}"
-            )
+            raise RuntimeError(f"Requested Python interpreter was not found: {python_bin}")
         return python_bin
 
     for candidate in ("python3.10", "python3.11"):
@@ -132,9 +130,7 @@ def _verify_gasa_dependencies(venv_python: Path) -> None:
     )
 
 
-def ensure_gasa_worker(
-    project_root: Path, python_bin: str | None = None
-) -> GasaSetupResult:
+def ensure_gasa_worker(project_root: Path, python_bin: str | None = None) -> GasaSetupResult:
     """Ensure GASA checkout/env exist and return worker execution paths."""
     repo_path = _ensure_gasa_checkout(project_root)
     venv_dir = _resolve_worker_venv_dir(project_root)
