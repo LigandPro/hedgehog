@@ -1999,6 +1999,45 @@ def setup_aizynthfinder(
     console.print(f"[bold]AiZynthFinder installed.[/bold] Config: {config_path}")
 
 
+@setup_app.command("bld-stock")
+def setup_bld_stock(
+    yes: bool = typer.Option(
+        True,
+        "--yes/--no-yes",
+        "-y/-n",
+        help="Auto-accept downloads (default: yes). Use --no-yes to prompt.",
+    ),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Rebuild the stock from the current PubChem deposit.",
+    ),
+    jobs: int = typer.Option(
+        8,
+        "--jobs",
+        "-j",
+        min=1,
+        help="Worker processes for RDKit InChIKey generation.",
+    ),
+) -> None:
+    """Build the BLDpharm catalogue stock (PubChem source 22134) for AiZynthFinder.
+
+    The stock lists catalogue membership only, not current stock or prices.
+    """
+    if yes:
+        os.environ["HEDGEHOG_AUTO_INSTALL"] = "1"
+    else:
+        os.environ.pop("HEDGEHOG_AUTO_INSTALL", None)
+
+    from hedgehog.setup import ensure_bld_stock
+
+    project_root = Path(__file__).resolve().parents[2]
+    stock_path = ensure_bld_stock(project_root, refresh=refresh, jobs=jobs)
+    console.print(
+        f"[bold]BLDpharm stock registered as 'bld'.[/bold] Stock: {stock_path}"
+    )
+
+
 @setup_app.command("sync")
 def setup_sync(
     yes: bool = typer.Option(

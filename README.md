@@ -80,8 +80,13 @@ filters are working.
 
 ```bash
 uv run hedgehog setup aizynthfinder
+uv run hedgehog setup bld-stock   # optional: add the BLDpharm catalogue stock
 uv run hedgehog --auto-install
 ```
+
+The BLDpharm stock is built from the BLD Pharm deposit in PubChem and records
+catalogue membership only, not current stock or prices. See
+[Synthesis Feasibility](docs/content/pipeline/synthesis.mdx#building-block-stocks).
 
 Full pipeline execution may require AiZynthFinder, GNINA/SMINA/Matcha, valid
 receptor structures, reference ligands, and enough CPU/GPU resources.

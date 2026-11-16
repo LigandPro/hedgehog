@@ -1344,3 +1344,20 @@ class TestPipelinePreflight:
             for report in result["stage_reports"]
             for check in report["checks"]
         )
+
+
+class TestRetrosynthesisConfigStocks:
+    """Retrosynthesis config round-trips must keep optional stocks."""
+
+    def test_extra_stocks_survive_flatten_and_unflatten(self):
+        from hedgehog.tui_backend.handlers.config import ConfigHandler
+
+        handler = ConfigHandler.__new__(ConfigHandler)
+        nested = {"stock": {"zinc": "/data/zinc.hdf5", "bld": "/data/bld_stock.csv"}}
+
+        flat = handler._flatten_retrosynthesis_config(nested)
+        assert flat["stock_zinc"] == "/data/zinc.hdf5"
+        assert flat["stock_bld"] == "/data/bld_stock.csv"
+        assert (
+            handler._unflatten_retrosynthesis_config(flat)["stock"] == nested["stock"]
+        )

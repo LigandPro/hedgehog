@@ -182,6 +182,7 @@ Prevalence evidence: `results/zinc250_thresholds/iteration_24_structural_ruleset
 | `aizynthfinder_time_limit` | float | `2000` | Search time limit per target representation, in seconds |
 | `aizynthfinder_iteration_limit` | int | `300` | Maximum MCTS iterations per target representation |
 | `aizynthfinder_return_first` | bool | `true` | Stop each representation after its first solved route |
+| `aizynthfinder_stocks` | list \| null | `null` | Stock keys from the AiZynthFinder `config.yml` to search, for example `[zinc, bld]` or `[bld]`; `null` uses every configured stock. `bld` is added by `hedgehog setup bld-stock` and is PubChem catalogue membership, not live availability |
 | `aizynthfinder_charge_mode` | string | `both` | Search the preserved SMILES, a stereochemistry-preserving neutralized SMILES, or both |
 | `aizynthfinder_retry_unsolved` | bool | `false` | Enable a second AiZynthFinder pass only for molecules unsolved across all charge forms in pass 1 |
 | `aizynthfinder_reuse_pass1` | bool | `false` | Reuse an existing `retrosynthesis_variants_pass1.json` checkpoint when restarting an interrupted retry |

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ensure_gnina": ("hedgehog.setup._gnina", "ensure_gnina"),
     "ensure_aizynthfinder": ("hedgehog.setup._aizynthfinder", "ensure_aizynthfinder"),
+    "ensure_bld_stock": ("hedgehog.setup._bld_stock", "ensure_bld_stock"),
     "ensure_rascore_model": ("hedgehog.setup._rascore", "ensure_rascore_model"),
     "FSScoreRuntime": ("hedgehog.setup._fsscore", "FSScoreRuntime"),
     "GasaSetupResult": ("hedgehog.setup._gasa", "GasaSetupResult"),
@@ -142,6 +143,7 @@ def ensure_matcha_checkout(*args, **kwargs):
 __all__ = [
     "ensure_gnina",
     "ensure_aizynthfinder",
+    "ensure_bld_stock",
     "ensure_rascore_model",
     "ensure_sync_model",
     "ensure_scscore_model",

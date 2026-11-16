@@ -172,9 +172,12 @@ class ConfigHandler:
         filter_data = data.get("filter", {})
         flat["filter_uspto"] = filter_data.get("uspto", "")
 
-        # Stock databases
-        stock = data.get("stock", {})
+        # Stock databases (zinc is always shown; extra stocks such as bld are kept)
+        stock = data.get("stock") or {}
         flat["stock_zinc"] = stock.get("zinc", "")
+        for key, value in stock.items():
+            if key != "zinc" and isinstance(value, str):
+                flat[f"stock_{key}"] = value
 
         return flat
 
@@ -205,8 +208,9 @@ class ConfigHandler:
             nested["filter"]["uspto"] = data["filter_uspto"]
 
         # Stock databases
-        if data.get("stock_zinc"):
-            nested["stock"]["zinc"] = data["stock_zinc"]
+        for key, value in data.items():
+            if key.startswith("stock_") and value:
+                nested["stock"][key.removeprefix("stock_")] = value
 
         return nested
 
